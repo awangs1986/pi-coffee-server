@@ -23,7 +23,6 @@
         <section id="project-controls" class="project-controls hidden" aria-label="项目">
           <label for="project-select">工作项目</label>
           <select id="project-select"><option value="">选择项目</option></select>
-          <input id="start-branch" placeholder="起始分支（默认项目分支）" aria-label="起始分支" />
           <div class="project-actions"><button id="project-add" class="btn small">＋ 项目</button><button id="project-discover" class="btn small">发现仓库</button></div>
           <div class="project-actions"><button id="show-active" class="btn small">对话</button><button id="show-archive" class="btn small">归档</button></div>
         </section>
@@ -66,7 +65,7 @@
             </div>
           </div>
           <button id="merge-workspace" class="btn small hidden">查看合并</button>
-          <button id="files-toggle" class="btn small hidden">文件</button>
+          <button id="files-toggle" class="btn small hidden" type="button" aria-pressed="false" aria-controls="workspace-panel" title="显示或收起右侧文件树">文件</button>
           <div class="topbar-meta" id="session-meta"></div>
         </header>
 
@@ -86,6 +85,11 @@
             <textarea id="prompt" rows="1" placeholder="给 Pi 一个任务… 输入 / 查看命令，可粘贴图片" aria-label="输入"></textarea>
             <div class="composer-bar">
               <div class="composer-left">
+                <!-- Gitea branch selector (SPEC §1.1): shows the open conversation's worktree branch; for a new conversation it picks the starting branch. -->
+                <label class="select-wrap branch-wrap hidden" id="branch-wrap" title="分支">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="4" r="2.2"/><circle cx="6" cy="20" r="2.2"/><circle cx="18" cy="8" r="2.2"/><path d="M6 6.2v11.6M18 10.2c0 4-12 2.5-12 7.6"/></svg>
+                  <select id="branch" aria-label="Gitea 分支"><option value="">分支…</option></select>
+                </label>
                 <label class="select-wrap" title="显式选择模型来源；失败不自动切换"><select id="model-source" aria-label="模型来源"><option value="native">原生 Pi</option><option value="relay">管理员 Relay</option></select></label>
                 <label class="select-wrap" title="模型">
                   <select id="model" aria-label="模型"><option value="">模型…</option></select>
@@ -118,9 +122,16 @@
           <div class="footnote">对话由 User VM 中的原版 Pi agent 执行；记录保存在 VM 上，关闭页面不会中断正在运行的任务。</div>
         </div>
       </main>
-      <aside id="workspace-panel" class="workspace-panel hidden" aria-label="工作区文件与预览">
-        <header><strong>工作区</strong><button id="files-refresh" class="btn small">刷新</button><button id="files-close" class="btn small" aria-label="关闭文件面板">×</button></header>
-        <div class="file-tabs"><button id="files-tree" class="btn small">文件树</button><button id="files-uploads" class="btn small">上传记录</button></div>
+      <!-- Third column (SPEC §1.1): the open conversation's worktree on the User VM. Shown by default on wide screens; an overlay ≤1100px. -->
+      <aside id="workspace-panel" class="workspace-panel" aria-label="工作区文件与预览">
+        <header>
+          <div class="workspace-head"><strong>工作区</strong><span class="workspace-sub" id="workspace-sub"></span></div>
+          <button id="files-refresh" class="btn small" type="button">刷新</button>
+          <button id="files-close" class="icon-btn" type="button" aria-label="收起文件面板" title="收起文件面板">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </header>
+        <div class="file-tabs" role="tablist"><button id="files-tree" class="btn small" type="button" role="tab" aria-selected="true">文件树</button><button id="files-uploads" class="btn small" type="button" role="tab" aria-selected="false">上传记录</button></div>
         <nav id="file-path" aria-label="当前目录"></nav>
         <div id="file-list" class="file-list"></div>
         <div id="artifact-preview" class="artifact-preview"><p>选择文件以预览。文件保存在你的 VM。</p></div>

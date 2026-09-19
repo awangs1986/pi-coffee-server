@@ -55,7 +55,8 @@ PI_COFFEE_TRANSFER_ADVERTISE=VM_LAN_ADDRESS
 
 - 每个项目根仅运行一个 Host 服务实例；不支持两个 Host 各自缓存同一个元数据文件。使用现有 systemd/容器服务管理，不自行启动第二套进程。
 - 同服务用户、同 agentDir 在 VM 终端使用 Pi 原生认证；不要求模型 Relay 在线。Relay provider 若需要，继续由原有 models.json/客户端 token 显式配置。
-- 在项目下点击“新对话”即可先创建 worktree、选择模型来源，再发送第一条消息。Relay 来源由 VM 环境 `PI_COFFEE_RELAY_PROVIDERS` 明确列出 provider ID（逗号分隔，默认 `cpa`，与旧例子一致）；不按名称猜测，不自动回退。未配置可用 Relay provider 时该来源不可选。
+- 在项目下点击“新对话”只是进入草稿态：底部输入条的分支下拉预选默认分支，**首次发消息、上传文件或改模型来源时才创建 worktree**（2026-09-19 改为惰性创建，起始分支取自下拉；创建失败时消息退回输入框，不留半成品）。Relay 来源由 VM 环境 `PI_COFFEE_RELAY_PROVIDERS` 明确列出 provider ID（逗号分隔，默认 `cpa`，与旧例子一致）；不按名称猜测，不自动回退。未配置可用 Relay provider 时该来源不可选。
+- 分支下拉数据来自 `POST /api/workspace {action:"branches", projectId}`：返回 VM 克隆内的本地分支、远端跟踪分支（如 `origin/release`，不主动 fetch）和其他对话的 `coffee/<id>` 分支，并标出默认分支；`{action:"conversation", branch}` 接受其中任一名字，未知或非法分支返回 409 并给出可读原因。对话元数据新增 `startBranch`／`startCommit`（40 位提交号），旧元数据缺省字段时按原样加载。已打开对话里改选分支 = 确认后新建对话，不迁移现有 worktree。
 - `PI_COFFEE_PROJECT_ROOT` 启用工作台模式；未启用时保留旧单 Host 兼容流程，但身份化 Web 不允许连接未启用 workspace 的 VM。
 - 不开启匿名 LocalSend。`PI_COFFEE_LEGACY_LOCALSEND=1` 只可在无 workspace 的明确旧环境使用；不是双用户产品配置。
 - `PI_COFFEE_ALLOW_UNAUTHENTICATED=1` 仅用于明确的单用户演示/诊断，不是多用户发布配置。

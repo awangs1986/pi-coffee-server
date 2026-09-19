@@ -42,11 +42,13 @@ owner 要求按大方向收拢，不再逐条追问边缘细节。首版界面�
 - **右栏**：当前对话 workspace 的文件树、预览与下载、上传记录；文件仍在用户 VM。
 - **底部**：输入框与 Gitea 分支选择同排，另有模型来源／模型选择、附件、停止与发送。
 
-当前实现与本合同的差距（`public/` 已核对）：
+实现状态（2026-09-19，`public/` 与 Host 已改，见 `docs/development/p0-p4-implementation-20260916.md` §1.1 段）：
 
-1. 文件树现在是**可选浮层**：`public/index.html` 的 `#workspace-panel` 默认带 `hidden`，只有点击顶栏「文件」按钮后 `.app.files-open` 才把网格从 `260px 1fr`（`public/app.css:39`）切成三列（`public/app.css:398`）。需改为**默认三栏**，选中项目／对话即常驻显示，浮层仅作为窄屏（≤1100px）降级形态保留。
-2. 分支选择目前只是左栏创建对话时的 `#start-branch` 文本框，仅在 `public/app.js:493` 创建时读取一次。需把分支控件移到**底部输入条**：显示当前对话分支，并用于新对话起始分支。切换分支必须遵守既有「一对话一 worktree」模型，不得静默迁移脏 worktree 或绕过 §5 的合并锁。
-3. 其余三块（左列表、中对话、底输入条）已具备，属复用而非重建。
+1. **默认三栏**：`#workspace-panel` 不再带 `hidden`；项目模式下（Host 配置了 `PI_COFFEE_PROJECT_ROOT`）宽屏（>1100px）默认 `.app.files-open` 三列常驻，右栏随当前对话切换；用户点「收起文件」的偏好记在 `localStorage['pi-coffee.files.v1']`。≤1100px 降级为浮层，≤820px 单列。旧单目录模式（无项目根）不显示右栏与分支控件，行为不变。
+2. **底部分支选择**：`#start-branch` 文本框已删除，改为输入条左侧的 `#branch` 下拉，数据来自 Host 新动作 `POST /api/workspace {action:"branches"}`（VM 克隆里的本地分支＋远端跟踪分支＋其他对话分支，标出默认分支；不主动 fetch，远端刷新仍按 §5.2 由 Agent 工具完成）。新对话在**首次发消息／上传／改模型来源时才创建 worktree**（惰性创建，起始分支取自下拉）；已打开的对话里下拉显示其 worktree 分支，改选其他分支需确认并**新建一个对话**，不迁移、不切换现有 worktree，也不触碰 §5 合并锁。对话元数据新增 `startBranch`／`startCommit`。
+3. 其余三块（左列表、中对话、底输入条）沿用既有实现。
+
+验证方式：`npm run check`（Host 单测覆盖 `branches`／起始分支／远端跟踪分支／非法分支）；`npm run preview:workspace` 用假 Pi 起整套栈看布局；`npm run smoke:workspace-browser` 为 Playwright 版端到端（需本机 Chromium，本轮未跑）。
 
 界面之外的既有合同不变：原生 Pi 执行与历史、统一网关转发、缓存／草稿策略、归档与删除保护。本节只约束布局与可达性，不改变数据归属；具体像素、宽度、动效属实现细节。
 

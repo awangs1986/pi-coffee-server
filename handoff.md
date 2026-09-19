@@ -1,6 +1,16 @@
 # PI Coffee — GitHub 代码审查交接
 
-更新日期：2026-09-17（Asia/Hong_Kong）
+更新日期：2026-09-19（UTC）
+
+## SPEC §1.1 界面骨架实现（2026-09-19，UTC，工作分支 `arena/01a0b9c3-pi-coffee`）
+
+按 [主 SPEC §1.1](docs/spec/multi-user-vm.md) 记录的两处差距改代码，不扩展到 §7.3 文件网关或 §7.4 缓存策略：
+
+- **默认三栏**：项目模式宽屏（>1100px）右栏文件树常驻并随对话切换，收起偏好存 `localStorage['pi-coffee.files.v1']`；≤1100px 浮层、≤820px 单列；无项目根的旧模式不显示右栏与分支控件。
+- **底部分支选择**：删除左栏 `#start-branch`，新增输入条 `#branch` 下拉；Host `POST /api/workspace` 新增 `branches` 动作（本地＋远端跟踪＋对话分支，不 fetch），`conversation` 动作接受远端跟踪名并校验；对话元数据新增 `startBranch`／`startCommit`。新对话惰性创建 worktree（首次发消息／上传／改模型来源），已打开对话改选分支 = 确认后新建对话，不迁移 worktree、不触碰合并锁。
+- 新增 `npm run preview:workspace`：假 Pi＋临时项目根＋几条分支的全栈预览，只为看界面，不是部署模式。
+- 验证：`npm run check` 构建成功、**29 个文件、158 项通过**；jsdom 级前端流程自测（惰性创建、来源预选、树加载、栏位收起、窄屏、分支改选取消／确认、切换对话、创建失败退回消息、旧模式）；真实栈下 WebSocket 帧序 `opened > history > transfer` 与文件树核对。**Playwright 版 `smoke:workspace-browser` 已同步改写但本环境无 Chromium，未跑**；真实 VM、Gitea 身份链路未复核。
+- 未推送、未合并 `main`。
 
 ## Windows 真机复核与跨平台修复（2026-09-17，Europe/Paris）
 

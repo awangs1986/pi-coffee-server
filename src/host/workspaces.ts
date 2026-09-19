@@ -6,8 +6,13 @@ import { join, resolve, relative, isAbsolute, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 export interface Project { id: string; name: string; path: string; branch: string }
-export interface Conversation { id: string; projectId: string; cwd: string; branch: string; archived: boolean; createdAt: string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean }
+/** `startBranch`/`startCommit` record the exact starting point (SPEC §4.3); metadata written before 2026-09-19 lacks them. */
+export interface Conversation { id: string; projectId: string; cwd: string; branch: string; archived: boolean; createdAt: string; startBranch?: string; startCommit?: string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
+/** One selectable starting point for a new conversation: a project branch, a remote-tracking branch of the VM clone, or another conversation's branch. */
+export interface BranchRef { name:string; kind:"local"|"remote"|"conversation"; commit:string; committedAt?:string; default:boolean }
+const CONVERSATION_BRANCH_PREFIX="coffee/";
+const MAX_BRANCHES=500;
 const privateName=(name:string)=> /^(\.git|\.pi|\.coffee|\.ssh|\.aws|\.env(?:\..*)?|\.npmrc|\.netrc|auth\.json|credentials(?:\..*)?)$/i.test(name);
 const pythonCommand=process.platform === "win32" ? "python" : "python3";
 const samePath=(left:string,right:string)=> {
@@ -99,11 +104,41 @@ export class Workspaces {
       const p={id:randomUUID(),name:safe,path,branch};this.state.projects.push(p);await this.save();return p;
     } catch(e) { /* Retain failed import for inspection; never remove unknown concurrent user work. */ throw new Error(`Project creation failed; inspect ${path} before retrying. ${e instanceof Error ? e.message.slice(0,300) : ''}`); }
   }); }
+  /**
+   * Starting points offered by the bottom-bar branch selector (SPEC §1.1). Read from the VM clone only:
+   * no fetch is performed, so remote-tracking branches are as fresh as the last Git operation in the VM.
+   */
+  async branches(projectId:string):Promise<{default:string;branches:BranchRef[]}> {
+    await this.load();const p=this.project(projectId);
+    const raw=await this.git(p.path,['for-each-ref','--format=%(refname)%00%(objectname)%00%(committerdate:iso-strict)%00%(symref)','refs/heads','refs/remotes']).catch(()=> '');
+    const branches:BranchRef[]=[];
+    for(const line of raw.split('\n')) {
+      const [refname,commit,committedAt,symref]=line.split('\0');
+      if(!refname || !commit || symref)continue; // symbolic refs such as origin/HEAD are aliases, not starting points
+      if(refname.startsWith('refs/heads/')) {
+        const name=refname.slice('refs/heads/'.length);
+        branches.push({name,kind:name.startsWith(CONVERSATION_BRANCH_PREFIX) ? 'conversation' : 'local',commit,committedAt,default:name===p.branch});
+      } else if(refname.startsWith('refs/remotes/')) {
+        branches.push({name:refname.slice('refs/remotes/'.length),kind:'remote',commit,committedAt,default:false});
+      }
+    }
+    const order={local:0,remote:1,conversation:2};
+    branches.sort((a,b)=>Number(b.default)-Number(a.default) || order[a.kind]-order[b.kind] || (b.committedAt ?? '').localeCompare(a.committedAt ?? '') || a.name.localeCompare(b.name));
+    return {default:p.branch,branches:branches.slice(0,MAX_BRANCHES)};
+  }
+  /** Resolve a selected starting branch to a commit: a local branch first, then a remote-tracking branch of the VM clone. Never fetches. */
+  private async startCommit(projectPath:string, from:string) {
+    for(const prefix of ['refs/heads/','refs/remotes/']) {
+      const commit=await this.git(projectPath,['rev-parse','--verify','--quiet',`${prefix}${from}^{commit}`]).catch(()=> '');
+      if(commit)return commit;
+    }
+    throw new Error(`Unknown branch "${from}" in the VM clone; fetch it in the VM or pick a listed branch`);
+  }
   async createConversation(projectId:string, branch?:string, id=randomUUID()) { return this.mutate(async()=> {
     if(!/^[a-zA-Z0-9-]{1,100}$/.test(id))throw new Error('Invalid conversation ID');
     if(this.state.conversations.some(c=>c.id===id))throw new Error('Conversation already exists');
     const p=this.project(projectId);const from=branch || p.branch;
-    await this.git(p.path,['check-ref-format','--branch',from]);
+    await this.git(p.path,['check-ref-format','--branch',from]).catch(()=>{throw new Error(`Invalid branch name "${from}"`);});
     // A manually cloned empty repository has no commit to attach a worktree to.
     // Initialize only its unborn default branch, leaving the user's index/files untouched.
     if(from===p.branch && await this.git(p.path,['symbolic-ref','--short','HEAD']).catch(()=>'')===p.branch &&
@@ -112,15 +147,15 @@ export class Workspaces {
       catch {throw new Error('Configure Git user.name and user.email in the VM before initializing this empty project');}
       await this.git(p.path,['commit','--allow-empty','--only','-m','Initialize project']);
     }
-    const head=await this.git(p.path,['rev-parse','--verify',`refs/heads/${from}^{commit}`]);
+    const head=await this.startCommit(p.path,from);
     const cwd=join(this.root,'.worktrees',id);await mkdir(join(this.root,'.worktrees'),{recursive:true});
-    const ownedBranch=`coffee/${id}`;await this.git(p.path,['worktree','add','-b',ownedBranch,cwd,head]);
+    const ownedBranch=`${CONVERSATION_BRANCH_PREFIX}${id}`;await this.git(p.path,['worktree','add','-b',ownedBranch,cwd,head]);
     const baseline:Record<string,string>={};
     for(const path of (await this.git(cwd,['ls-files','-z'])).split('\0').filter(Boolean).slice(0,5000)) {
       if(!/\.(png|jpe?g|gif|webp|svg|md|pdf)$/i.test(path))continue;
       try{const info=await stat(join(cwd,path));baseline[path]=`${info.mtimeMs}:${info.size}`;}catch{}
     }
-    const c={id,projectId,cwd,branch:ownedBranch,archived:false,createdAt:new Date().toISOString(),baseline};this.state.conversations.push(c);await this.save();return c;
+    const c:Conversation={id,projectId,cwd,branch:ownedBranch,archived:false,createdAt:new Date().toISOString(),startBranch:from,startCommit:head,baseline};this.state.conversations.push(c);await this.save();return c;
   },()=>'project:'+projectId); }
   async cwd(id:string) { const c=await this.lookup(id);if(!c)throw new Error('Create a project conversation first');if(c.archived || c.workspaceRemoved)throw new Error('Restore the archived conversation first (pending deletion cannot be resumed)');return c.cwd; }
   async markRun(id:string, runState:"running"|"idle"|"interrupted") {return this.mutate(async()=>{

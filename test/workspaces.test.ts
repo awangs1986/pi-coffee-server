@@ -147,3 +147,35 @@ describe('review regressions: preserve actual work and recover operation queues'
   }finally{await rm(root,{recursive:true,force:true});}
  });
 });
+
+describe('branch selection for new conversations (SPEC §1.1 bottom bar, §4.3 start commit)',()=>{
+ it('lists project, remote-tracking and conversation branches and starts a worktree from any of them',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'coffee-branches-'));
+  try {
+   const ws=new Workspaces(root),p=await ws.createProject('demo');
+   await git(p.path,['branch','feature']);
+   // A Gitea-style remote without network: a local bare remote with one extra branch.
+   const remote=join(root,'remote.git');await git(root,['clone','--bare','--quiet',p.path,remote]);await git(remote,['branch','release']);
+   await git(p.path,['remote','add','origin',remote]);await git(p.path,['fetch','--quiet','origin']);
+   await git(p.path,['symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/main']);
+   const listed=await ws.branches(p.id);
+   expect(listed.default).toBe('main');
+   expect(listed.branches.find(b=>b.name==='main')).toMatchObject({kind:'local',default:true});
+   expect(listed.branches.find(b=>b.name==='feature')).toMatchObject({kind:'local',default:false});
+   expect(listed.branches.find(b=>b.name==='origin/release')).toMatchObject({kind:'remote'});
+   expect(listed.branches.some(b=>b.name==='origin/HEAD')).toBe(false);
+   expect(listed.branches[0].name).toBe('main');
+   const c=await ws.createConversation(p.id,'origin/release');
+   expect(c.startBranch).toBe('origin/release');expect(c.startCommit).toMatch(/^[0-9a-f]{40}$/);
+   expect(c.branch).not.toBe('origin/release');
+   expect((await git(c.cwd,['rev-parse','HEAD'])).stdout.trim()).toBe(c.startCommit);
+   expect((await git(c.cwd,['symbolic-ref','--short','HEAD'])).stdout.trim()).toBe(c.branch);
+   expect((await ws.branches(p.id)).branches.find(b=>b.name===c.branch)).toMatchObject({kind:'conversation'});
+   const d=await ws.createConversation(p.id);expect(d.startBranch).toBe('main');expect(d.startCommit).toBe(c.startCommit);
+   await expect(ws.createConversation(p.id,'nope')).rejects.toThrow(/Unknown branch/);
+   await expect(ws.createConversation(p.id,'bad..name')).rejects.toThrow();
+   await expect(ws.branches('missing')).rejects.toThrow('Unknown project');
+   expect((await new Workspaces(root).lookup(c.id))?.startCommit).toBe(c.startCommit);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
+});

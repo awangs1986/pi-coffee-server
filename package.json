@@ -24,7 +24,8 @@
     "smoke:subagents": "npm run build && node scripts/smoke-subagents.mjs",
     "smoke:web": "npm run build && node scripts/smoke-web.mjs",
     "smoke:workspace-browser": "npm run build && node scripts/smoke-workspace-browser.mjs",
-    "smoke:gitea-oauth": "npm run build && node scripts/smoke-gitea-oauth.mjs"
+    "smoke:gitea-oauth": "npm run build && node scripts/smoke-gitea-oauth.mjs",
+    "preview:workspace": "npm run build && node scripts/preview-workspace.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.4",

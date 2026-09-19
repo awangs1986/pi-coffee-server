@@ -9,6 +9,7 @@ import {
 import { compactionNotice, isContextError } from './context-status.js';
 
 const ACTIVE_KEY = 'pi-coffee.active.v2';
+const FILES_KEY = 'pi-coffee.files.v1';     // wide-screen third column: 'closed' when the user collapsed it
 const $ = (selector) => document.querySelector(selector);
 const ui = {
   app: $('#app'), thread: $('#thread'), scroller: $('#scroller'), toBottom: $('#to-bottom'),
@@ -17,6 +18,8 @@ const ui = {
   sessionList: $('#session-list'), search: $('#search'), queue: $('#queue'), slash: $('#slash'),
   attachments: $('#attachments'), attach: $('#attach'), file: $('#file'), hint: $('#hint'),
   modelSource: $('#model-source'), model: $('#model'), thinking: $('#thinking'), modeWrap: $('#mode-wrap'), mode: $('#mode'),
+  branchWrap: $('#branch-wrap'), branch: $('#branch'), projectSelect: $('#project-select'), filesToggle: $('#files-toggle'),
+  workspacePanel: $('#workspace-panel'), workspaceSub: $('#workspace-sub'), fileList: $('#file-list'), filePath: $('#file-path'), artifactPreview: $('#artifact-preview'),
   modal: $('#modal'), modalTitle: $('#modal-title'), modalText: $('#modal-text'), modalInput: $('#modal-input'),
   modalOk: $('#modal-ok'), modalCancel: $('#modal-cancel'), toast: $('#toast'),
   extStatus: $('#ext-status'), widgets: $('#widgets'),
@@ -31,7 +34,10 @@ const ui = {
 let socket, reconnectTimer;
 let connected = false, opened = false, streaming = false, modelPending = null;
 let activeId = localStorage.getItem(ACTIVE_KEY) || null;
-let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
+let pendingOpenId = null, queuedPrompt = null;
+let pendingSource = null;      // model source chosen in the bottom bar before the conversation existed
+let historyReceived = false;   // the queued first prompt is only sent after `history` (which resets the thread)
+let pendingStartBranch = null; // starting branch chosen in the bottom bar for the next new conversation (SPEC §1.1)
 let sessions = [], commands = [], models = null, statsCache = null;
 let entries = [];
 let requestNumber = 0;
@@ -42,6 +48,11 @@ let lastUserText = '';
 let attachments = [];          // small inline images: { type, mimeType, data }
 let uploads = [];              // files transferred straight to the User VM (ADR-0009)
 let workspaceState = null, showArchived = false, workspaceRequestSeq = 0;
+const branchCache = new Map();  // projectId -> { at, data } from the VM clone; refreshed after creating conversations
+let branchRenderSeq = 0, branchRenderedKey = null;
+const wideFiles = window.matchMedia('(min-width: 1101px)');
+let filesPref = localStorage.getItem(FILES_KEY);  // wide-screen column preference
+let filesOverlayOpen = false;                      // narrow-screen overlay state (never persisted)
 let transfer = null;           // { url, scope, token, inbox, maxFileBytes, maxBatchBytes } from the Host
 let filesAwaitingTransfer = []; // picked before the Session/transfer endpoint was known
 let renderTimer = null;
@@ -229,7 +240,7 @@ function renderSessionList() {
   if (activeId && !known.some((s) => s.id === activeId)) known.unshift({ id: activeId, preview: '', running: streaming, messageCount: 0, updatedAt: new Date().toISOString() });
   if(workspaceState) {
     for(const c of workspaceState.conversations) if(!known.some(s=>s.id===c.id)) known.push({id:c.id,preview:'新对话',updatedAt:c.createdAt,running:false});
-    const selected=$('#project-select').value;
+    const selected=ui.projectSelect.value;
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived && (!selected || c?.projectId===selected);});
   }
   if (filter) known = known.filter((s) => sessionTitle(s).toLowerCase().includes(filter) || (s.preview || '').toLowerCase().includes(filter));
@@ -442,7 +453,8 @@ function setStreaming(active) {
 function refreshComposer() {
   const hasText = ui.prompt.value.trim().length > 0 || attachments.length > 0 || completedUploads().length > 0;
   ui.send.disabled = !connected || !hasText || uploadsBusy() || !!modelPending;
-  ui.model.disabled=ui.modelSource.disabled=!!modelPending || !connected || !opened;
+  ui.model.disabled=!!modelPending || !connected || !opened;
+  ui.modelSource.disabled=!!modelPending || !connected || !(opened || canCreateConversation());
   if (uploadsBusy()) ui.send.title = '等待文件传输完成';
   ui.stop.classList.toggle('hidden', !(connected && streaming));
   ui.modeWrap.classList.toggle('hidden', !(connected && streaming));
@@ -467,7 +479,6 @@ function connect() {
     setConnection('已连接', 'ready');
     send({ v: 1, type: 'list_sessions' });
     if (activeId) openSession(activeId).catch(e=>toast(e.message));
-    else if(prepareNew){prepareNew=false;openSession(null).catch(e=>toast(e.message));}
   };
   ws.onmessage = (event) => {
     let frame;
@@ -475,7 +486,7 @@ function connect() {
     handleFrame(frame, ws);
   };
   ws.onclose = () => {
-    modelPending=null;
+    modelPending=null;pendingSource=null;
     if (socket !== ws) return;
     opened = false;
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
@@ -487,16 +498,34 @@ async function openSession(id) {
   if (pendingOpenId) return;            // an open is already in flight on this socket
   if (opened) { connect(); return; }    // one socket owns one Session: start over
   if(!id && workspaceState) {
-    const projectId=$('#project-select').value;
-    if(!projectId) {toast('请先创建或选择项目');queuedPrompt=null;return;}
-    pendingOpenId='creating';
-    try {const c=await workspaceApi({action:'conversation',projectId,branch:$('#start-branch').value.trim() || undefined});id=c.id;await loadWorkspace();}
-    catch(e) {pendingOpenId=null;queuedPrompt=null;toast(e.message);return;}
+    const projectId=ui.projectSelect.value;
+    if(!projectId) {abandonCreate('请先在左栏创建或选择项目');return;}
+    // The worktree is created here, from the branch chosen in the bottom bar (default: the project branch).
+    const branch=pendingStartBranch || undefined;
+    pendingOpenId='creating';refreshComposer();
+    try {const c=await workspaceApi({action:'conversation',projectId,branch});id=c.id;pendingStartBranch=null;branchCache.delete(projectId);await loadWorkspace();}
+    catch(e) {pendingOpenId=null;abandonCreate(e.message);return;}
   }
   pendingOpenId = id || 'new';
   const frame = { v: 1, type: 'open' };
   if (id) frame.sessionId = id;
   send(frame);
+}
+// Creating the conversation failed (no project, bad branch, VM error): give the typed message back instead of dropping it.
+function abandonCreate(message) {
+  pendingSource = null;
+  if (models) renderModels(); else ui.modelSource.value = 'native';
+  setStreaming(false);
+  showThinking(false);
+  if (queuedPrompt !== null) { ui.prompt.value = queuedPrompt.text; attachments = queuedPrompt.images || []; queuedPrompt = null; renderAttachments(); autoGrow(); }
+  if (!activeId && entries.length === 0 && !$('#hero')) renderHero();
+  refreshComposer();
+  toast(message, 3200);
+}
+// The first prompt of a new conversation waits for history and for a bottom-bar source choice to be applied.
+function flushQueuedPrompt() {
+  if (queuedPrompt === null || !opened || !historyReceived || pendingSource || modelPending) return;
+  const q = queuedPrompt; queuedPrompt = null; submitPrompt(q.text, q.images);
 }
 function afterOpened() {
   send({ v: 1, type: 'get_models' });
@@ -518,6 +547,7 @@ function handleFrame(frame, ws) {
       activeId = frame.sessionId;
       localStorage.setItem(ACTIVE_KEY, activeId);
       statsCache = null;
+      historyReceived = false;
       resetThread();
       clearExtensionUi();
       resetTransfers();
@@ -525,16 +555,28 @@ function handleFrame(frame, ws) {
       setStreaming(Boolean(frame.state && frame.state.isStreaming));
       renderHeader();
       renderSessionList();
+      resetFilesPanel();
+      void refreshBranchControl();
       afterOpened();
       return;
     case 'history':
       if (frame.sessionId !== activeId) return;
       renderHistory(frame);
-      if (queuedPrompt !== null) { const q = queuedPrompt; queuedPrompt = null; submitPrompt(q.text, q.images); }
+      historyReceived = true;
+      flushQueuedPrompt();
       return;
     case 'models':
       models = frame;modelPending=null;refreshComposer();
+      if (pendingSource) {
+        // Source picked before the conversation existed: apply it now, before the first prompt is queued.
+        const want = pendingSource; pendingSource = null;
+        const next = models.models.find((m) => (m.source || 'native') === want);
+        const already = (models.current?.source || models.models.find((m) => m.provider === models.current?.provider && m.id === models.current?.id)?.source || 'native') === want;
+        if (next && !already) { renderModels(); chooseModel(next.provider, next.id); return; }
+        if (!next) toast('此 VM 未配置该模型来源，保持当前来源');
+      }
       renderModels();
+      flushQueuedPrompt();
       return;
     case 'commands':
       commands = Array.isArray(frame.commands) ? frame.commands : [];
@@ -871,6 +913,13 @@ function chooseModel(provider,id) {
   send({v:1,type:'set_model',requestId:modelPending,provider,id});
 }
 ui.modelSource.addEventListener('change',()=>{
+  if(!opened) {
+    // New conversation, not created yet: create its worktree now so the source applies to the first turn.
+    if(!canCreateConversation()){if(models)renderModels();else ui.modelSource.value='native';return;}
+    pendingSource=ui.modelSource.value;
+    if(!pendingOpenId){toast('正在创建对话工作区…');openSession(null).catch(e=>toast(e.message));}
+    return;
+  }
   const next=models?.models.find(m=>(m.source || 'native')===ui.modelSource.value);
   if(next)chooseModel(next.provider,next.id);else renderModels();
 });
@@ -1170,15 +1219,17 @@ $('#composer').addEventListener('submit', (event) => {
   const images = attachments.slice();
   if (!opened) {
     // First message of a brand-new conversation: (re)use the in-flight open
-    // and send once `history` confirms the Session.
+    // and send once `history` confirms the Session. In workspace mode this is
+    // where the worktree gets created, from the branch chosen in the bottom bar.
+    if (workspaceState && !ui.projectSelect.value) { toast('请先在左栏创建或选择项目'); return; }
     queuedPrompt = { text, images };
     attachments = [];
     renderAttachments();
-    if (!pendingOpenId) openSession(null);
     ui.prompt.value = '';
     autoGrow();
     setStreaming(true);
     showThinking(true);
+    if (!pendingOpenId) openSession(null).catch((e) => abandonCreate(e.message));
     return;
   }
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
@@ -1220,23 +1271,33 @@ function switchSession(id) {
   localStorage.setItem(ACTIVE_KEY, id);
   streaming = false;
   statsCache = null;
+  pendingSource = null;
   resetThread();
   renderHeader();
   renderSessionList();
+  resetFilesPanel();
+  void refreshBranchControl();
   connect();
 }
+// A new conversation is created lazily: the bottom bar first lets the user pick the starting branch
+// (and model source); the worktree is created by the first message, upload or source change.
 function newSession(focus = true) {
-  prepareNew=focus && !!workspaceState && !!$('#project-select').value;
   activeId = null;
   localStorage.removeItem(ACTIVE_KEY);
   streaming = false;
   statsCache = null;
+  pendingSource = null;
   resetThread();
   renderHero();
   renderHeader();
   renderSessionList();
+  resetFilesPanel();
+  void refreshBranchControl();
   connect();
   if (focus) ui.prompt.focus();
+}
+function canCreateConversation() {
+  return !opened && !activeId && !pendingOpenId && !!workspaceState && !!ui.projectSelect.value;
 }
 
 // ---------- sidebar / global ----------
@@ -1282,17 +1343,21 @@ async function workspaceApi(value) {
 async function loadWorkspace() {
   const seq=++workspaceRequestSeq;
   try {
-    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;workspaceState=data;
-    $('#project-controls').classList.remove('hidden');$('#files-toggle').classList.remove('hidden');$('#merge-workspace').classList.remove('hidden');
-    const select=$('#project-select'), old=select.value;select.replaceChildren();
+    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;
+    const firstLoad=!workspaceState;workspaceState=data;
+    $('#project-controls').classList.remove('hidden');ui.filesToggle.classList.remove('hidden');$('#merge-workspace').classList.remove('hidden');
+    const select=ui.projectSelect, old=select.value;select.replaceChildren();
     const all=document.createElement("option");all.value="";all.textContent="全部项目 / 旧对话";select.append(all);
     for(const p of data.projects){const o=document.createElement('option');o.value=p.id;o.textContent=p.name;select.append(o);}
     if(data.projects.some(p=>p.id===old))select.value=old;
     renderSessionList();
-    if(activeId && data.conversations.some(c=>c.id===activeId)) {const id=activeId;const grant=await workspaceApi({action:"files",id});if(activeId===id){transfer=grant;bindWorkspaceArtifacts();void refreshArtifactCards();}}
+    if(firstLoad){applyFilesLayout();resetFilesPanel();refreshFiles().catch(()=>undefined);}
+    void refreshBranchControl();
+    refreshComposer();
+    if(activeId && data.conversations.some(c=>c.id===activeId)) {const id=activeId;const grant=await workspaceApi({action:"files",id});if(activeId===id){const first=!transfer;transfer=grant;bindWorkspaceArtifacts();void refreshArtifactCards();if(first)refreshFiles().catch(e=>toast(e.message));}}
   } catch(e) {if(workspaceState)toast(e.message);}
 }
-$('#project-select').addEventListener('change',()=>{showArchived=false;renderSessionList();});
+ui.projectSelect.addEventListener('change',()=>{showArchived=false;pendingStartBranch=null;renderSessionList();void refreshBranchControl(true);refreshComposer();});
 $('#show-archive').addEventListener('click',()=>{showArchived=true;renderSessionList();});
 $('#show-active').addEventListener('click',()=>{showArchived=false;renderSessionList();});
 $('#project-discover').addEventListener('click',async()=> {try{await workspaceApi({action:'discover'});await loadWorkspace();}catch(e){toast(e.message);}});
@@ -1301,7 +1366,7 @@ $('#project-add').addEventListener('click',async()=> {
   const source=await askModal({title:'项目来源',text:'留空创建空 Git 项目；填写 HTTP(S)/SSH Git URL 克隆。导入 ZIP 请填写 zip:文件名（先在现有对话上传）。',input:'',okLabel:'创建'});if(source===null)return;
   try {
     const data=source.startsWith('zip:') ? {action:'import',name,scope:activeId,file:source.slice(4)} : {action:'project',name,url:source || undefined};
-    const p=await workspaceApi(data);await loadWorkspace();$('#project-select').value=p.id;showArchived=false;renderSessionList();toast('项目已创建');
+    const p=await workspaceApi(data);await loadWorkspace();ui.projectSelect.value=p.id;showArchived=false;pendingStartBranch=null;renderSessionList();void refreshBranchControl(true);refreshComposer();toast('项目已创建');
   } catch(e){toast(e.message);}
 });
 $('#merge-workspace').addEventListener('click',async()=> {
@@ -1313,37 +1378,168 @@ $('#merge-workspace').addEventListener('click',async()=> {
     const r=await workspaceApi({action:'merge',id:activeId,token:proposal.token});toast(r.ok ? '合并完成' : r.message);
   }catch(e){toast(e.message);}
 });
-let fileDirectory='';
+let fileDirectory='', filesTab='tree';
 function fileEndpoint(route,path) {
   if(!transfer)throw new Error('请先打开对话以获取 VM 文件授权');
   const u=new URL('/api/localsend/v2/'+route,transfer.url);u.search=new URLSearchParams({scope:transfer.scope,token:transfer.token,...(path===undefined?{}:{path})});return u.href;
 }
-$('#files-toggle').addEventListener('click',()=>{ui.app.classList.toggle('files-open');$('#workspace-panel').classList.toggle('hidden');refreshFiles().catch(e=>toast(e.message));});
-$('#files-close').addEventListener('click',()=>{ui.app.classList.remove('files-open');$('#workspace-panel').classList.add('hidden');});
-$('#files-refresh').addEventListener('click',()=>refreshFiles().catch(e=>toast(e.message)));
-$('#files-tree').addEventListener('click',()=>{fileDirectory='';refreshFiles().catch(e=>toast(e.message));});
-$('#files-uploads').addEventListener('click',async()=> {
- try {const r=await fetch(fileEndpoint('prepare-download'));const data=await r.json();if(!r.ok)throw new Error(data.message);const list=$('#file-list');list.replaceChildren();$('#file-path').textContent='上传记录';
- for(const f of Object.values(data.files || {})) {const a=el('a','file-row',f.fileName+' · '+formatBytes(f.size));const u=new URL(fileEndpoint('download'));u.searchParams.set('fileId',f.id);a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
- }catch(e){toast(e.message);}
-});
+const currentConversation=()=>workspaceState?.conversations.find(c=>c.id===activeId);
+const shortBranch=(name)=>name.replace(/^coffee\/([a-z0-9]{8})[a-z0-9-]{5,}$/i,'coffee/$1…');  // conversation IDs are long; keep the recognisable prefix
+
+// ----- third column visibility (SPEC §1.1): default column on wide screens, overlay ≤1100px, hidden without workspace mode -----
+function filesOpen() { return !!workspaceState && (wideFiles.matches ? filesPref !== 'closed' : filesOverlayOpen); }
+function applyFilesLayout() {
+  const open=filesOpen();
+  ui.app.classList.toggle('files-open',open);
+  ui.filesToggle.setAttribute('aria-pressed',String(open));
+  ui.filesToggle.textContent=open && wideFiles.matches ? '收起文件' : '文件';
+}
+function setFilesOpen(open) {
+  if(wideFiles.matches){filesPref=open ? null : 'closed';if(open)localStorage.removeItem(FILES_KEY);else localStorage.setItem(FILES_KEY,'closed');}
+  else filesOverlayOpen=open;
+  applyFilesLayout();
+  if(open)refreshFiles().catch(e=>toast(e.message));
+}
+wideFiles.addEventListener('change',()=>{applyFilesLayout();if(filesOpen())refreshFiles().catch(e=>toast(e.message));});
+ui.filesToggle.addEventListener('click',()=>setFilesOpen(!filesOpen()));
+$('#files-close').addEventListener('click',()=>setFilesOpen(false));
+$('#files-refresh').addEventListener('click',()=>{if(currentConversation())branchCache.delete(currentConversation().projectId);void refreshBranchControl(true);refreshFiles().catch(e=>toast(e.message));});
+$('#files-tree').addEventListener('click',()=>{filesTab='tree';fileDirectory='';refreshFiles().catch(e=>toast(e.message));});
+$('#files-uploads').addEventListener('click',()=>{filesTab='uploads';refreshFiles().catch(e=>toast(e.message));});
+
+function renderWorkspaceSub() {
+  const c=currentConversation();
+  const project=c ? workspaceState?.projects.find(p=>p.id===c.projectId) : null;
+  ui.workspaceSub.textContent=c ? `${project?.name ?? '项目'} · ${shortBranch(c.branch)}` : (activeId ? '旧对话 · 无项目工作区' : '新对话');
+  ui.workspaceSub.title=c ? `${project?.name ?? ''} · worktree 分支 ${c.branch}${c.startBranch ? ` · 自 ${c.startBranch}${c.startCommit ? '@'+c.startCommit.slice(0,7) : ''}` : ''}` : '';
+}
+function filesPlaceholder(text) {
+  ui.filePath.textContent='';
+  ui.fileList.replaceChildren(el('div','file-empty',text));
+  ui.artifactPreview.replaceChildren(el('p','','选择文件以预览。文件保存在你的 VM。'));
+}
+// Called whenever the open conversation changes: clears the previous conversation's tree immediately.
+function resetFilesPanel() {
+  fileDirectory='';filesTab='tree';
+  for(const [id,tab] of [['#files-tree','tree'],['#files-uploads','uploads']])$(id).setAttribute('aria-selected',String(filesTab===tab));
+  if(!workspaceState)return;
+  renderWorkspaceSub();
+  if(!activeId)filesPlaceholder('新对话：发送第一条消息、上传文件或选择模型来源后，会按底部选择的起始分支在你的 VM 创建独立 worktree，文件树随后显示在这里。');
+  else if(!currentConversation())filesPlaceholder('这个旧对话没有项目 worktree；文件树只对项目对话显示。');
+  else filesPlaceholder('正在读取工作区…');
+}
 async function refreshFiles() {
- if(!workspaceState || !transfer)return;
- const id=activeId;const r=await fetch(fileEndpoint('tree',fileDirectory));const data=await r.json();if(activeId!==id)return;
- if(!r.ok)throw new Error(data.message || '文件读取失败');
- const list=$('#file-list');list.replaceChildren();$('#file-path').textContent='/'+fileDirectory;
- if(fileDirectory){const up=el('button','file-row','.. 上一级');up.onclick=()=>{fileDirectory=fileDirectory.split('/').slice(0,-1).join('/');refreshFiles().catch(e=>toast(e.message));};list.append(up);}
- for(const f of data.entries) {const row=el('button','file-row',(f.directory?'▸ ':'')+f.name);row.onclick=()=>{const path=[fileDirectory,f.name].filter(Boolean).join('/');if(f.directory){fileDirectory=path;refreshFiles().catch(e=>toast(e.message));}else previewFile(path);};list.append(row);}
- if(data.truncated)list.append(el('p','','目录已限制为 1000 项'));
+  if(!workspaceState || !filesOpen())return;
+  for(const [id,tab] of [['#files-tree','tree'],['#files-uploads','uploads']])$(id).setAttribute('aria-selected',String(filesTab===tab));
+  renderWorkspaceSub();
+  if(!activeId || !currentConversation() || !transfer){resetFilesPanel();return;}
+  const id=activeId;
+  if(filesTab==='uploads'){await refreshUploads(id);return;}
+  const r=await fetch(fileEndpoint('tree',fileDirectory));const data=await r.json();if(activeId!==id || filesTab!=='tree')return;
+  if(!r.ok)throw new Error(data.message || '文件读取失败');
+  const list=ui.fileList;list.replaceChildren();ui.filePath.textContent='/'+fileDirectory;
+  if(fileDirectory){const up=el('button','file-row','.. 上一级');up.type='button';up.onclick=()=>{fileDirectory=fileDirectory.split('/').slice(0,-1).join('/');refreshFiles().catch(e=>toast(e.message));};list.append(up);}
+  for(const f of data.entries) {const row=el('button','file-row'+(f.directory?' dir':''),(f.directory?'▸ ':'')+f.name);row.type='button';row.title=f.name;row.onclick=()=>{const path=[fileDirectory,f.name].filter(Boolean).join('/');if(f.directory){fileDirectory=path;refreshFiles().catch(e=>toast(e.message));}else previewFile(path);};list.append(row);}
+  if(data.entries.length===0)list.append(el('div','file-empty','空目录'));
+  if(data.truncated)list.append(el('p','','目录已限制为 1000 项'));
+}
+async function refreshUploads(id) {
+  const r=await fetch(fileEndpoint('prepare-download'));const data=await r.json();if(activeId!==id || filesTab!=='uploads')return;
+  if(!r.ok)throw new Error(data.message || '上传记录读取失败');
+  const list=ui.fileList;list.replaceChildren();ui.filePath.textContent='上传记录';
+  const files=Object.values(data.files || {});
+  for(const f of files) {const a=el('a','file-row',f.fileName+' · '+formatBytes(f.size));const u=new URL(fileEndpoint('download'));u.searchParams.set('fileId',f.id);a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';list.append(a);}
+  if(files.length===0)list.append(el('div','file-empty','这个对话还没有上传文件。'));
 }
 function previewFile(path) {
- const preview=$('#artifact-preview');preview.replaceChildren();const url=fileEndpoint('preview',path);
+ const preview=ui.artifactPreview;preview.replaceChildren();const url=fileEndpoint('preview',path);
  const title=el('div','artifact-title',path);const download=el('a','btn small','下载');download.href=fileEndpoint('workspace-download',path);download.target='_blank';download.rel='noopener noreferrer';title.append(download);preview.append(title);
  const image=/\.(png|jpe?g|gif|webp|svg)$/i.test(path);
  if(image) {const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';const img=document.createElement('img');img.src=url;img.alt=path;a.append(img);preview.append(a);}
  else if(/\.pdf$/i.test(path)){const frame=document.createElement('iframe');frame.src=url;frame.title=path;frame.setAttribute('sandbox','');preview.append(frame);}
  else fetch(url).then(async r=>{if(!r.ok)throw new Error('预览不可用，请下载');if(!/^(text\/|application\/json)/i.test(r.headers.get('content-type') || ''))throw new Error('此格式不支持文本预览，请下载');const text=await r.text();if(/\.md$/i.test(path)){const body=el('div','markdown');body.innerHTML=renderMarkdown(text);preview.append(body);}else preview.append(el('pre','file-text',text));}).catch(e=>preview.append(el('p','',e.message)));
 }
+
+// ----- bottom-bar branch control (SPEC §1.1) -----
+async function loadBranches(projectId, force=false) {
+  const cached=branchCache.get(projectId);
+  if(!force && cached && Date.now()-cached.at<30000)return cached.data;
+  const data=await workspaceApi({action:'branches',projectId});
+  branchCache.set(projectId,{at:Date.now(),data});
+  return data;
+}
+const branchOption=(value,text,disabled=false)=>{const o=document.createElement('option');o.value=value;o.textContent=text;o.disabled=disabled;return o;};
+function branchGroup(label,items,render) {
+  if(items.length===0)return null;
+  const group=document.createElement('optgroup');group.label=label;
+  for(const b of items)group.append(render(b));
+  return group;
+}
+/**
+ * Open conversation: shows its worktree branch; every other branch is offered as the start of a *new* conversation
+ * (one conversation = one worktree; nothing is switched or migrated). New conversation: picks the starting branch.
+ */
+async function refreshBranchControl(force=false) {
+  if(!workspaceState){ui.branchWrap.classList.add('hidden');return;}
+  ui.branchWrap.classList.remove('hidden');
+  const c=currentConversation();
+  const projectId=c ? c.projectId : ui.projectSelect.value;
+  const project=workspaceState.projects.find(p=>p.id===projectId);
+  const key=[activeId,projectId,c?.branch].join('|');
+  if(!force && key===branchRenderedKey) {
+    // Same context, list already rendered: only keep the selection in sync (never rebuild an open dropdown).
+    const want=c ? c.branch : (pendingStartBranch || project?.branch || '');
+    if([...ui.branch.options].some(o=>o.value===want))ui.branch.value=want;
+    return;
+  }
+  const seq=++branchRenderSeq;
+  ui.branch.replaceChildren();
+  ui.branchWrap.classList.toggle('is-new',!c && !!project);
+  if(!project) {
+    ui.branch.append(branchOption('',activeId ? '无项目工作区' : '先选择项目'));
+    ui.branch.disabled=true;
+    ui.branchWrap.title=activeId ? '旧对话没有项目 worktree；新对话请先在左栏选择项目' : '在左栏选择项目后，这里选择新对话的起始分支';
+    branchRenderedKey=key;
+    return;
+  }
+  ui.branch.disabled=false;
+  const preset=c ? c.branch : (pendingStartBranch || project.branch);
+  ui.branch.append(branchOption(preset,c ? shortBranch(c.branch) : preset+(preset===project.branch ? '（默认）' : '')));
+  ui.branch.value=preset;
+  ui.branchWrap.title=c
+    ? `当前对话的 worktree 分支：${c.branch}${c.startBranch ? `（自 ${c.startBranch}${c.startCommit ? '@'+c.startCommit.slice(0,7) : ''}）` : ''}。选择其他分支会新建对话，不会切换本对话。`
+    : `新对话的起始分支（项目 ${project.name}，默认 ${project.branch}）。分支列表来自 VM 本地克隆，需要更新时让 Pi 执行 git fetch。`;
+  let data;
+  try { data=await loadBranches(project.id,force); } catch(e) { if(seq===branchRenderSeq)ui.branchWrap.title+=' 分支列表不可用：'+e.message; return; }
+  if(seq!==branchRenderSeq)return;
+  branchRenderedKey=key;
+  const known=data.branches.filter(b=>!c || b.name!==c.branch);
+  const local=known.filter(b=>b.kind==='local'), remote=known.filter(b=>b.kind==='remote'), conversation=known.filter(b=>b.kind==='conversation');
+  const label=(b)=>b.name+(b.default ? '（默认）' : '');
+  const groups=[
+    branchGroup(c ? '从项目分支新建对话' : project.name+' · 项目分支',local,b=>branchOption(b.name,label(b))),
+    branchGroup(c ? '从远端分支新建对话' : '远端分支（VM 本地克隆）',remote,b=>branchOption(b.name,b.name)),
+    branchGroup(c ? '从其他对话的分支新建对话' : '其他对话的分支',conversation,b=>branchOption(b.name,shortBranch(b.name))),
+  ].filter(Boolean);
+  if(!c) {
+    // The synchronous preset is replaced by the full list; keep the current choice selected.
+    ui.branch.replaceChildren(...groups);
+    if(local.length===0)ui.branch.append(branchOption(project.branch,project.branch+'（默认，首个提交将自动创建）'));
+    if(![...ui.branch.options].some(o=>o.value===preset))ui.branch.prepend(branchOption(preset,preset));
+    ui.branch.value=preset;
+  } else ui.branch.append(...groups);
+}
+ui.branch.addEventListener('change',async()=> {
+  const value=ui.branch.value;const c=currentConversation();
+  if(!c){pendingStartBranch=value || null;return;}   // applies when the conversation is created
+  if(!value || value===c.branch)return;
+  const ok=await askModal({title:'从分支新建对话',text:`当前对话固定使用 worktree 分支 ${c.branch}，不会切换或迁移。\n\n要以「${value}」为起始分支新建一个对话吗？当前对话及其工作区保持不变。`,okLabel:'新建对话'});
+  if(!ok){ui.branch.value=c.branch;return;}
+  ui.projectSelect.value=c.projectId;showArchived=false;
+  pendingStartBranch=value;
+  newSession();
+  closeSidebarOnMobile();
+});
 void loadWorkspace();
 setInterval(()=>{if(!document.hidden || uploadsBusy())void loadWorkspace();},5000);
 fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;const account=el('button','foot-btn',user.login+' · 退出');account.onclick=async()=>{await fetch('/auth/logout',{method:'POST'});localStorage.removeItem(ACTIVE_KEY);location.href='/auth/login';};$('.sidebar-foot').append(account);}).catch(()=>{});

@@ -130,7 +130,11 @@ export class HostServer {
           if(!this.transfer || typeof input.scope!=="string" || typeof input.file!=="string")throw new Error("Upload a ZIP to a conversation inbox first");
           result=await ws.createProject(input.name,undefined,await this.transfer.importPath(input.scope,input.file));break;
         }
-        case "conversation": result=await ws.createConversation(input.projectId,input.branch);break;
+        case "branches": {
+          if(typeof input.projectId!=="string")throw new Error("Select a project first");
+          result=await ws.branches(input.projectId);break;
+        }
+        case "conversation": result=await ws.createConversation(input.projectId,typeof input.branch==="string" && input.branch ? input.branch : undefined);break;
         case "archive":
         case "restore": {
           if(await ws.lookup(input.id)) result=await ws.archive(input.id,input.action==="archive",true);

@@ -1,5 +1,7 @@
 import { Workspaces } from "../src/host/workspaces.js";
 import { once } from "node:events";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,6 +12,7 @@ import type { HistoryEntry, ImageInput } from "../src/shared/protocol.js";
 import { decodeServerFrame, encodeFrame, type ServerFrame } from "../src/shared/protocol.js";
 import { HostServer } from "../src/host/server.js";
 import { RpcPiSessionFactory, type PiSession, type PiSessionFactory } from "../src/host/pi-adapter.js";
+const execFileAsync = promisify(execFile);
 
 class FakePiSession implements PiSession {
   private readonly listeners = new Set<(event: unknown) => void>();
@@ -654,6 +657,30 @@ describe("Host WebSocket seam", () => {
       expect((await ws.lookup(conversation.id))?.quiesced).toBe(true);
       expect((await post("delete",{confirmation:conversation.id})).status).toBe(200);
       expect(await ws.lookup(conversation.id)).toBeUndefined();
+    }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it("lists starting branches per project and creates conversations from a selected one",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-branches-api-"));
+    const factory=new FakeFactory();const ws=new Workspaces(root);
+    const project=await ws.createProject("demo");
+    await execFileAsync("git",["-c","user.name=T","-c","user.email=t@localhost","branch","topic"],{cwd:project.path});
+    server=new HostServer({port:0,token:"branches",factory,workspaces:ws});await server.start();
+    const post=(body:unknown,token="branches")=>fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify(body)});
+    try {
+      expect((await post({action:"branches",projectId:project.id},"wrong")).status).toBe(401);
+      expect((await post({action:"branches"})).status).toBe(409);
+      const listed=await(await post({action:"branches",projectId:project.id})).json();
+      expect(listed.default).toBe("main");
+      expect(listed.branches.map((b:{name:string})=>b.name)).toEqual(["main","topic"]);
+      const created=await(await post({action:"conversation",projectId:project.id,branch:"topic"})).json();
+      expect(created).toMatchObject({startBranch:"topic",projectId:project.id});
+      expect(created.branch).toMatch(/^coffee\//);
+      const state=await(await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{headers:{authorization:"Bearer branches"}})).json();
+      expect(state.conversations[0]).toMatchObject({id:created.id,startBranch:"topic",startCommit:created.startCommit});
+      const again=await(await post({action:"branches",projectId:project.id})).json();
+      expect(again.branches.find((b:{name:string})=>b.name===created.branch)?.kind).toBe("conversation");
+      expect((await post({action:"conversation",projectId:project.id,branch:"missing"})).status).toBe(409);
     }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
