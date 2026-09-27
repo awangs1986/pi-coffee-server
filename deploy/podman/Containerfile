@@ -10,7 +10,8 @@ RUN apt-get update \
 
 WORKDIR /opt/pi-coffee
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+# The pinned Pi Git dependency prepares its compiled package during installation.
+RUN npm ci
 COPY . .
 RUN npm run build
 

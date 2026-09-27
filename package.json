@@ -4,15 +4,6 @@
   "private": true,
   "description": "PI Coffee: Browser, Web gateway and native Agent Host",
   "type": "module",
-  "bin": {
-    "coffee-lsp": "./dist/src/lsp/bin.js"
-  },
-  "pi": {
-    "extensions": [
-      "./dist/src/extensions/web-access/extension.js",
-      "./dist/src/harness/extension.js"
-    ]
-  },
   "engines": {
     "node": ">=22.19.0"
   },
@@ -22,11 +13,6 @@
     "check": "npm run build && npm test",
     "start": "node dist/src/main.js all",
     "start:host": "node dist/src/main.js host",
-    "smoke:subagents": "npm run build && node scripts/smoke-subagents.mjs",
-    "smoke:toolchain": "npm run build && node scripts/smoke-toolchain.mjs",
-    "smoke:toolchain:real": "npm run build && node scripts/smoke-real-agent-toolchain.mjs",
-    "smoke:lsp-agent": "npm run build && node scripts/smoke-lsp-agent.mjs",
-    "smoke:web-access": "npm run build && node scripts/smoke-web-access.mjs",
     "probe:owner-access": "npm run build && node scripts/probe-owner-access.mjs",
     "smoke:gitea-workspaces": "npm run build && node scripts/smoke-gitea-workspaces.mjs",
     "start:web": "node dist/src/main.js web",
@@ -37,27 +23,19 @@
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@earendil-works/pi-tui": "0.87.1",
-    "@juicesharp/rpiv-todo": "2.9.0",
-    "context-fold": "0.4.0",
-    "jiti": "2.7.0",
-    "js-tiktoken": "1.0.21",
-    "pi-mcp-adapter": "2.37.0",
-    "pi-subagents": "0.63.0",
-    "pi-web-access": "0.27.0",
-    "pyright": "1.1.405",
+    "pi-coffee": "git+https://github.com/awangs1986/pi-coffee.git#0278a99d1a83084113afa057467e7271c12cdb74",
     "typebox": "1.3.7",
-    "typescript-language-server": "4.3.4",
     "ws": "8.21.3",
     "yaml": "2.8.3"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
     "@types/ws": "8.18.1",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11",
     "dompurify": "^3.4.14",
     "jsdom": "^30.1.0",
     "marked": "^18.0.11",
-    "playwright": "1.63.0"
+    "playwright": "1.63.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   }
 }

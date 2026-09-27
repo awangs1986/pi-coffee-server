@@ -1,3 +1,5 @@
+> Current source placement: [ADR-0021](docs/adr/0021-pi-only-source-authority.md). Pi-only development belongs to GitHub pi-coffee; Host, Web, Relay and native Agent adapters remain here. Older placement statements below are historical.
+
 > Source authority and repository placement: superseded where conflicting by [ADR-0020](docs/adr/0020-unified-github-authority.md). GitHub pi-coffee-server owns Web and Host.
 
 # PI Coffee Backlog
@@ -384,3 +386,7 @@ the linked Issues rather than inferred from this decision.
 ## Pi 0.87.1 on unified main (2026-09-27)
 
 [Server #18](http://gitea:3000/awangs/pi-coffee-server/issues/18) upgrades the four Pi packages to 0.87.1 on the GitHub-authoritative unified repository. Optional MCP compatibility and separately installed Pi Lens are covered by the [acceptance report](docs/reviews/pi-0.87.1-main-20260927.md). Context-fold remains pinned at 0.4.0; the independent context-management redesign is excluded. Publication and deployment identities remain explicit in the Issue.
+
+## Standalone Pi package consumer (2026-09-27)
+
+[Server #19](http://gitea:3000/awangs/pi-coffee-server/issues/19) consumes the extracted Pi package from [Pi #70](http://gitea:3000/awangs/pi-coffee/issues/70). The current Server Host/Web/native adapters are retained; only package integration imports and type ownership change. Separate GitHub/Gitea pairs identify their own main revision. No production deployment is included.

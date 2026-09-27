@@ -1,6 +1,6 @@
 # ADR-0020: GitHub authority and one source repository
 
-Status: Accepted, 2026-09-27. Supersedes the repository placement in ADR-0011 (split repositories), and earlier Gitea-first publication instructions.
+Status: Pi implementation placement superseded by [ADR-0021](0021-pi-only-source-authority.md). Host/Web placement and GitHub-first publication remain accepted. Originally accepted, 2026-09-27. Supersedes the repository placement in ADR-0011 (split repositories), and earlier Gitea-first publication instructions.
 
 ## Decision
 

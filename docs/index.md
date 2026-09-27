@@ -2,7 +2,7 @@
 
 ## Current authority
 
-[ADR-0020](adr/0020-unified-github-authority.md) defines GitHub as the source authority and retains Host in `pi-coffee-server`. Gitea mirrors the same source revision while continuing to provide product login, projects and Issues. Earlier repository split and per-user-VM-only documents are historical where they conflict with this decision.
+[ADR-0021](adr/0021-pi-only-source-authority.md) assigns Pi-only implementation to [pi-coffee](https://github.com/awangs1986/pi-coffee). This repository retains the latest Host, Web, Relay and native Agent adapters and consumes a pinned Pi package. Each GitHub main is authoritative for its scope and has an identical Gitea mirror. ADR-0020 remains historical for the earlier unification.
 
 ## Read by task
 
@@ -16,3 +16,5 @@
 Issues carry scope, status and acceptance evidence; checked-in code and tests carry implemented behavior. [Server recovery Issue #17](http://gitea:3000/awangs/pi-coffee-server/issues/17) is the current reconciliation entrypoint. Picode/V5 is a frozen reference.
 
 - [Pi 0.87.1 main upgrade](reviews/pi-0.87.1-main-20260927.md): pinned runtime, optional-plugin compatibility and reproducible checks; [Server #18](http://gitea:3000/awangs/pi-coffee-server/issues/18).
+
+- [Pi package consumer integration](development/pi-package-consumer.md): dependency pin, migration evidence and preservation of current Host/Web behavior; [Server #19](http://gitea:3000/awangs/pi-coffee-server/issues/19).
