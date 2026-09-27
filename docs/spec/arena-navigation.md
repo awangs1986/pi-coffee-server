@@ -82,3 +82,33 @@ Split rows, file folding and close. Host HTTP tests reject new native Chat witho
 persisting a task; native lifecycle regressions use independent project clones.
 Run npm run check from fresh clones. Browser visual acceptance uses synthetic
 content on desktop, narrow and short viewports; live acceptance is read-only.
+
+## Repository groups in the sidebar
+
+[Server #24](http://gitea:3000/awangs/pi-coffee-server/issues/24): conversations
+are automatically grouped by their registered Gitea project, across branches and
+native engines. Project headings show counts, pending/running indicators and an
+accessible expand/collapse button. Empty project groups remain available as drop
+targets. Active and archived views stay separate; choosing a project for a new
+task does not hide other sidebar conversations.
+
+Drag a conversation into a project group, or into **Ungrouped** to remove it from
+a group. The conversation menu also offers a **Move to sidebar group** select
+for keyboard/touch use. Explicit placement overrides automatic grouping;
+Ungrouped is an explicit null override rather than a reset to automatic placement.
+Group assignment and collapsed state are user-scoped Host metadata, retained
+across browser refresh and Host restart. Failed saves preserve the prior UI and
+show an error. No optimistic success, cross-user moves or external drag payloads.
+
+These are navigation groups only. A move must never change the actual project,
+repository, branch, VM directory, engine, transcript or running turn. Chat and
+terminal conversations can be organized without becoming Git-backed Work tasks.
+Within projects, preserve attention-first ordering and conversation indicators;
+ungrouped conversations retain the existing attention/time/terminal sections.
+The existing compact sidebar and its browser-height scrolling remain unchanged.
+
+The authenticated workspace endpoint accepts `sidebar_move` with a known owned
+conversation `id` and a known project `projectId` (or null), and `sidebar_collapse`
+with a known `projectId` and boolean `collapsed`. GET returns `sidebar.assignments`
+and `sidebar.collapsed`; absent metadata preserves automatic grouping. These
+operations do not acquire execution lifecycle locks or start/stop any Agent.

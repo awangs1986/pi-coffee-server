@@ -32,7 +32,7 @@ const displayPath=(path:string)=> {
   const parts=path.split('/').flatMap(part=>part.split(BACKSLASH));
   return !parts.some(part=>part==='..' || part==='.pi-coffee') && !privateParts(parts);
 };
-interface State { version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
+interface State { sidebar?: {assignments:Record<string,string|null>;collapsed:string[]}; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
   private state: State = {version:2,projects:[],conversations:[]};
@@ -127,6 +127,21 @@ export class Workspaces {
   }
   private project(id:string|undefined) { const p=this.state.projects.find(p=>p.id===id);if(!p)throw new Error('Unknown project');return p; }
   private conversation(id:string) { const c=this.state.conversations.find(c=>c.id===id);if(!c)throw new Error('Unknown workspace');return c; }
+  /** Sidebar placement is independent of execution identity and never performs Git work. */
+  async moveSidebar(id:string,projectId:unknown) { return this.mutate(async()=>{
+    if(projectId!==null && typeof projectId!=='string')throw new Error('Invalid sidebar project');
+    if(projectId!==null)this.project(projectId);
+    const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
+    this.state.sidebar={...sidebar,assignments:{...sidebar.assignments,[id]:projectId}};
+    await this.save();return this.state.sidebar;
+  }); }
+  async collapseSidebar(projectId:unknown,collapsed:unknown) { return this.mutate(async()=>{
+    if(typeof projectId!=='string' || typeof collapsed!=='boolean')throw new Error('Invalid sidebar collapse');
+    this.project(projectId);
+    const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
+    this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
+    await this.save();return this.state.sidebar;
+  }); }
   async list() { await this.load();await this.saveTail;return {...structuredClone(this.state),vmId:this.ownerId,capabilities:{chatWorkspaces:true}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async branches(projectId:string):Promise<string[]> {

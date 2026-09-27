@@ -230,7 +230,7 @@ export class HostServer {
         const task=await ws.lookup(target);
         if(task?.engine && task.engine!=="pi")throw new Error("Native cleanup is unavailable; Workspace and native history are retained. Archive this Task instead.");
       }
-      if(target && !["files","changes","status"].includes(input.action)) {
+      if(target && !["files","changes","status","sidebar_move","sidebar_collapse"].includes(input.action)) {
         if(slot.lifecycleLocks.has(target) || (input.action!=="archive" && slot.registry.get(target)?.isBusy))throw new Error("Stop the source conversation before changing its lifecycle");
         slot.lifecycleLocks.add(target);locked=target;
       }
@@ -251,6 +251,12 @@ export class HostServer {
       }
       let result:unknown;
       switch(input.action) {
+        case "sidebar_move": {
+          if(typeof input.id!=="string" || input.id.length>200 || !input.id)throw new Error("Invalid conversation");
+          if(!await ws.lookup(input.id) && !(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");
+          result=await ws.moveSidebar(input.id,input.projectId);break;
+        }
+        case "sidebar_collapse": result=await ws.collapseSidebar(input.projectId,input.collapsed);break;
         case "files": {
           if(!this.transfer || !await ws.lookup(input.id))throw new Error("Unknown workspace or file service unavailable");
           if(slot.lifecycleLocks.has(input.id))throw new Error("Workspace lifecycle operation in progress");
