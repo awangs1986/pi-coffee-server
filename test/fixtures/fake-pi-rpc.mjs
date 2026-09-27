@@ -148,6 +148,12 @@ for await (const line of input) {
       break;
     }
     case "prompt": {
+      if (command.message.startsWith("reject:")) {
+        // What real Pi does when no provider key is configured: the prompt
+        // response itself fails and no agent_start / agent_settled follows.
+        send({ id: command.id, type: "response", command: "prompt", success: false, error: "No API key found for the selected model." });
+        break;
+      }
       response("prompt", command.id);
       if (command.message === "crash: after acceptance") {
         streaming = true;

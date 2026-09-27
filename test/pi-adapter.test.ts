@@ -30,6 +30,23 @@ describe("original Pi RPC adapter", () => {
       await waitFor(()=>events.some(frame=>frame.type==="event" && isEvent(frame.event,"agent_settled")));
     }finally{await registry.close();rmSync(sessionDir,{recursive:true,force:true});}
   },10_000);
+  it("surfaces a rejected prompt (no API key) instead of leaving the Session busy forever", async () => {
+    const sessionDir=mkdtempSync(join(tmpdir(),"coffee-pi-reject-"));
+    const factory = new RpcPiSessionFactory({cliPath: resolve("test/fixtures/fake-pi-rpc.mjs"), cwd: process.cwd(),sessionDir});
+    const registry = new HostSessionRegistry({factory,idleTimeoutMs:0});
+    const {session}=await registry.open("reject-recovery");
+    const frames:ServerFrame[]=[];
+    session.attach({send:frame=>frames.push(frame)});
+    try {
+      session.reservePrompt("r1");
+      // The pinned RpcClient.prompt() swallows success:false; the adapter must not.
+      await expect(session.prompt("r1","reject: no key")).rejects.toThrow(/No API key/);
+      expect(session.isBusy).toBe(false);
+      // The next prompt is accepted normally.
+      session.reservePrompt("r2");await session.prompt("r2","hello again");
+      await waitFor(()=>frames.some(frame=>frame.type==="event" && isEvent(frame.event,"agent_settled")));
+    }finally{await registry.close();rmSync(sessionDir,{recursive:true,force:true});}
+  },10_000);
   it("strips Relay credentials from the spawned Host Pi environment", () => {
     const env = buildHostChildEnv({ PI_COFFEE_UPSTREAM_KEY: "override", SAFE_SETTING: "kept" });
     expect(env.SAFE_SETTING).toBe("kept");
