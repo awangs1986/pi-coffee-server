@@ -11,6 +11,16 @@ resets Agent to Pi. A created task retains its Agent; no context conversion or
 implicit engine switching. Existing native local tasks created before this rule
 remain accessible with their original files/history.
 
+Server #20 (2026-09-27): while creating a Work task, a compact **New Gitea
+project** action sits beside the repository selector. A single name dialog uses
+the existing scoped project API to create and initialize a private Gitea
+repository. Success refreshes the project list and selects its default branch
+without changing the chosen Agent or unsent draft. Cancel/failure preserves the
+previous selection; failures are shown explicitly. Disable duplicate creation
+while a request is pending. Do not retarget a task or replace a project selection
+the user changed while the request was in flight. Hide this shortcut for Chat
+and already-bound tasks.
+
 Pi credential import into Web Server is future consideration only. This change
 does not implement it or move credentials, runtime, histories or file ownership.
 Native Codex/Claude authentication remains their own user-VM authentication.
@@ -19,7 +29,8 @@ Native Codex/Claude authentication remains their own user-VM authentication.
 
 The upper-left PI Coffee menu owns Add project, Discover existing projects,
 Active conversations and Archived conversations, alongside existing settings.
-These global actions must not appear in the task footer. The compact footer
+These global actions must not appear in the task footer. The new-Work creation
+shortcut above is the explicit exception; import/discovery remain in the menu. The compact footer
 retains task identity/project and the up-arrow for VM/path/task details/compaction.
 
 The right pane starts closed at every viewport size, on initial task open and on

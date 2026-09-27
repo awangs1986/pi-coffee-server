@@ -87,6 +87,7 @@ let attachments = [];          // small inline images: { type, mimeType, data }
 let uploads = [];              // files transferred straight to the User VM (ADR-0009)
 let uploadLog = [];            // completed uploads for the current conversation: { name, size, path }
 let workspaceState = null, showArchived = false, workspaceRequestSeq = 0;
+let projectCreating = false;
 let transfer = null;           // { url, scope, token, inbox, maxFileBytes, maxBatchBytes } from the Host
 let workspaceChanges = null;   // aggregate Checkout status from `/api/workspace` action `changes`
 let workspaceSync = null;
@@ -760,6 +761,9 @@ function renderProjectContext() {
   }
   for(const option of kind.options)option.textContent=option.value==='chat'?(lockedToConversation?'Chat':'Chat · 本地目录'):(lockedToConversation?'Work':'Work · Gitea 项目');
   const projectWorkspace=kind.value==='project';
+  $('#project-create').classList.toggle('hidden',!projectWorkspace || lockedToConversation);
+  $('#project-create').disabled=projectCreating || !!pendingOpenId;
+  $('#project-create').textContent=projectCreating?'创建中…':'＋ 新建项目';
   ui.projectSelect.closest('label').classList.toggle('hidden',!projectWorkspace || lockedToConversation);
   ui.startBranch.closest('label').classList.toggle('hidden',!projectWorkspace || lockedToConversation);
   $('#create-task').classList.toggle('hidden',lockedToConversation);
@@ -1967,6 +1971,23 @@ ui.projectSelect.addEventListener('change',async()=>{
 $('#show-archive').addEventListener('click',()=>{closeBrandMenu();showArchived=true;renderSessionList();});
 $('#show-active').addEventListener('click',()=>{closeBrandMenu();showArchived=false;renderSessionList();});
 $('#project-discover').addEventListener('click',async()=> {closeBrandMenu();try{await workspaceApi({action:'discover'});await loadWorkspace();}catch(e){toast(e.message);}});
+$('#project-create').addEventListener('click',async()=>{
+  if(projectCreating || activeId || pendingOpenId)return;
+  projectCreating=true;renderProjectContext();
+  const previousProject=ui.projectSelect.value;
+  try {
+    const name=await askModal({title:'新建 Gitea 项目',text:'创建私有 Gitea 仓库。名称使用英文字母、数字、短横线或下划线。',input:'',okLabel:'创建'});
+    if(!name)return;
+    const project=await workspaceApi({action:'project',name});
+    await loadWorkspace();
+    if(!activeId && !pendingOpenId && $('#task-kind').value==='project' && ui.projectSelect.value===previousProject){
+      ui.projectSelect.value=project.id;
+      ui.projectSelect.dispatchEvent(new Event('change'));
+    }
+    toast('Gitea 项目已创建：'+project.name);
+  }catch(e){toast(e.message);}
+  finally{projectCreating=false;renderProjectContext();}
+});
 $('#project-add').addEventListener('click',async()=> {
   closeBrandMenu();
   const name=await askModal({title:'新建项目',text:'使用英文字母、数字、短横线或下划线。已存在的目录不会被覆盖。',input:'',okLabel:'下一步'});if(!name)return;
