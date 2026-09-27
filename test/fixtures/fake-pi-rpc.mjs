@@ -120,11 +120,19 @@ for await (const line of input) {
       send({ type: "compaction_end" });
       break;
     case "steer":
+      if (command.message.startsWith("/harness")) {
+        send({ id: command.id, type: "response", command: "steer", success: false, error: "Extension commands cannot be queued." });
+        break;
+      }
       queue.steering.push(command.message);
       response("steer", command.id);
       send({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });
       break;
     case "follow_up":
+      if (command.message.startsWith("/harness")) {
+        send({ id: command.id, type: "response", command: "follow_up", success: false, error: "Extension commands cannot be queued." });
+        break;
+      }
       queue.followUp.push(command.message);
       response("follow_up", command.id);
       send({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });

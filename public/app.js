@@ -69,6 +69,7 @@ let searchOpen = false, searchFilter = 'all';
 let sessions = [], commands = [], models = null, statsCache = null;
 let entries = [];
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
+const queuedRequests = new Set(); // A rejected queued input does not end the active run.
 let engine="pi", capabilities=null, engineAvailability=[];
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
@@ -802,6 +803,7 @@ function connect() {
 }
 function connectSocket() {
   clearTimeout(reconnectTimer);
+  queuedRequests.clear();
   if (socket) { socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null; try { socket.close(); } catch { /* ignore */ } }
   opened = false;
   pendingOpenId = null;
@@ -824,6 +826,7 @@ function connectSocket() {
   ws.onclose = () => {
     if (socket !== ws) return;
     if(pendingDelivery){uncertainTask=activeId;pendingDelivery=null;}
+    queuedRequests.clear();
     modelPending=null;
     opened = false;
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
@@ -879,6 +882,7 @@ function handleFrame(frame, ws) {
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
+      queuedRequests.clear();
       rememberTask(activeId);
       statsCache = null;
       resetThread();
@@ -925,6 +929,8 @@ function handleFrame(frame, ws) {
       if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
       return;
     case 'ack':
+      // Host treats queued input as a new prompt if the previous run already ended.
+      if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
       if (frame.operation === 'set_model' || frame.operation === 'set_thinking') send({ v: 1, type: 'get_models' });
       if (frame.operation === 'compact') setTimeout(() => send({ v: 1, type: 'get_stats' }), 800);
@@ -937,14 +943,17 @@ function handleFrame(frame, ws) {
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       handleEvent(frame.event || {});
       return;
-    case 'error':
+    case 'error': {
+      const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
+      if (pendingDelivery === frame.requestId) pendingDelivery = null;
       if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
-      setStreaming(frame.code === 'busy');
+      if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
       if (!opened || frame.code === 'not_open' || frame.code === 'already_open') pendingOpenId = null;
       if (queuedPrompt !== null && frame.code !== 'busy') { ui.prompt.value = queuedPrompt.text; attachments = queuedPrompt.images || []; renderAttachments(); queuedPrompt = null; autoGrow(); refreshComposer(); }
       if (frame.fatal) ws.close();
       return;
+    }
     default:
       return;
   }
@@ -979,6 +988,7 @@ function handleEvent(event) {
   if(type==='native_request'){handleExtensionUi(event);return;}
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
+    queuedRequests.clear();
     pendingDelivery=null;uncertainTask=null;setStreaming(false);clearExtensionUi();if(supports('models'))send({v:1,type:'get_models'});
     if(event.status!=='completed')pushNote(event.message || (event.status==='interrupted'?'当前轮次已停止':'本轮运行失败，请检查保存的结果'),event.status!=='interrupted');
     void refreshWorkspaceChanges(false).catch(()=>undefined);return;
@@ -1035,6 +1045,7 @@ function handleEvent(event) {
   if (type === 'compaction_end') { const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
 
   if (type === 'agent_settled') {
+    queuedRequests.clear();
     pendingDelivery=null;uncertainTask=null;
     void refreshWorkspaceChanges(false).catch(()=>undefined);
     setStreaming(false);
@@ -1753,6 +1764,7 @@ function submitPrompt(text, images) {
   const frame = { v: 1, type: 'prompt', requestId: requestId('web'), text: wireText };
   if (images && images.length && supports("images")) frame.images = images;
   if (mode !== 'prompt') frame.mode = mode;
+  if (mode !== 'prompt') queuedRequests.add(frame.requestId);
   if (mode === 'prompt') {
     pushUser(text, images, undefined, files);
     lastUserText = text;
