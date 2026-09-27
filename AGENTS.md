@@ -1,12 +1,12 @@
 # PI Coffee source and release authority
 
-GitHub `awangs1986/pi-coffee-server` is the authoritative repository. This repository contains Browser, Web gateway, Relay, Host and native Agent adapters. Gitea `awangs/pi-coffee-server` mirrors the same commits. The former Gitea `pi-coffee` runtime repository and Picode/V5 are historical references.
+GitHub `awangs1986/pi-coffee-server` owns Browser, Web gateway, Relay, Host and native Pi/Codex/Claude adapters. Gitea `awangs/pi-coffee-server` mirrors the same commits. Pi-only Harness, prompts, tools, LSP, subagents, context extensions and Skills are maintained in GitHub `awangs1986/pi-coffee` and consumed through an immutable package revision. Picode/V5 remains historical.
 
 ## Before changes, merges or deployment
 
 1. Read [docs/index.md](docs/index.md), [BACKLOG.md](BACKLOG.md), and the linked Issue for the affected feature.
 2. Fetch GitHub and Gitea. Compare commits and feature coverage before reconciling divergent histories. Preserve work on both sides; use normal merge ancestry and never replace a newer capability with an older tree.
-3. Read [the unification decision](docs/adr/0020-unified-github-authority.md) when choosing repository boundaries, resolving contradictory older docs, or deploying. Host remains in this repository by the owner's explicit decision.
+3. Read [the Pi package split decision](docs/adr/0021-pi-only-source-authority.md) when choosing repository boundaries, resolving contradictory older docs, or deploying. Host remains in this repository by the owner's explicit decision.
 4. Work from current GitHub main in a clean checkout. Preserve other local branches and uncommitted work.
 
 ## Implementation and release
@@ -18,3 +18,5 @@ GitHub `awangs1986/pi-coffee-server` is the authoritative repository. This repos
 - Push GitHub main first, then fast-forward Gitea main to the identical commit. Fetch and verify both remote SHAs. Deploy from that commit and record the release identity and served asset probe.
 - Keep credentials, cookies, snapshots and user transcripts out of commits and Issues.
 - Record scope, failures and acceptance evidence in the corresponding Issue. A release is complete only when a fresh clone passes the documented check and the deployed application passes the relevant UI/API probe.
+
+- Preserve the latest Host/Web/native adapter implementations when upgrading the Pi package. Validate its public integration surface with `test/pi-package-integration.test.ts`; do not copy an older runtime tree over this repository.

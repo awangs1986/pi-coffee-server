@@ -1,7 +1,7 @@
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
-import { resolvePiSkills, withCoffeeLspPath } from "./pi-skills.js";
+import { resolvePiExtensions, resolvePiSkills, withCoffeeLspPath } from "pi-coffee";
 import { parseUserRoutes } from "./web/identity.js";
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -10,7 +10,6 @@ import { CodexSessionFactory } from "./host/codex-adapter.js";
 import { HostServer, type UserScope } from "./host/server.js";
 import { RpcPiSessionFactory, type PiSessionFactory } from "./host/pi-adapter.js";
 import { DEFAULT_MAX_BATCH_BYTES, DEFAULT_MAX_FILE_BYTES, TransferServer } from "./host/transfer.js";
-import { resolvePiExtensions } from "./pi-extensions.js";
 import { RelayServer } from "./relay/server.js";
 import { normalizeUsername, parseAllowedUsers, taskNamespace } from "./shared/identity.js";
 import { GiteaAuth } from "./web/auth.js";

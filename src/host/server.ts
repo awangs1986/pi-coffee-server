@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { SkillManager, type SkillManagerOptions } from "./skills.js";
 import { capabilitiesFor } from "../shared/protocol.js";
-import { stopLspDaemon } from "../lsp/transport.js";
+import { stopLspDaemon } from "pi-coffee";
 import { readJson, json } from "../shared/http.js";
 import type { Workspaces } from "./workspaces.js";
 

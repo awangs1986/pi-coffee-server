@@ -1,3 +1,5 @@
+> Source placement update: [ADR-0021](../adr/0021-pi-only-source-authority.md). Host and Web still use one Server release. Its lockfile pins a separate Pi package commit; record that dependency identity alongside the Server release.
+
 # Unified release procedure
 
 1. Fetch GitHub and Gitea and read the reconciliation matrix. Build from the authoritative GitHub main commit, keeping both histories and previous release directories.

@@ -1,3 +1,5 @@
+> Source placement: this repository owns Host, Web, Relay and native Agent adapters. Pi Harness/tools/LSP/Skills are maintained in [pi-coffee](https://github.com/awangs1986/pi-coffee) and consumed as a pinned package. See [ADR-0021](docs/adr/0021-pi-only-source-authority.md).
+
 # PI Coffee Server
 
 A browser workbench backed by native Pi, Codex CLI and Claude Code on the owner's machine. New conversations default to Pi Chat. Work tasks bind Pi, Codex or Claude at creation and use independent project checkouts. Agent choice is fixed for that task.

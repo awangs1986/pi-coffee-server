@@ -243,7 +243,7 @@ the owner's VM remain the sections above.
 npm ci && npm run check && npm start        # Host + Web on loopback, Pi with its default credentials
 ```
 
-安装或升级后可先运行 `npm run smoke:subagents`；它使用离线临时目录验证
+Run `npm run smoke:subagents` in the standalone Pi repository after installation or upgrade; it uses an isolated offline directory to verify
 `pi-subagents` 扩展和命令注册，不需要模型凭据。
 
 `npm start` (`all`) also starts the Relay when either `PI_COFFEE_UPSTREAM_KEY`

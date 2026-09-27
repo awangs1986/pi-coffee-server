@@ -4,7 +4,7 @@ import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {RpcPiSessionFactory} from '../dist/src/host/pi-adapter.js';
-import {resolvePiExtensions} from '../dist/src/pi-extensions.js';
+import {resolvePiExtensions} from 'pi-coffee';
 const root=await mkdtemp(join(tmpdir(),'coffee-context-probe-'));
 let session;
 try{
