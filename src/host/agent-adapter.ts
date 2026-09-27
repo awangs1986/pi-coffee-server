@@ -77,7 +77,7 @@ export interface AgentSessionFactory {
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
   /** Read native choices without creating a conversation or running a turn. */
-  modelCatalog?(engine: "codex"): Promise<AgentModels>;
+  modelCatalog?(engine: "pi" | "codex"): Promise<AgentModels>;
   /** Start (or resume, when the store already has it) the session with this id. */
   create(options: { sessionId: string; requireExisting?: boolean }): Promise<AgentSession>;
   /** Conversations in the durable store, newest first. */

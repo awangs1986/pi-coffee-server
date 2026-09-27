@@ -22,7 +22,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==="codex" && this.options.codexSessionFactory)return {...capabilitiesFor("pi"),commands:false,extensions:false,cleanup:false};
     return capabilitiesFor(engine);
   }
-  async modelCatalog(engine:"codex") {
+  async modelCatalog(engine:"pi" | "codex") {
+    if(engine==="pi"){
+      if(!this.options.pi.modelCatalog)throw new Error("Pi model discovery unavailable");
+      return this.options.pi.modelCatalog(engine);
+    }
     const factory=this.options.legacyCodex;
     if(engine!=="codex" || !this.options.codex || !factory?.modelCatalog)throw new Error("Codex model discovery unavailable");
     return factory.modelCatalog(engine);
@@ -30,7 +34,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async engines():Promise<EngineAvailability[]> {
     return Promise.all(PI_ONLY_ENGINES.map(async original=>{
       const config=original.id==="pi"?undefined:this.options[original.id];
-      if(!config)return {...original};
+      if(!config)return {...original,...(original.id==="pi"?{modelCatalog:Boolean(this.options.pi.modelCatalog)}:{})};
       let version:string;
       try {
         const result=await exec(config.command,[...(config.args??[]),"--version"],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192});

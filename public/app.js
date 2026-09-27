@@ -134,12 +134,12 @@ function toggleBrandMenu() {
 }
 
 // ---------- Agent settings menu ----------
-const draftCodex = () => !activeId && !pendingOpenId && $("#task-kind").value === "project" && $("#task-engine").value === "codex";
-const modelControlsLocked = () => !!modelPending || !connected || (!opened && !draftCodex());
+const draftModelEngine = () => !activeId && !pendingOpenId && engineAvailability.some(e=>e.id===$('#task-engine').value && e.available && e.modelCatalog) ? $('#task-engine').value : null;
+const modelControlsLocked = () => !!modelPending || !connected || (!opened && !draftModelEngine());
 function loadDraftModels() {
-  if (!connected || !draftCodex() || !engineAvailability.some(e=>e.id==='codex' && e.available && e.modelCatalog)) return;
+  if (!connected || !draftModelEngine()) return;
   catalogRequest=requestId("catalog");
-  send({v:1,type:"get_model_catalog",engine:"codex",requestId:catalogRequest});
+  send({v:1,type:"get_model_catalog",engine:draftModelEngine(),requestId:catalogRequest});
 }
 function flushFirstPrompt() {
   if (!historyReady || modelPending || queuedPrompt === null) return;
@@ -913,7 +913,7 @@ function handleFrame(frame, ws) {
       renderHeader();
       renderSessionList();
       historyReady=false;catalogRequest=null;
-      if(draftModel && engine==='codex'){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
+      if(draftModel && ['pi','codex'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       afterOpened();
       return;
     case 'history':
@@ -923,7 +923,7 @@ function handleFrame(frame, ws) {
       historyReady=true;flushFirstPrompt();
       return;
     case 'model_catalog':
-      if(!draftCodex() || frame.requestId!==catalogRequest || frame.engine!=='codex')return;
+      if(!draftModelEngine() || frame.requestId!==catalogRequest || frame.engine!==draftModelEngine())return;
       catalogRequest=null;models={...frame,thinkingLevels:[],thinkingLevel:''};
       if(draftModel && models.models.some(m=>m.provider===draftModel.provider && m.id===draftModel.id))models.current=draftModel;
       draftModel=models.current;
@@ -1434,7 +1434,7 @@ ui.model.addEventListener('change', () => {
   chooseModel(provider,rest.join('/'));
 });
 function chooseModel(provider,id) {
-  if(!opened && draftCodex()){draftModel={provider,id};models={...models,current:draftModel};renderModels();refreshComposer();return;}
+  if(!opened && draftModelEngine()){draftModel={provider,id};models={...models,current:draftModel};renderModels();refreshComposer();return;}
   modelPending=requestId('model');refreshComposer();
   send({v:1,type:'set_model',requestId:modelPending,provider,id});
 }

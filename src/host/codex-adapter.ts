@@ -133,7 +133,8 @@ export class CodexSessionFactory implements PiSessionFactory {
     return server;
   }
 
-  async modelCatalog(_engine:"codex"):Promise<PiModels> {
+  async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
+    if(engine!=="codex")throw new Error("This adapter only discovers Codex models");
     // A short-lived native connection lists models only: no thread/start or turn/start.
     const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});

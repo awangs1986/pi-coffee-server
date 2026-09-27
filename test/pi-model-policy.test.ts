@@ -16,7 +16,12 @@ it('enforces Pi model choices through the authenticated Host, including slash co
  const send=(frame:object)=>ws.send(JSON.stringify({v:1,...frame}));
  const next=async(predicate:(f:any)=>boolean)=>{for(let i=0;i<300;i++){const index=frames.findIndex(predicate);if(index>=0)return frames.splice(index,1)[0];await new Promise(r=>setTimeout(r,10));}throw new Error('Expected frame did not arrive');};
  try{
-  await once(ws,'open');send({type:'open',sessionId:'policy-task'});await next(f=>f.type==='history');
+  await once(ws,'open');
+  send({type:'get_model_catalog',engine:'pi',requestId:'draft'});
+  const preview=await next(f=>f.requestId==='draft' || f.type==='error');
+  expect(preview).toMatchObject({type:'model_catalog',engine:'pi',models:[expect.objectContaining({provider:'fake',id:'fake-large'})]});
+  expect(await factory.list()).toEqual([]);
+  send({type:'open',sessionId:'policy-task'});await next(f=>f.type==='history');
   send({type:'get_models'});const catalog=await next(f=>f.type==='models');
   expect(catalog.models.map((m:any)=>m.id)).toEqual(['fake-large']);expect(catalog.current).toBeNull();
   send({type:'set_model',requestId:'denied',provider:'fake',id:'fake-mini'});
