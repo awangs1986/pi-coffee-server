@@ -139,7 +139,11 @@ export class CodexSessionFactory implements PiSessionFactory {
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
-      return codexModelChoices(await server.request("model/list",{}) as Obj,this.options.model,this.options.reasoningEffort);
+      const configResult=await server.request("config/read",{includeLayers:false}) as Obj;
+      const config=configResult.config as Obj | undefined;
+      const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
+      const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
+      return codexModelChoices(await server.request("model/list",{}) as Obj,model,effort);
     }finally{await server.stop();}
   }
 

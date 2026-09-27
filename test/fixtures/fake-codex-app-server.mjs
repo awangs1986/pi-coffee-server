@@ -219,6 +219,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       return notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });
     }
+    case "config/read": return reply({config:{model:"gpt-fake-mini"}});
     case "model/list":
       return reply({ data: [
         { id: "gpt-fake", model: "gpt-fake", displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
