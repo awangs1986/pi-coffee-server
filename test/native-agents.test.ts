@@ -315,9 +315,9 @@ it('groups project tasks, folds them, and drags out/in without changing the task
  expect(group().querySelector('ul')!.hidden).toBe(true);
  const opens=app.frames.filter(f=>f.type==='open').length;
  const transfer={setData:vi.fn(),getData:()=>id,effectAllowed:'',dropEffect:''};
- const drag=(target:Element,type:string)=>{const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(e,'dataTransfer',{value:transfer});target.dispatchEvent(e);};
+ const drag=(target:Element,type:string)=>{const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(e,'dataTransfer',{value:transfer});target.dispatchEvent(e);return e;};
  group().querySelector<HTMLButtonElement>('.project-group-toggle')!.click();await vi.advanceTimersByTimeAsync(20);
- drag(group().querySelector('.session-item')!,'dragstart');drag(document.querySelector('[data-sidebar-ungrouped]')!,'drop');await vi.advanceTimersByTimeAsync(20);
+ drag(group().querySelector('.session-item')!,'dragstart');expect(drag(document.querySelector('[data-sidebar-ungrouped]')!,'dragenter').defaultPrevented).toBe(true);drag(document.querySelector('[data-sidebar-ungrouped]')!,'drop');await vi.advanceTimersByTimeAsync(20);
  expect(group().querySelectorAll('.session-item')).toHaveLength(0);
  expect(document.querySelector('[data-sidebar-ungrouped] .session-item')).not.toBeNull();
  drag(document.querySelector('[data-sidebar-ungrouped] .session-item')!,'dragstart');drag(group(),'drop');await vi.advanceTimersByTimeAsync(20);
