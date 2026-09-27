@@ -327,7 +327,7 @@ export class HostServer {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
         : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions };
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions });
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history)} : {}) });
       const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         this.broadcastSessions(slot);

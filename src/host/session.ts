@@ -23,6 +23,7 @@ export interface HostSessionOptions {
   /** Stop the Pi process after this long with no browser attached and nothing running. 0 disables. */
   idleTimeoutMs?: number;
   onIdle?: (session: HostSession) => void;
+  onHistory?: (id:string,history:PiHistory)=>Promise<void>;
   /** Called when a run starts or settles (the conversation list's running flag / counts change). */
   onLifecycle?: (session: HostSession) => void;
   /**
@@ -51,6 +52,8 @@ export class HostSession {
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
   private readonly onIdle?: (session: HostSession) => void;
+  private readonly onHistory?: (id:string,history:PiHistory)=>Promise<void>;
+  private historyExport:Promise<void>=Promise.resolve();
   private readonly onLifecycle?: (session: HostSession) => void;
   private readonly sinks = new Set<SessionSink>();
   private readonly events: ServerFrame[] = [];
@@ -80,6 +83,7 @@ export class HostSession {
     this.eventBufferSize = Math.max(1, options.eventBufferSize ?? 256);
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
     this.onIdle = options.onIdle;
+    this.onHistory=options.onHistory;
     this.onLifecycle = options.onLifecycle;
     this.externalPollMs = Math.max(0, options.externalPollMs ?? 3000);
   }
@@ -117,6 +121,7 @@ export class HostSession {
     await this.start();
     if (!this.pi) throw new Error("Session is not ready");
     const history = await this.pi.getHistory();
+    await this.exportHistory(history);
     // The durable history already contains every completed message, so the
     // browser only needs the events of the message that is still in flight.
     // A returning browser's `after` cursor can only move that boundary later.
@@ -266,6 +271,7 @@ export class HostSession {
     }
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    await this.historyExport;
     if (this.pi) await this.pi.stop();
     this.pi = undefined;
     this.started = false;
@@ -382,10 +388,19 @@ export class HostSession {
       lifecycle = true; // the list's "waiting" flag changed
     }
     for (const sink of this.sinks) sink.send(frame);
-    if (settled) this.scheduleIdleCheck();
+    if (settled) {void this.exportHistory();this.scheduleIdleCheck();}
     if (lifecycle) this.onLifecycle?.(this);
   }
 
+  private exportHistory(history?:PiHistory):Promise<void>{
+    if(!this.onHistory)return Promise.resolve();
+    const pi=this.pi;
+    this.historyExport=this.historyExport.then(async()=>{
+      if(history)await this.onHistory!(this.id,history);
+      else if(pi)await this.onHistory!(this.id,await pi.getHistory());
+    }).catch(()=>{console.warn('Task history export unavailable for '+this.id+'; native history remains authoritative');});
+    return this.historyExport;
+  }
   private async refreshState(): Promise<void> {
     if (!this.pi) return;
     try {
@@ -413,7 +428,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(options: { factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -442,6 +457,7 @@ export class HostSessionRegistry {
       ...(this.externalPollMs === undefined ? {} : { externalPollMs: this.externalPollMs }),
       onIdle: (idle) => void this.retire(idle),
       onLifecycle: (session) => this.notifyChange(session),
+      onHistory:this.options.onHistory,
     });
     this.sessions.set(session.id, session);
     try {

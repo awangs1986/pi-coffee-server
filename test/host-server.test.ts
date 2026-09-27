@@ -1027,3 +1027,23 @@ it("Skill reload retains running/background sessions and restarts only a verifie
   pi.finish('done');expect((await reload()).status).toBe(200);expect(pi.stopped).toBe(true);expect(await ws.lookup(task.id)).toBeDefined();expect(pi.history.length).toBeGreaterThan(0);
  }finally{socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
 });
+
+it('exports display history via the Agent seam without replacing native recovery, including detached turns',async()=>{
+ const {readFile}=await import('node:fs/promises');const root=mkdtempSync(join(tmpdir(),'coffee-history-export-'));
+ try{
+  const workspaces=new Workspaces(join(root,'registry'),{taskRoot:join(root,'coffee/awang/projects')});await workspaces.createChatConversation('export-task');
+  const factory=new FakeFactory();server=new HostServer({port:0,token:'history-export',factory,workspaces});await server.start();
+  const socket=new WebSocket(`ws://127.0.0.1:${server.address().port}/host`,{headers:{authorization:'Bearer history-export'}});const frames=new FrameQueue(socket);await once(socket,'open');
+  socket.send(encodeFrame({v:1,type:'open',sessionId:'export-task'}));
+  let frame=await frames.next();while(frame.type!=='history')frame=await frames.next();
+  const path=join(root,'coffee/awang/projects/export-task/history/conversation.json');
+  await expect.poll(async()=>JSON.parse(await readFile(path,'utf8')).entries).toEqual([]);
+  socket.close();await once(socket,'close');
+  await factory.sessions.get('export-task')!.prompt('export without a browser');
+  await expect.poll(async()=>JSON.parse(await readFile(path,'utf8')).entries.length).toBe(2);
+  const saved=JSON.parse(await readFile(path,'utf8'));expect(saved).toMatchObject({schemaVersion:1,role:'display-export-only',engine:'pi',conversationId:'export-task'});
+  expect(saved.entries[1].text).toBe('echo: export without a browser');
+  await server.close();server=undefined;
+  expect(factory.sessions.get('export-task')!.history).toHaveLength(2);
+ }finally{await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+});
