@@ -86,7 +86,7 @@ Agent 增强使用 Pi 的公开扩展接口；Host 保留窄 RPC 适配，Web �
 
 | 对应决定 | 已观察到的实现 | 仍不能宣称完成 |
 |---|---|---|
-| PA-001 | Pi 依赖锁定 0.84.4，增强经 `src/pi-extensions.ts`、公开 hooks 和 Host RPC 适配 | 尚未做升级到另一版本的兼容验收 |
+| PA-001 | Pi packages are pinned to 0.87.1; enhancements use `src/pi-extensions.ts`, public hooks and the Host RPC adapter | Unified-main compatibility evidence: [upgrade report](../reviews/pi-0.87.1-main-20260927.md); deployment is separate |
 | PA-002 / PA-003 | 仅接受 Chat/Work，默认 Work；v1 会话保留历史并写入 v2 Work；Chat 五工具与零系统提示词在实际 Pi 请求中验证 | 第三方自定义扩展装配和其他 provider 实网仍须按升级矩阵验证 |
 | PA-004 | `software-development.md` 已按三仓库交叉参考扩展；renderer 支持 `work`，经现有 hook 注入；正文项目和调用示例测试通过 | Work 最终装配已测；文本合同不等于成熟编程 Agent 的模型行为对比 |
 | PA-005 | 当前活动集合见 `src/harness/mode.ts`；注册、激活、可选能力需要分别计量 | PA-011 精简表已实现，见[工具 SPEC](./work-tools.md)；真实模型质量继续按行为评测验收 |
@@ -94,7 +94,7 @@ Agent 增强使用 Pi 的公开扩展接口；Host 保留窄 RPC 适配，Web �
 | PA-007 | 已有 schema、发现/激活接口；Work 正文的调用例子通过真实 schema 和公共接口测试 | 不代表各模型都会正确选工具和填参数；仍需行为样例评测 |
 | PA-011 / PA-012 | [CLI LSP](./lsp-middle-layer.md)、会话内复用、原生 Skill 发布、TS/Python Profile 和 3×3 真实模型探针已完成 | Work 精简表与 Chat 的 Skill 元数据隔离已验；LSP 故障/性能矩阵仍有部分项 |
 | PA-008 | 主 SPEC、专项 SPEC、决策/验收表与维护流程已建立 | 本次迁移记录在 HARNESS-001/002；其他发布门槛不随模式迁移自动关闭 |
-| PA-009 | 已实际读出原生 `buildSystemPrompt` 内容并据此删重；工具 `promptSnippet`/`promptGuidelines` 通道在用 | 运行加载仅核对 0.84.4；升级后需重新核对最终装配；保留 Base 的设计已确定 |
+| PA-009 | Native base instructions and tool `promptSnippet`/`promptGuidelines` remain in use | Pi 0.87.1 real-RPC request tests verify the assembled Work prompt and Chat isolation; see the [upgrade report](../reviews/pi-0.87.1-main-20260927.md) |
 | PA-010 | 文本中立守卫与正向对照已加入 `test/harness-prompt.test.ts` | 审计发现身份守卫仍依赖已知名字，PA-010 未完全满足；见[评审](../reviews/chat-work-design-review-20260920.md)与手工测试 T10 |
 
 提示词实现证据见 [评审 §5](../reviews/work-prompt-20260920.md)：31 个测试文件、179 项本地测试以及两个 Pi 扩展加载 smoke 通过。测试使用本地替身的部分须保持标注；不得据此填写下表所有项目为“通过”。

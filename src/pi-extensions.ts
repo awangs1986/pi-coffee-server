@@ -18,7 +18,7 @@ const resolvePackage = createRequire(import.meta.url).resolve;
  * deterministic summary wins over companion extensions. Its local adapter
  * cancels compaction on failure instead of silently requesting a model summary.
  *
- * pi-lens is installed as an opt-in, non-visible integration. It is not added
+ * pi-lens is a separately installed opt-in integration. It is not added
  * to the default list and therefore does not initialize LSP/diagnostic work or
  * expose any tools unless `PI_COFFEE_PI_LENS=on` is explicitly set.
  * rpiv-todo is likewise opt-in: its todo tool, `/todos` command, and overlay
@@ -93,7 +93,11 @@ export function resolvePiLensExtension(env: NodeJS.ProcessEnv = process.env): st
   const agentDir = env.PI_COFFEE_AGENT_DIR ?? env.PI_CODING_AGENT_DIR ?? getAgentDir();
   const managedEntry = join(agentDir, "npm", "node_modules", "pi-lens", "dist", "index.js");
   if (existsSync(managedEntry)) return managedEntry;
-  return resolvePackage("pi-lens");
+  try {
+    return resolvePackage("pi-lens");
+  } catch {
+    throw new Error("PI_COFFEE_PI_LENS=on requires a separately installed, Pi-compatible pi-lens package");
+  }
 }
 
 /** Resolve the optional rpiv-todo native Pi extension without loading it by default. */

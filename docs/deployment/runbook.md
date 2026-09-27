@@ -34,7 +34,7 @@ refuse to start on a non-loopback bind without their token (fail closed).
 - Debian 12 (server) or Linux Mint Xfce (User VM), internal network only.
 - Node.js **>= 22.19** (`node -v`). Debian/Mint packages are older; use the
   NodeSource 22.x repository or an official tarball.
-- `git`, `curl`. The pinned original Pi (`@earendil-works/pi-coding-agent@0.84.4`)
+- `git`, `curl`. The pinned original Pi (`@earendil-works/pi-coding-agent@0.87.1`)
   and locked `pi-subagents@0.63.0` are installed by `npm ci` inside the
   checkout; nothing else to install for Pi.
 - Firewall: the server must reach `USER_VM:8788` (Host); the User VM must reach

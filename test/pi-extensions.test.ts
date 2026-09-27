@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { delimiter, isAbsolute } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import {
   resolveWebExtension,
@@ -85,18 +87,28 @@ describe("PI Coffee native extension selection", () => {
     ]);
   });
 
-  it("keeps pi-lens non-visible until explicitly opted in", () => {
-    const defaults = resolvePiExtensions({});
-    expect(defaults.some((path) => /[\\/]pi-lens[\\/]/.test(path))).toBe(false);
+  it("keeps pi-lens optional and explains an explicit opt-in without an installed package", () => {
+    expect(resolvePiExtensions({}).some(path => path.includes("pi-lens"))).toBe(false);
+    expect(() => resolvePiExtensions({
+      PI_COFFEE_PI_LENS: "on", PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent",
+    })).toThrow("requires a separately installed, Pi-compatible pi-lens package");
+  });
 
-    const enabled = resolvePiExtensions({
-      PI_COFFEE_PI_LENS: "on",
-      PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent",
-    });
-    expect(enabled).toContain(resolvePiLensExtension({ PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent" }));
-    expect(enabled.indexOf(resolvePiLensExtension({ PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent" })))
-      .toBeLessThan(enabled.indexOf(resolveContextFoldExtension({ PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent" })));
-    expect(resolvePiLensExtension({ PI_COFFEE_AGENT_DIR: "/tmp/pi-coffee-no-agent" })).toMatch(/node_modules[\\/]pi-lens[\\/](dist[\\/]index\.js|index\.js)$/);
+  it("resolves an explicitly installed pi-lens only when opted in", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coffee-optional-lens-"));
+    const entry = join(root, "npm", "node_modules", "pi-lens", "dist", "index.js");
+    try {
+      await mkdir(join(root, "npm", "node_modules", "pi-lens", "dist"), { recursive: true });
+      await writeFile(entry, "export default function () {}\n");
+      const env = { PI_COFFEE_AGENT_DIR: root };
+      expect(resolvePiExtensions(env)).not.toContain(entry);
+      const enabled = resolvePiExtensions({ ...env, PI_COFFEE_PI_LENS: "on" });
+      expect(resolvePiLensExtension(env)).toBe(entry);
+      expect(enabled.indexOf(entry)).toBeGreaterThanOrEqual(0);
+      expect(enabled.indexOf(entry)).toBeLessThan(enabled.indexOf(resolveContextFoldExtension(env)));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps rpiv-todo non-visible until explicitly opted in", () => {

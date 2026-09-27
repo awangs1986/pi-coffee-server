@@ -17,7 +17,7 @@ The MVP is a transport and ownership proof, not a feature port from V5.
 
 | Where | What |
 |---|---|
-| User VM (one per user, Linux Mint Xfce) | Agent Host + original Pi 0.84.4, running as the VM owner. Holds the Host token and its Relay token; **no upstream key**. |
+| User VM (one per user, Linux Mint Xfce) | Agent Host + original Pi 0.87.1, running as the VM owner. Holds the Host token and its Relay token; **no upstream key**. |
 | Server (Debian) | Web Server (browser entry, bridges to the Host) and LLM Relay (the only process with the upstream key). |
 
 A single-machine `npm start` remains the developer smoke, not the MVP
@@ -69,7 +69,7 @@ npm run check
 npm start
 ```
 
-The tests use a fake RPC process so no credential is needed. A real run additionally needs the normal Pi provider/model configuration in the Host environment. The current adapter is pinned to `@earendil-works/pi-coding-agent@0.84.4`.
+The tests use a fake RPC process so no credential is needed. A real run additionally needs the normal Pi provider/model configuration in the Host environment. The current adapter is pinned to `@earendil-works/pi-coding-agent@0.87.1`.
 
 ## MVP completion criterion for a colleague
 

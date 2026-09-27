@@ -11,7 +11,9 @@ import { resolvePiExtensions } from '../dist/src/pi-extensions.js';
 // Deterministic transport probe, not an evaluation of a real model's decisions.
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const reports = [];
-for (const lensEnabled of [false, true]) reports.push(await probe(lensEnabled));
+// Pi Lens is not bundled: its peer range does not support the pinned Pi release.
+const lensModes = process.argv.includes("--with-pi-lens") ? [false, true] : [false];
+for (const lensEnabled of lensModes) reports.push(await probe(lensEnabled));
 console.log(JSON.stringify({ ok: reports.every(r => r.ok), model: 'local scripted fixture', reports }, null, 2));
 if (reports.some(r => !r.ok)) process.exitCode = 1;
 
