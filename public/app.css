@@ -574,7 +574,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .chip-btn.danger { color: var(--danger); border-color: #fca5a5; background: #fef2f2; }
 
 /* ---------- P2: docked diff review ---------- */
-.app.diff-docked { grid-template-columns: 260px 1fr minmax(380px, 34vw); }
+/* Grid columns for .diff-docked live with the shared right-column rules near the end of this file. */
 .diff-panel { display: flex; flex-direction: column; min-width: 0; height: 100vh; height: 100dvh; border-left: 1px solid var(--border); background: var(--bg); }
 .diff-panel.hidden { display: none; }
 .diff-panel-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
@@ -592,7 +592,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .diff-file-head { position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; margin: 0; padding: 6px 0; font-size: 12.5px; font-weight: 650; background: var(--bg); border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .diff-file-head .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .diff-file-body .diff-stats { display: none; }
-@media (max-width: 1099px) { .app.diff-docked { grid-template-columns: 260px 1fr; } .diff-panel { display: none; } }
+
 /* Context strip and three-column workspace: navigation / conversation / Checkout. */
 .project-context {
   position: relative; width: min(var(--composer-width), 100%); margin: 6px auto 0;
@@ -909,3 +909,9 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .app > .diff-panel { grid-column: 3; grid-row: 1; }
 .app.diff-docked { grid-template-columns: var(--sidebar-width) minmax(0,1fr) 320px; }
 .app.side-collapsed.diff-docked { grid-template-columns: 0 minmax(0,1fr) 320px; }
+/* Below the dock threshold the review falls back to the modal (app.js closes the dock on resize); never reserve the column. */
+@media (max-width: 1099px) {
+  .app.diff-docked { grid-template-columns: var(--sidebar-width) minmax(0,1fr); }
+  .app.side-collapsed.diff-docked { grid-template-columns: 0 minmax(0,1fr); }
+  .diff-panel { display: none; }
+}

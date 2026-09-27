@@ -154,6 +154,7 @@ rl.on("line", (line) => {
   switch (method) {
     case "initialize": return reply({ userAgent: "fake", codexHome: home, platformFamily: "unix", platformOs: "linux" });
     case "initialized": return;
+    case "account/read": return reply(rateLimits ? { account: { type: "chatgpt", email: "vm-owner@example.com", planType: rateLimits.planType }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: false });
     case "getAuthStatus": return reply({ authMethod: rateLimits ? "chatgpt" : "apiKey", requiresOpenaiAuth: true });
     case "account/rateLimits/read":
       if (!rateLimits) return fail("rate limits unavailable for this auth method");

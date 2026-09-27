@@ -248,16 +248,30 @@ class RpcPiSession implements PiSession {
     // shape used by PI Coffee.  Keep the cast local to this adapter.
     this.running = true;
     this.watchActiveProcess();
-    try { await this.client.prompt(text, images as never); }
+    try { await this.sendChecked({ type: "prompt", message: text, images }); }
     catch (error) {this.stopWatching();throw error;}
   }
 
   async steer(text: string, images?: ImageInput[]): Promise<void> {
-    await this.client.steer(text, images as never);
+    await this.sendChecked({ type: "steer", message: text, images });
   }
 
   async followUp(text: string, images?: ImageInput[]): Promise<void> {
-    await this.client.followUp(text, images as never);
+    await this.sendChecked({ type: "follow_up", message: text, images });
+  }
+
+  /**
+   * The pinned RpcClient's prompt/steer/followUp resolve on *any* response,
+   * including `success:false` (e.g. "No API key found"), after which Pi emits
+   * no lifecycle events at all. Send the command ourselves and reject on
+   * failure so the Host releases the run instead of staying busy forever.
+   */
+  private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<void> {
+    const client = this.client as unknown as { send(command: unknown): Promise<unknown> };
+    const response = await client.send({ ...command, ...(command.images === undefined ? {} : { images: command.images }) }) as { success?: boolean; error?: string } | undefined;
+    if (response && response.success === false) {
+      throw new Error(typeof response.error === "string" && response.error.length > 0 ? response.error : `Pi rejected ${command.type}`);
+    }
   }
 
   async abort(): Promise<void> {
