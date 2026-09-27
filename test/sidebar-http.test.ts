@@ -1,0 +1,34 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {HostServer} from '../src/host/server.js';
+import {Workspaces} from '../src/host/workspaces.js';
+it('persists scoped sidebar placement and collapse without changing task identity or execution',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-sidebar-'));let server:HostServer|undefined;
+ try{
+  const source=join(root,'repo');await mkdir(source);const exec=promisify(execFile);
+  const git=(...args:string[])=>exec('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:source});
+  await git('init','-b','main');await writeFile(join(source,'README.md'),'fixture');await git('add','.');await git('commit','-m','base');
+  const store=new Workspaces(join(root,'alice'));const p=await store.registerProject('demo',source);const c=await store.createChatConversation('chat');await store.markRun(c.id,'running');
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw new Error('Must not start an Agent');}};
+  const start=async()=>{server=new HostServer({port:0,token:'test-sidebar',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:new Workspaces(join(root,user))})});await server.start();};await start();
+  const call=async(body?:unknown,user='alice',token='test-sidebar')=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{method:body?'POST':'GET',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
+  const move={action:'sidebar_move',id:c.id,projectId:p.id};
+  expect((await call(move,'alice','wrong')).status).toBe(401);
+  expect((await call(move)).status).toBe(200);
+  expect((await call({action:'sidebar_collapse',projectId:p.id,collapsed:true})).status).toBe(200);
+  expect((await call()).data.sidebar).toEqual({assignments:{chat:p.id},collapsed:[p.id]});
+  expect((await call()).data.conversations[0]).toMatchObject({id:c.id,cwd:c.cwd,branch:'',engine:'pi',workspaceKind:'chat'});
+  expect((await call(move,'bob')).status).toBe(409);
+  expect((await call(undefined,'bob')).data.sidebar).toBeUndefined();
+  expect((await call({...move,projectId:'unknown'})).status).toBe(409);
+  expect((await call({...move,id:{bad:true}})).status).toBe(409);
+  expect((await call({action:'sidebar_collapse',projectId:p.id,collapsed:'yes'})).status).toBe(409);
+  await server!.close();await start();expect((await call()).data.sidebar).toEqual({assignments:{chat:p.id},collapsed:[p.id]});
+  expect((await call({...move,projectId:null})).status).toBe(200);
+  expect((await call()).data.sidebar.assignments.chat).toBeNull();
+ }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});

@@ -5,6 +5,7 @@ afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();loca
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
+ const sidebar={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
  const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
@@ -12,8 +13,10 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
-  const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
-  requests.push(body);if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
+  const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
+  requests.push(body);if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  if(body.action==='sidebar_collapse'){sidebar.collapsed=body.collapsed?[body.projectId]:[];return {ok:true,json:async()=>structuredClone(sidebar)};}
+  if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
   if(body.action==='project'){const p={id:'new-project',name:body.name,branch:'main'};projects.push(p);return {ok:true,json:async()=>p};}
   if(body.action==='branches')return {ok:true,json:async()=>['main']};
   if(body.action==='changes')return {ok:true,json:async()=>({branch:'coffee/demo',base:'abc123',target:'def456',refreshedAt:'2026-09-23',files:[{path:'src/a.ts',status:'M',additions:1,deletions:1}],patch:'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -9,2 +9,2 @@\n-before\n+after\n unchanged',checks:[]})};
@@ -300,4 +303,35 @@ it('locks draft model controls while explicit task creation is in flight',async(
  const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);
  document.querySelector<HTMLButtonElement>('#create-task')!.click();expect(button.disabled).toBe(true);
  await vi.advanceTimersByTimeAsync(20);
+});
+
+it('groups project tasks, folds them, and drags out/in without changing the task project or opening it',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#project-select')!.value='p';
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ const group=()=>document.querySelector<HTMLElement>('[data-sidebar-project="p"]')!;
+ expect(group()).not.toBeNull();expect(group().textContent).toContain('demo');
+ group().querySelector<HTMLButtonElement>('.project-group-toggle')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(group().querySelector('ul')!.hidden).toBe(true);
+ const opens=app.frames.filter(f=>f.type==='open').length;
+ const transfer={setData:vi.fn(),getData:()=>id,effectAllowed:'',dropEffect:''};
+ const drag=(target:Element,type:string)=>{const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(e,'dataTransfer',{value:transfer});target.dispatchEvent(e);};
+ group().querySelector<HTMLButtonElement>('.project-group-toggle')!.click();await vi.advanceTimersByTimeAsync(20);
+ drag(group().querySelector('.session-item')!,'dragstart');drag(document.querySelector('[data-sidebar-ungrouped]')!,'drop');await vi.advanceTimersByTimeAsync(20);
+ expect(group().querySelectorAll('.session-item')).toHaveLength(0);
+ expect(document.querySelector('[data-sidebar-ungrouped] .session-item')).not.toBeNull();
+ drag(document.querySelector('[data-sidebar-ungrouped] .session-item')!,'dragstart');drag(group(),'drop');await vi.advanceTimersByTimeAsync(20);
+ expect(group().querySelectorAll('.session-item')).toHaveLength(1);
+ expect(app.conversations[0].projectId).toBe('p');expect(app.frames.filter(f=>f.type==='open')).toHaveLength(opens);
+ app.sockets[0].receive({type:'sessions',sessions:[]});expect(group().querySelectorAll('.session-item')).toHaveLength(1);
+});
+it('keeps prior sidebar placement on failed saves and supports the move menu',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ const moveSelect=()=>{document.querySelector<HTMLButtonElement>('[data-sidebar-ungrouped] .more')!.click();return document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;};
+ const first=moveSelect();first.value='p';vi.mocked(fetch).mockResolvedValueOnce({ok:false,status:409,json:async()=>({error:'Cannot save grouping'})} as Response);first.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('[data-sidebar-ungrouped] .session-item')).not.toBeNull();expect(document.body.textContent).toContain('Cannot save grouping');
+ const retry=moveSelect();retry.value='p';retry.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('[data-sidebar-project="p"] .session-item')?.getAttribute('data-session-id')).toBe(id);
+ expect(app.conversations[0].workspaceKind).toBe('chat');expect(app.conversations[0].projectId).toBeUndefined();
 });

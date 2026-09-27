@@ -390,3 +390,10 @@ the linked Issues rather than inferred from this decision.
 ## Standalone Pi package consumer (2026-09-27)
 
 [Server #19](http://gitea:3000/awangs/pi-coffee-server/issues/19) consumes the extracted Pi package from [Pi #70](http://gitea:3000/awangs/pi-coffee/issues/70). The current Server Host/Web/native adapters are retained; only package integration imports and type ownership change. Separate GitHub/Gitea pairs identify their own main revision. No production deployment is included.
+
+## Sidebar project groups (2026-09-27)
+
+[Server #24](http://gitea:3000/awangs/pi-coffee-server/issues/24) tracks collapsible
+Gitea project groups, drag placement and the equivalent conversation menu.
+[Navigation contract](docs/spec/arena-navigation.md#repository-groups-in-the-sidebar)
+defines user-scoped persistence and the strict separation from task execution identity.

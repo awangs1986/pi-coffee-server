@@ -9,7 +9,7 @@ import {
   copyText,
 
 } from './render.js';
-import { attentionOf, formatReset, isTerminalSession, patchFiles, sessionGroups, usageBadge } from './sidebar.js';
+import { attentionOf, orderSessions, formatReset, isTerminalSession, patchFiles, sessionGroups, usageBadge } from './sidebar.js';
 
 
 const ACTIVE_KEY_BASE = 'pi-coffee.active.v2';
@@ -433,33 +433,88 @@ function sessionTitle(session) {
   return (cut > 0 ? raw.slice(0, cut).trim() : raw) || '新对话';
 }
 function renderSessionList() {
+  if(sidebarDragId)return;
   ui.sessionList.innerHTML = '';
   renderSearchResults();
   let known = sessions.slice();
   if (activeId && !known.some((s) => s.id === activeId)) known.unshift({ id: activeId, preview: '', running: streaming, messageCount: 0, updatedAt: new Date().toISOString() });
   if(workspaceState) {
     for(const c of workspaceState.conversations) if(!known.some(s=>s.id===c.id)) known.push({id:c.id,preview:c.creationState==='failed'?'创建失败 · 点击重试':c.creationState==='creating'?'创建中 · 点击恢复':c.workspaceKind==='chat'?'Chat 任务':'Work 任务',updatedAt:c.createdAt,running:false});
-    const selected=activeId ? '' : $('#project-select').value;
-    known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived && (!selected || c?.projectId===selected);});
+    known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
-  if (known.length === 0) {
+  if (known.length === 0 && !workspaceState?.projects.length) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
     return;
   }
 
-  // Who needs you first (P0), then time buckets, then the VM admin's terminal threads (P3).
-  for (const group of sessionGroups(known)) {
-    const label = el('li', 'side-label' + (group.label === '需要你' ? ' attention' : ''), group.label);
-    if (group.label === '本机终端会话') label.title = '在 User VM 终端里用 codex 打开的会话（同一工作目录）。点击可查看，空闲后可接管继续对话。';
-    ui.sessionList.appendChild(label);
-    for (const session of group.sessions) ui.sessionList.appendChild(sessionRow(session));
-
+  if (!workspaceState) { appendSessionGroups(ui.sessionList,known); return; }
+  const assigned=new Map(workspaceState.projects.map(p=>[p.id,[]]));
+  const ungrouped=[];
+  for(const session of known){
+    const task=workspaceState.conversations.find(c=>c.id===session.id);
+    const overrides=workspaceState.sidebar?.assignments;
+    const projectId=overrides && Object.hasOwn(overrides,session.id) ? overrides[session.id] : task?.projectId;
+    (assigned.get(projectId) || ungrouped).push(session);
+  }
+  for(const project of workspaceState.projects){
+    const items=assigned.get(project.id);
+    const group=el('li','project-group');group.dataset.sidebarProject=project.id;
+    const folded=workspaceState.sidebar?.collapsed?.includes(project.id) || false;
+    const button=el('button','project-group-toggle');button.type='button';
+    button.setAttribute('aria-expanded',String(!folded));button.title=project.repoUrl || project.name;
+    button.append(el('span','project-chevron',folded?'▸':'▾'),el('span','project-group-name',project.name),el('span','project-group-count',String(items.length)));
+    const attention=items.filter(s=>attentionOf(s)==='waiting'||attentionOf(s)==='finished').length;
+    const running=items.filter(s=>attentionOf(s)==='running').length;
+    if(attention)button.append(el('span','project-group-status',attention+' 待查看'));
+    else if(running)button.append(el('span','project-group-status',running+' 运行中'));
+    button.addEventListener('click',()=>saveSidebar({action:'sidebar_collapse',projectId:project.id,collapsed:!folded}));
+    const list=el('ul','project-group-list');list.hidden=folded;list.setAttribute('aria-label',project.name+' 对话');
+    for(const session of orderSessions(items))list.append(sessionRow(session));
+    group.append(button,list);sidebarDropTarget(group,project.id);ui.sessionList.append(group);
+  }
+  const outside=el('li','ungrouped-conversations');outside.dataset.sidebarUngrouped='';
+  outside.append(el('div','side-label','未分组'));
+  const list=el('ul','project-group-list');appendSessionGroups(list,ungrouped);
+  if(!ungrouped.length)list.append(el('li','sidebar-drop-hint','拖到这里移出项目分组'));
+  outside.append(list);sidebarDropTarget(outside,null);ui.sessionList.append(outside);
+}
+function appendSessionGroups(parent,list){
+  for(const group of sessionGroups(list)){
+    const label=el('li','side-label'+(group.label==='需要你'?' attention':''),group.label);
+    parent.append(label);for(const session of group.sessions)parent.append(sessionRow(session));
   }
 }
+// Native drag payloads are accepted only when this page started the drag.
+let sidebarDragId=null,sidebarSaving=false;
+function sidebarDropTarget(node,projectId){
+  node.addEventListener('dragover',event=>{if(!sidebarDragId || sidebarSaving)return;event.preventDefault();event.dataTransfer.dropEffect='move';node.classList.add('drop-target');});
+  node.addEventListener('dragleave',event=>{if(!node.contains(event.relatedTarget))node.classList.remove('drop-target');});
+  node.addEventListener('drop',event=>{
+    event.preventDefault();event.stopPropagation();node.classList.remove('drop-target');
+    const id=sidebarDragId;sidebarDragId=null;
+    if(id && !sidebarSaving)void saveSidebar({action:'sidebar_move',id,projectId});
+  });
+}
+async function saveSidebar(change){
+  if(sidebarSaving)return;sidebarSaving=true;
+  try{
+    const sidebar=await workspaceApi(change);
+    ++workspaceRequestSeq; // Ignore workspace reads started before this persisted change.
+    if(workspaceState)workspaceState.sidebar=sidebar;
+    renderSessionList();
+  }catch(error){toast(error.message);}finally{sidebarSaving=false;}
+}
+
 function sessionRow(session) {
   const attention = attentionOf(session);
   const terminal = isTerminalSession(session);
   const item = el('li', 'session-item' + (session.id === activeId ? ' active' : '') + (attention ? ' ' + attention : '') + (terminal ? ' terminal' : ''));
+  item.dataset.sessionId=session.id;
+  if(workspaceState){
+    item.draggable=true;
+    item.addEventListener('dragstart',event=>{if(sidebarSaving){event.preventDefault();return;}sidebarDragId=session.id;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',session.id);});
+    item.addEventListener('dragend',()=>{sidebarDragId=null;document.querySelectorAll('.drop-target').forEach(n=>n.classList.remove('drop-target'));renderSessionList();});
+  }
   item.setAttribute('role', 'button');
   item.tabIndex = 0;
   const main = el('div', 'session-main');
@@ -519,6 +574,16 @@ function openSessionMenu(session, anchor) {
     });menuNode.append(remove);
   }
   menuNode.append(rename, del);
+  if(workspaceState?.projects.length){
+    const label=el('label','sidebar-move-label','移至侧栏分组');
+    const select=el('select','sidebar-move-select');select.setAttribute('aria-label','移至侧栏分组');
+    const option=el('option','','未分组');option.value='';select.append(option);
+    for(const p of workspaceState.projects){const o=el('option','',p.name);o.value=p.id;select.append(o);}
+    const overrides=workspaceState.sidebar?.assignments;
+    select.value=(overrides && Object.hasOwn(overrides,session.id)?overrides[session.id]:workspaceState.conversations.find(c=>c.id===session.id)?.projectId) || '';
+    select.addEventListener('change',()=>{const projectId=select.value || null;closeMenu();void saveSidebar({action:'sidebar_move',id:session.id,projectId});});
+    label.append(select);menuNode.append(label);
+  }
   document.body.appendChild(menuNode);
   const rect = anchor.getBoundingClientRect();
   menuNode.style.top = rect.bottom + 4 + 'px';
