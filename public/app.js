@@ -864,12 +864,12 @@ async function openSession(id) {
     const selectedEngine=existing?.engine || $("#task-engine").value;
     const signature=JSON.stringify([selectedEngine,workspaceKind,projectId,existing?.startBranch || ui.startBranch.value.trim()]);
     if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
-    saveCreation();pendingOpenId='creating';$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
+    saveCreation();pendingOpenId='creating';refreshComposer();$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
     try {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
       id=c.id;activeId=id;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
     }catch(e){pendingOpenId=null;toast(e.message);await loadWorkspace();return;}
-    finally{$('#create-task').disabled=false;$('#create-task').textContent='创建任务 / 重试';}
+    finally{refreshComposer();$('#create-task').disabled=false;$('#create-task').textContent='创建任务 / 重试';}
   }
   pendingOpenId = id || 'new';
   const frame = { v: 1, type: 'open', nativeProtocol:1 };

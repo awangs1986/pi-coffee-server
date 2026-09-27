@@ -263,7 +263,8 @@ it.each(['history-first','models-first','rejected'])('selects a Codex draft mode
  document.querySelector<HTMLButtonElement>('#agent-model-row')!.click();
  [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes('chosen-model'))!.click();
  expect(app.frames.some(f=>f.type==='set_model')).toBe(false);
- const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first message';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first message';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(button.disabled).toBe(true);await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id;
  ws.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{models:true}});
  if(order!=='models-first')ws.receive({type:'history',sessionId:id,entries:[]});
@@ -290,4 +291,13 @@ it('does not request a draft model catalog from an older Host',async()=>{
  engine.value='codex';engine.dispatchEvent(new Event('change'));
  expect(app.frames.some(f=>f.type==='get_model_catalog')).toBe(false);
  expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(true);
+});
+
+it('locks draft model controls while explicit task creation is in flight',async()=>{
+ const app=await setup();chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+ engine.value='codex';engine.dispatchEvent(new Event('change'));const query=app.frames.find(f=>f.type==='get_model_catalog');
+ app.sockets.at(-1).receive({type:'model_catalog',requestId:query.requestId,engine:'codex',models:[{provider:'codex',id:'default-model'}],current:{provider:'codex',id:'default-model'}});
+ const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();expect(button.disabled).toBe(true);
+ await vi.advanceTimersByTimeAsync(20);
 });
