@@ -5,15 +5,17 @@ afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();loca
 async function setup(legacy=false,wide=false){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
- const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[];
+ const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
-  const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects:[{id:"p",name:"demo",branch:"main"}],conversations,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
+  const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
+  if(body.action==='project'){const p={id:'new-project',name:body.name,branch:'main'};projects.push(p);return {ok:true,json:async()=>p};}
+  if(body.action==='branches')return {ok:true,json:async()=>['main']};
   if(body.action==='changes')return {ok:true,json:async()=>({branch:'coffee/demo',base:'abc123',target:'def456',refreshedAt:'2026-09-23',files:[{path:'src/a.ts',status:'M',additions:1,deletions:1}],patch:'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -9,2 +9,2 @@\n-before\n+after\n unchanged',checks:[]})};
   return {ok:true,json:async()=>({state:'local',files:[]})};
  }));vi.useFakeTimers();await import('../public/app.js');await vi.advanceTimersByTimeAsync(20);
@@ -128,6 +130,38 @@ it('collapses task details when starting another Task',async()=>{
 });
 
 function chooseWork(){const kind=document.querySelector<HTMLSelectElement>('#task-kind')!;kind.value='project';kind.dispatchEvent(new Event('change'));document.querySelector<HTMLSelectElement>('#project-select')!.value='p';}
+it('creates and selects a Gitea project beside the Work selector without changing Agent or draft',async()=>{
+ const app=await setup();const button=document.querySelector<HTMLButtonElement>('#project-create')!;
+ expect(button).not.toBeNull();expect(button.classList.contains('hidden')).toBe(true);
+ chooseWork();expect(button.classList.contains('hidden')).toBe(false);
+ const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;engine.value='codex';engine.dispatchEvent(new Event('change'));
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='keep this draft';
+ button.click();expect(document.querySelector('#modal-title')?.textContent).toBe('新建 Gitea 项目');
+ document.querySelector<HTMLInputElement>('#modal-input')!.value='new-demo';document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='project')).toEqual([{action:'project',name:'new-demo'}]);
+ expect(document.querySelector<HTMLSelectElement>('#project-select')!.value).toBe('new-project');
+ expect(document.querySelector<HTMLInputElement>('#start-branch')!.value).toBe('main');
+ expect(engine.value).toBe('codex');expect(prompt.value).toBe('keep this draft');
+ expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.find(r=>r.action==='conversation')).toMatchObject({projectId:'new-project',engine:'codex',branch:'main'});
+ expect(button.classList.contains('hidden')).toBe(true);
+});
+it.each(['cancel','failure'])('retains the Work selection when Gitea creation ends with %s',async(outcome)=>{
+ const app=await setup();chooseWork();
+ const branch=document.querySelector<HTMLInputElement>('#start-branch')!;branch.value='feature/existing';
+ const button=document.querySelector<HTMLButtonElement>('#project-create')!;button.click();
+ if(outcome==='cancel')document.querySelector<HTMLButtonElement>('#modal-cancel')!.click();
+ else {
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({error:'Gitea repository already exists'}),{status:409}));
+  document.querySelector<HTMLInputElement>('#modal-input')!.value='existing';document.querySelector<HTMLButtonElement>('#modal-ok')!.click();
+ }
+ await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector<HTMLSelectElement>('#project-select')!.value).toBe('p');expect(branch.value).toBe('feature/existing');
+ expect(button.disabled).toBe(false);expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+ if(outcome==='cancel')expect(app.requests.some(r=>r.action==='project')).toBe(false);
+ else expect(document.querySelector('#toast')?.textContent).toContain('Gitea repository already exists');
+});
 it('defaults new conversations to Pi Chat and only offers native engines for Work',async()=>{
  const app=await setup();const kind=document.querySelector<HTMLSelectElement>('#task-kind')!,engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
  expect(kind.value).toBe('chat');expect(engine.value).toBe('pi');expect(engine.disabled).toBe(true);expect(engine.options[1].disabled).toBe(true);
