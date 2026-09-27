@@ -286,3 +286,9 @@ engine and request ID, and the normal model-list fields. Only `codex` is accepte
 Discovery does not create a task or native thread. The browser ignores replies
 for abandoned drafts and applies selections through `set_model` after `opened`,
 waiting for confirmation before the first prompt.
+
+Pi also advertises `modelCatalog: true` when its factory supports ephemeral
+registry discovery. `get_model_catalog.engine` and `model_catalog.engine` accept
+`pi` or `codex`; other values remain invalid. The response contains the selected
+engine's choices only, including its configured model policy. No session must be
+opened to query this catalog.

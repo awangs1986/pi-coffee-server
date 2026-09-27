@@ -108,3 +108,18 @@ task applies an explicitly selected model through the normal session interface.
 The first prompt waits for history and model confirmation; a rejected model
 restores the draft without sending it using a fallback model. Reasoning controls
 continue to use the opened session's authoritative capabilities.
+
+## Pi draft model selection — 2026-09-27
+
+[Server #23](http://gitea:3000/awangs/pi-coffee-server/issues/23) extends draft
+model selection to Pi. The default new conversation remains Pi Chat, with its
+model menu available before task creation or the first message. Pi Work uses the
+same catalog. Discovery uses native Pi ephemeral RPC (`--no-session`), does not
+call a provider, and does not create a task directory or durable transcript.
+The Host's Pi allowlist applies to discovery and later selection; this deployment
+therefore offers only Muse 1.3 Contributor and Antigravity Gemini 3.8 Flash.
+
+The selected model is applied after opening the new task and confirmed before its
+first prompt. Existing request correlation, stale-response rejection, old-Host
+capability gating, and failed-selection draft recovery apply to both Pi and Codex.
+Changing the Agent resets the draft selection. Native Claude behavior is unchanged.
