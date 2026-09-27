@@ -22,6 +22,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==="codex" && this.options.codexSessionFactory)return {...capabilitiesFor("pi"),commands:false,extensions:false,cleanup:false};
     return capabilitiesFor(engine);
   }
+  async modelCatalog(engine:"codex") {
+    const factory=this.options.legacyCodex;
+    if(engine!=="codex" || !this.options.codex || !factory?.modelCatalog)throw new Error("Codex model discovery unavailable");
+    return factory.modelCatalog(engine);
+  }
   async engines():Promise<EngineAvailability[]> {
     return Promise.all(PI_ONLY_ENGINES.map(async original=>{
       const config=original.id==="pi"?undefined:this.options[original.id];
@@ -35,7 +40,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
       if(!supported)return {...original,version,available:false,reason:"Unsupported native CLI version; use the verified release"};
       try {
         const ready=await this.authentication(original.id as "codex"|"claude",config);
-        return {...original,version,available:ready,authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
+        return {...original,version,available:ready,modelCatalog:original.id==="codex" && Boolean(this.options.legacyCodex?.modelCatalog),authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
       } catch {return {...original,version,available:false,authentication:"unknown" as const,reason:"Native authentication status unavailable; inspect this CLI on the User VM"};}
     }));
   }

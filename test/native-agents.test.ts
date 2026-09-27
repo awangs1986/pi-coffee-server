@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
-async function setup(legacy=false,wide=false){
+async function setup(legacy=false,wide=false,catalog=true){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
  const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
@@ -11,7 +11,7 @@ async function setup(legacy=false,wide=false){
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
   if(body.action==='project'){const p={id:'new-project',name:body.name,branch:'main'};projects.push(p);return {ok:true,json:async()=>p};}
@@ -29,7 +29,7 @@ it('fixes Agent at Task creation, scopes Model controls and ignores obsolete soc
  expect(app.frames.find(f=>f.type==='open')).toMatchObject({sessionId:created.id,nativeProtocol:1});
  app.sockets[0].receive({type:'opened',engine:'codex',sessionId:created.id,state:{},capabilities:{models:true,tools:true,questions:true,stop:true,images:true}});
  app.sockets[0].receive({type:'history',sessionId:created.id,entries:[]});await vi.advanceTimersByTimeAsync(10);
- expect(app.frames.filter(f=>f.type.startsWith('get_')).map(f=>f.type)).toEqual(['get_models']);
+ expect(app.frames.filter(f=>f.type.startsWith('get_')).map(f=>f.type)).toEqual(['get_model_catalog','get_models']);
  expect(document.querySelector('#plugins-btn')?.classList.contains('hidden')).toBe(true);
  const oldHandler=app.sockets[0].onmessage;document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
  oldHandler({data:JSON.stringify({type:'opened',sessionId:'obsolete',state:{}})});expect(localStorage.getItem('pi-coffee.active.v2')).toBeNull();
@@ -249,4 +249,45 @@ it('ignores stale Skill inventories after the user changes Agent',async()=>{
  const select=document.querySelector<HTMLSelectElement>('#skills-engine')!;select.value='codex';select.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
  release({ok:true,json:async()=>({directory:'/old/pi',skills:[{id:'old',name:'obsolete-pi',description:'stale',managed:false,enabled:true}],warnings:[]})});await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelector('#skills-list')!.textContent).not.toContain('obsolete-pi');expect(select.value).toBe('codex');
+});
+
+
+it.each(['history-first','models-first','rejected'])('selects a Codex draft model and waits before the first prompt (%s)',async(order)=>{
+ const app=await setup();chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+ engine.value='codex';engine.dispatchEvent(new Event('change'));
+ const query=app.frames.find(f=>f.type==='get_model_catalog');expect(query).toMatchObject({engine:'codex'});
+ expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+ const ws=app.sockets.at(-1);
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:'codex',models:[{provider:'codex',id:'default-model'},{provider:'codex',id:'chosen-model'}],current:{provider:'codex',id:'default-model'},thinkingLevels:[],thinkingLevel:''});
+ const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);button.click();
+ document.querySelector<HTMLButtonElement>('#agent-model-row')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes('chosen-model'))!.click();
+ expect(app.frames.some(f=>f.type==='set_model')).toBe(false);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first message';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ ws.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{models:true}});
+ if(order!=='models-first')ws.receive({type:'history',sessionId:id,entries:[]});
+ const change=app.frames.find(f=>f.type==='set_model');expect(change).toMatchObject({provider:'codex',id:'chosen-model'});
+ expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+ if(order==='rejected'){ws.receive({type:'error',requestId:change.requestId,code:'operation_failed',message:'Model unavailable'});expect(app.frames.some(f=>f.type==='prompt')).toBe(false);expect(prompt.value).toBe('first message');return;}
+ ws.receive({type:'ack',operation:'set_model',requestId:change.requestId});
+ ws.receive({type:'models',models:[{provider:'codex',id:'chosen-model'}],current:{provider:'codex',id:'chosen-model'},thinkingLevels:[],thinkingLevel:''});
+ if(order==='models-first'){expect(app.frames.some(f=>f.type==='prompt')).toBe(false);ws.receive({type:'history',sessionId:id,entries:[]});}
+ expect(app.frames.filter(f=>f.type==='prompt')).toEqual([expect.objectContaining({text:'first message'})]);
+});
+
+it('ignores a stale Codex catalog after switching back to Pi',async()=>{
+ const app=await setup();chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+ engine.value='codex';engine.dispatchEvent(new Event('change'));const query=app.frames.find(f=>f.type==='get_model_catalog');
+ engine.value='pi';engine.dispatchEvent(new Event('change'));
+ app.sockets.at(-1).receive({type:'model_catalog',requestId:query.requestId,engine:'codex',models:[{provider:'codex',id:'stale-model'}],current:{provider:'codex',id:'stale-model'}});
+ expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(true);
+ expect(engine.value).toBe('pi');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+});
+
+it('does not request a draft model catalog from an older Host',async()=>{
+ const app=await setup(false,false,false);chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+ engine.value='codex';engine.dispatchEvent(new Event('change'));
+ expect(app.frames.some(f=>f.type==='get_model_catalog')).toBe(false);
+ expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(true);
 });

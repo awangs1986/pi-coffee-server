@@ -207,6 +207,7 @@ export type ClientFrame =
       requestId?: string;
       sessionId: string;
     }
+  | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_models" }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
@@ -256,7 +257,9 @@ export type ServerFrame =
     }
   | {
       v: typeof PROTOCOL_VERSION;
-      type: "models";
+      type: "models" | "model_catalog";
+      engine?: "codex";
+      requestId?: string;
       models: ModelChoice[];
       current: { provider: string; id: string; source?: "native" | "relay" } | null;
       thinkingLevel: string;
@@ -361,6 +364,9 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
       return parseOpen(value);
     case "list_sessions":
       return { v: PROTOCOL_VERSION, type: "list_sessions" };
+    case "get_model_catalog":
+      if(value.engine!=="codex")throw new ProtocolError("invalid_frame","Model catalog requires Codex");
+      return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:"codex",...withRequestId(value)};
     case "get_models":
       return { v: PROTOCOL_VERSION, type: "get_models" };
     case "get_commands":

@@ -1,4 +1,7 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { HostServer } from '../src/host/server.js';
+import { WebSocket } from 'ws';
+import { once } from 'node:events';
+import { mkdirSync, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +80,19 @@ describe("Codex app-server adapter", () => {
       for (const factory of b.factories) await factory.close();
       rmSync(b.root, { recursive: true, force: true });
     }
+  });
+
+  it("exposes the native model catalog over authenticated WS without creating a thread",async()=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
+    const host=new HostServer({port:0,token:'catalog-test',factory});await host.start();
+    const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer catalog-test'}});
+    try {
+      await once(ws,'open');const response=once(ws,'message');
+      ws.send(JSON.stringify({v:1,type:'get_model_catalog',engine:'codex',requestId:'draft'}));
+      const [raw]=await response;const frame=JSON.parse(raw.toString());
+      expect(frame).toMatchObject({type:'model_catalog',engine:'codex',requestId:'draft',models:expect.arrayContaining([expect.objectContaining({provider:'codex',id:'gpt-fake'})])});
+      expect(await factory.list()).toEqual([]);
+    }finally{ws.close();await host.close();}
   });
 
   it("creates a thread per PI Coffee session id, lists it under that id, and resumes it from a fresh server", async () => {

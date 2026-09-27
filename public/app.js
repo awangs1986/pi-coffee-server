@@ -67,6 +67,7 @@ let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
 let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
+let catalogRequest = null, draftModel = null, historyReady = false;
 let entries = [];
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
@@ -75,7 +76,7 @@ const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
   let available=[];try{const response=await fetch("/api/engines");if(response.ok)available=(await response.json()).engines??[];}catch{}
-  engineAvailability=available;renderProjectContext();
+  engineAvailability=available;renderProjectContext();loadDraftModels();
 }
 void loadEngines();
 let requestNumber = 0;
@@ -133,7 +134,17 @@ function toggleBrandMenu() {
 }
 
 // ---------- Agent settings menu ----------
-const modelControlsLocked = () => !!modelPending || !connected || !opened;
+const draftCodex = () => !activeId && !pendingOpenId && $("#task-kind").value === "project" && $("#task-engine").value === "codex";
+const modelControlsLocked = () => !!modelPending || !connected || (!opened && !draftCodex());
+function loadDraftModels() {
+  if (!connected || !draftCodex() || !engineAvailability.some(e=>e.id==='codex' && e.available && e.modelCatalog)) return;
+  catalogRequest=requestId("catalog");
+  send({v:1,type:"get_model_catalog",engine:"codex",requestId:catalogRequest});
+}
+function flushFirstPrompt() {
+  if (!historyReady || modelPending || queuedPrompt === null) return;
+  const q=queuedPrompt;queuedPrompt=null;submitPrompt(q.text,q.images);
+}
 function sourceLabel(source) {
   return source === 'relay' ? 'Relay' : 'Native';
 }
@@ -809,7 +820,7 @@ function connectSocket() {
   clearTimeout(reconnectTimer);
   queuedRequests.clear();
   if (socket) { socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null; try { socket.close(); } catch { /* ignore */ } }
-  opened = false;
+  opened = false;historyReady=false;
   pendingOpenId = null;
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(scheme + '//' + location.host + '/ws');
@@ -818,6 +829,7 @@ function connectSocket() {
   ws.onopen = () => {
     setConnection('已连接', 'ready');
     send({ v: 1, type: 'list_sessions' });
+    loadDraftModels();
     if (activeId) openSession(activeId).catch(e=>toast(e.message));
     else if(prepareNew){prepareNew=false;openSession(null).catch(e=>toast(e.message));}
   };
@@ -866,7 +878,7 @@ async function openSession(id) {
 }
 function afterOpened() {
   refreshComposer();
-  if(supports('models'))send({ v: 1, type: 'get_models' });
+  if(supports('models') && !modelPending)send({ v: 1, type: 'get_models' });
   if(supports('commands'))send({ v: 1, type: 'get_commands' });
   if(supports('stats'))send({ v: 1, type: 'get_stats' });
   if (pluginsWaiting && supports('extensions')) send({ v: 1, type: 'get_extensions' });
@@ -900,18 +912,25 @@ function handleFrame(frame, ws) {
       setStreaming(Boolean(frame.state && frame.state.isStreaming));
       renderHeader();
       renderSessionList();
+      historyReady=false;catalogRequest=null;
+      if(draftModel && engine==='codex'){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       afterOpened();
       return;
     case 'history':
       if (frame.sessionId !== activeId) return;
       renderHistory(frame);
       if(uncertainTask===activeId)pushNote("上一条请求的交付状态尚不确定，不会自动重发。请先核查历史和运行状态，再决定是否重试。",true);
-      if (queuedPrompt !== null) { const q = queuedPrompt; queuedPrompt = null; submitPrompt(q.text, q.images); }
+      historyReady=true;flushFirstPrompt();
       return;
+    case 'model_catalog':
+      if(!draftCodex() || frame.requestId!==catalogRequest || frame.engine!=='codex')return;
+      catalogRequest=null;models={...frame,thinkingLevels:[],thinkingLevel:''};
+      if(draftModel && models.models.some(m=>m.provider===draftModel.provider && m.id===draftModel.id))models.current=draftModel;
+      renderModels();refreshComposer();return;
     case 'models':
       if(frame.sessionId && frame.sessionId!==activeId)return;
       models = frame;modelPending=null;refreshComposer();
-      renderModels();
+      renderModels();flushFirstPrompt();
       return;
     case 'commands':
       commands = Array.isArray(frame.commands) ? frame.commands : [];
@@ -1414,6 +1433,7 @@ ui.model.addEventListener('change', () => {
   chooseModel(provider,rest.join('/'));
 });
 function chooseModel(provider,id) {
+  if(!opened && draftCodex()){draftModel={provider,id};models={...models,current:draftModel};renderModels();refreshComposer();return;}
   modelPending=requestId('model');refreshComposer();
   send({v:1,type:'set_model',requestId:modelPending,provider,id});
 }
@@ -1804,7 +1824,7 @@ function switchSession(id) {
   ui.projectManage.open = false;
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;workspaceSync=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;workspaceSync=null;
   activeId = id;
   rememberTask(id);
   streaming = false;
@@ -1823,7 +1843,7 @@ function newSession(focus = true) {
   ui.projectManage.open = false;
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;
   engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
@@ -1952,8 +1972,8 @@ async function loadWorkspace() {
     else {workspaceChanges=null;workspaceSync=null;renderSyncState();for(const id of ['migrate-workspace','checkpoint-workspace','pull-request'])$('#'+id).classList.add('hidden');selectedChangedPath=null;if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();}
   } catch(e) {if(workspaceState){workspaceSync={...workspaceSync,state:'unknown',error:e.message};renderSyncState();renderProjectContext();}}
 }
-$('#task-engine').addEventListener('change',()=>{creationRequest=null;saveCreation();renderProjectContext();});
-$('#task-kind').addEventListener('change',()=>{creationRequest=null;saveCreation();renderProjectContext();});
+$('#task-engine').addEventListener('change',()=>{creationRequest=null;catalogRequest=null;draftModel=null;models=null;engine=$('#task-engine').value;closeAgentMenu();saveCreation();refreshComposer();loadDraftModels();});
+$('#task-kind').addEventListener('change',()=>{creationRequest=null;catalogRequest=null;draftModel=null;models=null;closeAgentMenu();saveCreation();refreshComposer();engine=$('#task-engine').value;loadDraftModels();});
 $('#create-task').addEventListener('click',async()=>{
   if(activeId && !workspaceState?.conversations.some(c=>c.id===activeId)){
     const id=activeId,workspaceKind=$('#task-kind').value,projectId=ui.projectSelect.value;

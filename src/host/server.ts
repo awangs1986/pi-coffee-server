@@ -551,6 +551,12 @@ class HostSocket implements SessionSink {
         case "abort":
           await this.abort(frame);
           break;
+        case "get_model_catalog": {
+          if(!this.factory.modelCatalog)throw new Error("Model discovery unavailable on this Host");
+          const catalog=await this.factory.modelCatalog(frame.engine);
+          this.send({v:1,type:"model_catalog",engine:frame.engine,...rid(frame),...catalog});
+          break;
+        }
         case "get_models": {
           if (!this.session || !this.opened) throw new NotOpenError();
           const models = await this.session.getModels();
