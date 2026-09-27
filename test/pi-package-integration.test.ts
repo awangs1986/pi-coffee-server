@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -28,9 +28,11 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     models: [{ id: "fixture", name: "fixture", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 1024 }],
   } } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ compaction: { enabled: false }, retry: { enabled: false } }));
+  const toolsFile=join(root,'native-tools.json'), inspector=join(root,'inspect.mjs');
+  await writeFile(inspector,`import {writeFileSync} from 'node:fs';export default function(pi){pi.on('session_start',()=>writeFileSync(${JSON.stringify(toolsFile)},JSON.stringify(pi.getAllTools())));}`);
   const host = new HostServer({ host: "127.0.0.1", port: 0, factory: new RpcPiSessionFactory({
     cwd: root, agentDir, sessionDir: join(root, "sessions"), provider: "fixture", model: "fixture", args: ["--offline"],
-    extensions: runtime.resolvePiExtensions({}), skills: runtime.resolvePiSkills({}),
+    extensions: [...runtime.resolvePiExtensions({}), inspector], skills: runtime.resolvePiSkills({}),
     env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_SCHEDULER_DIR: join(root, "admission") },
   }) });
   let web: WebServer | undefined;
@@ -47,6 +49,12 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     await web.start();
     const first = await connect(); first.socket.send(JSON.stringify({ v: 1, type: "open" }));
     await expect.poll(() => first.frames.find(frame => frame.type === "opened"), { timeout: 15000 }).toBeTruthy();
+    const tools=JSON.parse(await readFile(toolsFile,'utf8'));
+    expect(tools.filter((t:any)=>t.name==='web_search')).toHaveLength(1);
+    expect(tools.some((t:any)=>t.name==='research_seal')).toBe(false);
+    const search=tools.find((t:any)=>t.name==='web_search');
+    expect(search.parameters.properties.provider).toBeDefined();
+    expect(search.parameters.properties.delegate).toBeUndefined();
     const id = first.frames.find(frame => frame.type === "opened").sessionId;
     first.socket.send(JSON.stringify({ v: 1, type: "prompt", requestId: "package-probe", text: "Reply with the test marker." }));
     await expect.poll(() => first.frames.some(frame => frame.type === "event" && frame.event.type === "agent_settled"), { timeout: 15000 }).toBe(true);

@@ -13,3 +13,11 @@ Publish each GitHub main before its Gitea mirror and verify each pair's SHA. The
 Pi package revision: `0278a99d1a83084113afa057467e7271c12cdb74`. The container installation permits the package preparation step so a Git dependency supplies compiled exports before Server compilation.
 
 The lockfile uses the explicit HTTPS Git URL, not npm's generated SSH shorthand. This allows a public fresh installation without a GitHub SSH key. Current-main checks and fresh-clone acceptance are recorded in Server #19. The deployment image allows `npm ci` lifecycle scripts because the owned Git package must build its exports.
+
+## Official-only Web upgrade — Server #28
+
+The Server pins Pi `1ec49a93048f0e441806cd17da7b245972e5f51a` (Pi #71). Official pi-web-access owns all Web tools and native commands. The old Coffee search transport, research_seal and automatic search delegation are removed. Host, Web, native adapters, task paths, model allowlists and native session stores are retained.
+
+The owner accepted the official cache under the shared Pi configuration directory. Native current-session records gate result retrieval; this cache is not included in task bundles and needs separate backup/retention management. Configure Serper in the native web-search.json location selected by PI_CODING_AGENT_DIR, using workflow none and maxInlineContentChars 4000. Keep credentials private. Disable global duplicate pi-web-access extension autoload through the documented package resource filter; the pinned dependency supplies the active extension. Do not enable both.
+
+The consumer RPC test checks exactly one web_search, official provider schema, no Coffee delegate parameter or research_seal, a model response and reconnect history. Pi package tests cover direct Chat/Work searches, optional explicit research children, multi-query/provider-error handling and generic large-tool-result bounds. Official custom session recovery entries may retain complete results; they are distinct from bounded tool messages sent to the model.
