@@ -91,3 +91,20 @@ See [Arena navigation and review](arena-navigation.md). Global Project/archive
 commands belong in the upper-left brand menu. Review is opt-in through the folder
 icon. Pi credential import into Web Server is a future possibility, not an accepted
 implementation or a change to native Codex/Claude authentication.
+
+## Codex model selection before task creation — 2026-09-27
+
+[Server #21](http://gitea:3000/awangs/pi-coffee-server/issues/21) corrects the
+new-task model picker. A Work draft with Codex selected can read the native model
+catalog and choose a model before creating the task or sending its first message.
+Discovery runs through the authenticated, user-scoped Host factory; it must not
+create a native thread, clone a project, run a model turn, or expose credentials.
+The Host advertises `modelCatalog` in Codex engine availability; older Hosts retain
+the existing model selection after task creation.
+
+Selection remains local to the draft. Switching Agent or task discards it, and
+late discovery replies cannot replace the current Agent's choices. Creating the
+task applies an explicitly selected model through the normal session interface.
+The first prompt waits for history and model confirmation; a rejected model
+restores the draft without sending it using a fallback model. Reasoning controls
+continue to use the opened session's authoritative capabilities.

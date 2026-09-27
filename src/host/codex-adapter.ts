@@ -133,6 +133,16 @@ export class CodexSessionFactory implements PiSessionFactory {
     return server;
   }
 
+  async modelCatalog(_engine:"codex"):Promise<PiModels> {
+    // A short-lived native connection lists models only: no thread/start or turn/start.
+    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+      env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
+    try {
+      await server.start("pi_coffee_models","0.1.0");
+      return codexModelChoices(await server.request("model/list",{}) as Obj,this.options.model,this.options.reasoningEffort);
+    }finally{await server.stop();}
+  }
+
   private async loadMapping(): Promise<Map<string, string>> {
     if (this.mapping) return this.mapping;
     try {
@@ -492,32 +502,7 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {}) as Obj;
-    const data = Array.isArray(result.data) ? (result.data as Obj[]) : [];
-    // The configured model wins even when the catalog does not list it (custom provider);
-    // only an unconfigured session falls back to Codex's default.
-    const current = this.model === undefined
-      ? data.find((model) => model.isDefault === true)
-      : data.find((model) => model.model === this.model || model.id === this.model);
-    const efforts = (model: Obj | undefined) => Array.isArray(model?.supportedReasoningEfforts)
-      ? (model!.supportedReasoningEfforts as Obj[]).map((option) => String(option.reasoningEffort))
-      : [];
-    const currentId = typeof current?.model === "string" ? current.model : this.model;
-    const levels = efforts(current);
-    const level = this.effort ?? (typeof current?.defaultReasoningEffort === "string" ? current.defaultReasoningEffort : levels[0] ?? "medium");
-    const choices = data.filter((model) => model.hidden !== true).map((model) => ({
-      provider: "codex",
-      id: String(model.model ?? model.id),
-      ...(efforts(model).length > 0 ? { reasoning: true } : {}),
-    }));
-    // A custom model_provider (config.toml) can name models the built-in
-    // catalog does not know; the configured one must still be selectable.
-    if (currentId !== undefined && !choices.some((choice) => choice.id === currentId)) choices.unshift({ provider: "codex", id: currentId });
-    return {
-      models: choices,
-      current: currentId === undefined ? null : { provider: "codex", id: currentId },
-      thinkingLevel: level,
-      thinkingLevels: levels,
-    };
+    return codexModelChoices(result,this.model,this.effort);
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
@@ -811,4 +796,33 @@ function parseWindow(raw: Json | undefined): RateLimitWindow | undefined {
     windowMinutes: obj.windowDurationMins,
     resetsAt: typeof obj.resetsAt === "number" ? new Date(obj.resetsAt * 1000).toISOString() : null,
   };
+}
+
+function codexModelChoices(result:Obj,configuredModel?:string,configuredEffort?:string):PiModels {
+    const data = Array.isArray(result.data) ? (result.data as Obj[]) : [];
+    // The configured model wins even when the catalog does not list it (custom provider);
+    // only an unconfigured session falls back to Codex's default.
+    const current = configuredModel === undefined
+      ? data.find((model) => model.isDefault === true)
+      : data.find((model) => model.model === configuredModel || model.id === configuredModel);
+    const efforts = (model: Obj | undefined) => Array.isArray(model?.supportedReasoningEfforts)
+      ? (model!.supportedReasoningEfforts as Obj[]).map((option) => String(option.reasoningEffort))
+      : [];
+    const currentId = typeof current?.model === "string" ? current.model : configuredModel;
+    const levels = efforts(current);
+    const level = configuredEffort ?? (typeof current?.defaultReasoningEffort === "string" ? current.defaultReasoningEffort : levels[0] ?? "medium");
+    const choices = data.filter((model) => model.hidden !== true).map((model) => ({
+      provider: "codex",
+      id: String(model.model ?? model.id),
+      ...(efforts(model).length > 0 ? { reasoning: true } : {}),
+    }));
+    // A custom model_provider (config.toml) can name models the built-in
+    // catalog does not know; the configured one must still be selectable.
+    if (currentId !== undefined && !choices.some((choice) => choice.id === currentId)) choices.unshift({ provider: "codex", id: currentId });
+    return {
+      models: choices,
+      current: currentId === undefined ? null : { provider: "codex", id: currentId },
+      thinkingLevel: level,
+      thinkingLevels: levels,
+    };
 }

@@ -276,3 +276,13 @@ The [canonical contract](spec/skill-management.md) defines `list`, `detail`,
 `scope` and an optional registered `conversationId`. It does not add Agent tools
 or alter WebSocket model/session protocols. Old Hosts return 404; Web must show
 management as unavailable. File/source ownership and all mutations remain on VM.
+
+### Draft Codex model discovery
+
+When `/api/engines` advertises Codex `modelCatalog: true`, an authenticated browser
+may send `{v:1,type:"get_model_catalog",engine:"codex",requestId:"..."}` before
+opening a session. The scoped Host replies with `type:"model_catalog"`, the same
+engine and request ID, and the normal model-list fields. Only `codex` is accepted.
+Discovery does not create a task or native thread. The browser ignores replies
+for abandoned drafts and applies selections through `set_model` after `opened`,
+waiting for confirmation before the first prompt.
