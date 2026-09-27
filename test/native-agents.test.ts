@@ -35,6 +35,47 @@ it('fixes Agent at Task creation, scopes Model controls and ignores obsolete soc
 it('keeps Pi available and disables native choices on a legacy Host',async()=>{
  await setup(true);const options=[...document.querySelector<HTMLSelectElement>('#task-engine')!.options];expect(options.map(o=>o.disabled)).toEqual([false,true,true]);
 });
+it.each(['steer','follow_up'])('keeps the active Pi reply and Stop available after a rejected %s command',async(mode)=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});
+ const emit=(event:unknown)=>ws.receive({type:'event',sessionId:id,event});
+ emit({type:'agent_start'});emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Still '}});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ document.querySelector<HTMLSelectElement>('#mode')!.value=mode;
+ prompt.value='/harness work';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const queued=app.frames.find(f=>f.type==='prompt');expect(queued).toMatchObject({mode,text:'/harness work'});
+ ws.receive({type:'ack',operation:mode,requestId:queued.requestId});
+ ws.receive({type:'error',code:'operation_failed',requestId:queued.requestId,message:'Extension commands cannot be queued.'});
+ expect(document.querySelector('#thread')?.textContent).toContain('Extension commands cannot be queued.');
+ expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#mode-wrap')?.classList.contains('hidden')).toBe(false);
+ emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'working.'}});await vi.advanceTimersByTimeAsync(50);
+ expect(document.querySelectorAll('.msg.assistant')).toHaveLength(1);
+ expect(document.querySelector('.msg.assistant')?.textContent).toContain('Still working.');
+ document.querySelector<HTMLButtonElement>('#stop')!.click();expect(app.frames.at(-1)).toMatchObject({type:'abort'});
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);
+ const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
+ expect(document.querySelector('#thread')?.textContent).not.toContain('交付状态尚不确定');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+it.each([false,true])('allows retry after a rejected Pi prompt (queued input promoted to prompt: %s)',async(wasRunning)=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:wasRunning}});
+ ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='first try';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const first=app.frames.find(f=>f.type==='prompt');
+ ws.receive({type:'ack',operation:'prompt',requestId:first.requestId});
+ ws.receive({type:'error',code:'operation_failed',requestId:first.requestId,message:'No API key found for the selected model.'});
+ expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(true);
+ expect(document.querySelector('#mode-wrap')?.classList.contains('hidden')).toBe(true);
+ prompt.value='explicit retry';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const retry=app.frames.filter(f=>f.type==='prompt');expect(retry).toHaveLength(2);expect(retry[1].mode).toBeUndefined();
+ expect(retry[1].text).toBe('explicit retry');expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
+});
 it('renders replayed native items once, answers a native question and never resends an uncertain prompt',async()=>{
  const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value='codex';document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];

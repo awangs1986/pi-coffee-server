@@ -935,6 +935,53 @@ describe("Host WebSocket seam", () => {
     }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
+  it("correlates a rejected RPC prompt over WebSocket and accepts an explicit retry",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-host-rejection-"));
+    const {workspaces,conversation}=await workspaceConversation(root,"rejection");
+    const factory=new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),sessionDir:join(root,"sessions"),cwd:conversation.cwd});
+    server=new HostServer({port:0,host:"127.0.0.1",factory,workspaces});await server.start();
+    try {
+      const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+      expect(await frames.next()).toMatchObject({type:"opened"});await frames.next();
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"rejected",text:"reject: no provider key"}));
+      expect(await frames.next()).toMatchObject({type:"ack",operation:"prompt",requestId:"rejected"});
+      expect(await frames.next()).toMatchObject({type:"error",code:"operation_failed",requestId:"rejected",message:"No API key found for the selected model."});
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"retry",text:"retry explicitly"}));
+      expect(await frames.next()).toMatchObject({type:"ack",operation:"prompt",requestId:"retry"});
+      expect(await frames.next()).toMatchObject({type:"event",event:{type:"agent_start"}});
+      expect(await frames.next()).toMatchObject({type:"event",event:{assistantMessageEvent:{delta:"echo: retry explicitly"}}});
+      await frames.next();expect(await frames.next()).toMatchObject({type:"event",event:{type:"agent_settled"}});
+      socket.close();
+    }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it.each(["steer","follow_up"] as const)("keeps the original RPC run active after a rejected %s command",async(mode)=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-host-queue-rejection-"));
+    const {workspaces,conversation}=await workspaceConversation(root,"queue-rejection");
+    const factory=new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),sessionDir:join(root,"sessions"),cwd:conversation.cwd});
+    server=new HostServer({port:0,host:"127.0.0.1",factory,workspaces});await server.start();
+    try {
+      const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+      await frames.next();await frames.next();
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"original",text:"ask: Hold the run"}));
+      expect(await frames.next()).toMatchObject({type:"ack",requestId:"original"});
+      expect(await frames.next()).toMatchObject({type:"event",event:{type:"agent_start"}});await frames.next();
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"queued",mode,text:"/harness work"}));
+      expect(await frames.next()).toMatchObject({type:"ack",operation:mode,requestId:"queued"});
+      expect(await frames.next()).toMatchObject({type:"error",code:"operation_failed",requestId:"queued",message:"Extension commands cannot be queued."});
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"parallel",text:"must not replace the active run"}));
+      expect(await frames.next()).toMatchObject({type:"error",code:"busy",requestId:"parallel"});
+      socket.send(encodeFrame({v:1,type:"abort",requestId:"stop"}));
+      expect([await frames.next(),await frames.next()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({type:"ack",operation:"abort",requestId:"stop"}),
+        expect.objectContaining({type:"event",event:expect.objectContaining({type:"agent_settled"})}),
+      ]));
+      socket.close();
+    }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
   it("persists interruption after a real RPC process dies and reopens without replaying its run",async()=>{
     const root=mkdtempSync(join(tmpdir(),"coffee-host-crash-"));
     const {workspaces,conversation}=await workspaceConversation(root,"demo");
