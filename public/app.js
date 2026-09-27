@@ -926,6 +926,7 @@ function handleFrame(frame, ws) {
       if(!draftCodex() || frame.requestId!==catalogRequest || frame.engine!=='codex')return;
       catalogRequest=null;models={...frame,thinkingLevels:[],thinkingLevel:''};
       if(draftModel && models.models.some(m=>m.provider===draftModel.provider && m.id===draftModel.id))models.current=draftModel;
+      draftModel=models.current;
       renderModels();refreshComposer();return;
     case 'models':
       if(frame.sessionId && frame.sessionId!==activeId)return;

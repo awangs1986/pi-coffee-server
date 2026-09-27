@@ -91,6 +91,7 @@ describe("Codex app-server adapter", () => {
       ws.send(JSON.stringify({v:1,type:'get_model_catalog',engine:'codex',requestId:'draft'}));
       const [raw]=await response;const frame=JSON.parse(raw.toString());
       expect(frame).toMatchObject({type:'model_catalog',engine:'codex',requestId:'draft',models:expect.arrayContaining([expect.objectContaining({provider:'codex',id:'gpt-fake'})])});
+      expect(frame.current).toEqual({provider:'codex',id:'gpt-fake-mini'});
       expect(await factory.list()).toEqual([]);
     }finally{ws.close();await host.close();}
   });
