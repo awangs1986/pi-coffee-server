@@ -487,7 +487,9 @@ function appendSessionGroups(parent,list){
 // Native drag payloads are accepted only when this page started the drag.
 let sidebarDragId=null,sidebarSaving=false;
 function sidebarDropTarget(node,projectId){
-  node.addEventListener('dragover',event=>{if(!sidebarDragId || sidebarSaving)return;event.preventDefault();event.dataTransfer.dropEffect='move';node.classList.add('drop-target');});
+  const accept=event=>{if(!sidebarDragId || sidebarSaving)return;event.preventDefault();event.dataTransfer.dropEffect='move';node.classList.add('drop-target');};
+  node.addEventListener('dragenter',accept);
+  node.addEventListener('dragover',accept);
   node.addEventListener('dragleave',event=>{if(!node.contains(event.relatedTarget))node.classList.remove('drop-target');});
   node.addEventListener('drop',event=>{
     event.preventDefault();event.stopPropagation();node.classList.remove('drop-target');
