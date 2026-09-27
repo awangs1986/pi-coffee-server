@@ -29,6 +29,8 @@ export interface RpcPiSessionFactoryOptions {
   cliPath?: string;
   provider?: string;
   model?: string;
+  /** Exact provider/model IDs selectable through this Host; absent means unrestricted. */
+  allowedModels?: string[];
   args?: string[];
   /** Additional native Pi extensions loaded for every Host session. */
   extensions?: string[];
@@ -71,6 +73,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   private readonly options: RpcPiSessionFactoryOptions;
 
   constructor(options: RpcPiSessionFactoryOptions = {}) {
+    if(options.allowedModels && (options.allowedModels.length===0 || options.allowedModels.some(id=>!/^([^\s/]+)\/(\S+)$/.test(id))))throw new Error("Pi allowedModels must contain exact provider/model IDs");
     this.options = options;
   }
 
@@ -101,7 +104,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       },
       args,
     });
-    const session = new RpcPiSession(client, extensionPathsFromArgs(args));
+    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels);
     await session.start();
     return session;
   }
@@ -192,7 +195,7 @@ class RpcPiSession implements PiSession {
   private runGeneration = 0;
   private running = false;
 
-  constructor(client: RpcClient, configuredExtensions: readonly string[] = []) {
+  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[]) {
     this.client = client;
     this.configuredExtensions = configuredExtensions;
     this.unsubscribe = client.onEvent((event) => {
@@ -243,7 +246,19 @@ class RpcPiSession implements PiSession {
     }
   }
 
+  private modelAllowed(provider:unknown,id:unknown):boolean {
+    return !this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`));
+  }
+
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    if(this.allowedModels && /^\/model(?:\s|$)/.test(text.trim())){
+      const match=/^\/model\s+([^\s/]+)\/(\S+)\s*$/.exec(text.trim());
+      if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+this.allowedModels.join(', '));
+      if(images?.length)throw new Error('Send attachments separately from a model selection command');
+      await this.setModel(match[1],match[2]);
+      for(const listener of this.listeners)listener({type:'agent_settled'});
+      return;
+    }
     // The RPC package's wire image shape is intentionally the same compact
     // shape used by PI Coffee.  Keep the cast local to this adapter.
     this.running = true;
@@ -267,6 +282,11 @@ class RpcPiSession implements PiSession {
    * failure so the Host releases the run instead of staying busy forever.
    */
   private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<void> {
+    if(this.allowedModels){
+      if(/^\/model(?:\s|$)/.test(command.message.trim()))throw new Error('Change models when the current turn has finished');
+      const state=await this.client.getState();
+      if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');
+    }
     const client = this.client as unknown as { send(command: unknown): Promise<unknown> };
     const response = await client.send({ ...command, ...(command.images === undefined ? {} : { images: command.images }) }) as { success?: boolean; error?: string } | undefined;
     if (response && response.success === false) {
@@ -315,14 +335,14 @@ class RpcPiSession implements PiSession {
     ]);
     const current = state.model as { provider?: unknown; id?: unknown } | undefined;
     return {
-      models: available.map((model) => ({
+      models: available.filter(model=>this.modelAllowed(model.provider,model.id)).map((model) => ({
         source: (process.env.PI_COFFEE_RELAY_PROVIDERS ?? "cpa").split(",").map(v=>v.trim()).includes(model.provider) ? "relay" as const : "native" as const,
         provider: model.provider,
         id: model.id,
         contextWindow: model.contextWindow,
         reasoning: model.reasoning,
       })),
-      current: current && typeof current.provider === "string" && typeof current.id === "string"
+      current: current && this.modelAllowed(current.provider,current.id) && typeof current.provider === "string" && typeof current.id === "string"
         ? { provider: current.provider, id: current.id, source: (process.env.PI_COFFEE_RELAY_PROVIDERS ?? "cpa").split(",").map(v=>v.trim()).includes(current.provider) ? "relay" as const : "native" as const }
         : null,
       thinkingLevel: String(state.thinkingLevel),
@@ -331,6 +351,7 @@ class RpcPiSession implements PiSession {
   }
 
   async setModel(provider: string, id: string): Promise<void> {
+    if(!this.modelAllowed(provider,id))throw new Error("Pi model is not allowed: "+provider+"/"+id);
     await this.client.setModel(provider, id);
   }
 

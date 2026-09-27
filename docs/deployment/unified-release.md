@@ -15,3 +15,28 @@
 Signed-cookie authentication requires a new login after Web restart, even with a configured signing secret. This keeps logout revocation effective across restarts; task execution and native sessions continue on Host. Route-file authentication retains its existing session-store behavior.
 
 A successful native model response alone is insufficient release evidence.
+
+## Pi model selection policy
+
+`PI_COFFEE_PI_ALLOWED_MODELS` optionally limits Host-managed Pi sessions to a
+comma-separated list of exact `provider/model-id` values. Missing configuration
+preserves native discovery; an explicitly empty or malformed list fails startup.
+The Pi adapter filters discovery and rejects other `set_model` values. It handles
+`/model provider/model-id` locally, without a model turn, using the same policy.
+Model commands cannot be queued into an active turn. A resumed session whose
+current model is no longer approved must select an allowed model before sending;
+the adapter does not silently run it with a different model. Codex and Claude Code
+are unaffected. Existing native credentials remain in the VM.
+
+The owner's deployment policy from [Server #22](http://gitea:3000/awangs/pi-coffee-server/issues/22):
+
+```ini
+PI_COFFEE_PI_ALLOWED_MODELS=openrouter/meta/muse-spark-1.3-contributor,antigravity/gemini-3.8-flash
+PI_COFFEE_PROVIDER=openrouter
+PI_COFFEE_MODEL=meta/muse-spark-1.3-contributor
+```
+
+Only approved models available in the native registry are offered. Missing native
+registration/authentication is not replaced with a fabricated model definition.
+This governs Host-managed model selection, not standalone CLI installations or
+arbitrary programs launched in the owner's unrestricted VM.

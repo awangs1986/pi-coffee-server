@@ -88,6 +88,7 @@ async function run(selectedRole: Role): Promise<void> {
     agentDir: process.env.PI_COFFEE_AGENT_DIR,
     provider: process.env.PI_COFFEE_PROVIDER,
     model: process.env.PI_COFFEE_MODEL,
+    allowedModels: process.env.PI_COFFEE_PI_ALLOWED_MODELS === undefined ? undefined : envList("PI_COFFEE_PI_ALLOWED_MODELS", ","),
     extensions: resolvePiExtensions(),
   };
   const sessionRoot = process.env.PI_COFFEE_SESSION_DIR?.trim();
