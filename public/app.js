@@ -434,6 +434,9 @@ function sessionTitle(session) {
 }
 function renderSessionList() {
   if(sidebarDragId)return;
+  const grouped=workspaceState?.sidebar?.showGroups!==false;
+  $('#show-groups').setAttribute('aria-checked',String(grouped));
+  $('#show-groups').disabled=!workspaceState || sidebarSaving;
   ui.sessionList.innerHTML = '';
   renderSearchResults();
   let known = sessions.slice();
@@ -442,12 +445,12 @@ function renderSessionList() {
     for(const c of workspaceState.conversations) if(!known.some(s=>s.id===c.id)) known.push({id:c.id,preview:c.creationState==='failed'?'创建失败 · 点击重试':c.creationState==='creating'?'创建中 · 点击恢复':c.workspaceKind==='chat'?'Chat 任务':'Work 任务',updatedAt:c.createdAt,running:false});
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
-  if (known.length === 0 && !workspaceState?.projects.length) {
+  if (known.length === 0 && (!grouped || !workspaceState?.projects.length)) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
     return;
   }
 
-  if (!workspaceState) { appendSessionGroups(ui.sessionList,known); return; }
+  if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known); return; }
   const assigned=new Map(workspaceState.projects.map(p=>[p.id,[]]));
   const ungrouped=[];
   for(const session of known){
@@ -504,7 +507,7 @@ async function saveSidebar(change){
     ++workspaceRequestSeq; // Ignore workspace reads started before this persisted change.
     if(workspaceState)workspaceState.sidebar=sidebar;
     renderSessionList();
-  }catch(error){toast(error.message);}finally{sidebarSaving=false;}
+  }catch(error){toast(error.message);}finally{sidebarSaving=false;$('#show-groups').disabled=!workspaceState;}
 }
 
 function sessionRow(session) {
@@ -592,6 +595,7 @@ function openSessionMenu(session, anchor) {
   menuNode.style.left = Math.min(rect.left, window.innerWidth - 160) + 'px';
 }
 ui.brandBtn?.addEventListener('click', toggleBrandMenu);
+$('#show-groups').addEventListener('click',()=>saveSidebar({action:'sidebar_display',showGroups:workspaceState?.sidebar?.showGroups===false}));
 ui.themeToggle?.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 ui.agentBtn?.addEventListener('click', toggleAgentMenu);
 ui.agentRows.source?.addEventListener('click', () => openAgentPane('source'));

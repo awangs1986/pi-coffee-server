@@ -112,3 +112,21 @@ conversation `id` and a known project `projectId` (or null), and `sidebar_collap
 with a known `projectId` and boolean `collapsed`. GET returns `sidebar.assignments`
 and `sidebar.collapsed`; absent metadata preserves automatic grouping. These
 operations do not acquire execution lifecycle locks or start/stop any Agent.
+
+## Brand mark and optional grouping
+
+[Server #25](http://gitea:3000/awangs/pi-coffee-server/issues/25): the sidebar
+brand mark is a monochrome black/white pixel-art coffee cup, rendered as an
+inline crisp-edged SVG. Preserve the existing brand menu and compact layout.
+
+The PI Coffee menu contains a **Show groups** (`显示分组`) checkbox, checked by
+default when no preference exists. Unchecking restores the original
+attention/time/terminal list, with no project or Ungrouped headings. Rechecking
+restores project groups, existing manual placements and collapsed states.
+Switching never opens a conversation, changes its execution identity, clears
+placement data or interrupts a turn. Active/archived filtering still applies.
+
+`sidebar_display` accepts only boolean `showGroups`; the authenticated user's
+Host persists `sidebar.showGroups` alongside assignments and collapsed groups.
+The preference survives refresh and Host restart, without affecting other users.
+Failed saves keep the previous choice and list with an explicit error.

@@ -5,7 +5,7 @@ afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();loca
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
- const sidebar={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
+ const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
  const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
@@ -15,6 +15,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  if(body.action==='sidebar_display'){sidebar.showGroups=body.showGroups;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_collapse'){sidebar.collapsed=body.collapsed?[body.projectId]:[];return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
   if(body.action==='project'){const p={id:'new-project',name:body.name,branch:'main'};projects.push(p);return {ok:true,json:async()=>p};}
@@ -334,4 +335,18 @@ it('keeps prior sidebar placement on failed saves and supports the move menu',as
  const retry=moveSelect();retry.value='p';retry.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelector('[data-sidebar-project="p"] .session-item')?.getAttribute('data-session-id')).toBe(id);
  expect(app.conversations[0].workspaceKind).toBe('chat');expect(app.conversations[0].projectId).toBeUndefined();
+});
+
+it('defaults to groups, restores the original list when unchecked, and keeps saved folds and placements',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#project-select')!.value='p';document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const toggle=()=>document.querySelector<HTMLButtonElement>('[role="menuitemcheckbox"][id="show-groups"]')!;
+ expect(toggle()).not.toBeNull();expect(toggle().getAttribute('aria-checked')).toBe('true');
+ document.querySelector<HTMLButtonElement>('.project-group-toggle')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();toggle().click();await vi.advanceTimersByTimeAsync(20);
+ expect(toggle().getAttribute('aria-checked')).toBe('false');expect(document.querySelector('.project-group')).toBeNull();
+ expect(document.querySelector('#session-list .session-item')).not.toBeNull();expect(document.querySelector('#session-list')!.textContent).not.toContain('未分组');
+ const openCount=app.frames.filter(f=>f.type==='open').length;
+ toggle().click();await vi.advanceTimersByTimeAsync(20);
+ expect(toggle().getAttribute('aria-checked')).toBe('true');expect(document.querySelector<HTMLUListElement>('.project-group-list')!.hidden).toBe(true);
+ expect(app.frames.filter(f=>f.type==='open')).toHaveLength(openCount);
 });

@@ -32,7 +32,7 @@ const displayPath=(path:string)=> {
   const parts=path.split('/').flatMap(part=>part.split(BACKSLASH));
   return !parts.some(part=>part==='..' || part==='.pi-coffee') && !privateParts(parts);
 };
-interface State { sidebar?: {assignments:Record<string,string|null>;collapsed:string[]}; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
+interface State { sidebar?: {showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
   private state: State = {version:2,projects:[],conversations:[]};
@@ -133,6 +133,11 @@ export class Workspaces {
     if(projectId!==null)this.project(projectId);
     const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
     this.state.sidebar={...sidebar,assignments:{...sidebar.assignments,[id]:projectId}};
+    await this.save();return this.state.sidebar;
+  }); }
+  async displaySidebar(showGroups:unknown) { return this.mutate(async()=>{
+    if(typeof showGroups!=='boolean')throw new Error('Invalid sidebar display preference');
+    this.state.sidebar={...(this.state.sidebar ?? {assignments:{},collapsed:[]}),showGroups};
     await this.save();return this.state.sidebar;
   }); }
   async collapseSidebar(projectId:unknown,collapsed:unknown) { return this.mutate(async()=>{
