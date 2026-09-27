@@ -380,3 +380,7 @@ The Web owns management controls; each User VM owns native Skill files and execu
 This delivers the Skill portion of ARCH-002; generic extension installation and a
 central marketplace remain outside this change. Deployment evidence is recorded in
 the linked Issues rather than inferred from this decision.
+
+## Pi 0.87.1 on unified main (2026-09-27)
+
+[Server #18](http://gitea:3000/awangs/pi-coffee-server/issues/18) upgrades the four Pi packages to 0.87.1 on the GitHub-authoritative unified repository. Optional MCP compatibility and separately installed Pi Lens are covered by the [acceptance report](docs/reviews/pi-0.87.1-main-20260927.md). Context-fold remains pinned at 0.4.0; the independent context-management redesign is excluded. Publication and deployment identities remain explicit in the Issue.
