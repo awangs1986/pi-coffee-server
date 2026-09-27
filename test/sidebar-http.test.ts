@@ -30,5 +30,12 @@ it('persists scoped sidebar placement and collapse without changing task identit
   await server!.close();await start();expect((await call()).data.sidebar).toEqual({assignments:{chat:p.id},collapsed:[p.id]});
   expect((await call({...move,projectId:null})).status).toBe(200);
   expect((await call()).data.sidebar.assignments.chat).toBeNull();
+  expect((await call({action:'sidebar_display',showGroups:false})).status).toBe(200);
+  expect((await call({action:'sidebar_display',showGroups:'false'})).status).toBe(409);
+  await server!.close();await start();
+  expect((await call()).data.sidebar).toEqual({assignments:{chat:null},collapsed:[p.id],showGroups:false});
+  expect((await call(undefined,'bob')).data.sidebar).toBeUndefined();
+  expect((await call({action:'sidebar_display',showGroups:true})).status).toBe(200);
+  expect((await call()).data.sidebar).toEqual({assignments:{chat:null},collapsed:[p.id],showGroups:true});
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });

@@ -106,7 +106,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .brand:hover { background: var(--hover); }
 .brand-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand-mark { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; font-size: 13px; font-weight: 800; flex: none; }
+.brand-mark { width: 28px; height: 28px; display: grid; place-items: center; flex: none; }
+.brand-mark svg { display: block; }
+.group-check { width: 16px; height: 16px; flex: none; border: 1px solid var(--text-3); border-radius: 3px; display: grid; place-items: center; font-size: 12px; }
+#show-groups[aria-checked="false"] .group-check { color: transparent; }
 .brand-caret { color: var(--text-3); flex: none; transition: transform .15s ease; }
 .brand[aria-expanded="true"] .brand-caret { transform: rotate(180deg); }
 .brand-menu {
