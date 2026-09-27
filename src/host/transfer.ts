@@ -199,7 +199,7 @@ export class TransferServer {
   async inbox(scope:string):Promise<string> {
     if(!this.workspaceFor(scope))return this.inboxFor(scope);
     const base=await this.baseFor(scope);
-    return relative(base,join(await this.workspaceFor(scope)!.dataRoot(this.taskFor(scope)),'inbox')).split(sep).join('/');
+    return relative(base,await this.workspaceFor(scope)!.inboxDirectory(this.taskFor(scope))).split(sep).join('/');
   }
   private async inboxPath(scope:string,writing=false):Promise<string> {
     if(this.workspaceFor(scope) && writing)await this.workspaceFor(scope)!.cwd(this.taskFor(scope));

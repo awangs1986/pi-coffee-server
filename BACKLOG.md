@@ -1,3 +1,5 @@
+> Current task storage: [upgrade-safe task bundles](docs/spec/task-storage.md), tracked in [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).
+
 > Current source placement: [ADR-0021](docs/adr/0021-pi-only-source-authority.md). Pi-only development belongs to GitHub pi-coffee; Host, Web, Relay and native Agent adapters remain here. Older placement statements below are historical.
 
 > Source authority and repository placement: superseded where conflicting by [ADR-0020](docs/adr/0020-unified-github-authority.md). GitHub pi-coffee-server owns Web and Host.

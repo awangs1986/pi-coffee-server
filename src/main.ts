@@ -1,3 +1,4 @@
+import {taskRootForScope} from './host/task-storage.js';
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
@@ -101,11 +102,13 @@ async function run(selectedRole: Role): Promise<void> {
   if (!["read-only", "workspace-write", "danger-full-access"].includes(codexSandbox)) throw new Error("PI_COFFEE_CODEX_SANDBOX must be read-only, workspace-write or danger-full-access");
   if (!["never", "on-request", "untrusted"].includes(codexApproval)) throw new Error("PI_COFFEE_CODEX_APPROVAL must be never, on-request or untrusted");
   const idleTimeoutMs = envNumber("PI_COFFEE_IDLE_TIMEOUT_MS", 10 * 60 * 1000);
+  const taskAccounts=JSON.parse(process.env.PI_COFFEE_TASK_USER_MAP ?? '{}');
+  if(!taskAccounts || typeof taskAccounts!=='object' || Array.isArray(taskAccounts))throw new Error('Invalid task storage user map');
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
     await mkdir(cwd,{recursive:true});
     const workRoot=user ? cwd : process.env.PI_COFFEE_WORK_ROOT ?? cwd;
     const forge=process.env.PI_COFFEE_GITEA_URL && process.env.PI_COFFEE_GITEA_TOKEN && process.env.PI_COFFEE_GITEA_OWNER ? new GiteaClient({baseUrl:process.env.PI_COFFEE_GITEA_URL,token:process.env.PI_COFFEE_GITEA_TOKEN,owner:process.env.PI_COFFEE_GITEA_OWNER}) : undefined;
-    const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge});
+    const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge});
     await workspaces.list();
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const codexOptions={cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
