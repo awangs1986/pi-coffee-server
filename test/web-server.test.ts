@@ -8,6 +8,7 @@ import { gunzipSync } from "node:zlib";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostServer } from "../src/host/server.js";
+import { TransferServer } from "../src/host/transfer.js";
 import type { PiSession, PiSessionFactory } from "../src/host/pi-adapter.js";
 import { WebServer } from "../src/web/server.js";
 import { decodeServerFrame, encodeFrame, type HistoryEntry, type ImageInput, type ServerFrame } from "../src/shared/protocol.js";
@@ -316,5 +317,54 @@ describe("Web Server seam", () => {
     browser.send("not-json");
     await expect(frames.next()).resolves.toMatchObject({ type: "error", code: "invalid_json", fatal: true });
     browser.close();
+  });
+
+  it("streams LocalSend v2 uploads and downloads through the same-origin Web gateway (ADR-0010 §4)", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "coffee-web-localsend-"));
+    const transfer = new TransferServer({ host: "127.0.0.1", port: 0, workdir });
+    await transfer.start();
+    try {
+      host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory(), transfer });
+      await host.start();
+      web = new WebServer({ host: "127.0.0.1", port: 0, hostUrl: `ws://127.0.0.1:${host.address().port}/host` });
+      await web.start();
+
+      const browser = await connect(`ws://127.0.0.1:${web.address().port}/ws`);
+      const frames = new FrameQueue(browser);
+      browser.send(encodeFrame({ v: 1, type: "open" }));
+      const opened = await frames.next();
+      expect(opened.type).toBe("opened");
+      expect(await frames.next()).toMatchObject({ type: "history" });
+      const grant = await frames.next();
+      expect(grant.type).toBe("transfer");
+      if (grant.type !== "transfer") throw new Error("expected transfer grant");
+
+      const webBase = `http://127.0.0.1:${web.address().port}`;
+      const prepare = await fetch(`${webBase}/api/localsend/v2/prepare-upload?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          info: { alias: "PI Coffee Web", version: "2.0" },
+          files: { f1: { id: "f1", fileName: "spec.txt", size: 11, fileType: "text/plain" } },
+        }),
+      });
+      expect(prepare.status).toBe(200);
+      const prepared = (await prepare.json()) as { sessionId: string; files: Record<string, string> };
+      const uploaded = await fetch(`${webBase}/api/localsend/v2/upload?sessionId=${encodeURIComponent(prepared.sessionId)}&fileId=f1&token=${encodeURIComponent(prepared.files.f1)}`, {
+        method: "POST",
+        body: "hello world",
+      });
+      expect(uploaded.status).toBe(200);
+      const uploadedJson = (await uploaded.json()) as { path: string };
+      expect(uploadedJson.path).toContain("spec.txt");
+
+      const downloaded = await fetch(`${webBase}/api/localsend/v2/download?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}&fileId=${encodeURIComponent(uploadedJson.path)}`);
+      expect(downloaded.status).toBe(200);
+      expect(await downloaded.text()).toBe("hello world");
+      browser.close();
+    } finally {
+      await transfer.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 });

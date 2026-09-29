@@ -154,8 +154,10 @@ function loadDraftModels() {
   send({v:1,type:"get_model_catalog",engine:draftModelEngine(),requestId:catalogRequest});
 }
 function flushFirstPrompt() {
-  if (!historyReady || modelPending || queuedPrompt === null) return;
-  const q=queuedPrompt;queuedPrompt=null;submitPrompt(q.text,q.images);
+  if (!historyReady || modelPending || queuedPrompt === null || uploadsBusy()) return;
+  const q=queuedPrompt;queuedPrompt=null;
+  const files=completedUploads();
+  submitPrompt(q.text || (files.length ? '（附件）' : '（图片）'),q.images);
 }
 function sourceLabel(source) {
   return source === 'relay' ? 'Relay' : 'Native';
@@ -854,8 +856,10 @@ function setStreaming(active) {
   renderSessionList();
 }
 function refreshComposer() {
-  const hasText = ui.prompt.value.trim().length > 0 || attachments.length > 0 || completedUploads().length > 0;
-  ui.send.disabled = !connected || !hasText || uploadsBusy() || !!modelPending || (streaming && !supports("steer") && !supports("followUp"));
+  const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
+  const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
+  const hasText = ui.prompt.value.trim().length > 0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
+  ui.send.disabled = !connected || !hasText || activeUploadsBusy || !!modelPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -878,7 +882,11 @@ function refreshComposer() {
 async function whoAmI() {
   try {
     const response = await fetch('/auth/me', { cache: 'no-store' });
-    if (response.status === 401) { location.href = '/login'; return false; }
+    if (response.status === 401) {
+      const body = await response.json().catch(() => ({}));
+      location.href = body?.loginUrl || '/login';
+      return false;
+    }
     if (!response.ok) return true;
     const info = await response.json();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
@@ -892,14 +900,14 @@ async function whoAmI() {
     return true;   // the Web Server may be restarting; let the socket retry decide
   }
 }
-ui.userBtn.addEventListener('click', () => {
+ui.userBtn.addEventListener('click', async () => {
   if (!currentUser) return;
   if (!confirm('退出 PI Coffee 的登录？User VM 里正在运行的任务不会被打断。')) return;
-  const form = document.createElement('form');
-  form.method = 'post';
-  form.action = '/auth/logout';
-  document.body.appendChild(form);
-  form.submit();
+  const identityLogin = String(currentUser).startsWith('gitea-');
+  sessionStorage.removeItem(ACTIVE_KEY);
+  localStorage.removeItem(ACTIVE_KEY);
+  await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
+  location.href = identityLogin ? '/auth/login' : '/login';
 });
 function renderProjectContext() {
   if (!ui.projectSelect || !ui.startBranch) return;
@@ -1032,16 +1040,26 @@ function connectSocket() {
   };
   ws.onerror = () => { if (socket === ws) setConnection('连接错误', 'error'); };
 }
+function restoreQueuedPrompt() {
+  if (queuedPrompt === null || opened) return;
+  ui.prompt.value = queuedPrompt.text;
+  attachments = queuedPrompt.images || [];
+  queuedPrompt = null;
+  renderAttachments();
+  autoGrow();
+  setStreaming(false);
+  showThinking(false);
+}
 async function openSession(id) {
-  if(!connected){toast('等待 VM 连接就绪');return;}
+  if(!connected){restoreQueuedPrompt();toast('等待 VM 连接就绪');return;}
   if (pendingOpenId) return;            // an open is already in flight on this socket
   if (opened) { connect(); return; }    // one socket owns one Session: start over
-  if(!id && !workspaceState){await loadWorkspace();if(!workspaceState){toast('工作区服务尚未就绪');return;}}
+  if(!id && !workspaceState){await loadWorkspace();if(!workspaceState){restoreQueuedPrompt();toast('工作区服务尚未就绪');return;}}
   const existing=workspaceState?.conversations.find(c=>c.id===id);
   if((!id && workspaceState) || existing?.creationState==='failed' || existing?.creationState==='creating') {
     const workspaceKind=existing?.workspaceKind || $('#task-kind').value;
     const projectId=existing?.projectId || ui.projectSelect.value;
-    if(workspaceKind==='project' && !projectId) {toast(forgeCapabilities().github ? '请先选择 Gitea 或 GitHub 仓库' : '请先选择 Gitea 项目');return;}
+    if(workspaceKind==='project' && !projectId) {restoreQueuedPrompt();toast(forgeCapabilities().github ? '请先选择 Gitea 或 GitHub 仓库' : '请先选择 Gitea 项目');return;}
     const selectedEngine=existing?.engine || $("#task-engine").value;
     const signature=JSON.stringify([selectedEngine,workspaceKind,projectId,existing?.startBranch || ui.startBranch.value.trim()]);
     if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
@@ -1052,7 +1070,7 @@ async function openSession(id) {
     }catch(e){
       pendingOpenId=null;toast(e.message);
       // The first message started this creation: give the draft back instead of a stuck "running" state.
-      if(queuedPrompt!==null && !opened){ui.prompt.value=queuedPrompt.text;attachments=queuedPrompt.images || [];queuedPrompt=null;renderAttachments();autoGrow();setStreaming(false);showThinking(false);}
+      restoreQueuedPrompt();
       await loadWorkspace();return;
     }
     finally{refreshComposer();$('#create-task').disabled=false;$('#create-task').textContent='创建任务 / 重试';}
@@ -1060,7 +1078,7 @@ async function openSession(id) {
   pendingOpenId = id || 'new';
   const frame = { v: 1, type: 'open', nativeProtocol:1 };
   if (id) frame.sessionId = id;
-  send(frame);
+  if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); }
 }
 function afterOpened() {
   refreshComposer();
@@ -1080,7 +1098,7 @@ function handleFrame(frame, ws) {
     case 'opened':
       if(pendingOpenId && pendingOpenId!=="new" && frame.sessionId!==pendingOpenId)return;
       engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;commands=[];
-      const sameTransfer=transfer?.scope===frame.sessionId;
+      const sameTransfer=(transfer?.sessionId || transfer?.scope)===frame.sessionId;
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
@@ -1131,7 +1149,7 @@ function handleFrame(frame, ws) {
     case 'transfer':
       setTimeout(()=>{if(workspaceState) {renderWorkspaceList();void refreshArtifactCards();void refreshWorkspaceChanges(false).catch(()=>undefined);}},0);
       if (frame.sessionId !== activeId) return;
-      transfer = frame;
+      transfer = normalizeTransferGrant(frame, frame.sessionId);
       refreshToolDownloadLinks();
       renderUploadLogCard(); // relink rows with the fresh token
       if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
@@ -1197,9 +1215,14 @@ function handleEvent(event) {
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
     queuedRequests.clear();
-    pendingDelivery=null;uncertainTask=null;setStreaming(false);clearExtensionUi();if(supports('models'))send({v:1,type:'get_models'});
+    pendingDelivery=null;uncertainTask=null;setStreaming(false);notifyFinished();clearExtensionUi();
+    if(supports('models'))send({v:1,type:'get_models'});
+    if(supports('stats'))send({v:1,type:'get_stats'});
     if(event.status!=='completed')pushNote(event.message || (event.status==='interrupted'?'当前轮次已停止':'本轮运行失败，请检查保存的结果'),event.status!=='interrupted');
-    void refreshWorkspaceChanges(false).catch(()=>undefined);return;
+    void refreshWorkspaceChanges(false).then(()=>maybeRenderChangesCard()).catch(()=>undefined);
+    cancelTurnDiffRefresh();
+    if($('#diff-dialog').open)void loadDiff(null,{preserve:true});
+    return;
   }
 
 
@@ -1255,7 +1278,6 @@ function handleEvent(event) {
   if (type === 'agent_settled') {
     queuedRequests.clear();
     pendingDelivery=null;uncertainTask=null;
-    void refreshWorkspaceChanges(false).catch(()=>undefined);
     setStreaming(false);
     notifyFinished();
     for (const entry of openTools.values()) { entry.done = true; fillToolCard(entry.node, entry); }
@@ -1295,7 +1317,10 @@ function notifyFinished() {
     } catch { /* notifications unavailable */ }
   }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && finishedWhileHidden) { finishedWhileHidden = false; renderHeader(); } });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && finishedWhileHidden) { finishedWhileHidden = false; renderHeader(); }
+  if (!document.hidden && workspaceState) void loadWorkspace();
+});
 function requestNotifyPermission() {
   if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
   Notification.requestPermission().catch(() => undefined);
@@ -1592,6 +1617,21 @@ const MAX_IMAGE_BYTES = 600 * 1024;
 const INLINE_IMAGE_LIMIT = 4 * 1024 * 1024; // larger images travel as files
 const HASH_LIMIT = 32 * 1024 * 1024;         // sha256 in the browser only for files this small
 
+function normalizeTransferGrant(grant, fallbackSessionId) {
+  if (!grant || typeof grant !== 'object') return null;
+  let url = grant.url;
+  try {
+    const parsed = new URL(url, location.origin);
+    const pageHttps = location.protocol === 'https:';
+    const pageLoopback = ['127.0.0.1', 'localhost', '::1'].includes(location.hostname);
+    const targetLoopback = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+    if ((pageHttps && parsed.protocol === 'http:') || (!pageLoopback && targetLoopback)) url = location.origin;
+  } catch {
+    url = location.origin;
+  }
+  return { ...grant, url, rawUrl: grant.url, sessionId: grant.sessionId || fallbackSessionId || activeId };
+}
+
 async function addFiles(files) {
   const epoch=taskSelectionEpoch;
   const toUpload = [];
@@ -1600,7 +1640,7 @@ async function addFiles(files) {
     if (isSmallImage) {
       // Small images go inline with the prompt so the model can see them.
       if (attachments.length >= 8) { toast('最多 8 张内联图片，其余作为文件上传'); toUpload.push(file); continue; }
-      try { const image=await encodeImage(file);if(epoch!==taskSelectionEpoch)return;attachments.push(image); } catch { toast('无法读取图片'); }
+      try { const image=await encodeImage(file);if(epoch!==taskSelectionEpoch)return;attachments.push(image);file.__inlineAttached=true; } catch { toast('无法读取图片'); }
       toUpload.push(file); // Persist original bytes before sending the inline representation.
     } else {
       toUpload.push(file);
@@ -1612,21 +1652,44 @@ async function addFiles(files) {
 }
 
 // Files go straight from the browser to the User VM over the LocalSend v2 API
-// the Host advertises; the Web Server never sees a byte (ADR-0009).
+// the Host advertises, with same-origin Web gateway fallback (ADR-0009 / ADR-0010).
 async function uploadFiles(files) {
   if (!transfer) {
     filesAwaitingTransfer.push(...files);
-    if (!opened && !pendingOpenId && connected) { void openSession(activeId); toast('正在为文件建立对话…'); }
-    else if (opened) { toast('这个 Host 没有开启文件传输'); filesAwaitingTransfer = []; }
+    renderAttachments();
+    refreshComposer();
+    const canAutoOpen = !workspaceState || $('#task-kind').value !== 'project' || Boolean(ui.projectSelect.value);
+    if (!opened && !pendingOpenId && connected && canAutoOpen) { void openSession(activeId); toast('正在为文件建立对话…'); }
+    else if (opened && activeId && workspaceState) {
+      const id = activeId;
+      void workspaceApi({ action: 'files', id }).then((grant) => {
+        if (activeId !== id || !grant) return;
+        transfer = normalizeTransferGrant(grant, id);
+        if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
+      }).catch(() => {
+        const hadNonInline = filesAwaitingTransfer.some((f) => !f.__inlineAttached);
+        filesAwaitingTransfer = [];
+        renderAttachments(); refreshComposer();
+        if (hadNonInline) { toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt(); } else flushFirstPrompt();
+      });
+    } else if (opened) {
+      const hadNonInline = filesAwaitingTransfer.some((f) => !f.__inlineAttached);
+      filesAwaitingTransfer = [];
+      renderAttachments(); refreshComposer();
+      if (hadNonInline) { toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt(); } else flushFirstPrompt();
+    }
     return;
   }
-  const grant=transfer;
-  const tooBig = files.filter((f) => f.size > grant.maxFileBytes);
-  if (tooBig.length) toast(`已跳过 ${tooBig.length} 个超过 ${formatBytes(grant.maxFileBytes)} 的文件`);
-  const batch = files.filter((f) => f.size <= grant.maxFileBytes);
+  let grant=transfer;
+  const targetSessionId = grant.sessionId || grant.scope;
+  const maxFileBytes = grant.maxFileBytes ?? 256 * 1024 * 1024;
+  const maxBatchBytes = grant.maxBatchBytes ?? 1024 * 1024 * 1024;
+  const tooBig = files.filter((f) => f.size > maxFileBytes);
+  if (tooBig.length) toast(`已跳过 ${tooBig.length} 个超过 ${formatBytes(maxFileBytes)} 的文件`);
+  const batch = files.filter((f) => f.size <= maxFileBytes);
   if (batch.length === 0) return;
   const pending = uploads.filter((u) => u.state === 'uploading').reduce((s, u) => s + u.size, 0);
-  if (pending + batch.reduce((s, f) => s + f.size, 0) > grant.maxBatchBytes) { toast(`一次最多传输 ${formatBytes(grant.maxBatchBytes)}`); return; }
+  if (pending + batch.reduce((s, f) => s + f.size, 0) > maxBatchBytes) { toast(`一次最多传输 ${formatBytes(maxBatchBytes)}`); return; }
 
   const entries = batch.map((file) => ({
     url:grant.url,scope:grant.scope,id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -1641,22 +1704,54 @@ async function uploadFiles(files) {
     const sha256 = u.size <= HASH_LIMIT ? await sha256Hex(u.file).catch(() => undefined) : undefined;
     meta[u.id] = { id: u.id, fileName: u.name, size: u.size, fileType: u.file.type || 'application/octet-stream', ...(sha256 ? { sha256 } : {}) };
   }
-  if(activeId!==grant.scope)return;
+  if(activeId!==targetSessionId)return;
+  const prepareBody = JSON.stringify({ info: { alias: 'PI Coffee Web', version: '2.0', deviceModel: navigator.platform || 'browser', deviceType: 'web', fingerprint: 'web', port: 0, protocol: 'http', download: false }, files: meta });
+  const requestPrepare = (g) => fetch(`${g.url}/api/localsend/v2/prepare-upload?scope=${encodeURIComponent(g.scope)}&token=${encodeURIComponent(g.token)}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: prepareBody,
+  });
+  const prepareWithFallback = async (g) => {
+    try {
+      return await requestPrepare(g);
+    } catch (networkError) {
+      if (g.url !== location.origin) {
+        g.url = location.origin;
+        if (transfer && (transfer.sessionId || transfer.scope) === targetSessionId) transfer = g;
+        for (const u of entries) u.url = g.url;
+        return await requestPrepare(g);
+      }
+      throw networkError;
+    }
+  };
   let prepared;
   try {
-    const response = await fetch(`${grant.url}/api/localsend/v2/prepare-upload?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ info: { alias: 'PI Coffee Web', version: '2.0', deviceModel: navigator.platform || 'browser', deviceType: 'web', fingerprint: 'web', port: 0, protocol: 'http', download: false }, files: meta }),
-    });
+    let response = await prepareWithFallback(grant);
+    if ((response.status === 401 || response.status === 403) && workspaceState && activeId === targetSessionId) {
+      const usedSameOrigin = grant.url === location.origin;
+      const fresh = await workspaceApi({ action: 'files', id: activeId }).catch(() => null);
+      if (fresh && activeId === targetSessionId) {
+        grant = normalizeTransferGrant(fresh, activeId);
+        if (usedSameOrigin) grant.url = location.origin;
+        transfer = grant;
+        for (const u of entries) { u.url = grant.url; u.scope = grant.scope; }
+        response = await prepareWithFallback(grant);
+      }
+    }
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || ('HTTP ' + response.status));
     prepared = await response.json();
   } catch (error) {
-    for (const u of entries) { u.state = 'failed'; u.error = '无法连接 User VM 的传输端点：' + (error.message || error); }
+    uploads = uploads.filter((u) => !(entries.includes(u) && u.file?.__inlineAttached));
+    for (const u of entries) {
+      if (u.file?.__inlineAttached) continue;
+      u.state = 'failed';
+      u.error = '无法连接 User VM 的传输端点：' + (error.message || error);
+    }
     renderAttachments(); refreshComposer();
-    toast('文件传输失败：浏览器无法直连 User VM（' + grant.url + '）');
+    if (uploads.some((u) => u.state === 'failed')) restoreQueuedPrompt();
+    else flushFirstPrompt();
+    if (entries.some((u) => !u.file?.__inlineAttached)) toast('文件传输失败：浏览器无法直连 User VM（' + grant.url + '）');
     return;
   }
-  if(activeId!==grant.scope)return;
+  if(activeId!==targetSessionId)return;
   for (const u of entries) {
     u.sessionId = prepared.sessionId;
     u.token = prepared.files[u.id];
@@ -1674,10 +1769,21 @@ function sendFile(u) {
     xhr.upload.onprogress = (e) => { if (e.lengthComputable && u.state === 'uploading') { u.received = Math.max(u.received, e.loaded); renderAttachmentProgress(u); } };
     xhr.onload = () => {
       if (xhr.status === 200) { if (u.state === 'uploading') { try{const result=JSON.parse(xhr.responseText);u.path=result.path;u.sha256=result.sha256;}catch{} u.received = u.size; u.state = u.path ? 'done' : 'finishing'; } }
+      else if (u.file?.__inlineAttached) { uploads = uploads.filter((x) => x !== u); }
       else { u.state = 'failed'; u.error = xhr.status === 422 ? '校验失败（SHA-256 不匹配）' : xhr.status === 403 ? '令牌无效' : 'HTTP ' + xhr.status; }
-      renderAttachments(); refreshComposer(); resolve();
+      renderAttachments(); refreshComposer();
+      if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
+      resolve();
     };
-    xhr.onerror = () => { if (u.state !== 'cancelled') { u.state = 'failed'; u.error = '网络错误'; } renderAttachments(); refreshComposer(); resolve(); };
+    xhr.onerror = () => {
+      if (u.state !== 'cancelled') {
+        if (u.file?.__inlineAttached) uploads = uploads.filter((x) => x !== u);
+        else { u.state = 'failed'; u.error = '网络错误'; }
+      }
+      renderAttachments(); refreshComposer();
+      if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
+      resolve();
+    };
     xhr.onabort = () => { u.state = 'cancelled'; renderAttachments(); refreshComposer(); resolve(); };
     xhr.send(u.file);
   });
@@ -1696,11 +1802,17 @@ function handleTransferEvent(event) {
     u.path = event.path; u.name = event.fileName || u.name; u.sha256 = event.sha256; u.received = u.size;
     if (u.state !== 'cancelled') u.state = 'done';
     renderAttachments(); refreshComposer();
+    flushFirstPrompt();
     // Keep a transcript-side aggregate so uploads stay discoverable after the rail rolls on.
     if (!uploadLog.some((f) => f.path === u.path)) { uploadLog.push({ name: u.name, size: u.size, path: u.path }); renderUploadLogCard(); }
     return;
   }
-  if (event.type === 'transfer_failed' && u.state !== 'cancelled') { u.state = 'failed'; u.error = event.message || '传输失败'; renderAttachments(); refreshComposer(); }
+  if (event.type === 'transfer_failed' && u.state !== 'cancelled') {
+    if (u.file?.__inlineAttached) uploads = uploads.filter((x) => x !== u);
+    else { u.state = 'failed'; u.error = event.message || '传输失败'; }
+    renderAttachments(); refreshComposer();
+    if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
+  }
 }
 
 function downloadUrl(path) {
@@ -1768,7 +1880,8 @@ function encodeImage(file) {
 }
 function renderAttachments() {
   ui.attachments.innerHTML = '';
-  ui.attachments.classList.toggle('hidden', attachments.length === 0 && uploads.length === 0);
+  const visibleQueued = filesAwaitingTransfer.filter((f) => !f.__inlineAttached);
+  ui.attachments.classList.toggle('hidden', attachments.length === 0 && uploads.length === 0 && visibleQueued.length === 0);
   attachments.forEach((image, index) => {
     const wrap = el('div', 'attachment');
     const img = document.createElement('img');
@@ -1781,6 +1894,21 @@ function renderAttachments() {
     wrap.append(img, remove);
     ui.attachments.appendChild(wrap);
   });
+  for (const file of visibleQueued) {
+    const chip = el('div', 'upload-chip uploading');
+    chip.innerHTML = '<span class="file-ico">📄</span><span class="upload-main"><span class="upload-name"></span><span class="upload-meta"></span><span class="upload-bar"><span class="upload-fill" style="width:0%"></span></span></span>';
+    chip.querySelector('.upload-name').textContent = file.name;
+    chip.querySelector('.upload-meta').textContent = `${formatBytes(file.size)} · 等待建立对话…`;
+    const remove = el('button', 'attachment-remove', '×');
+    remove.type = 'button';
+    remove.title = '移除';
+    remove.addEventListener('click', () => {
+      filesAwaitingTransfer = filesAwaitingTransfer.filter((x) => x !== file);
+      renderAttachments(); refreshComposer();
+    });
+    chip.appendChild(remove);
+    ui.attachments.appendChild(chip);
+  }
   for (const u of uploads) {
     const chip = el('div', 'upload-chip ' + u.state);
     chip.dataset.id = u.id;
@@ -1845,9 +1973,9 @@ ui.prompt.addEventListener('input', () => {
   autoGrow();
   refreshComposer();
   slashIndex = 0;
-  // The command list comes from the Pi process of an open Session. Typing "/"
-  // before the first message opens the new conversation early to fetch it.
-  if (ui.prompt.value.startsWith('/') && !opened && !pendingOpenId && connected) openSession(null);
+  // The command list comes from the Pi process of an open Session. On a legacy Host without
+  // task workspaces, typing "/" before the first message opens the new conversation early.
+  if (ui.prompt.value.startsWith('/') && !opened && !pendingOpenId && connected && !workspaceState) openSession(null);
   renderSlash();
 });
 ui.prompt.addEventListener('keydown', (event) => {
@@ -1867,9 +1995,11 @@ $('#composer').addEventListener('submit', (event) => {
   event.preventDefault();
   const text = ui.prompt.value.trim();
   const files = completedUploads();
-  if ((!text && attachments.length === 0 && files.length === 0) || !socket || socket.readyState !== WebSocket.OPEN) return;
+  const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
+  if ((!text && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
   if(modelPending){toast('等待模型来源切换确认');return;}
-  if (uploadsBusy() || uploads.some(u=>u.state==='failed')) { toast('请等待原始附件上传成功，或移除失败附件'); return; }
+  const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
+  if (activeUploadsBusy || uploads.some(u=>u.state==='failed')) { toast('请等待原始附件上传成功，或移除失败附件'); return; }
   const images = attachments.slice();
   if (!opened) {
     // First message of a brand-new conversation: (re)use the in-flight open
@@ -1877,11 +2007,11 @@ $('#composer').addEventListener('submit', (event) => {
     queuedPrompt = { text, images };
     attachments = [];
     renderAttachments();
-    if (!pendingOpenId) openSession(null);
     ui.prompt.value = '';
     autoGrow();
     setStreaming(true);
     showThinking(true);
+    if (!pendingOpenId) openSession(null);
     return;
   }
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
@@ -2079,8 +2209,17 @@ async function loadWorkspace() {
       $('#migrate-workspace').classList.toggle('hidden',chat || Boolean(c.startSha));
       $('#checkpoint-workspace').classList.toggle('hidden',chat || !c.startSha);
       if(c.creationState==='failed' || c.creationState==='creating')return;
-      const grant=await workspaceApi({action:'files',id});
-      if(activeId===id){transfer=grant;bindWorkspaceArtifacts();void refreshArtifactCards();void refreshWorkspaceStatus();void refreshWorkspaceChanges(false).then(()=>maybeRenderChangesCard()).catch(()=>undefined);}
+      const grant=await workspaceApi({action:'files',id}).catch(()=>null);
+      if(activeId===id){
+        if(grant){
+          transfer=normalizeTransferGrant(grant,id);
+          bindWorkspaceArtifacts();
+          void refreshArtifactCards();
+          if(filesAwaitingTransfer.length){const queued=filesAwaitingTransfer;filesAwaitingTransfer=[];void uploadFiles(queued);}
+        }
+        void refreshWorkspaceStatus();
+        void refreshWorkspaceChanges(false).then(()=>maybeRenderChangesCard()).catch(()=>undefined);
+      }
     }
     else {workspaceChanges=null;workspaceSync=null;renderSyncState();for(const id of ['migrate-workspace','checkpoint-workspace','pull-request'])$('#'+id).classList.add('hidden');selectedChangedPath=null;if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();}
   } catch(e) {if(workspaceState){workspaceSync={...workspaceSync,state:'unknown',error:e.message};renderSyncState();renderProjectContext();}}
@@ -2508,9 +2647,9 @@ function syncCollapseToggle() {
 function getDiffView() {
   return diffView ??= new DiffView($('#diff-content'),{onCommentsChange:renderDiffComments,onNotice:toast});
 }
-function renderDiffComments(count) {
+function renderDiffComments(count, otherScopeCount = 0) {
   $('#diff-comments').classList.toggle('hidden',!count);
-  $('#diff-comments-count').textContent=`评论 (${count})`;
+  $('#diff-comments-count').textContent=otherScopeCount > 0 ? `评论 (${count}，含另一视图 ${otherScopeCount} 条)` : `评论 (${count})`;
 }
 function renderWorkspaceDiff(data, focusPath=null, {preserve=false}={}) {
   $('#diff-scope-info').textContent=diffScopeInfo(data);
@@ -2659,7 +2798,7 @@ $('#view-all-changes').addEventListener('click',()=>{showWorkspaceReview('diff')
 $('#wt-download').addEventListener('click',()=>{void downloadWorkspacePatch().catch(e=>toast(e.message));});
 void loadWorkspace();
 setInterval(()=>{if(!document.hidden || uploadsBusy())void loadWorkspace();},5000);
-fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;const account=el('button','foot-btn',user.login+' · 退出');account.onclick=async()=>{await fetch('/auth/logout',{method:'POST'});localStorage.removeItem(ACTIVE_KEY);location.href='/auth/login';};$('.sidebar-foot').append(account);}).catch(()=>{});
+fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
 function bindWorkspaceArtifacts() {
  if(!workspaceState || !transfer)return;

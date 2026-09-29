@@ -265,7 +265,7 @@ export class HostServer {
           const scope=transferScope(user,input.id);
           const token=this.transfer.issueToken(scope,slot.workdir,input.id,ws);
           this.transferTargets.set(scope,{slot:Promise.resolve(slot),sessionId:input.id});
-          result={url:this.transfer.publicUrl(),scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
+          result={url:this.transfer.publicUrl(),sessionId:input.id,scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
         case "changes": result=input.scope==="turn" ? await ws.turnChanges(input.id) : await ws.changes(input.id);break;
         case "change_file": result=await ws.changeFile(input.id,input);break;

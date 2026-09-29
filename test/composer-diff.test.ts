@@ -234,3 +234,112 @@ it('gives the draft back when the first message cannot create the task',async()=
   expect(prompt.value).toBe('');await vi.advanceTimersByTimeAsync(20);
   expect(prompt.value).toBe('hello');expect(hidden('#stop')).toBe(true);expect(q('#toast').textContent).toContain('Gitea unavailable');
 });
+
+it('restores the draft when sending a new Work task without a repository, and does not create early on "/"',async()=>{
+  const app=await setup();
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  const kind=q<HTMLSelectElement>('#task-kind');kind.value='project';kind.dispatchEvent(new Event('change'));
+  q<HTMLSelectElement>('#project-select').value='';
+  const prompt=q<HTMLTextAreaElement>('#prompt');
+  prompt.value='/help';prompt.dispatchEvent(new Event('input'));
+  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(20);
+  expect(prompt.value).toBe('/help');expect(hidden('#stop')).toBe(true);
+  expect(q('#toast').textContent).toContain('请先选择');
+});
+
+it('refreshes the open Diff and renders the changed-files card when a native run_completed arrives',async()=>{
+  const turnPatch='diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10 +10 @@\n-const answer = compute(left);\n+const answer = compute(right);';
+  const app=await setup({task:{engine:'codex',turnSnapshot:{tree:'3333333333',startedAt:'2026-09-28T02:00:00Z'}},turn:{scope:'turn',sessionId:'task-1',branch:'coffee/vm/task-1',base:'3333333333',target:'WORKTREE',startedAt:'2026-09-28T02:00:00Z',running:false,files:[{path:'src/a.ts',status:'M',additions:1,deletions:1}],patch:turnPatch,truncated:false}});
+  const turnReads=()=>app.requests.filter(r=>r.action==='changes' && r.scope==='turn').length;
+  const emit=(event:unknown)=>app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event});
+  q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#diff-scope').click();q<HTMLButtonElement>('#diff-scope-turn').click();await vi.advanceTimersByTimeAsync(20);
+  const opened=turnReads();
+  emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
+  emit({type:'run_completed',status:'completed'});await vi.advanceTimersByTimeAsync(20);
+  expect(turnReads()).toBe(opened+1);
+  expect(q('#thread .changes-card')).not.toBeNull();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(turnReads()).toBe(opened+1);
+});
+
+it('uploads attachments with hashed authenticated scopes, refreshes expired tokens, and includes new-task files in the first prompt',async()=>{
+  const app=await setup();
+  Object.defineProperty(crypto,'subtle',{configurable:true,value:{digest:async()=>new ArrayBuffer(32)}});
+  const xhrRequests:{url:string;body:any}[]=[];
+  class FakeXHR{
+    url='';status=200;responseText='';upload:any={};onload:any;onerror:any;onabort:any;
+    open(_method:string,url:string){this.url=url;}
+    send(body:any){xhrRequests.push({url:this.url,body});this.responseText=JSON.stringify({path:`inbox/${body.name}`,sha256:'00'.repeat(32)});queueMicrotask(()=>this.onload?.());}
+    abort(){this.onabort?.();}
+  }
+  vi.stubGlobal('XMLHttpRequest',FakeXHR);
+  let tokenCount=0;let firstPrepareExpired=true;const prepareUrls:string[]=[];
+  const baseFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+    const urlStr=String(url);
+    if(urlStr.includes('/api/localsend/v2/prepare-upload')){
+      prepareUrls.push(urlStr);
+      if(urlStr.startsWith('http://unreachable.vm:53317'))throw new Error('ECONNREFUSED');
+      if(firstPrepareExpired){firstPrepareExpired=false;return {ok:false,status:401,json:async()=>({message:'Invalid scope token'})};}
+      const parsed=JSON.parse(init.body);
+      const files=Object.fromEntries(Object.keys(parsed.files).map(k=>[k,'file-tok-'+k]));
+      return {ok:true,status:200,json:async()=>({sessionId:'ls-1',files})};
+    }
+    const body=init?.body ? JSON.parse(init.body) : null;
+    if(body?.action==='files'){
+      tokenCount+=1;
+      return {ok:true,status:200,json:async()=>({url:'http://unreachable.vm:53317',scope:'hashed-user-scope-'+body.id,sessionId:body.id,token:'fresh-tok-'+tokenCount,maxFileBytes:10_000_000,maxBatchBytes:50_000_000,files:[]})};
+    }
+    return baseFetch(url,init);
+  }));
+
+  // 1. Existing task with authenticated hashed scope (`scope !== activeId`), unreachable direct URL -> same-origin fallback, and expired 401 token -> auto-refresh
+  app.sockets.at(-1).receive({type:'transfer',sessionId:'task-1',scope:'hashed-user-scope-task-1',url:'http://unreachable.vm:53317',token:'stale-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  const file1=new File(['spec'],'spec.pdf',{type:'application/pdf'});
+  Object.defineProperty(file1,'arrayBuffer',{value:async()=>new ArrayBuffer(4)});
+  const input=q<HTMLInputElement>('#file');
+  Object.defineProperty(input,'files',{configurable:true,value:[file1]});
+  input.dispatchEvent(new Event('change'));
+  await vi.advanceTimersByTimeAsync(30);
+
+  expect(prepareUrls.some(u=>u.startsWith('http://unreachable.vm:53317'))).toBe(true);
+  expect(prepareUrls.some(u=>u.startsWith(location.origin) && u.includes('token=fresh-tok-'))).toBe(true);
+  expect(xhrRequests).toHaveLength(1);
+  expect(q('#attachments .upload-chip.done')).not.toBeNull();
+
+  // 2. New Work task: attaching a file before selecting a repository queues the file visibly without prematurely failing openSession, and sends it with the first prompt once submitted
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  const kind=q<HTMLSelectElement>('#task-kind');kind.value='project';kind.dispatchEvent(new Event('change'));
+  q<HTMLSelectElement>('#project-select').value='';
+  const file2=new File(['draft'],'notes.txt',{type:'text/plain'});
+  Object.defineProperty(file2,'arrayBuffer',{value:async()=>new ArrayBuffer(5)});
+  Object.defineProperty(input,'files',{configurable:true,value:[file2]});
+  input.dispatchEvent(new Event('change'));
+  await vi.advanceTimersByTimeAsync(20);
+  expect(q('#attachments .upload-chip')?.textContent).toContain('等待建立对话');
+  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+
+  q<HTMLSelectElement>('#project-select').value='p';q<HTMLSelectElement>('#project-select').dispatchEvent(new Event('change'));
+  const prompt=q<HTMLTextAreaElement>('#prompt');prompt.value='请总结附件';prompt.dispatchEvent(new Event('input'));
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(20);
+
+  const created=app.requests.find(r=>r.action==='conversation');
+  expect(created).toBeDefined();
+  const ws=app.sockets.at(-1);
+  ws.receive({type:'opened',sessionId:created.id,engine:'pi',state:{}});
+  ws.receive({type:'history',sessionId:created.id,entries:[]});
+  ws.receive({type:'transfer',sessionId:created.id,scope:'hashed-user-scope-'+created.id,url:location.origin,token:'new-task-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  await vi.advanceTimersByTimeAsync(30);
+
+  const sentPrompt=app.frames.find(f=>f.type==='prompt');
+  expect(sentPrompt).toBeDefined();
+  expect(sentPrompt.text).toContain('请总结附件');
+  expect(sentPrompt.text).toContain('[已上传到工作目录的文件]');
+  expect(sentPrompt.text).toContain('inbox/notes.txt');
+});
+
+

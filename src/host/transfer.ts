@@ -134,7 +134,8 @@ export class TransferServer {
 
   /** Base URL a browser on the LAN should use. */
   publicUrl(): string {
-    const host = this.advertiseHost ?? detectLanAddress() ?? "127.0.0.1";
+    const wildcard = this.host === "0.0.0.0" || this.host === "::";
+    const host = this.advertiseHost ?? (wildcard ? detectLanAddress() : this.host) ?? "127.0.0.1";
     return `${this.secure ? "https" : "http"}://${host}:${this.address().port}`;
   }
 
@@ -398,6 +399,7 @@ export class TransferServer {
           hash.update(chunk);
           if (!out.write(chunk)) request.pause();
           const now = Date.now();
+          if (this.tokenExpiry.has(scope)) this.tokenExpiry.set(scope, now + 45000);
           if (now - lastProgress >= PROGRESS_INTERVAL_MS) {
             lastProgress = now;
             this.emit(scope, { type: "transfer_progress", sessionId: session.id, fileId: file.id, fileName: file.fileName, received, size: file.size });

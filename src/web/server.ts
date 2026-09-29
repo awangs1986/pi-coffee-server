@@ -4,8 +4,8 @@ import { readJson, json } from "../shared/http.js";
 import { Identity, type IdentityOptions } from "./identity.js";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
+import { createServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -57,6 +57,9 @@ export class WebServer {
   private readonly defaultUser?:string;
   private readonly allowUnauthenticated: boolean;
   private readonly assets = new Map<string, CachedAsset>();
+  private readonly transferByScope = new Map<string, string>();
+  private readonly transferByUpload = new Map<string, string>();
+  private defaultTransferUrl?: string;
 
   constructor(options: WebServerOptions) {
     this.auth=options.auth;this.defaultUser=options.defaultUser;
@@ -70,11 +73,12 @@ export class WebServer {
     this.secure = options.tls !== undefined;
     const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response);
     this.http = options.tls ? createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handler) : createServer(handler);
+    this.http.requestTimeout = 0;
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
     this.http.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     this.wsServer.on("connection", (socket, request) => {
       const route = (request as IncomingMessage & { coffeeRoute?: { hostUrl: string; hostToken: string; user?:string } }).coffeeRoute;
-      const bridge = new BrowserBridge(socket, { url: route?.hostUrl ?? this.hostUrl, token: route?.hostToken ?? this.hostToken, user:route?.user ?? this.defaultUser, authorize:async()=>this.identity ? Boolean(await this.identity.authorize(request)) : this.auth ? Boolean(this.auth.principalOf(request)) : true });
+      const bridge = new BrowserBridge(socket, { url: route?.hostUrl ?? this.hostUrl, token: route?.hostToken ?? this.hostToken, user:route?.user ?? this.defaultUser, authorize:async()=>this.identity ? Boolean(await this.identity.authorize(request)) : this.auth ? Boolean(this.auth.principalOf(request)) : true, onFrame:(data,binary)=>{if(!binary){try{this.recordTransferGrant(JSON.parse(typeof data==="string"?data:data.toString()));}catch{}}} });
       if (this.identity || this.auth) {
         let checking = false;
         const timer = setInterval(async () => {
@@ -161,7 +165,7 @@ export class WebServer {
     if (this.auth && await this.auth.handle(request,response)) return;
     if (path==="/auth/me") {
       const session=await this.identity?.authorize(request);
-      if(this.identity && !session){json(response,401,{error:"Login required"});return;}
+      if(this.identity && !session){json(response,401,{error:"Login required",loginUrl:"/auth/login"});return;}
       json(response,200,{auth:Boolean(this.identity),user:session?{id:session.id,login:session.login}:this.defaultUser??null});return;
     }
     if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || path==='/' || path==='/index.html')) {
@@ -177,8 +181,14 @@ export class WebServer {
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
         const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined);
-        json(response,result.status,await result.json());
+        const body=await result.json();
+        if(result.ok)this.recordTransferGrant(body);
+        json(response,result.status,body);
       } catch {json(response,502,{error:"VM unavailable or invalid request"});}
+      return;
+    }
+    if (path.startsWith("/api/localsend/v2/")) {
+      await this.proxyLocalSend(request, response);
       return;
     }
     if (this.identity && (path === "/" || path === "/index.html") && !await this.identity.authorize(request)) {
@@ -231,6 +241,63 @@ export class WebServer {
     };
     if (body.length <= 16 * 1024 * 1024) this.assets.set(path, asset);
     return asset;
+  }
+
+  private recordTransferGrant(payload: unknown): void {
+    if (!payload || typeof payload !== "object") return;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.url === "string" && /^https?:\/\//.test(record.url)) {
+      this.defaultTransferUrl = record.url;
+      if (typeof record.scope === "string" && record.scope) this.transferByScope.set(record.scope, record.url);
+    }
+  }
+
+  /** Same-origin LocalSend v2 streaming proxy (ADR-0010 §4) when direct browser-to-VM transfer is unreachable. */
+  private async proxyLocalSend(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (this.identity && !await this.identity.authorize(request)) { json(response, 401, { message: "Login required" }); return; }
+    if (this.auth && !this.auth.principalOf(request)) { json(response, 401, { message: "Login required" }); return; }
+    const reqUrl = new URL(request.url ?? "/", "http://localhost");
+    const scope = reqUrl.searchParams.get("scope");
+    const sessionId = reqUrl.searchParams.get("sessionId");
+    const baseUrl = (scope && this.transferByScope.get(scope))
+      || (sessionId && this.transferByUpload.get(sessionId))
+      || this.defaultTransferUrl;
+    if (!baseUrl) { json(response, 502, { message: "Transfer service unavailable" }); return; }
+    let target: URL;
+    try { target = new URL(reqUrl.pathname + reqUrl.search, baseUrl); }
+    catch { json(response, 502, { message: "Invalid transfer target" }); return; }
+    if (reqUrl.pathname === "/api/localsend/v2/prepare-upload" && request.method === "POST") {
+      try {
+        const body = await readJson(request);
+        const upstream = await fetch(target, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), redirect: "error" });
+        const data = await upstream.json().catch(() => ({})) as Record<string, unknown>;
+        if (upstream.ok && typeof data.sessionId === "string") this.transferByUpload.set(data.sessionId, baseUrl);
+        json(response, upstream.status, data);
+      } catch { json(response, 502, { message: "Transfer service unreachable" }); }
+      return;
+    }
+    const requester = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const headers: Record<string, string> = {};
+    for (const key of ["content-type", "content-length", "range"]) {
+      const value = request.headers[key];
+      if (typeof value === "string") headers[key] = value;
+    }
+    const upstreamReq = requester(target, { method: request.method ?? "GET", headers }, (upstreamRes) => {
+      const outHeaders: Record<string, string | string[]> = {};
+      for (const key of ["content-type", "content-length", "content-disposition", "content-security-policy", "cache-control", "x-content-type-options", "referrer-policy", "content-range", "accept-ranges"]) {
+        const value = upstreamRes.headers[key];
+        if (value !== undefined) outHeaders[key] = value;
+      }
+      response.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
+      upstreamRes.pipe(response);
+    });
+    upstreamReq.on("error", () => {
+      if (!response.headersSent) json(response, 502, { message: "Transfer stream failed" });
+      else response.destroy();
+    });
+    request.on("aborted", () => upstreamReq.destroy());
+    response.on("close", () => { if (!response.writableEnded) upstreamReq.destroy(); });
+    request.pipe(upstreamReq);
   }
 
   private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown) {
@@ -287,6 +354,7 @@ export class WebServer {
 
 interface BrowserBridgeOptions {
   authorize?:()=>Promise<boolean>;
+  onFrame?:(data: RawData, isBinary: boolean)=>void;
   user?: string;
   url: string;
   token?: string;
@@ -295,6 +363,7 @@ interface BrowserBridgeOptions {
 class BrowserBridge {
   readonly user?:string;
   private readonly authorize?:()=>Promise<boolean>;
+  private readonly onFrame?:(data: RawData, isBinary: boolean)=>void;
   private readonly browser: WebSocket;
   private readonly host: HostClient;
   private hostUnsubscribe?: () => void;
@@ -305,7 +374,7 @@ class BrowserBridge {
 
   constructor(browser: WebSocket, options: BrowserBridgeOptions) {
     this.browser = browser;
-    this.user=options.user;this.authorize=options.authorize;
+    this.user=options.user;this.authorize=options.authorize;this.onFrame=options.onFrame;
     this.host = new HostClient({
       ...options,
       onUnavailable: (error) => {
@@ -349,7 +418,10 @@ class BrowserBridge {
       if(this.authorize && !await this.authorize()){this.close();return;}
       if (!this.connected) {
         await this.host.connect();
-        this.hostUnsubscribe = this.host.onFrame((hostData, hostBinary) => this.send(hostData, hostBinary));
+        this.hostUnsubscribe = this.host.onFrame((hostData, hostBinary) => {
+          this.onFrame?.(hostData, hostBinary);
+          this.send(hostData, hostBinary);
+        });
         this.connected = true;
       }
       this.host.send(data, isBinary);
