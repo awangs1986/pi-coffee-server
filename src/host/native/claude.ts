@@ -27,9 +27,10 @@ export class ClaudeSession implements AgentSession {
   private bound:boolean;
   private name?:string;
   private model?:string;
-  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>) {
+  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>,extraDirs:string[]=[]) {
     this.recoveryUnknown=binding.writers==="unknown";this.nativeId=binding.id??binding.requestedId!;this.bound=binding.state==="bound";
-    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",this.bound?"--resume":"--session-id",this.nativeId],cwd);
+    const addDirArgs=extraDirs.flatMap(dir=>["--add-dir",dir]);
+    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",...addDirArgs,this.bound?"--resume":"--session-id",this.nativeId],cwd);
     this.home=command.env?.CLAUDE_CONFIG_DIR??process.env.CLAUDE_CONFIG_DIR??join(homedir(),".claude");
     this.process.onMessage=message=>this.handle(message);
     this.process.onExit=()=>{

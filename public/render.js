@@ -219,11 +219,13 @@ export function fileChips(files) {
   const strip = el('div', 'file-chips');
   for (const file of files) {
     const chip = el(file.href ? 'a' : 'span', 'file-chip');
+    const uploadPath = file.uploadPath || file.path;
+    if (uploadPath) chip.dataset.uploadPath = uploadPath;
     if (file.href) { chip.href = file.href; chip.target = '_blank'; chip.rel = 'noopener'; chip.title = '下载 ' + file.name; }
-    else if (file.uploadPath) { chip.dataset.uploadPath = file.uploadPath; chip.title = file.uploadPath; }
+    else if (uploadPath) { chip.title = uploadPath; }
     chip.innerHTML = '<span class="file-ico">📄</span><span class="file-name"></span><span class="file-size"></span>';
     chip.querySelector('.file-name').textContent = file.name;
-    chip.querySelector('.file-size').textContent = formatBytes(file.size);
+    chip.querySelector('.file-size').textContent = typeof file.size === 'number' ? formatBytes(file.size) : (file.sizeText || '');
     strip.appendChild(chip);
   }
   return strip;
