@@ -1,3 +1,5 @@
+> Current plugin source layout: [repository map](REPOSITORIES.md) and [monorepo consumption](docs/development/plugin-monorepo.md).
+
 > Current manual context policy: [experimental Handoff](docs/spec/manual-handoff.md), [GitHub Server #2](https://github.com/awangs1986/pi-coffee-server/issues/2). Automatic compaction remains native Pi.
 
 > Current task storage: [upgrade-safe task bundles](docs/spec/task-storage.md), tracked in [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).

@@ -1,3 +1,5 @@
+> Packaging migration: canonical Handoff source now lives in pi-coffee/packages/context-handoff; see [current package consumption](../development/plugin-monorepo.md). Version/commit records below describe the initial integration baseline. Behavior is unchanged.
+
 # Experimental manual Handoff
 
 Accepted 2026-09-29. Tracking: [Server #2](https://github.com/awangs1986/pi-coffee-server/issues/2)
