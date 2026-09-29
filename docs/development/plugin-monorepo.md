@@ -50,7 +50,7 @@ history. This caught a completed-LSP settlement blocker before deployment.
 Deploy Web and Host from the same checked Server commit. Replace stale explicit
 extension overrides with the default resolver, preserve private environment files,
 native authentication, the Pi model allowlist and task roots. Native Codex CLI
-0.159.1 is installed in a versioned directory and selected through the existing
+0.159.1 is admitted by the verified native readiness gate and installed in a versioned directory and selected through the existing
 command interface; native Claude behavior is unchanged. Keep prior service
 configuration and release directories for rollback. The Issue records final SHAs,
 fresh-clone checks, served-asset identity and live probes.
