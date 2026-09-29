@@ -53,6 +53,50 @@ const q=<T extends Element=HTMLElement>(selector:string)=>document.querySelector
 const hidden=(selector:string)=>q(selector).classList.contains('hidden');
 const workspaceActions=(requests:any[])=>requests.map(r=>r.action).filter(a=>['checkpoint','sync','pull_request'].includes(a));
 
+it('requires explicit confirmation of experimental handoff compaction and preserves cancellation',async()=>{
+  const app=await setup();
+  const compact=q<HTMLButtonElement>('#sp-compact');
+  expect(compact.textContent).toBe('交接压缩');
+  compact.click();await vi.advanceTimersByTimeAsync(20);
+  expect(q('#modal-title').textContent).toBe('交接压缩（实验性功能）');
+  expect(q('#modal-text').textContent).toContain('不保证避免上下文漂移');
+  expect(q('#modal-text').textContent).toContain('多次系统自动压缩后');
+  expect(q('#modal-text').textContent).toContain('Pi 原生自动压缩');
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+  q<HTMLButtonElement>('#modal-cancel').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+  compact.click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(1);
+});
+
+it('does not compact a different task after the confirmation dialog was opened',async()=>{
+  const app=await setup();
+  q<HTMLButtonElement>('#sp-compact').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+});
+
+it('shows active compaction after reconnect and blocks input until settlement',async()=>{
+  const app=await setup();const ws=app.sockets.at(-1);
+  ws.receive({type:'opened',sessionId:'task-1',engine:'pi',state:{isCompacting:true}});
+  q<HTMLTextAreaElement>('#prompt').value='continue';q('#prompt').dispatchEvent(new Event('input'));
+  expect(q<HTMLButtonElement>('#send').disabled).toBe(true);
+  expect(q<HTMLButtonElement>('#sp-compact').disabled).toBe(true);
+  expect(hidden('#stop')).toBe(false);
+  ws.receive({type:'event',sessionId:'task-1',event:{type:'compaction_end',result:{summary:'handoff'},aborted:false}});
+  expect(q('#thread').textContent).not.toContain('上下文已压缩');
+  ws.receive({type:'event',sessionId:'task-1',event:{type:'context_operation',active:false,success:true}});
+  expect(q<HTMLButtonElement>('#send').disabled).toBe(false);
+  expect(q('#thread').textContent).toContain('交接压缩完成');
+});
+
+it('reports failed compaction to a reconnected browser without an originating request',async()=>{
+  const app=await setup();app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'context_operation',active:false,success:false,message:'Handoff did not commit'}});
+  expect(q('#thread').textContent).toContain('Handoff did not commit');
+});
+
 it('puts repository | branch, the branch Diff total and 创建 PR inside the composer card',async()=>{
   await setup();
   expect(q('#project-controls').closest('#composer-card')).not.toBeNull();expect(hidden('#project-controls')).toBe(false);
@@ -353,5 +397,4 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
   expect(chip.href).toContain('token=rotated-tok-99');
   expect(q('#upload-log')?.textContent).toContain('notes.txt');
 });
-
 

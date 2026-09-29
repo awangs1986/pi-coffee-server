@@ -532,6 +532,30 @@ describe("Host WebSocket seam", () => {
     socket.close();
   });
 
+  it("owns manual compaction across reconnect and rejects concurrent mutation", async () => {
+    const factory=new FakeFactory();server=new HostServer({port:0,host:"127.0.0.1",factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:"open"}));const opened=await frames.next();
+    if(opened.type!=="opened")throw new Error("expected opened");await frames.next();
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let finish!:()=>void;pi.compact=()=>new Promise<void>(r=>{finish=r;});
+    socket.send(encodeFrame({v:1,type:"compact",requestId:"handoff"}));
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:true}});
+    for(const frame of [{type:"compact"},{type:"prompt",text:"new work"},{type:"set_model",provider:"fake",id:"other"},{type:"prompt",mode:"steer",text:"new work"}] as const){
+      socket.send(encodeFrame({v:1,...frame,requestId:"concurrent"}));expect(await frames.next()).toMatchObject({type:"error",code:"busy"});
+    }
+    const second=await connect(server.address().port),other=new FrameQueue(second);
+    second.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+    expect(await other.next()).toMatchObject({type:"opened",state:{isCompacting:true}});
+    socket.close();finish();
+    // A subsequent reconnect observes the settled context operation.
+    await new Promise(r=>setTimeout(r,30));
+    const third=await connect(server.address().port),last=new FrameQueue(third);
+    third.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+    expect(await last.next()).toMatchObject({type:"opened",state:{isCompacting:false}});
+    second.close();third.close();
+  });
+
   it("exposes models, thinking, commands, stats and compact through the seam", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory });
@@ -561,10 +585,14 @@ describe("Host WebSocket seam", () => {
     socket.send(encodeFrame({ v: 1, type: "get_stats" }));
     expect(await frames.next()).toMatchObject({ type: "stats", sessionId: opened.sessionId, stats: { cost: 0.001, contextUsage: { percent: 1.5 } } });
     socket.send(encodeFrame({ v: 1, type: "compact", requestId: "c1" }));
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:true}});
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:false,success:true}});
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "compact", requestId: "c1" });
     await waitFor(() => pi.compacted === 1);
     pi.compact = async () => { throw new Error("Local compaction unavailable"); };
     socket.send(encodeFrame({ v: 1, type: "compact", requestId: "c-fail" }));
+    expect(await frames.next()).toMatchObject({type:"event",event:{active:true}});
+    expect(await frames.next()).toMatchObject({type:"event",event:{active:false,success:false}});
     expect(await frames.next()).toMatchObject({ type: "error", requestId: "c-fail" });
     socket.close();
   });

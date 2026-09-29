@@ -55,7 +55,7 @@ let socket, reconnectTimer;
 let retryNote;
 let finishedWhileHidden = false;
 const pendingToolFills = new Set();
-let connected = false, opened = false, streaming = false, modelPending = null;
+let connected = false, opened = false, streaming = false, compacting = false, modelPending = null;
 let activeId = null;
 let currentUser = null;
 function rememberTask(id){if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
@@ -148,7 +148,7 @@ function toggleBrandMenu() {
 
 // ---------- Agent settings menu ----------
 const draftModelEngine = () => !activeId && !pendingOpenId && engineAvailability.some(e=>e.id===$('#task-engine').value && e.available && e.modelCatalog) ? $('#task-engine').value : null;
-const modelControlsLocked = () => !!modelPending || !connected || (!opened && !draftModelEngine());
+const modelControlsLocked = () => compacting || !!modelPending || !connected || (!opened && !draftModelEngine());
 function loadDraftModels() {
   if (!connected || !draftModelEngine()) return;
   catalogRequest=requestId("catalog");
@@ -807,7 +807,8 @@ function renderStats() {
   status.classList.toggle('hidden',!status.textContent);
   ui.spBar.setAttribute('aria-valuetext',pct!==null?Math.floor(pct)+'% Full':'Usage unavailable');
   if(pct!==null)ui.spBar.setAttribute('aria-valuenow',String(Math.min(100,pct)));else ui.spBar.removeAttribute('aria-valuenow');
-  ui.spCompact.disabled=!opened || streaming || !supports('compact');
+  ui.spCompact.textContent=engine==='pi' ? '交接压缩' : '压缩上下文';
+  ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
   ui.spCompact.classList.toggle('hidden',!supports('compact'));
 }
 function showStatsPop() {
@@ -834,19 +835,22 @@ ui.statsPop.addEventListener('click', event => {
 });
 ui.statsPop.addEventListener('keydown', event => { event.stopPropagation(); });
 async function requestLocalCompaction() {
-  if (!opened) return;
-  if (streaming) { toast('请先停止当前任务，再执行本地压缩。'); return; }
+  if (!opened || compacting) return;
+  if (streaming) { toast('请先停止当前任务，再压缩上下文。'); return; }
+  const epoch=taskSelectionEpoch, sessionId=activeId, handoff=engine==='pi';
   hideStatsPop();
-  const ok = await askModal({ title: '本地压缩上下文？', text: '默认 context-fold 配置在 VM 本地生成恢复索引，不调用模型生成摘要。原始记录保留；压缩后不会自动重放任务。若插件被关闭，请先恢复默认配置。', okLabel: '本地压缩' });
-  if (!ok) return;
+  const ok = await askModal(handoff
+    ? {title:'交接压缩（实验性功能）',text:'交接压缩不保证避免上下文漂移，适合在多次系统自动压缩后重新聚焦当前项目。自动压缩仍使用 Pi 原生自动压缩。同一对话、历史和项目文件保留。',okLabel:'交接压缩'}
+    : {title:'压缩上下文？',text:'使用当前 Agent 的原生压缩功能。',okLabel:'压缩'});
+  if (!ok || epoch!==taskSelectionEpoch || sessionId!==activeId || !opened || streaming || compacting) return;
   send({ v: 1, type: 'compact', requestId: requestId('compact') });
-  toast('正在本地压缩…');
+  toast(handoff ? '正在交接压缩…' : '正在压缩上下文…');
 }
 function offerContextRecovery(message) {
   if (!isContextError(message)) return;
-  const entry = pushNote('上下文过大。可本地压缩后继续；若仍过大，请缩短本次输入或检查模型窗口配置。');
+  const entry = pushNote('上下文过大。可压缩后继续；若仍过大，请缩短本次输入或检查模型窗口配置。');
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'btn small'; button.textContent = '本地压缩上下文';
+  button.type = 'button'; button.className = 'btn small'; button.textContent = engine==='pi' ? '交接压缩' : '压缩上下文';
   const sessionId = activeId;
   button.addEventListener('click', () => { if (sessionId === activeId) void requestLocalCompaction(); });
   entry.node.append(button);
@@ -887,16 +891,18 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = !connected || !hasText || activeUploadsBusy || !!modelPending || (streaming && !supports("steer") && !supports("followUp"));
-  ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = modelControlsLocked();
+  ui.send.disabled = compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
-  ui.stop.classList.toggle('hidden', !(connected && streaming));
-  ui.modeWrap.classList.toggle('hidden', !(connected && streaming && (supports("steer") || supports("followUp"))));
+  ui.stop.classList.toggle('hidden', !(connected && (streaming || compacting)));
+  ui.modeWrap.classList.toggle('hidden', !(connected && !compacting && streaming && (supports("steer") || supports("followUp"))));
   ui.pluginsBtn.classList.toggle("hidden",!supports("extensions"));ui.statsWrap.classList.toggle("hidden",!supports("stats"));
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
-  ui.hint.classList.toggle('hidden', !streaming);
+  if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
+  ui.hint.classList.toggle('hidden', !streaming && !compacting);
+  ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
   if (connected) {
     ui.status.textContent = streaming ? engineName()+' 正在工作…' : '已连接';
     ui.dot.className = 'dot ' + (streaming ? 'busy' : 'ready');
@@ -1139,7 +1145,10 @@ function handleFrame(frame, ws) {
       void loadWorkspace();
       workspaceChanges=null;selectedChangedPath=null;lastChangeCardSignature='';if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();renderProjectContext();
       streaming = false;
+  compacting = false;
+      compacting=Boolean(frame.state?.isCompacting);
       setStreaming(Boolean(frame.state && frame.state.isStreaming));
+      refreshComposer();
       renderHeader();
       renderSessionList();
       historyReady=false;catalogRequest=null;
@@ -1187,7 +1196,7 @@ function handleFrame(frame, ws) {
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
       if (frame.operation === 'set_model' || frame.operation === 'set_thinking') send({ v: 1, type: 'get_models' });
-      if (frame.operation === 'compact') setTimeout(() => send({ v: 1, type: 'get_stats' }), 800);
+      if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
     case 'resync_required':
       pushNote('正在运行的这一段输出有部分未能补放；已完成的消息以上方历史为准。');
@@ -1301,7 +1310,8 @@ function handleEvent(event) {
     if (retryNote && retryNote.node.isConnected) { retryNote.text = text; retryNote.node.textContent = text; } else retryNote = pushNote(text);
     return;
   }
-  if (type === 'compaction_end') { const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
+  if(type==='context_operation'){compacting=event.active===true;refreshComposer();if(!compacting && event.success===false)pushNote(event.message || '压缩未完成，原对话保留。',true);if(!compacting && event.success===true)pushNote(engine==='pi' ? '交接压缩完成，已保留原对话和历史。' : '上下文压缩完成。');return;}
+  if (type === 'compaction_end') { if(compacting)return; const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
 
   if (type === 'agent_settled') {
     queuedRequests.clear();
@@ -2068,6 +2078,7 @@ $('#composer').addEventListener('submit', (event) => {
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
 function submitPrompt(text, images) {
+  if(compacting){toast('请等待压缩完成，或先停止');return;}
   if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return;}
   const mode = streaming ? ui.mode.value : 'prompt';
   requestNotifyPermission();   // first prompt is the moment the user has context for the browser's ask
@@ -2119,6 +2130,7 @@ function switchSession(id) {
   activeId = id;
   rememberTask(id);
   streaming = false;
+  compacting = false;
   statsCache = null;
   selectedChangedPath = null;
   lastChangeCardSignature = '';
@@ -2140,6 +2152,7 @@ function newSession(focus = true) {
   activeId = null;
   rememberTask(null);
   streaming = false;
+  compacting = false;
   statsCache = null;
   selectedChangedPath = null;
   lastChangeCardSignature = '';
@@ -2209,7 +2222,7 @@ document.addEventListener('keydown', (event) => {
     if(skillPanel.isOpen()){skillPanel.close();return;}
     if(searchOpen){setSearchOpen(false);$('#search-open').focus();return;}
     closeSidebarOnMobile();
-    if (streaming && opened && document.activeElement !== ui.prompt) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); }
+    if ((streaming || compacting) && opened && document.activeElement !== ui.prompt) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); }
   }
 });
 document.addEventListener('visibilitychange', () => {

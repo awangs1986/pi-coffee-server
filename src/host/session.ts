@@ -64,6 +64,7 @@ export class HostSession {
   private lastMessageEndCursor = 0;
   private state: SessionState = { isStreaming: false, messageCount: 0 };
   private activeRequestId?: string;
+  private compacting = false;
   /** Extension dialogs awaiting an answer, keyed by request id. */
   private readonly pendingUi = new Map<string, ServerFrame>();
   private readonly answeringUi = new Set<string>();
@@ -151,7 +152,7 @@ export class HostSession {
   }
 
   get currentState(): SessionState {
-    return { ...this.state };
+    return { ...this.state, isCompacting: this.compacting };
   }
 
   get currentCursor(): number {
@@ -173,7 +174,7 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
-  get isBusy(): boolean { return this.state.isStreaming || this.activeRequestId !== undefined; }
+  get isBusy(): boolean { return this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get wasInterrupted(): boolean { return this.interrupted; }
   releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
 
@@ -181,7 +182,7 @@ export class HostSession {
   reservePrompt(requestId: string): void {
     if (this.interrupted) throw new Error("Agent was interrupted. Reopen the conversation before retrying; the previous request was not replayed.");
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.activeRequestId !== undefined || this.state.isStreaming) {
+    if (this.isBusy) {
       throw new SessionBusyError();
     }
     this.activeRequestId = requestId;
@@ -201,6 +202,7 @@ export class HostSession {
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
   async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[]): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
+    if (this.compacting) throw new SessionBusyError();
     if (mode === "steer") await this.pi.steer(text, images);
     else await this.pi.followUp(text, images);
   }
@@ -211,6 +213,7 @@ export class HostSession {
   }
 
   async rename(name: string): Promise<void> {
+    if (this.compacting)throw new SessionBusyError();
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     await this.pi.rename(name);
     this.state = { ...this.state, sessionName: name };
@@ -246,12 +249,25 @@ export class HostSession {
   backgroundState():Promise<{known:boolean;active:number}> {return this.ready().backgroundState?.() ?? Promise.resolve({known:false,active:0});}
 
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
-  setModel(provider: string, id: string): Promise<void> { return this.ready().setModel(provider, id); }
-  setThinkingLevel(level: string): Promise<void> { return this.ready().setThinkingLevel(level); }
+  setModel(provider: string, id: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
+  setThinkingLevel(level: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
   getStats(): Promise<SessionStats> { return this.ready().getStats(); }
-  compact(): Promise<void> { return this.ready().compact(); }
+  async compact(): Promise<void> {
+    const pi=this.ready();
+    if(this.isBusy)throw new SessionBusyError();
+    this.compacting=true;this.clearIdleTimer();
+    this.announce({type:"context_operation",active:true});this.onLifecycle?.(this);
+    let success=false, message:string|undefined;
+    try {await pi.compact();await this.exportHistory(await pi.getHistory());success=true;}
+    catch(error) {message=error instanceof Error ? error.message : "Compaction failed";throw error;}
+    finally {
+      this.compacting=false;
+      this.announce({type:"context_operation",active:false,success,...(message ? {message} : {})});this.onLifecycle?.(this);
+      this.scheduleIdleCheck();
+    }
+  }
 
   private ready(): PiSession {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
