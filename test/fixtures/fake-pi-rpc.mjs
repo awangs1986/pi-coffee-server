@@ -123,7 +123,7 @@ for await (const line of input) {
       if(process.env.FAKE_HANDOFF){
         const commit=()=>{compacting=false;
           if(command.customInstructions!=="context-handoff:manual:v1")return response("compact",command.id,{});
-          entries.push({type:"compaction",id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,summary:"handoff",details:process.env.FAKE_HANDOFF==="native" ? {} : {plugin:"pi-handoff",pluginVersion:"0.2.0-experimental.2",trigger:"manual"}});
+          entries.push({type:"compaction",id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,summary:"handoff",details:process.env.FAKE_HANDOFF==="native" ? {} : {plugin:"pi-handoff",pluginVersion:"0.2.0-experimental.3",trigger:"manual"}});
           response("compact",command.id,{summary:"handoff"});};
         if(process.env.FAKE_HANDOFF==="slow"){compacting=true;setTimeout(commit,31000);}else commit();
         break;

@@ -3,7 +3,7 @@ import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
 import { GitHubClient } from "./host/github.js";
-import { resolvePiSkills, withCoffeeLspPath } from "pi-coffee";
+import { resolvePiSkills, withCoffeeLspPath } from "pi-coffee-lsp";
 import { resolveHostPiExtensions } from "./host/pi-extensions.js";
 import { parseUserRoutes } from "./web/identity.js";
 import { readFileSync } from "node:fs";
