@@ -340,6 +340,18 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
   expect(sentPrompt.text).toContain('请总结附件');
   expect(sentPrompt.text).toContain('[已上传到工作目录的文件]');
   expect(sentPrompt.text).toContain('inbox/notes.txt');
+
+  // 3. Reloading history parses [已上传到工作目录的文件] back into clickable .file-chip pills and keeps same-origin + refreshed tokens on poll
+  ws.receive({type:'history',sessionId:created.id,entries:[{kind:'user',id:'u1',text:sentPrompt.text}]});
+  ws.receive({type:'transfer',sessionId:created.id,scope:'hashed-user-scope-'+created.id,url:'http://unreachable.vm:53317',token:'rotated-tok-99',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  await vi.advanceTimersByTimeAsync(20);
+  expect(q('#thread .msg.user .text').textContent).toBe('请总结附件');
+  const chip=q<HTMLAnchorElement>('#thread .msg.user a.file-chip');
+  expect(chip).not.toBeNull();
+  expect(chip.querySelector('.file-name')?.textContent).toBe('notes.txt');
+  expect(chip.href).toContain(location.origin);
+  expect(chip.href).toContain('token=rotated-tok-99');
+  expect(q('#upload-log')?.textContent).toContain('notes.txt');
 });
 
 

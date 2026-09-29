@@ -108,6 +108,7 @@ let prBusy='';                 // progress label while 创建 PR runs checkpoint
 let workspaceDetailOpen = false; // true while a Diff/Checks document replaces the change list
 let lastChangeCardSignature = '';
 let filesAwaitingTransfer = []; // picked before the Session/transfer endpoint was known
+let preferSameOriginTransfer = false;
 let renderTimer = null;
 
 // ---------- helpers ----------
@@ -468,11 +469,37 @@ function showThinking(show) {
   }
 }
 
+function splitUploadedFilesText(rawText) {
+  const text = String(rawText || '');
+  const marker = '\n\n[已上传到工作目录的文件]\n';
+  const cut = text.indexOf(marker);
+  if (cut < 0) return { text, files: [] };
+  const body = text.slice(0, cut);
+  const tail = text.slice(cut + marker.length);
+  const files = [];
+  for (const line of tail.split('\n')) {
+    const match = /^- (.+?)(?: \(([^()]+)\))?$/.exec(line.trim());
+    if (!match) continue;
+    const path = match[1].trim();
+    const name = path.split('/').pop() || path;
+    const sizeText = match[2] || '';
+    files.push({ name, path, uploadPath: path, sizeText, href: downloadUrl(path) });
+  }
+  return { text: body, files };
+}
+
 function renderHistory(frame) {
   resetThread();
   if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
   for (const item of frame.entries || []) {
-    if (item.kind === 'user') { pushUser(item.text || '', undefined, item.imageCount); lastUserText = item.text || lastUserText; }
+    if (item.kind === 'user') {
+      const parsed = splitUploadedFilesText(item.text || '');
+      pushUser(parsed.text, undefined, item.imageCount, parsed.files);
+      for (const f of parsed.files) {
+        if (!uploadLog.some((x) => x.path === f.path)) uploadLog.push({ name: f.name, size: f.size, sizeText: f.sizeText, path: f.path });
+      }
+      lastUserText = parsed.text || lastUserText;
+    }
     else if (item.kind === 'assistant') nativeItems.set(item.id,pushAssistant(item.text || ''));
     else if (item.kind === 'tool') nativeItems.set(item.id,pushTool({ name: item.name, args: item.args, result: item.result || '', done: true, error: Boolean(item.isError), details: item.diff ? { patch: item.diff } : undefined }));
     else if (item.kind === 'note') pushNote(item.text || '');
@@ -480,6 +507,7 @@ function renderHistory(frame) {
   // History groups are finished work: collapse them.
   for (const group of ui.thread.querySelectorAll('.activity')) { group.open = false; group.classList.remove('running'); }
   currentActivity = undefined;
+  if (uploadLog.length) renderUploadLogCard();
   if (entries.length === 0) renderHero();
   if (streaming) showThinking(true);
   scrollToEnd();
@@ -1620,14 +1648,18 @@ const HASH_LIMIT = 32 * 1024 * 1024;         // sha256 in the browser only for f
 function normalizeTransferGrant(grant, fallbackSessionId) {
   if (!grant || typeof grant !== 'object') return null;
   let url = grant.url;
-  try {
-    const parsed = new URL(url, location.origin);
-    const pageHttps = location.protocol === 'https:';
-    const pageLoopback = ['127.0.0.1', 'localhost', '::1'].includes(location.hostname);
-    const targetLoopback = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
-    if ((pageHttps && parsed.protocol === 'http:') || (!pageLoopback && targetLoopback)) url = location.origin;
-  } catch {
+  if (preferSameOriginTransfer) {
     url = location.origin;
+  } else {
+    try {
+      const parsed = new URL(url, location.origin);
+      const pageHttps = location.protocol === 'https:';
+      const pageLoopback = ['127.0.0.1', 'localhost', '::1'].includes(location.hostname);
+      const targetLoopback = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+      if ((pageHttps && parsed.protocol === 'http:') || (!pageLoopback && targetLoopback)) url = location.origin;
+    } catch {
+      url = location.origin;
+    }
   }
   return { ...grant, url, rawUrl: grant.url, sessionId: grant.sessionId || fallbackSessionId || activeId };
 }
@@ -1714,6 +1746,7 @@ async function uploadFiles(files) {
       return await requestPrepare(g);
     } catch (networkError) {
       if (g.url !== location.origin) {
+        preferSameOriginTransfer = true;
         g.url = location.origin;
         if (transfer && (transfer.sessionId || transfer.scope) === targetSessionId) transfer = g;
         for (const u of entries) u.url = g.url;
@@ -1827,7 +1860,8 @@ function renderUploadLogCard() {
   for (const f of uploadLog.slice(0, 20)) {
     const href = downloadUrl(f.path);
     const row = el('div', 'upload-log-row');
-    row.append(el('span', 'upload-log-name', f.name + ' · ' + formatBytes(f.size)));
+    const sizeLabel = typeof f.size === 'number' ? formatBytes(f.size) : (f.sizeText || '');
+    row.append(el('span', 'upload-log-name', f.name + (sizeLabel ? ' · ' + sizeLabel : '')));
     if (href) { const a = el('a', '', '下载'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; row.append(a); }
     card.append(row);
   }
@@ -1836,6 +1870,23 @@ function renderUploadLogCard() {
 
 function refreshToolDownloadLinks() {
   for (const entry of entries) if (entry.k === 'tool' && entry.node) addToolDownloadLink(entry);
+  for (const chip of ui.thread.querySelectorAll('.file-chip[data-upload-path]')) {
+    const path = chip.dataset.uploadPath;
+    const href = downloadUrl(path);
+    if (!href) continue;
+    if (chip.tagName === 'A') {
+      chip.href = href;
+    } else {
+      const link = el('a', 'file-chip');
+      link.dataset.uploadPath = path;
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.title = '下载 ' + (chip.querySelector('.file-name')?.textContent || path);
+      link.replaceChildren(...chip.childNodes);
+      chip.replaceWith(link);
+    }
+  }
 }
 function addToolDownloadLink(entry) {
   const args = entry.args && typeof entry.args === 'object' ? entry.args : {};
@@ -2213,6 +2264,8 @@ async function loadWorkspace() {
       if(activeId===id){
         if(grant){
           transfer=normalizeTransferGrant(grant,id);
+          refreshToolDownloadLinks();
+          renderUploadLogCard();
           bindWorkspaceArtifacts();
           void refreshArtifactCards();
           if(filesAwaitingTransfer.length){const queued=filesAwaitingTransfer;filesAwaitingTransfer=[];void uploadFiles(queued);}
@@ -2816,7 +2869,20 @@ async function refreshArtifactCards() {
  if(!workspaceState || !transfer || !activeId)return;
  const id=activeId;
  try {
-  const r=await fetch(fileEndpoint('artifacts'));if(!r.ok)return;const data=await r.json();if(id!==activeId)return;
+  let r;
+  try {
+    r=await fetch(fileEndpoint('artifacts'));
+  } catch (err) {
+    if (transfer && transfer.url !== location.origin) {
+      preferSameOriginTransfer = true;
+      transfer = { ...transfer, url: location.origin };
+      refreshToolDownloadLinks();
+      renderUploadLogCard();
+      bindWorkspaceArtifacts();
+      r=await fetch(fileEndpoint('artifacts'));
+    } else throw err;
+  }
+  if(!r.ok)return;const data=await r.json();if(id!==activeId)return;
   const signature=id+JSON.stringify(data.artifacts)+transfer.token;
   if(signature===artifactSignature && $('#generated-artifacts'))return;
   artifactSignature=signature;$('#generated-artifacts')?.remove();

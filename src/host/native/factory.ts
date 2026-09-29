@@ -75,7 +75,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(task.nativeBinding?.state==="starting" && !task.nativeBinding.id)throw new Error("Native start was uncertain; inspect it before recovery. No prompt was replayed.");
     if(task.engine==="claude"){
       if(!task.nativeBinding)await this.options.workspaces.setNativeBinding(sessionId,{state:"prepared",requestedId:randomUUID()});
-      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding));
+      const extraDirs=task.taskRoot?[await this.options.workspaces.dataRoot(sessionId)]:[];
+      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs);
       try{return await session.start();}catch(error){await session.stop();throw error;}
     }
     const nativeId=task.nativeBinding?.id;
