@@ -12,7 +12,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { RpcPiSessionFactory } from "../src/host/pi-adapter.js";
 
 it("keeps Web/Host Pi replies and reconnect history working through the installed Pi package", async () => {
-  const runtime = await import("pi-coffee");
+  const runtime = await import("pi-coffee-lsp");
   const root = await mkdtemp(join(tmpdir(), "coffee-consumer-"));
   const agentDir = join(root, "agent"),cwd=join(root,"workspace"); await mkdir(agentDir);await mkdir(cwd);await writeFile(join(cwd,"protected.txt"),"keep");
   const requests:any[]=[];let invalidHandoff=false;let releaseSynthesis:(()=>void)|undefined;
@@ -22,11 +22,13 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     const synthesis=request.messages.some((m:any)=>String(m.content).startsWith("PI_HANDOFF_SYNTHESIS"));
     if(synthesis && !invalidHandoff)await new Promise<void>(r=>{releaseSynthesis=r;});
     const input=synthesis ? JSON.parse(request.messages.find((m:any)=>m.role==="user").content) : undefined;
+    const callActivate=!synthesis && !request.messages.some((m:any)=>m.role==="tool");
+    const callLsp=!synthesis && !callActivate && !request.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe");
     const content=synthesis ? JSON.stringify(invalidHandoff ? {} : {status:"active",nextAction:"Continue the test",claims:[{id:"next",kind:"nextAction",text:"Continue the test",refs:[input.sources.find((s:any)=>s.role==="user").id]}],steps:[],exactValues:[]}) : "PACKAGE_CONSUMER_OK "+"Maintain the test constraint. ".repeat(150);
     res.writeHead(200, { "content-type": "text/event-stream" });
     for (const choice of [
-      { index: 0, delta: { role: "assistant", content }, finish_reason: null },
-      { index: 0, delta: {}, finish_reason: "stop" },
+      { index: 0, delta: callLsp || callActivate ? { role: "assistant", tool_calls: [{index:0,id:callActivate ? "activate-probe" : "lsp-probe",type:"function",function:{name:callActivate ? "search_tools" : "lsp",arguments:JSON.stringify(callActivate ? {action:"activate",capability_id:"lsp"} : {operation:"servers"})}}] } : { role: "assistant", content }, finish_reason: null },
+      { index: 0, delta: {}, finish_reason: callLsp || callActivate ? "tool_calls" : "stop" },
     ]) res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [choice] })}\n\n`);
     res.end("data: [DONE]\n\n");
   });
@@ -41,7 +43,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
   const host = new HostServer({ host: "127.0.0.1", port: 0, idleTimeoutMs:50, factory: new RpcPiSessionFactory({
     cwd, agentDir, sessionDir: join(root, "sessions"), provider: "fixture", model: "fixture", args: ["--offline"],
     extensions: [...resolveHostPiExtensions({}), inspector], skills: runtime.resolvePiSkills({}),
-    env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_SCHEDULER_DIR: join(root, "admission") },
+    env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_INITIAL_MODE: "work", PI_COFFEE_SCHEDULER_DIR: join(root, "admission") },
   }) });
   let web: WebServer | undefined;
   const sockets: WebSocket[] = [];
@@ -59,6 +61,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     await expect.poll(() => first.frames.find(frame => frame.type === "opened"), { timeout: 15000 }).toBeTruthy();
     const tools=JSON.parse(await readFile(toolsFile,'utf8'));
     expect(tools.filter((t:any)=>t.name==='web_search')).toHaveLength(1);
+    expect(tools.filter((t:any)=>t.name==='lsp')).toHaveLength(1);
     expect(tools.some((t:any)=>t.name==='research_seal')).toBe(false);
     const search=tools.find((t:any)=>t.name==='web_search');
     expect(search.parameters.properties.provider).toBeDefined();
@@ -67,6 +70,8 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     first.socket.send(JSON.stringify({ v: 1, type: "prompt", requestId: "package-probe", text: "Reply with the test marker." }));
     await expect.poll(() => first.frames.some(frame => frame.type === "event" && frame.event.type === "agent_settled"), { timeout: 15000 }).toBe(true);
     expect(JSON.stringify(first.frames)).toContain("PACKAGE_CONSUMER_OK");
+    expect(requests.some(r=>r.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe"))).toBe(true);
+    expect(requests.flatMap(r=>r.messages).find((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe").content).not.toMatch(/not found|unknown tool|not active/i);
     expect(first.frames.filter(frame => frame.type === "error" || frame.event?.type === "extension_error")).toEqual([]);
     first.socket.send(JSON.stringify({v:1,type:"get_commands"}));
     await expect.poll(()=>first.frames.find(f=>f.type==="commands")).toBeTruthy();
@@ -74,7 +79,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     expect(commands.filter((c:any)=>c.name==="handoff")).toHaveLength(1);
     expect(commands.some((c:any)=>c.name==="context-recovery")).toBe(false);
     first.socket.send(JSON.stringify({v:1,type:"compact",requestId:"real-handoff"}));
-    await expect.poll(()=>releaseSynthesis,{timeout:10000}).toBeTruthy();
+    await expect.poll(()=>{const failure=first.frames.find(f=>f.type==="error" && f.requestId==="real-handoff");if(failure)throw Error(JSON.stringify(first.frames.filter(f=>f.type==="error" || f.event?.type?.includes("extension") || f.event?.type?.includes("context"))));return releaseSynthesis;},{timeout:10000}).toBeTruthy();
     first.socket.send(JSON.stringify({v:1,type:"get_stats"}));
     await expect.poll(()=>first.frames.find(f=>f.type==="stats")).toBeTruthy();
     releaseSynthesis!();
@@ -83,7 +88,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     const native=await SessionManager.listAll(join(root,"sessions"));expect(native).toHaveLength(1);
     const entries=SessionManager.open(native[0].path).getEntries();
     expect(entries.filter((e:any)=>e.type==="compaction" && e.details?.plugin==="pi-handoff")).toHaveLength(1);
-    expect(entries.find((e:any)=>e.type==="compaction")).toMatchObject({details:{pluginVersion:"0.2.0-experimental.2",trigger:"manual"}});
+    expect(entries.find((e:any)=>e.type==="compaction")).toMatchObject({details:{pluginVersion:"0.2.0-experimental.3",trigger:"manual"}});
     invalidHandoff=true;
     first.socket.send(JSON.stringify({v:1,type:"compact",requestId:"bad-handoff"}));
     await expect.poll(()=>first.frames.find(f=>f.type==="error" && f.requestId==="bad-handoff"),{timeout:15000}).toBeTruthy();
