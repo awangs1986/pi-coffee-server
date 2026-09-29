@@ -48,6 +48,7 @@ describe('Gitea identity and fixed VM routing',()=> {
   await web.start();const base=`http://127.0.0.1:${web.address().port}`;
   try {
    expect((await fetch(base+'/api/me')).status).toBe(401);
+   const unauthMe=await fetch(base+'/auth/me');expect(unauthMe.status).toBe(401);expect(await unauthMe.json()).toEqual({error:'Login required',loginUrl:'/auth/login'});
    expect((await fetch(base+'/auth/callback?state=invalid&code=x',{redirect:'manual'})).status).toBe(401);
    const login=await fetch(base+'/auth/login',{redirect:'manual'});const target=new URL(login.headers.get('location')!);
    expect(target.searchParams.get('code_challenge_method')).toBe('S256');challenge=target.searchParams.get('state')!;
@@ -55,6 +56,7 @@ describe('Gitea identity and fixed VM routing',()=> {
    expect(result.status).toBe(302);expect(result.headers.get('set-cookie')).toContain('HttpOnly');
    const cookie=result.headers.get('set-cookie')!.split(';')[0];
    const me=await fetch(base+'/api/me',{headers:{cookie}});expect(await me.json()).toEqual({id:'7',login:'owner'});
+   const authMe=await fetch(base+'/auth/me',{headers:{cookie}});expect(await authMe.json()).toEqual({auth:true,user:{id:'7',login:'owner'}});
    const forbidden=new WebSocket(base.replace('http:','ws:')+'/ws',{headers:{cookie,origin:'http://evil.test'}});
    const status=await new Promise<number>((resolve,reject)=>{forbidden.on('unexpected-response',(_,res)=>{res.resume();forbidden.terminate();resolve(res.statusCode!);});forbidden.on('error',()=>{});});expect(status).toBe(403);
    routes={};expect((await fetch(base+'/api/me',{headers:{cookie}})).status).toBe(401);

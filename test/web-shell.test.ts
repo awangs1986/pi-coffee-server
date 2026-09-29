@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const html = readFileSync('public/index.html', 'utf8');
 const css = readFileSync('public/app.css', 'utf8');
 const app = readFileSync('public/app.js', 'utf8');
+const diffView = readFileSync('public/diff-view.js', 'utf8');
 const render = readFileSync('public/render.js', 'utf8');
 
 describe('compact Agent composer shell', () => {
@@ -44,7 +45,12 @@ describe('Gitea context strip', () => {
   it('keeps repository/branch context visible while collapsing management actions', () => {
     expect(html).toContain('class="project-context hidden"');
     expect(app).toContain("$('#project-controls').classList.remove('hidden')");
-    expect(html).toContain('<details class="project-manage">');
+    // One composer card: prompt, toolbar, then the repository/branch strip with Diff and PR.
+    expect(html).toMatch(/<div class="composer-card" id="composer-card">\s*<form class="composer"[\s\S]*<\/form>\s*<section id="project-controls"/);
+    for (const id of ['task-details-btn', 'task-details', 'branch-diff', 'pull-request', 'strip-kind', 'task-branch']) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain('class="project-manage"');
+    expect(html).not.toContain('id="turn-diff"');
+    expect(html.match(/id="diff-close"/g)).toHaveLength(1);
     for (const id of ['project-select', 'start-branch', 'project-add', 'project-discover', 'show-active', 'show-archive']) {
       expect(html).toContain(`id="${id}"`);
     }
@@ -79,7 +85,8 @@ describe('Checkout review and Gitea synchronization surfaces', () => {
   it('keeps the transcript-only changed-files card and per-file Diff focus', () => {
     expect(app).toContain('function changedFilesCard(data)');
     expect(app).toContain('function maybeRenderChangesCard');
-    expect(app).toContain('function patchForFile(patch,path)');
+    // Per-file patches for the Diff body (a section cut by the Host's cap is refetched whole).
+    expect(diffView).toContain('export function patchSections(patch, truncated = false)');
     expect(app).toContain("showWorkspaceReview('diff',file.path)");
     expect(css).toMatch(/\.changes-card-list \.workspace-change-row:nth-child\(n\+4\)/);
   });

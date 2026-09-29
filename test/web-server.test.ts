@@ -1,10 +1,14 @@
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { get as httpGet, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostServer } from "../src/host/server.js";
+import { TransferServer } from "../src/host/transfer.js";
 import type { PiSession, PiSessionFactory } from "../src/host/pi-adapter.js";
 import { WebServer } from "../src/web/server.js";
 import { decodeServerFrame, encodeFrame, type HistoryEntry, type ImageInput, type ServerFrame } from "../src/shared/protocol.js";
@@ -214,6 +218,67 @@ describe("Web Server seam", () => {
     }
   });
 
+  it("serves the Diff bundle from public/vendor/: hashed chunks cached for good, the entry revalidated, text gzipped", async () => {
+    const publicDir = mkdtempSync(join(tmpdir(), "pi-coffee-public-"));
+    try {
+      mkdirSync(join(publicDir, "vendor"));
+      const entry = `import "./diffs-AB12CD34.js";\n${"export const view = 'diff';\n".repeat(80)}`;
+      const chunk = "export const chunk = 1;\n".repeat(200);
+      writeFileSync(join(publicDir, "index.html"), "<!doctype html><title>t</title>");
+      writeFileSync(join(publicDir, "app.js"), "console.log('app');\n".repeat(100));
+      writeFileSync(join(publicDir, "vendor", "diffs.js"), entry);
+      writeFileSync(join(publicDir, "vendor", "diffs-AB12CD34.js"), chunk);
+      writeFileSync(join(publicDir, "vendor", "notes.txt"), "not served");
+      host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory() });
+      await host.start();
+      web = new WebServer({ host: "127.0.0.1", port: 0, hostUrl: `ws://127.0.0.1:${host.address().port}/host`, publicDir });
+      await web.start();
+      const port = web.address().port;
+      const raw = (path: string, headers: Record<string, string> = {}) => new Promise<{ status: number; headers: IncomingHttpHeaders; body: Buffer }>((resolveRequest, reject) => {
+        httpGet({ host: "127.0.0.1", port, path, headers }, (response) => {
+          const parts: Buffer[] = [];
+          response.on("data", (part: Buffer) => parts.push(part));
+          response.on("end", () => resolveRequest({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(parts) }));
+        }).on("error", reject);
+      });
+
+      const hashed = await raw("/vendor/diffs-AB12CD34.js", { "accept-encoding": "gzip, br" });
+      expect(hashed.status).toBe(200);
+      expect(hashed.headers["content-type"]).toContain("text/javascript");
+      expect(hashed.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+      expect(hashed.headers["content-encoding"]).toBe("gzip");
+      expect(hashed.headers.vary).toBe("accept-encoding");
+      expect(hashed.body.length).toBeLessThan(chunk.length / 4);
+      expect(gunzipSync(hashed.body).toString()).toBe(chunk);
+
+      const plain = await raw("/vendor/diffs.js");
+      expect(plain.headers["content-encoding"]).toBeUndefined();
+      expect(plain.headers["cache-control"]).toBe("no-cache");
+      expect(plain.body.toString()).toBe(entry);
+      const etag = String(plain.headers.etag);
+      expect(etag).toMatch(/^"[A-Za-z0-9_-]{22}"$/);
+      const revalidated = await raw("/vendor/diffs.js", { "if-none-match": etag });
+      expect(revalidated.status).toBe(304);
+      expect(revalidated.body.length).toBe(0);
+      writeFileSync(join(publicDir, "vendor", "diffs.js"), entry + "// rebuilt\n");
+      const rebuilt = await raw("/vendor/diffs.js", { "if-none-match": etag });
+      expect(rebuilt.status).toBe(200);
+      expect(rebuilt.headers.etag).not.toBe(etag);
+
+      // The shell stays uncacheable, but it is compressed too.
+      const shell = await raw("/app.js", { "accept-encoding": "gzip" });
+      expect(shell.headers["cache-control"]).toBe("no-store");
+      expect(shell.headers.etag).toBeUndefined();
+      expect(gunzipSync(shell.body).toString()).toContain("console.log('app');");
+
+      for (const path of ["/vendor/notes.txt", "/vendor/x/diffs.js", "/vendor/..%2Fapp.js", "/vendor/..%2F..%2Fpackage.json", "/vendor/../../package.json", "/vendor/.diffs.js", "/vendor/diffs.css", "/vendor/missing.js", "/vendor/"]) {
+        expect((await raw(path)).status, path).toBe(404);
+      }
+    } finally {
+      rmSync(publicDir, { recursive: true, force: true });
+    }
+  });
+
   it("serves the shell and the WebSocket over HTTPS when given TLS material (the optional secure route)", async () => {
     const cert = readFileSync(resolve("test/fixtures/tls/test-cert.pem"));
     const key = readFileSync(resolve("test/fixtures/tls/test-key.pem"));
@@ -252,5 +317,62 @@ describe("Web Server seam", () => {
     browser.send("not-json");
     await expect(frames.next()).resolves.toMatchObject({ type: "error", code: "invalid_json", fatal: true });
     browser.close();
+  });
+
+  it("streams LocalSend v2 uploads and downloads through the same-origin Web gateway (ADR-0010 §4)", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "coffee-web-localsend-"));
+    const transfer = new TransferServer({ host: "127.0.0.1", port: 0, workdir });
+    await transfer.start();
+    try {
+      host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory(), transfer });
+      await host.start();
+      let principal='alice';
+      const auth={principalOf:()=>({user:principal}),handle:async()=>false,originAllowed:()=>true} as any;
+      web = new WebServer({auth, host: "127.0.0.1", port: 0, hostUrl: `ws://127.0.0.1:${host.address().port}/host` });
+      await web.start();
+
+      const browser = await connect(`ws://127.0.0.1:${web.address().port}/ws`);
+      const frames = new FrameQueue(browser);
+      browser.send(encodeFrame({ v: 1, type: "open" }));
+      const opened = await frames.next();
+      expect(opened.type).toBe("opened");
+      expect(await frames.next()).toMatchObject({ type: "history" });
+      const grant = await frames.next();
+      expect(grant.type).toBe("transfer");
+      if (grant.type !== "transfer") throw new Error("expected transfer grant");
+
+      const webBase = `http://127.0.0.1:${web.address().port}`;
+      principal='bob';
+      expect((await fetch(`${webBase}/api/localsend/v2/download?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}&fileId=spec.txt`)).status).toBe(403);
+      principal='alice';
+      const prepare = await fetch(`${webBase}/api/localsend/v2/prepare-upload?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          info: { alias: "PI Coffee Web", version: "2.0" },
+          files: { f1: { id: "f1", fileName: "spec.txt", size: 11, fileType: "text/plain" } },
+        }),
+      });
+      expect(prepare.status).toBe(200);
+      const prepared = (await prepare.json()) as { sessionId: string; files: Record<string, string> };
+      principal='bob';
+      expect((await fetch(`${webBase}/api/localsend/v2/upload?sessionId=${encodeURIComponent(prepared.sessionId)}&fileId=f1&token=${encodeURIComponent(prepared.files.f1)}`,{method:'POST',body:'hello world'})).status).toBe(403);
+      principal='alice';
+      const uploaded = await fetch(`${webBase}/api/localsend/v2/upload?sessionId=${encodeURIComponent(prepared.sessionId)}&fileId=f1&token=${encodeURIComponent(prepared.files.f1)}`, {
+        method: "POST",
+        body: "hello world",
+      });
+      expect(uploaded.status).toBe(200);
+      const uploadedJson = (await uploaded.json()) as { path: string };
+      expect(uploadedJson.path).toContain("spec.txt");
+
+      const downloaded = await fetch(`${webBase}/api/localsend/v2/download?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}&fileId=${encodeURIComponent(uploadedJson.path)}`);
+      expect(downloaded.status).toBe(200);
+      expect(await downloaded.text()).toBe("hello world");
+      browser.close();
+    } finally {
+      await transfer.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 });
