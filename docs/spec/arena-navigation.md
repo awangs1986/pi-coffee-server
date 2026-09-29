@@ -112,7 +112,11 @@ Scope is a radio menu: **Branch** — all changes vs the base branch (the Host's
 comparison, with branch/base/target/refresh metadata); **最近一轮** — only what the latest turn
 changed. 最近一轮 is disabled with a reason for Chat, for Claude Code (not yet supported) and
 before the first recorded turn. A panel left open refreshes in place after each turn, keeping
-folded files and scroll position.
+folded files and scroll position. While a Codex run is editing, each `turn_diff` event also
+refreshes an open 最近一轮 in the same way, still from the Host snapshot (the event's own diff is
+not rendered): at most once every 1.5 s, never two reads at once, and not while a comment box has
+focus; the settled turn's refresh replaces a pending one. Branch, and Pi's 最近一轮, refresh when
+the turn ends.
 
 File rows: chevron, monospace path, right-aligned `+N −M` (zero side omitted; binary and
 untracked-without-count are labelled). Bodies are rendered by @pierre/diffs
@@ -164,7 +168,8 @@ It is read-only, skips the task lifecycle lock and refuses private or escaping p
 Public browser-controller tests cover Pi Chat defaults, native Work readiness,
 brand menu commands, opt-in review, task transitions, line numbers, actual paired
 Split rows, file folding and close; the composer strip for Work/Chat, the merged Agent
-menu, the docked Diff (scope menu, 最近一轮, Escape/focus return) and one-click 创建 PR
+menu, the docked Diff (scope menu, 最近一轮 and its throttled `turn_diff` refresh, Escape/focus
+return) and one-click 创建 PR
 (`test/composer-diff.test.ts`), plus renderer/word-diff units (`test/review-diff.test.ts`).
 The @pierre/diffs body (lazy mounting and per-file loading, in-place layout/theme, context
 expansion, comments → composer, fallback) is covered by `test/diff-view.test.ts`; `change_file`

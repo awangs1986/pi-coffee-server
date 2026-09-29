@@ -100,6 +100,10 @@ let workspaceSync = null;
 let selectedChangedPath = null;
 let reviewLayout='unified', diffTaskId=null, diffEpoch=0, diffView=null;
 let diffScope='branch', diffData=null, diffReturnFocus=null, filesPanelBeforeDiff=false; // Diff panel: Branch | 最近一轮
+// Codex reports its cumulative diff after every edit (turn_diff). An open 最近一轮 re-reads the Host
+// snapshot comparison at most once per interval, never overlapping; the event's own diff is not rendered.
+const TURN_DIFF_REFRESH_MS=1500;
+let turnDiffTimer=null, turnDiffLoading=false, turnDiffAgain=false;
 let prBusy='';                 // progress label while 创建 PR runs checkpoint → push → pull request
 let workspaceDetailOpen = false; // true while a Diff/Checks document replaces the change list
 let lastChangeCardSignature = '';
@@ -1176,7 +1180,7 @@ function handleEvent(event) {
     pendingToolFills.add(entry);
     return;
   }
-  if (type === 'turn_diff') return;   // superseded by the Host's per-turn snapshot (Diff → 最近一轮)
+  if (type === 'turn_diff') { scheduleTurnDiffRefresh(); return; }   // Codex edited a file: refresh an open 最近一轮
   if(type==='run_started'){setStreaming(true);showThinking(true);return;}
   if(type==='message_delta' || type==='message_completed'){
     showThinking(false);let entry=nativeItems.get(event.id);
@@ -1261,6 +1265,7 @@ function handleEvent(event) {
     if (uiCurrent || uiQueue.length) { uiQueue.length = 0; closeUiDialog(); }
     send({ v: 1, type: 'get_stats' });
     void refreshWorkspaceChanges(false).then(() => maybeRenderChangesCard()).catch(() => undefined);
+    cancelTurnDiffRefresh();
     if ($('#diff-dialog').open) void loadDiff(null, { preserve: true });
   }
 }
@@ -2534,6 +2539,22 @@ async function loadDiff(focusPath=null, {preserve=false}={}) {
     if(id===activeId && epoch===diffEpoch && dialog.open){diffData=null;$('#diff-scope-info').textContent='';showDiffMessage(el('p','workspace-warning',e.message));syncCollapseToggle();}
   }
 }
+function turnDiffLive(){return $('#diff-dialog').open && diffScope==='turn';}
+function scheduleTurnDiffRefresh(){
+  if(!turnDiffLive())return;
+  if(turnDiffLoading){turnDiffAgain=true;return;}
+  if(!turnDiffTimer)turnDiffTimer=setTimeout(runTurnDiffRefresh,TURN_DIFF_REFRESH_MS);
+}
+async function runTurnDiffRefresh(){
+  turnDiffTimer=null;
+  if(!turnDiffLive())return;
+  // Rebuilding a file under a comment being typed would move the caret: wait until focus leaves.
+  if(document.activeElement?.closest?.('#diff-content .diff-comment-box')){turnDiffTimer=setTimeout(runTurnDiffRefresh,TURN_DIFF_REFRESH_MS);return;}
+  turnDiffLoading=true;
+  try{await loadDiff(null,{preserve:true});}
+  finally{turnDiffLoading=false;if(turnDiffAgain){turnDiffAgain=false;scheduleTurnDiffRefresh();}}
+}
+function cancelTurnDiffRefresh(){clearTimeout(turnDiffTimer);turnDiffTimer=null;turnDiffAgain=false;}
 async function showDiffDialog(path=null, {scope}={}) {
   const task=currentTask();
   if(task?.workspaceKind==='chat')return toast('Chat 没有项目 Diff');

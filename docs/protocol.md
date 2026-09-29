@@ -144,7 +144,7 @@ Images are sent inline as base64 (at most 8 per prompt, within `MAX_FRAME_BYTES`
 Agent event payloads are opaque JSON values at this seam. The browser renders `message_update` → `text_delta`, tool execution start/update/end, `message_end` errors, `extension_ui_request` notifications and visible custom messages. Two events extend Pi's vocabulary and are emitted by the Codex adapter (ADR-0011); the browser ignores them when absent:
 
 - `tool_execution_update {toolCallId, toolName, partialResult}` — output of a still-running tool, accumulated so far (the card refreshes live).
-- `turn_diff {diff}` — the run's cumulative unified diff; shown as the 本轮改动 chip in the top bar.
+- `turn_diff {diff}` — the run's cumulative unified diff. The browser does not render this diff: it only refreshes a Diff panel left open on 最近一轮 (at most once every 1.5 s), which still reads the Host's turn-snapshot comparison (`changes` with `scope:'turn'`, see 「Host contract for 最近一轮」 in [Arena navigation](spec/arena-navigation.md)).
 
 ### Sidebar attention and native threads
 
