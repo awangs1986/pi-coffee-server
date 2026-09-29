@@ -302,6 +302,12 @@
           <button id="diff-close" class="review-icon-btn bordered" type="button" aria-label="关闭 Diff" title="关闭 (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
         </header>
         <div id="diff-content" class="review-content"></div>
+        <div id="diff-comments" class="diff-comment-tray hidden" role="region" aria-label="Diff 评论">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span id="diff-comments-count" class="diff-comment-count">评论 (0)</span>
+          <button id="diff-comments-clear" class="btn small" type="button">清空</button>
+          <button id="diff-comments-send" class="btn small primary" type="button" title="把评论汇总成一条消息放进输入框，确认后再发送">汇总到输入框</button>
+        </div>
       </dialog>
     </div>
 

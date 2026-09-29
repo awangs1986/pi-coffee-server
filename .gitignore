@@ -9,3 +9,4 @@ sessions/
 .DS_Store
 
 public/vendor-*.js
+public/vendor/

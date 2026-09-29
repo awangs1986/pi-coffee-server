@@ -115,16 +115,28 @@ before the first recorded turn. A panel left open refreshes in place after each 
 folded files and scroll position.
 
 File rows: chevron, monospace path, right-aligned `+N −M` (zero side omitted; binary and
-untracked-without-count are labelled). Unified has one line-number column — the old number on
-removed rows (red), the new number elsewhere — no sign column, no wrapping (horizontal scroll),
-a dotted red gutter bar for removals and a solid green bar for additions. Split pairs removed
-and added lines, clips each half at the boundary like the reference and hatches the side with
-no counterpart. Word highlights compare each removed block with the added block that replaces
-it (token LCS across lines, bounded work; rewrites and wholly new lines stay unmarked). A hunk
-separator shows the enclosing function; a first hunk starting at line 1 has none. Prose files
-(Markdown, text) are not syntax-coloured. Empty/binary/oversize patches and stale remote state
-are explicit. Syntax rendering escapes source. Task changes invalidate pending loads. Switching
-layout or folding does not run Git or a model.
+untracked-without-count are labelled). Bodies are rendered by @pierre/diffs
+([ADR-0023](../adr/0023-pierre-diff-renderer.md)), loaded on the first Diff open: Shiki
+highlighting, word-level changes, one line-number column in Unified — the old number on removed
+rows, the new number elsewhere — no sign column, no wrapping (horizontal scroll), a dotted red
+bar for removals and a solid green bar for additions. Split pairs removed and added lines and
+hatches the side with no counterpart. Separators read 「N 行未改动」 and expand unchanged lines
+in place; the first expansion fetches both sides' text (each ≤1 MB, otherwise the reason is
+shown). Files mount as they near the viewport and lines are virtualized; a file the capped
+combined patch lacks is fetched whole (`change_file`, ≤4 MB), so there is no 150 KB cut-off.
+Empty/binary/oversize files and stale remote state are explicit. Switching layout, theme or
+folding updates the mounted files in place without Git or a model; task changes invalidate
+pending loads. Browsers without `IntersectionObserver`/`ResizeObserver`, or a failed bundle
+load, fall back to the built-in `review.js` renderer (same patches, no virtualization).
+
+Line comments: select line numbers (click, Shift-click) and press the gutter 「+」 to open a
+comment box under the range (⌘/Ctrl + Enter saves, Escape cancels without closing the panel).
+Saved comments stay under their lines with 编辑 and 删除. A tray at the bottom shows
+「评论 (N)」, 清空 (confirmed) and 汇总到输入框, which appends one message to the composer —
+per comment the path, `L<start>–L<end>` (「改动前」 for removed lines), up to 8 quoted lines and
+the comment — and does not send it. Comments belong to the task and survive Diff refreshes,
+layout switches and closing the panel; sending or clearing removes them; a page reload loses
+them.
 
 ### Host contract for 最近一轮
 
@@ -141,6 +153,12 @@ patch (≤150 KB), truncated, …}`. Without a snapshot, for Chat or for an unsu
 answers 409 with an explicit reason. Without `scope` the response is unchanged apart from
 `scope:'branch'`; untracked files now carry line counts (first 100).
 
+`POST /api/workspace {action:'change_file', id, path, scope, base, contents?}` returns one file
+of either scope: `{patch, truncated}` (patch ≤4 MB) and, with `contents:true`,
+`{oldContents, newContents, contentsUnavailable?}`. Branch requires the `base` that `changes`
+reported, still an ancestor of HEAD; 最近一轮 uses the turn snapshot through a throwaway index.
+It is read-only, skips the task lifecycle lock and refuses private or escaping paths.
+
 ## Acceptance
 
 Public browser-controller tests cover Pi Chat defaults, native Work readiness,
@@ -148,6 +166,9 @@ brand menu commands, opt-in review, task transitions, line numbers, actual paire
 Split rows, file folding and close; the composer strip for Work/Chat, the merged Agent
 menu, the docked Diff (scope menu, 最近一轮, Escape/focus return) and one-click 创建 PR
 (`test/composer-diff.test.ts`), plus renderer/word-diff units (`test/review-diff.test.ts`).
+The @pierre/diffs body (lazy mounting and per-file loading, in-place layout/theme, context
+expansion, comments → composer, fallback) is covered by `test/diff-view.test.ts`; `change_file`
+by `test/diff-file-http.test.ts`; the vendor route's caching and gzip by `test/web-server.test.ts`.
 Host tests cover the turn snapshot (`test/turn-changes.test.ts`) and the HTTP/WS seam: an
 Agent edit made during the turn is the only file reported for `scope:'turn'`. Host HTTP tests reject new native Chat without
 persisting a task; native lifecycle regressions use independent project clones.

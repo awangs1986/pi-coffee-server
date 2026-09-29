@@ -5,7 +5,7 @@ import { parseAgentEngine, type AgentEngine } from "../shared/protocol.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, readdir, realpath, rm, stat, cp, lstat, appendFile, copyFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, readdir, readlink, realpath, rm, stat, cp, lstat, appendFile, copyFile } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute, normalize, basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
@@ -25,6 +25,11 @@ export interface TurnSnapshot { tree?:string; head?:string; startedAt:string; re
 /** Engines whose runs record a turn snapshot. Claude Code is not covered yet (owner decision 2026-09-28). */
 export const TURN_SNAPSHOT_ENGINES: ReadonlySet<AgentEngine> = new Set<AgentEngine>(["pi","codex"]);
 const TURN_SNAPSHOT_TIMEOUT_MS = 20000;
+/** One file's patch in the Diff panel; larger files are pointed to git diff on the VM. */
+export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
+/** Each side's text offered for expanding unchanged context. */
+export const FILE_CONTENTS_LIMIT = 1024 * 1024;
+export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
 export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface GitHubRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
@@ -653,16 +658,95 @@ export class Workspaces {
       }],
     };
   }
-  private async untrackedPatch(id:string,path:string):Promise<string|undefined> {
+  private async untrackedPatch(id:string,path:string,limit=256*1024):Promise<string|undefined> {
     let full:string,info:Awaited<ReturnType<typeof stat>>;
     try {full=await this.file(id,path);info=await stat(full);} catch {return undefined;}
-    if(!info.isFile() || info.size>256*1024)return undefined;
+    if(!info.isFile() || info.size>limit)return undefined;
     const content=await readFile(full,'utf8').catch(()=> undefined);if(content===undefined || content.includes('\0'))return undefined;
     const withoutTrailingNewline=content.endsWith('\n') ? content.slice(0,-1) : content;
     const lines=withoutTrailingNewline.length ? withoutTrailingNewline.split('\n') : [];
     const additions=lines.map(line=>'+'+line).join('\n');
     const hunk=lines.length===0 ? '@@ -0,0 +0,0 @@' : `@@ -0,0 +1,${lines.length} @@`;
     return ['diff --git a/'+path+' b/'+path,'new file mode 100644','index 0000000..0000000','--- /dev/null','+++ b/'+path,hunk,additions].join(LF)+(content.endsWith(LF) || lines.length===0 ? '' : LF+BACKSLASH+' No newline at end of file');
+  }
+  /**
+   * One file of the Diff panel, loaded when it scrolls into view: its whole patch
+   * (the combined `changes` patch is capped) and, when asked, both sides' text so
+   * the browser can expand unchanged context. Read-only, against the same bases as
+   * `changes` (the merge-base it reported, which must still be an ancestor of
+   * HEAD) and `turnChanges` (the turn's start snapshot).
+   */
+  async changeFile(id:string,input:{scope?:unknown;path?:unknown;base?:unknown;contents?:unknown}) {
+    await this.load();
+    const c=this.conversation(id);
+    if(c.workspaceKind==='chat')throw new Error('Chat workspace has no project Diff');
+    if(c.workspaceRemoved)throw new Error('Workspace has been removed');
+    const path=input.path;
+    if(typeof path!=='string' || path.length>4096 || !displayPath(path))throw new Error('Invalid or private path');
+    await this.checkDirectory(c);
+    const turn=input.scope==='turn';
+    let base:string,patch:string,tooLarge=false;
+    if(turn) {
+      if(!TURN_SNAPSHOT_ENGINES.has(c.engine ?? 'pi'))throw new Error('Last-turn Diff is not available for this Agent yet');
+      const tree=c.turnSnapshot?.tree;
+      if(!tree)throw new Error('No turn recorded yet; send a message first');
+      if((await this.gitResult(c.cwd,['cat-file','-e',tree+'^{tree}'])).code!==0)throw new Error('Last-turn snapshot is no longer available');
+      base=tree;patch=await this.pathAgainstWorkingTree(c.cwd,tree,path);
+    } else {
+      const commit=typeof input.base==='string' ? input.base : '';
+      if(!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit))throw new Error('Diff base missing; refresh the Diff');
+      if((await this.gitResult(c.cwd,['merge-base','--is-ancestor',commit,'HEAD'])).code!==0)throw new Error('Diff base is no longer part of the task branch; refresh the Diff');
+      base=commit;
+      patch=await this.gitBounded(c.cwd,['diff','--no-ext-diff','--no-textconv','--no-renames',commit,'--',path],FILE_PATCH_LIMIT);
+      if(!patch && (await this.git(c.cwd,['ls-files','--others','--exclude-standard','-z','--',path]).catch(()=> '')).split('\0').includes(path)) {
+        const size=(await this.file(id,path).then(full=>stat(full)).catch(()=>undefined))?.size ?? 0;
+        tooLarge=size>FILE_PATCH_LIMIT;
+        if(!tooLarge)patch=await this.untrackedPatch(id,path,FILE_PATCH_LIMIT) ?? '';
+      }
+    }
+    const truncated=tooLarge || Buffer.byteLength(patch)>=FILE_PATCH_LIMIT;
+    const result:{scope:'branch'|'turn';path:string;base:string;patch:string;truncated:boolean;oldContents?:string|null;newContents?:string|null;contentsUnavailable?:'binary'|'too_large'}=
+      {scope:turn ? 'turn' : 'branch',path,base,patch:truncated ? '' : patch,truncated};
+    if(input.contents===true && !truncated) {
+      const [before,after]=await Promise.all([this.blobText(c.cwd,base,path),this.workingText(id,path)]);
+      result.oldContents=before.text;result.newContents=after.text;
+      const reason=before.reason ?? after.reason;if(reason)result.contentsUnavailable=reason;
+    }
+    return result;
+  }
+  /** `git diff <tree> -- <path>` against the working tree (untracked included) via a throwaway index. */
+  private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
+    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+    const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
+    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_INDEX_FILE:index};
+    const run=(args:string[],maxBuffer=2*1024*1024)=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
+    try {
+      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      // A path gone from both the index and the working tree has nothing to add; the diff still shows it deleted.
+      await run(['add','-A','--',path]).catch(()=>undefined);
+      try {return (await run(['diff','--cached','--no-ext-diff','--no-textconv','--no-renames',tree,'--',path],FILE_PATCH_LIMIT)).stdout;}
+      catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
+    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+  }
+  /** A side's text from a commit or tree; null when absent there, binary or over the limit. */
+  private async blobText(cwd:string,treeish:string,path:string):Promise<SideText> {
+    const spec=`${treeish}:${path}`;
+    const size=await this.gitResult(cwd,['cat-file','-s',spec]);
+    if(size.code!==0)return {text:null};
+    if(Number(size.stdout.trim())>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
+    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:{...process.env,GIT_TERMINAL_PROMPT:'0'}});
+    return stdout.includes(0) ? {text:null,reason:'binary'} : {text:stdout.toString('utf8')};
+  }
+  /** The working-tree side as Git sees it (a symlink is its target text); null when deleted. */
+  private async workingText(id:string,path:string):Promise<SideText> {
+    let parent:string;
+    try {parent=await this.file(id,dirname(path));} catch {return {text:null};}
+    const full=join(parent,basename(path)),info=await lstat(full).catch(()=>undefined);
+    if(info?.isSymbolicLink())return {text:await readlink(full)};
+    if(!info?.isFile())return {text:null};
+    if(info.size>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
+    const buffer=await readFile(full);
+    return buffer.includes(0) ? {text:null,reason:'binary'} : {text:buffer.toString('utf8')};
   }
   async deleteWorkspace(id:string, confirmation:string, deleteHistory:()=>Promise<unknown>=async()=>{}, includeLocalFiles=false) {return this.mutate(async()=> {
     const c=this.conversation(id),p=c.workspaceKind==='chat' ? undefined : this.project(c.projectId);

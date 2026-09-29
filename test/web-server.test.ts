@@ -1,7 +1,10 @@
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { get as httpGet, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostServer } from "../src/host/server.js";
@@ -211,6 +214,67 @@ describe("Web Server seam", () => {
     for (const path of ["/app.txt", "/nested/app.js", "/..%2Fpackage.json", "/../package.json", "/package.json", "/app.js.map"]) {
       const blocked = await fetch(`${base}${path}`);
       expect(blocked.status, path).toBe(404);
+    }
+  });
+
+  it("serves the Diff bundle from public/vendor/: hashed chunks cached for good, the entry revalidated, text gzipped", async () => {
+    const publicDir = mkdtempSync(join(tmpdir(), "pi-coffee-public-"));
+    try {
+      mkdirSync(join(publicDir, "vendor"));
+      const entry = `import "./diffs-AB12CD34.js";\n${"export const view = 'diff';\n".repeat(80)}`;
+      const chunk = "export const chunk = 1;\n".repeat(200);
+      writeFileSync(join(publicDir, "index.html"), "<!doctype html><title>t</title>");
+      writeFileSync(join(publicDir, "app.js"), "console.log('app');\n".repeat(100));
+      writeFileSync(join(publicDir, "vendor", "diffs.js"), entry);
+      writeFileSync(join(publicDir, "vendor", "diffs-AB12CD34.js"), chunk);
+      writeFileSync(join(publicDir, "vendor", "notes.txt"), "not served");
+      host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory() });
+      await host.start();
+      web = new WebServer({ host: "127.0.0.1", port: 0, hostUrl: `ws://127.0.0.1:${host.address().port}/host`, publicDir });
+      await web.start();
+      const port = web.address().port;
+      const raw = (path: string, headers: Record<string, string> = {}) => new Promise<{ status: number; headers: IncomingHttpHeaders; body: Buffer }>((resolveRequest, reject) => {
+        httpGet({ host: "127.0.0.1", port, path, headers }, (response) => {
+          const parts: Buffer[] = [];
+          response.on("data", (part: Buffer) => parts.push(part));
+          response.on("end", () => resolveRequest({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(parts) }));
+        }).on("error", reject);
+      });
+
+      const hashed = await raw("/vendor/diffs-AB12CD34.js", { "accept-encoding": "gzip, br" });
+      expect(hashed.status).toBe(200);
+      expect(hashed.headers["content-type"]).toContain("text/javascript");
+      expect(hashed.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+      expect(hashed.headers["content-encoding"]).toBe("gzip");
+      expect(hashed.headers.vary).toBe("accept-encoding");
+      expect(hashed.body.length).toBeLessThan(chunk.length / 4);
+      expect(gunzipSync(hashed.body).toString()).toBe(chunk);
+
+      const plain = await raw("/vendor/diffs.js");
+      expect(plain.headers["content-encoding"]).toBeUndefined();
+      expect(plain.headers["cache-control"]).toBe("no-cache");
+      expect(plain.body.toString()).toBe(entry);
+      const etag = String(plain.headers.etag);
+      expect(etag).toMatch(/^"[A-Za-z0-9_-]{22}"$/);
+      const revalidated = await raw("/vendor/diffs.js", { "if-none-match": etag });
+      expect(revalidated.status).toBe(304);
+      expect(revalidated.body.length).toBe(0);
+      writeFileSync(join(publicDir, "vendor", "diffs.js"), entry + "// rebuilt\n");
+      const rebuilt = await raw("/vendor/diffs.js", { "if-none-match": etag });
+      expect(rebuilt.status).toBe(200);
+      expect(rebuilt.headers.etag).not.toBe(etag);
+
+      // The shell stays uncacheable, but it is compressed too.
+      const shell = await raw("/app.js", { "accept-encoding": "gzip" });
+      expect(shell.headers["cache-control"]).toBe("no-store");
+      expect(shell.headers.etag).toBeUndefined();
+      expect(gunzipSync(shell.body).toString()).toContain("console.log('app');");
+
+      for (const path of ["/vendor/notes.txt", "/vendor/x/diffs.js", "/vendor/..%2Fapp.js", "/vendor/..%2F..%2Fpackage.json", "/vendor/../../package.json", "/vendor/.diffs.js", "/vendor/diffs.css", "/vendor/missing.js", "/vendor/"]) {
+        expect((await raw(path)).status, path).toBe(404);
+      }
+    } finally {
+      rmSync(publicDir, { recursive: true, force: true });
     }
   });
 

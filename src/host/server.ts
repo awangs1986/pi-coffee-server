@@ -230,7 +230,7 @@ export class HostServer {
         const task=await ws.lookup(target);
         if(task?.engine && task.engine!=="pi")throw new Error("Native cleanup is unavailable; Workspace and native history are retained. Archive this Task instead.");
       }
-      if(target && !["files","changes","status","sidebar_move","sidebar_collapse","sidebar_display"].includes(input.action)) {
+      if(target && !["files","changes","change_file","status","sidebar_move","sidebar_collapse","sidebar_display"].includes(input.action)) {
         if(slot.lifecycleLocks.has(target) || (input.action!=="archive" && slot.registry.get(target)?.isBusy))throw new Error("Stop the source conversation before changing its lifecycle");
         slot.lifecycleLocks.add(target);locked=target;
       }
@@ -268,6 +268,7 @@ export class HostServer {
           result={url:this.transfer.publicUrl(),scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
         case "changes": result=input.scope==="turn" ? await ws.turnChanges(input.id) : await ws.changes(input.id);break;
+        case "change_file": result=await ws.changeFile(input.id,input);break;
         case "status": result=await ws.syncStatus(input.id,input.refresh!==false);break;
         case "branches": result=await ws.branches(input.projectId);break;
         case "discover": result=await ws.discover();break;

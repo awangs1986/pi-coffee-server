@@ -915,6 +915,26 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .review-file-counts { display: flex; gap: 8px; flex: none; font: 12px/1 var(--mono); }
 .review-file-empty { margin: 0; padding: 12px 16px; color: var(--text-3); font-size: 12.5px; }
 .review-file-scroll { overflow-x: auto; }
+/* @pierre/diffs bodies (diff-view.js): Pierre draws inside a shadow root; isolation keeps its gutter
+   layers under the sticky file headers. Comment boxes are slotted light DOM, so they reset the code
+   typography they would otherwise inherit. */
+.review-file-body { isolation: isolate; }
+.review-file-body diffs-container { display: block; }
+.review-file-body > .review-file-empty, .review-file-body > .workspace-warning { margin: 0; padding: 12px 16px; }
+.diff-comment-box, .diff-comment { margin: 6px 12px 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font: 13px/1.5 var(--font); white-space: normal; box-shadow: 0 1px 2px rgb(0 0 0 / .05); }
+.diff-comment-box { display: flex; flex-direction: column; gap: 8px; border-color: var(--border-strong); }
+.diff-comment-box textarea { width: 100%; min-height: 64px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; outline: none; }
+.diff-comment-box textarea:focus { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 16%, transparent); }
+.diff-comment-actions { display: flex; align-items: center; gap: 8px; }
+.diff-comment-actions .diff-comment-ref { flex: 1; }
+.diff-comment-ref { color: var(--text-3); font: 12px/1.4 var(--mono); }
+.diff-comment-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.diff-comment-head .diff-comment-ref { flex: 1; }
+.diff-comment-link { border: 0; padding: 0; background: none; color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer; }
+.diff-comment-link:hover { color: var(--text); text-decoration: underline; }
+.diff-comment-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-comment-tray { display: flex; align-items: center; gap: 8px; flex: none; padding: 8px 12px 8px 16px; border-top: 1px solid var(--border); background: var(--bg); color: var(--text-2); }
+.diff-comment-count { flex: 1; color: var(--text); font-size: 13px; font-weight: 600; }
 .review-code { border-collapse: collapse; font: 12.5px/20px var(--mono); tab-size: 4; }
 .review-code[data-layout="unified"] { width: max-content; min-width: 100%; }
 .review-code td { padding: 0; vertical-align: top; }
