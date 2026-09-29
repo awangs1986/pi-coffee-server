@@ -61,8 +61,8 @@ export function sideLine(fileDiff, side, lineNumber) {
   return typeof text === 'string' ? text.replace(/\r?\n$/, '') : undefined;
 }
 
-export function rangeLabel({ start, end, side }) {
-  return (start === end ? `L${start}` : `L${start}–L${end}`) + (side === 'deletions' ? '（改动前）' : '');
+export function rangeLabel({ start, end, side, scope }) {
+  return (start === end ? `L${start}` : `L${start}–L${end}`) + (side === 'deletions' ? (scope === 'turn' ? '（本轮改动前）' : '（改动前）') : '');
 }
 
 /** One message for the composer: every comment with its location and the lines it is about. */
@@ -469,5 +469,9 @@ export class DiffView {
     this.emitComments();
   }
 
-  emitComments() { this.onCommentsChange(this.comments().length); }
+  emitComments() {
+    const all = this.comments();
+    const inScope = this.data?.scope ? all.filter((item) => item.scope === this.data.scope).length : all.length;
+    this.onCommentsChange(all.length, all.length - inScope);
+  }
 }

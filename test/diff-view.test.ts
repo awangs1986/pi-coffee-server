@@ -4,6 +4,7 @@
 // The renderer is a stand-in with Pierre's constructor/render contract; patches are parsed
 // by the real @pierre/diffs parser so line lookups use its actual data model.
 import {readFileSync} from 'node:fs';
+import {composeCommentMessage,patchSections,rangeLabel} from '../public/diff-view.js';
 import {parsePatchFiles} from '@pierre/diffs';
 import {afterEach,expect,it,vi} from 'vitest';
 
@@ -252,6 +253,9 @@ it('asks before clearing comments',async()=>{
   expect(confirm).toHaveBeenCalledWith('清空 1 条 Diff 评论？');expect(q('#diff-comments-count').textContent).toBe('评论 (1)');
   confirm.mockReturnValue(true);q<HTMLButtonElement>('#diff-comments-clear').click();
   expect(q('#diff-comments').classList.contains('hidden')).toBe(true);expect(a.container!.querySelector('.diff-comment')).toBeNull();
+  expect(rangeLabel({start:4,end:5,side:'deletions',scope:'turn'})).toBe('L4–L5（本轮改动前）');
+  expect(composeCommentMessage([{path:'src/a.ts',start:4,end:4,side:'deletions',scope:'turn',excerpt:['old'],text:'fix'}])).toContain('`src/a.ts` L4（本轮改动前）');
+  expect(patchSections('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b').has('src/a.ts')).toBe(true);
 });
 
 it('falls back to the built-in renderer when the Diff bundle cannot load, still loading capped files',async()=>{
