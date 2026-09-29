@@ -40,7 +40,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const result=await exec(config.command,[...(config.args??[]),"--version"],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,reason:"Native executable unavailable"};}
-      const supported=original.id==="codex" ? /\b0\.(154\.0|156\.1)\b/.test(version) : /\b2\.1\.280\b/.test(version);
+      const supported=original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1)\b/.test(version) : /\b2\.1\.280\b/.test(version);
       if(!supported)return {...original,version,available:false,reason:"Unsupported native CLI version; use the verified release"};
       try {
         const ready=await this.authentication(original.id as "codex"|"claude",config);
