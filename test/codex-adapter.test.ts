@@ -246,7 +246,7 @@ describe("Codex app-server adapter", () => {
     const edit = rec2.events.find((event) => event.type === "tool_execution_end");
     expect(edit).toMatchObject({ toolName: "edit", isError: false });
     expect(JSON.stringify(edit?.result)).toContain("+new");
-    // The turn's cumulative diff is surfaced for the "本轮改动" view.
+    // The turn's cumulative diff is surfaced; the browser uses it to refresh an open 最近一轮 Diff.
     const diff = rec2.events.find((event) => event.type === "turn_diff");
     expect(String(diff?.diff)).toContain("+++ b/src/x.ts");
   });

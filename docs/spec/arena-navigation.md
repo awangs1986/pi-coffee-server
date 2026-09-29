@@ -10,6 +10,8 @@ a Gitea Project and starting branch. Returning the new-task selector to Chat
 resets Agent to Pi. A created task retains its Agent; no context conversion or
 implicit engine switching. Existing native local tasks created before this rule
 remain accessible with their original files/history.
+Since 2026-09-28 the Agent and Chat/Work selectors live in the composer's Agent menu,
+and the first message or attachment creates the task (see Composer).
 
 Server #20 (2026-09-27): while creating a Work task, a compact **New Gitea
 project** action sits beside the repository selector. A single name dialog uses
@@ -21,6 +23,16 @@ while a request is pending. Do not retarget a task or replace a project selectio
 the user changed while the request was in flight. Hide this shortcut for Chat
 and already-bound tasks.
 
+GitHub (2026-09-29, [ADR-0022](../adr/0022-github-work-projects.md)): when the Host has
+`PI_COFFEE_GITHUB_TOKEN`, the repository select groups Projects under Gitea and GitHub and ends
+the GitHub group with 「＋ 添加 GitHub 仓库…」; 「＋ 新建项目」 becomes a two-item menu (新建 Gitea
+项目 / 添加 GitHub 仓库). The picker lists repositories the Host token can reach, filters as
+you type, accepts a pasted `owner/repo` or URL, marks 已添加 / 私有 and disables repositories
+without push access or archived ones. Adding one registers it through the Host, closes the
+picker and selects it with its default branch; failures keep the picker open with the Host's
+reason. The strip's repository icon follows the selected Project's forge, and the PR texts
+name that forge. Without the token nothing changes.
+
 Pi credential import into Web Server is future consideration only. This change
 does not implement it or move credentials, runtime, histories or file ownership.
 Native Codex/Claude authentication remains their own user-VM authentication.
@@ -29,9 +41,10 @@ Native Codex/Claude authentication remains their own user-VM authentication.
 
 The upper-left PI Coffee menu owns Add project, Discover existing projects,
 Active conversations and Archived conversations, alongside existing settings.
-These global actions must not appear in the task footer. The new-Work creation
-shortcut above is the explicit exception; import/discovery remain in the menu. The compact footer
-retains task identity/project and the up-arrow for VM/path/task details/compaction.
+These global actions must not appear in the task strip. The new-Work creation
+shortcut above is the explicit exception; import/discovery remain in the menu. The composer's
+task strip retains repository/branch identity; VM, path, Details and compaction live behind the
+toolbar's 任务详情 button (see Composer).
 
 The right pane starts closed at every viewport size, on initial task open and on
 task switch/new conversation. Background polling and streamed changes cannot open
@@ -55,30 +68,114 @@ categories. The sidebar task list remains independent of the search query.
 The running task, connection, transcript and unsent draft stay mounted while
 search is open. Close or Escape returns to that task without aborting it. Selecting
 an active result opens the task; archived results expose existing restore actions.
-New conversation exits search. Search closes the review card and Diff dialog.
+New conversation exits search. Search closes the review card and Diff panel.
+
+## Composer
+
+One rounded card, following the Arena reference: the prompt (placeholder 「想让 PI Coffee
+做什么？」), a toolbar, a divider and the task strip. Wording is Chinese-first; Diff, Branch,
+Unified and Split stay in English.
+
+- Toolbar left: ⊞+ uploads attachments; the Agent trigger shows the Agent icon and name
+  (Pi / Codex / Claude Code) and opens one menu with Agent, 类型 (Chat/Work), 来源, 模型 and
+  思考深度. For a new task, Agent and 类型 are chosen there (the hidden `#task-engine` and
+  `#task-kind` selects stay the source of truth, so Codex/Claude remain Work-only). They lock
+  once the task exists; model rows follow the model catalog and are disabled without one.
+- Toolbar right: the running-mode select and Stop while a turn runs; the scroll icon opens
+  任务详情 (VM, branch, readiness, Details, complete path, Copy path, 本地压缩上下文); the send
+  button is a bordered rounded square with →, grey while disabled. The key hint appears only
+  while a turn runs.
+- Strip, Work task: Gitea or GitHub repository link | branch, then `+A −D ›` (task branch vs base; a
+  zero side is omitted, hidden without changes) and 创建 PR, which becomes `PR #N ↗`.
+- Strip, Chat task: only 「Chat · 本地目录」; no Diff or PR. New task: the repository select
+  (+ 新建项目) and starting branch for Work, or the Chat label (a shortcut to the 类型 pane).
+- The first message (or attachment) creates the task; there is no separate 创建任务 button.
+  A pre-directory legacy task keeps 「为旧任务创建目录」. A failed creation returns the draft.
+- 创建 PR is one click: if files are pending it runs Checkpoint (commit + push the Host's
+  `checkpointPaths`, message = PR title); if only unpushed it syncs; then `pull_request`. One
+  dialog asks for the title. Behind/diverged/branch-mismatch states stop before pushing. While a
+  turn runs, creation is disabled; an existing PR opens on the Project's forge (Gitea or GitHub).
 
 ## Diff
 
 The right pane is the file-change summary with Diff/Checks tabs, counts, patch
-download and View all changes, matching the supplied Arena list reference. A file
-or View all changes opens a separate large Diff dialog, not a narrow inline patch.
-The third supplied image defines its structure: Diff title, collapse-all,
-Branch scope, Unified/Split controls, close, collapsible file headings, change
-counts, code line numbers and red/green line backgrounds.
+download and View all changes, matching the supplied Arena list reference. A file,
+View all changes or the strip's `+A −D ›` opens the Diff panel.
 
-Unified shows old/new line numbers from hunk headers; Split places removed and
-added lines alongside each other, leaving a blank side for unpaired lines. Scope
-is the Host's existing branch comparison, with branch/base/target metadata in its
-disclosure; do not advertise unsupported comparison bases. Empty/binary/oversize
-patches and stale remote state are explicit. Syntax rendering escapes source.
-Close or Escape returns to the prior surface. Task changes invalidate pending
-review loads. Switching the display layout does not run Git or a model.
+The Diff panel is a docked right column (`clamp(460px, 44vw, 920px)`) beside the chat, which
+stays usable; below 1100px it covers the viewport. It is non-modal and never reserves a grid
+column below the dock width. It temporarily replaces the Checkout card and restores it (and the
+focus) when closed with × or Escape. Header: Diff, collapse-all (⊟/⊞ with a dark tooltip
+「收起/展开全部文件」), the scope menu, Unified | Split (active segment blue) and a bordered ×.
+
+Scope is a radio menu: **Branch** — all changes vs the base branch (the Host's branch
+comparison, with branch/base/target/refresh metadata); **最近一轮** — only what the latest turn
+changed. 最近一轮 is disabled with a reason for Chat, for Claude Code (not yet supported) and
+before the first recorded turn. A panel left open refreshes in place after each turn, keeping
+folded files and scroll position. While a Codex run is editing, each `turn_diff` event also
+refreshes an open 最近一轮 in the same way, still from the Host snapshot (the event's own diff is
+not rendered): at most once every 1.5 s, never two reads at once, and not while a comment box has
+focus; the settled turn's refresh replaces a pending one. Branch, and Pi's 最近一轮, refresh when
+the turn ends.
+
+File rows: chevron, monospace path, right-aligned `+N −M` (zero side omitted; binary and
+untracked-without-count are labelled). Bodies are rendered by @pierre/diffs
+([ADR-0023](../adr/0023-pierre-diff-renderer.md)), loaded on the first Diff open: Shiki
+highlighting, word-level changes, one line-number column in Unified — the old number on removed
+rows, the new number elsewhere — no sign column, no wrapping (horizontal scroll), a dotted red
+bar for removals and a solid green bar for additions. Split pairs removed and added lines and
+hatches the side with no counterpart. Separators read 「N 行未改动」 and expand unchanged lines
+in place; the first expansion fetches both sides' text (each ≤1 MB, otherwise the reason is
+shown). Files mount as they near the viewport and lines are virtualized; a file the capped
+combined patch lacks is fetched whole (`change_file`, ≤4 MB), so there is no 150 KB cut-off.
+Empty/binary/oversize files and stale remote state are explicit. Switching layout, theme or
+folding updates the mounted files in place without Git or a model; task changes invalidate
+pending loads. Browsers without `IntersectionObserver`/`ResizeObserver`, or a failed bundle
+load, fall back to the built-in `review.js` renderer (same patches, no virtualization).
+
+Line comments: select line numbers (click, Shift-click) and press the gutter 「+」 to open a
+comment box under the range (⌘/Ctrl + Enter saves, Escape cancels without closing the panel).
+Saved comments stay under their lines with 编辑 and 删除. A tray at the bottom shows
+「评论 (N)」, 清空 (confirmed) and 汇总到输入框, which appends one message to the composer —
+per comment the path, `L<start>–L<end>` (「改动前」 for removed lines), up to 8 quoted lines and
+the comment — and does not send it. Comments belong to the task and survive Diff refreshes,
+layout switches and closing the panel; sending or clearing removes them; a page reload loses
+them.
+
+### Host contract for 最近一轮
+
+When a Work task's run starts (Pi and Codex; Claude Code is not handled yet), the Host snapshots
+the checkout's working tree into a Git tree object before the prompt is acknowledged, using a
+temporary index (the task's own index, HEAD and refs are untouched; ignored files are excluded).
+The snapshot is stored as `conversation.turnSnapshot` (`tree`, `head`, `startedAt`,
+`requestId`); a failed snapshot is recorded as an error and never leaves an older tree behind.
+Steering or queueing into a running turn does not start a new snapshot.
+
+`POST /api/workspace {action:'changes', id, scope:'turn'}` diffs that tree against the current
+working tree, including untracked files, and returns `{scope:'turn', startedAt, running, files,
+patch (≤150 KB), truncated, …}`. Without a snapshot, for Chat or for an unsupported Agent it
+answers 409 with an explicit reason. Without `scope` the response is unchanged apart from
+`scope:'branch'`; untracked files now carry line counts (first 100).
+
+`POST /api/workspace {action:'change_file', id, path, scope, base, contents?}` returns one file
+of either scope: `{patch, truncated}` (patch ≤4 MB) and, with `contents:true`,
+`{oldContents, newContents, contentsUnavailable?}`. Branch requires the `base` that `changes`
+reported, still an ancestor of HEAD; 最近一轮 uses the turn snapshot through a throwaway index.
+It is read-only, skips the task lifecycle lock and refuses private or escaping paths.
 
 ## Acceptance
 
 Public browser-controller tests cover Pi Chat defaults, native Work readiness,
 brand menu commands, opt-in review, task transitions, line numbers, actual paired
-Split rows, file folding and close. Host HTTP tests reject new native Chat without
+Split rows, file folding and close; the composer strip for Work/Chat, the merged Agent
+menu, the docked Diff (scope menu, 最近一轮 and its throttled `turn_diff` refresh, Escape/focus
+return) and one-click 创建 PR
+(`test/composer-diff.test.ts`), plus renderer/word-diff units (`test/review-diff.test.ts`).
+The @pierre/diffs body (lazy mounting and per-file loading, in-place layout/theme, context
+expansion, comments → composer, fallback) is covered by `test/diff-view.test.ts`; `change_file`
+by `test/diff-file-http.test.ts`; the vendor route's caching and gzip by `test/web-server.test.ts`.
+Host tests cover the turn snapshot (`test/turn-changes.test.ts`) and the HTTP/WS seam: an
+Agent edit made during the turn is the only file reported for `scope:'turn'`. Host HTTP tests reject new native Chat without
 persisting a task; native lifecycle regressions use independent project clones.
 Run npm run check from fresh clones. Browser visual acceptance uses synthetic
 content on desktop, narrow and short viewports; live acceptance is read-only.

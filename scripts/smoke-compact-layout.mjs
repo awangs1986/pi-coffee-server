@@ -31,21 +31,39 @@ try {
   assert.equal(await page.evaluate(()=>document.activeElement.id),'stats');
   await page.locator('#stats').click();await page.locator('#stats-close').click();
  }
+ // Diff: docked beside the chat on wide screens, a full-screen overlay when narrow; never modal.
  await page.getByRole('button',{name:'打开变更面板',exact:true}).click();
  await page.locator('.wt-file').first().click();
- for(const [width,height] of [[1280,796],[390,844],[820,480]]) {
+ await page.locator('#diff-content .review-file').first().waitFor();
+ for(const [width,height] of [[1440,900],[1280,796],[1100,640],[390,844],[820,480]]) {
   await page.setViewportSize({width,height});
-  const bounds=await page.locator('#diff-dialog').evaluate(p=>{const r=p.getBoundingClientRect();return {modal:p.matches(':modal'),fits:r.x>=0&&r.y>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1,overflow:p.scrollWidth>p.clientWidth};});
-  assert.deepEqual(bounds,{modal:true,fits:true,overflow:false});
+  const bounds=await page.locator('#diff-dialog').evaluate(p=>{const r=p.getBoundingClientRect(),m=document.querySelector('main').getBoundingClientRect();return {modal:p.matches(':modal'),fits:r.x>=0&&r.y>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1,overflow:p.scrollWidth>p.clientWidth,docked:r.left>=m.right-1&&m.width>=300,full:r.width>=innerWidth-1&&r.height>=innerHeight-1};});
+  assert.deepEqual({modal:bounds.modal,fits:bounds.fits,overflow:bounds.overflow},{modal:false,fits:true,overflow:false});
+  assert.equal(width>=1100 ? bounds.docked : bounds.full,true,JSON.stringify({width,bounds}));
+  const layout=await page.evaluate(measureLayout);console.log(JSON.stringify({...layout,diff:true}));assert.deepEqual(layout.failures,[]);
  }
+ await page.setViewportSize({width:1280,height:796});
  await page.getByRole('button',{name:'Split',exact:true}).click();
- assert.match(await page.locator('.review-code').innerText(),/old[\s\S]*new/);
+ assert.equal(await page.locator('.review-code').first().getAttribute('data-layout'),'split');
+ assert.match(await page.locator('.review-code').first().innerText(),/merge-base[\s\S]*mergeBase/);
+ // 最近一轮 lists only the files the latest turn changed.
+ await page.locator('#diff-scope').click();
+ await page.getByRole('menuitemradio',{name:/最近一轮/}).click();
+ await page.locator('#diff-scope-label',{hasText:'最近一轮'}).waitFor();
+ await page.waitForFunction(()=>document.querySelectorAll('#diff-content .review-file').length===2);
  await page.getByRole('button',{name:'关闭 Diff',exact:true}).press('Escape');
  assert.equal(await page.locator('#diff-dialog').isVisible(),false);
  await page.getByRole('button',{name:'关闭 Checkout 面板',exact:true}).click();
+ // The composer strip opens the same Diff and creates the PR in one click.
+ await page.locator('#branch-diff').click();
+ await page.locator('#diff-content .review-file').first().waitFor();
+ await page.getByRole('button',{name:'关闭 Diff',exact:true}).click();
+ await page.getByRole('button',{name:'创建 PR',exact:true}).click();
+ await page.locator('#modal-ok').click();
+ await page.locator('#pull-request-label',{hasText:'PR #12'}).waitFor();
  await page.getByRole('textbox',{name:'输入',exact:true}).fill('Synthetic draft\n'.repeat(35));
  assert.deepEqual((await page.evaluate(measureLayout)).failures,[]);
- await page.getByLabel('展开任务信息',{exact:true}).click();
+ await page.getByRole('button',{name:'任务详情',exact:true}).click();
  await page.getByRole('button',{name:'详情',exact:true}).click();
  assert.match(await page.locator('#modal-text').textContent(),/00000000-0000-4000-8000-000000000000/);
  console.log('Compact layout passed');

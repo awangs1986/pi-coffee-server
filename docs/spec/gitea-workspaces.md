@@ -27,6 +27,8 @@
 
 ## 项目、分支和创建
 
+> GitHub 修订（2026-09-29，[ADR-0022](../adr/0022-github-work-projects.md)）：Project 也可以直接指向 Host 配置的 GitHub（或 GitHub Enterprise）仓库，`forge: "github"`，ID 为 `github-<repository id>`。对这类 Project，GW-04 的“Gitea 实例”读作 Host 的 `PI_COFFEE_GITHUB_TOKEN` / `PI_COFFEE_GITHUB_API_URL`；GW-05 的“外部 GitHub 先导入 Gitea”只约束 URL 导入入口，不再是使用 GitHub 仓库的前提；GW-09 的 PR 在 Project 所属的 forge 上创建和复用，合并也在那里完成。GW-06 到 GW-12 对两种 forge 相同。
+
 - **GW-04**：Project 指向已登记的 Gitea 实例及稳定 repository ID，保存可刷新 URL/默认分支；本地 Project 根目录不再是合并权威。实例必须来自管理员配置，不能让浏览器传任意带凭据后端地址。
 - **GW-05**：保留 URL 导入、发现本地仓库、创建空项目、压缩包导入四个入口。外部 GitHub/本地/ZIP 内容先导入 Gitea 后登记；外部地址可保留为 upstream，后续同步 GitHub 是独立操作，不自动双向镜像。非空目标冲突报错，不覆盖已有远端。新空仓库先建立作者身份真实的初始 commit；不会伪造作者。ZIP 解压限制和忽略敏感文件规则继续生效。
 - **GW-06**：每个代码 Conversation 从 Gitea 指定的远端分支（默认 repository 默认分支）解析到精确 commit，创建完整、独立的普通 clone；首版不共享 `.git`/alternates、不使用 shallow clone。分支名为 `coffee/<stable-owner-or-vm-id>/<conversation-uuid>`；分配后不让第二个活跃 Conversation 复用。碰撞报错/分配新 ID，不接管未知分支。
