@@ -25,6 +25,7 @@ does not execute Git.
 | `conversation` | `projectId`, optional `branch` | independent Checkout and reserved Conversation branch |
 | `status` | `id`, optional `refresh` | dirty and remote sync state/SHA/time |
 | `changes` | `id` | bounded diff/checks against fetched target branch |
+| `change_file` | `id`, `path`, `scope`, `base` (Branch: the merge-base `changes` returned), optional `contents` | one file's whole patch (≤4 MB, else `truncated`) and, with `contents`, both sides' text (≤1 MB each) for the Diff panel; read-only ([ADR-0023](adr/0023-pierre-diff-renderer.md)) |
 | `checkpoint` | `id`, selected `paths`, `message` | commit, normal push and exact remote SHA confirmation |
 | `sync` | `id` | retry normal push of the existing local checkpoint |
 | `pull_request` | `id`, `title` | idempotent real PR record on the Project's forge (Gitea, or GitHub for `forge: "github"`) |

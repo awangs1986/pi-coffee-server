@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 const html = readFileSync('public/index.html', 'utf8');
 const css = readFileSync('public/app.css', 'utf8');
 const app = readFileSync('public/app.js', 'utf8');
+const diffView = readFileSync('public/diff-view.js', 'utf8');
 const render = readFileSync('public/render.js', 'utf8');
 
 describe('compact Agent composer shell', () => {
@@ -84,7 +85,8 @@ describe('Checkout review and Gitea synchronization surfaces', () => {
   it('keeps the transcript-only changed-files card and per-file Diff focus', () => {
     expect(app).toContain('function changedFilesCard(data)');
     expect(app).toContain('function maybeRenderChangesCard');
-    expect(app).toContain('function patchForFile(patch,path)');
+    // Per-file patches for the Diff body (a section cut by the Host's cap is refetched whole).
+    expect(diffView).toContain('export function patchSections(patch, truncated = false)');
     expect(app).toContain("showWorkspaceReview('diff',file.path)");
     expect(css).toMatch(/\.changes-card-list \.workspace-change-row:nth-child\(n\+4\)/);
   });

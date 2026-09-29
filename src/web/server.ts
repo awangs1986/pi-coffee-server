@@ -2,11 +2,14 @@ import { USER_HEADER } from "../shared/identity.js";
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json } from "../shared/http.js";
 import { Identity, type IdentityOptions } from "./identity.js";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { HostClient } from "./host-client.js";
 
@@ -53,6 +56,7 @@ export class WebServer {
   private readonly auth?: GiteaAuth;
   private readonly defaultUser?:string;
   private readonly allowUnauthenticated: boolean;
+  private readonly assets = new Map<string, CachedAsset>();
 
   constructor(options: WebServerOptions) {
     this.auth=options.auth;this.defaultUser=options.defaultUser;
@@ -187,13 +191,46 @@ export class WebServer {
       return;
     }
     try {
-      const body = await readFile(resolve(this.publicDir, asset.file));
-      response.writeHead(200, { "content-type": asset.contentType, "cache-control": "no-store" });
-      response.end(body);
+      const cached = await this.readAsset(asset.file);
+      const cacheControl = assetCacheControl(asset.file);
+      const headers: Record<string, string> = { "content-type": asset.contentType, "cache-control": cacheControl, vary: "accept-encoding" };
+      if (cacheControl !== "no-store") {
+        headers.etag = cached.etag;
+        if (request.headers["if-none-match"] === cached.etag) {
+          response.writeHead(304, headers);
+          response.end();
+          return;
+        }
+      }
+      let body = cached.body;
+      if (cached.compressible && /\bgzip\b/.test(String(request.headers["accept-encoding"] ?? ""))) {
+        cached.gzipped ??= await gzipAsync(cached.body);
+        body = cached.gzipped;
+        headers["content-encoding"] = "gzip";
+      }
+      headers["content-length"] = String(body.length);
+      response.writeHead(200, headers);
+      response.end(request.method === "HEAD" ? undefined : body);
     } catch {
       response.writeHead(asset.file === "index.html" ? 500 : 404, { "content-type": "text/plain; charset=utf-8" });
       response.end(asset.file === "index.html" ? "PI Coffee shell is not installed" : "Not found");
     }
+  }
+
+  /** Shell files, re-read only when their size or mtime changes; gzip is computed once per version. */
+  private async readAsset(file: string): Promise<CachedAsset> {
+    const path = resolve(this.publicDir, file);
+    const info = await stat(path);
+    const known = this.assets.get(path);
+    if (known && known.mtimeMs === info.mtimeMs && known.size === info.size) return known;
+    const body = await readFile(path);
+    const asset: CachedAsset = {
+      mtimeMs: info.mtimeMs, size: info.size, body,
+      etag: `"${createHash("sha256").update(body).digest("base64url").slice(0, 22)}"`,
+      compressible: body.length >= 1024 && !/\.(png|ico|woff2)$/.test(file),
+    };
+    if (body.length <= 16 * 1024 * 1024) this.assets.set(path, asset);
+    return asset;
   }
 
   private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown) {
@@ -322,6 +359,20 @@ class BrowserBridge {
   }
 }
 
+interface CachedAsset { mtimeMs: number; size: number; body: Buffer; etag: string; compressible: boolean; gzipped?: Buffer }
+const gzipAsync = promisify(gzip);
+
+/**
+ * The shell itself is replaced in place on deploy, so it is never cached. The Diff
+ * bundle's chunks are content-hashed by esbuild (diffs-<hash>.js) and never change
+ * under the same name; its stable entry revalidates with an ETag instead.
+ */
+function assetCacheControl(file: string): string {
+  if (/^vendor\/[A-Za-z0-9_]+-[A-Z0-9]{8}\.js$/.test(file)) return "public, max-age=31536000, immutable";
+  if (file.startsWith("vendor/")) return "no-cache";
+  return "no-store";
+}
+
 const ASSET_TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
   css: "text/css; charset=utf-8",
@@ -333,12 +384,15 @@ const ASSET_TYPES: Record<string, string> = {
 };
 
 /**
- * The shell is a flat set of files directly under `public/`. Only a single
- * safe path segment with a known extension is served, so `..`, nested paths,
- * and anything else never reach the filesystem.
+ * The shell is a flat set of files directly under `public/`, plus the generated
+ * Diff bundle under `public/vendor/` (JavaScript only). Only a single safe path
+ * segment with a known extension is served, so `..`, deeper paths, and anything
+ * else never reach the filesystem.
  */
 function resolveAsset(path: string): { file: string; contentType: string } | undefined {
   if (path === "/" || path === "/index.html") return { file: "index.html", contentType: ASSET_TYPES.html };
+  const vendor = /^\/vendor\/([A-Za-z0-9_-]+)\.js$/.exec(path);
+  if (vendor !== null) return { file: `vendor/${vendor[1]}.js`, contentType: ASSET_TYPES.js };
   const match = /^\/([A-Za-z0-9_-]+)\.([a-z0-9]+)$/.exec(path);
   if (match === null) return undefined;
   const contentType = ASSET_TYPES[match[2]];

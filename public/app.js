@@ -13,7 +13,7 @@ import { attentionOf, orderSessions, formatReset, isTerminalSession, sessionGrou
 
 const ACTIVE_KEY_BASE = 'pi-coffee.active.v2';
 let ACTIVE_KEY = ACTIVE_KEY_BASE;   // suffixed with the login name once /auth/me answers
-import { renderReviewFile } from './review.js';
+import { DiffView } from './diff-view.js';
 import { compactionNotice, isContextError } from './context-status.js';
 
 
@@ -98,7 +98,7 @@ let transfer = null;           // { url, scope, token, inbox, maxFileBytes, maxB
 let workspaceChanges = null;   // aggregate Checkout status from `/api/workspace` action `changes`
 let workspaceSync = null;
 let selectedChangedPath = null;
-let reviewLayout='unified', diffTaskId=null, diffEpoch=0;
+let reviewLayout='unified', diffTaskId=null, diffEpoch=0, diffView=null;
 let diffScope='branch', diffData=null, diffReturnFocus=null, filesPanelBeforeDiff=false; // Diff panel: Branch | 最近一轮
 let prBusy='';                 // progress label while 创建 PR runs checkpoint → push → pull request
 let workspaceDetailOpen = false; // true while a Diff/Checks document replaces the change list
@@ -125,6 +125,7 @@ function isMobileSidebar() { return window.matchMedia('(max-width: 820px)').matc
 function applyTheme(theme) {
   const next = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
+  diffView?.setTheme(next);
   try { localStorage.setItem(THEME_KEY, next); } catch { /* private-mode storage can fail */ }
   ui.themeToggle?.setAttribute('aria-pressed', String(next === 'dark'));
   if (ui.themeLabel) ui.themeLabel.textContent = next === 'dark' ? '浅色模式' : '深色模式';
@@ -2405,16 +2406,6 @@ function maybeRenderChangesCard(data=workspaceChanges) {
   lastChangeCardSignature=signature;
   appendNode(changedFilesCard(data));
 }
-function patchForFile(patch,path) {
-  if(!patch || !path) return '';
-  const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);
-  for(const section of sections) {
-    let target=section.match(/^diff --git [^\n]* b\/(.+)$/m)?.[1] || section.match(/^\+\+\+ b\/(.+)$/m)?.[1];
-    if(target?.startsWith('"') && target.endsWith('"'))target=target.slice(1,-1).replace(/\\(["\\])/g,'$1');
-    if(target===path)return section;
-  }
-  return '';
-}
 function middleTruncate(path,max=24) {
   if(path.length<=max)return path;
   const base=path.split('/').pop() || path;
@@ -2508,26 +2499,31 @@ function syncCollapseToggle() {
   button.setAttribute('aria-label',label);button.disabled=!files.length;
   $('#diff-collapse-tip').textContent=label;
 }
+// The file list is diff-view.js: @pierre/diffs with per-file lazy loading, or review.js as fallback.
+function getDiffView() {
+  return diffView ??= new DiffView($('#diff-content'),{onCommentsChange:renderDiffComments,onNotice:toast});
+}
+function renderDiffComments(count) {
+  $('#diff-comments').classList.toggle('hidden',!count);
+  $('#diff-comments-count').textContent=`评论 (${count})`;
+}
 function renderWorkspaceDiff(data, focusPath=null, {preserve=false}={}) {
-  const content=$('#diff-content');
-  const collapsed=preserve ? new Set([...content.querySelectorAll('.review-file:not([open])')].map(file=>file.dataset.path)) : new Set();
-  const scrollTop=preserve ? content.scrollTop : 0;
-  content.replaceChildren();
   $('#diff-scope-info').textContent=diffScopeInfo(data);
   for(const mode of ['unified','split'])$('#diff-'+mode).setAttribute('aria-pressed',String(mode===reviewLayout));
-  for(const file of data.files)content.append(renderReviewFile(file,patchForFile(data.patch,file.path),reviewLayout,{open:!collapsed.has(file.path)}));
-  if(!data.files.length)content.append(el('p','workspace-empty',data.scope==='turn' ? '最近一轮没有改动文件。' : '没有改动。'));
-  if(data.truncated)content.append(el('p','workspace-warning','Diff 过大，仅显示前 150 KB；请在 VM 使用 git diff 查看完整内容。'));
+  const id=activeId,scope=data.scope,base=data.base;
+  // Whole per-file patches (and both sides' text for expanding context) come from the same scope and base.
+  const loadFile=(path,extra={})=>workspaceApi({action:'change_file',id,scope,base,path,...extra});
+  getDiffView().render(data,{taskId:id,layout:reviewLayout,theme:document.documentElement.dataset.theme==='dark' ? 'dark' : 'light',loadFile,focusPath,preserve});
   syncCollapseToggle();
-  if(preserve){content.scrollTop=scrollTop;return;}
-  content.scrollTop=0;
-  const target=focusPath ? [...content.querySelectorAll('.review-file')].find(file=>file.dataset.path===focusPath) : null;
-  if(target){target.open=true;target.scrollIntoView?.({block:'start'});}
+}
+function showDiffMessage(node) {
+  getDiffView().teardown();
+  $('#diff-content').replaceChildren(node);
 }
 async function loadDiff(focusPath=null, {preserve=false}={}) {
   const id=activeId,epoch=++diffEpoch,scope=diffScope,dialog=$('#diff-dialog');diffTaskId=id;
   renderDiffScope();
-  if(!preserve)$('#diff-content').replaceChildren(el('p','workspace-empty','正在读取 Diff…'));
+  if(!preserve)showDiffMessage(el('p','workspace-empty','正在读取 Diff…'));
   try {
     const data=scope==='turn' ? await workspaceApi({action:'changes',id,scope:'turn'}) : await refreshWorkspaceChanges(false);
     if(!data || id!==activeId || epoch!==diffEpoch || !dialog.open)return;
@@ -2535,7 +2531,7 @@ async function loadDiff(focusPath=null, {preserve=false}={}) {
     diffData={...data,scope};
     renderWorkspaceDiff(diffData,focusPath,{preserve});
   } catch(e) {
-    if(id===activeId && epoch===diffEpoch && dialog.open){diffData=null;$('#diff-scope-info').textContent='';$('#diff-content').replaceChildren(el('p','workspace-warning',e.message));syncCollapseToggle();}
+    if(id===activeId && epoch===diffEpoch && dialog.open){diffData=null;$('#diff-scope-info').textContent='';showDiffMessage(el('p','workspace-warning',e.message));syncCollapseToggle();}
   }
 }
 async function showDiffDialog(path=null, {scope}={}) {
@@ -2684,6 +2680,7 @@ async function refreshArtifactCards() {
 function closeDiffDialog(restore=false) {
   const dialog=$('#diff-dialog');
   ++diffEpoch;diffTaskId=null;diffData=null;
+  diffView?.close();
   closeDiffScopeMenu();
   const wasOpen=dialog.open;
   closeDialogElement(dialog);
@@ -2720,8 +2717,23 @@ for(const option of document.querySelectorAll('.review-scope-option'))option.add
 });
 for(const mode of ['unified','split'])$('#diff-'+mode).addEventListener('click',()=>{
   reviewLayout=mode;
-  if(diffData && diffTaskId===activeId)renderWorkspaceDiff(diffData,null,{preserve:true});
-  else for(const other of ['unified','split'])$('#diff-'+other).setAttribute('aria-pressed',String(other===reviewLayout));
+  for(const other of ['unified','split'])$('#diff-'+other).setAttribute('aria-pressed',String(other===reviewLayout));
+  if(diffData && diffTaskId===activeId){getDiffView().setLayout(mode);syncCollapseToggle();}
+});
+// Line comments: gathered in the Diff, summarized into one composer message that the user sends.
+$('#diff-comments-send').addEventListener('click',()=>{
+  const message=getDiffView().takeComments();
+  if(!message)return;
+  const current=ui.prompt.value.replace(/\s+$/,'');
+  ui.prompt.value=current ? current+'\n\n'+message : message;
+  ui.prompt.dispatchEvent(new Event('input',{bubbles:true}));
+  if(window.matchMedia('(max-width: 1100px)').matches)closeDiffDialog(false);
+  ui.prompt.focus();ui.prompt.setSelectionRange(ui.prompt.value.length,ui.prompt.value.length);
+  toast('评论已汇总到输入框，确认后再发送');
+});
+$('#diff-comments-clear').addEventListener('click',()=>{
+  const count=getDiffView().comments().length;
+  if(count && confirm(`清空 ${count} 条 Diff 评论？`))getDiffView().clearComments();
 });
 $('#diff-content').addEventListener('toggle',syncCollapseToggle,true);
 $('#diff-collapse').addEventListener('click',()=>{const files=[...$('#diff-content').querySelectorAll('.review-file')];const open=!files.some(file=>file.open);for(const file of files)file.open=open;syncCollapseToggle();});
