@@ -44,7 +44,12 @@ describe('Gitea context strip', () => {
   it('keeps repository/branch context visible while collapsing management actions', () => {
     expect(html).toContain('class="project-context hidden"');
     expect(app).toContain("$('#project-controls').classList.remove('hidden')");
-    expect(html).toContain('<details class="project-manage">');
+    // One composer card: prompt, toolbar, then the repository/branch strip with Diff and PR.
+    expect(html).toMatch(/<div class="composer-card" id="composer-card">\s*<form class="composer"[\s\S]*<\/form>\s*<section id="project-controls"/);
+    for (const id of ['task-details-btn', 'task-details', 'branch-diff', 'pull-request', 'strip-kind', 'task-branch']) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain('class="project-manage"');
+    expect(html).not.toContain('id="turn-diff"');
+    expect(html.match(/id="diff-close"/g)).toHaveLength(1);
     for (const id of ['project-select', 'start-branch', 'project-add', 'project-discover', 'show-active', 'show-archive']) {
       expect(html).toContain(`id="${id}"`);
     }

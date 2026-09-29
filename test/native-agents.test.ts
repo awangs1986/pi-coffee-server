@@ -128,9 +128,11 @@ it('opens seven-category context usage on click without cumulative data and clos
 });
 
 it('collapses task details when starting another Task',async()=>{
- await setup();const disclosure=document.querySelector<HTMLDetailsElement>('.project-manage')!;disclosure.open=true;
+ await setup();const button=document.querySelector<HTMLButtonElement>('#task-details-btn')!,popover=document.querySelector('#task-details')!;
+ button.click();expect(popover.classList.contains('hidden')).toBe(false);expect(button.getAttribute('aria-expanded')).toBe('true');
+ expect(popover.textContent).toContain('发送第一条消息后创建任务目录');
  document.querySelector<HTMLButtonElement>('#new-task')!.click();
- expect(disclosure.open).toBe(false);
+ expect(popover.classList.contains('hidden')).toBe(true);expect(button.getAttribute('aria-expanded')).toBe('false');
 });
 
 function chooseWork(){const kind=document.querySelector<HTMLSelectElement>('#task-kind')!;kind.value='project';kind.dispatchEvent(new Event('change'));document.querySelector<HTMLSelectElement>('#project-select')!.value='p';}
@@ -286,7 +288,9 @@ it('ignores a stale Codex catalog after switching back to Pi',async()=>{
  engine.value='codex';engine.dispatchEvent(new Event('change'));const query=app.frames.find(f=>f.type==='get_model_catalog');
  engine.value='pi';engine.dispatchEvent(new Event('change'));
  app.sockets.at(-1).receive({type:'model_catalog',requestId:query.requestId,engine:'codex',models:[{provider:'codex',id:'stale-model'}],current:{provider:'codex',id:'stale-model'}});
- expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(true);
+ // The trigger stays usable for Agent/类型; only the model rows lock, and the stale Codex model never shows.
+ const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);expect(document.querySelector('#agent-name')!.textContent).toBe('Pi');
+ button.click();expect(document.querySelector<HTMLButtonElement>('#agent-model-row')!.disabled).toBe(true);expect(document.querySelector('#agent-model-value')!.textContent).toBe('—');
  expect(engine.value).toBe('pi');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
 });
 
@@ -294,7 +298,9 @@ it('does not request a draft model catalog from an older Host',async()=>{
  const app=await setup(false,false,false);chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
  engine.value='codex';engine.dispatchEvent(new Event('change'));
  expect(app.frames.some(f=>f.type==='get_model_catalog')).toBe(false);
- expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(true);
+ const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);button.click();
+ expect(document.querySelector<HTMLButtonElement>('#agent-model-row')!.disabled).toBe(true);
+ expect(document.querySelector('#agent-menu-note')!.textContent).toContain('模型在任务创建后可选');
 });
 
 it('locks draft model controls while explicit task creation is in flight',async()=>{

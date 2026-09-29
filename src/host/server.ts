@@ -222,7 +222,7 @@ export class HostServer {
         const engine=parseAgentEngine(input.engine);
         const existing=target ? await ws.lookup(target) : undefined;
         if(existing && (existing.engine ?? "pi")!==engine)throw new Error("Task Agent is fixed at creation");
-        if(!existing && input.action==='conversation' && input.workspaceKind==='chat' && engine!=='pi')throw new Error('Chat is available only with Pi; choose Work and a Gitea Project for Codex or Claude Code');
+        if(!existing && input.action==='conversation' && input.workspaceKind==='chat' && engine!=='pi')throw new Error('Chat is available only with Pi; choose Work and a Gitea or GitHub Project for Codex or Claude Code');
         const available=(await slot.factory.engines?.() ?? PI_ONLY_ENGINES).find(item=>item.id===engine);
         if(!existing && !available?.available)throw new Error(available?.reason ?? "Agent unavailable");
       }
@@ -267,10 +267,12 @@ export class HostServer {
           this.transferTargets.set(scope,{slot:Promise.resolve(slot),sessionId:input.id});
           result={url:this.transfer.publicUrl(),scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
-        case "changes": result=await ws.changes(input.id);break;
+        case "changes": result=input.scope==="turn" ? await ws.turnChanges(input.id) : await ws.changes(input.id);break;
         case "status": result=await ws.syncStatus(input.id,input.refresh!==false);break;
         case "branches": result=await ws.branches(input.projectId);break;
         case "discover": result=await ws.discover();break;
+        case "github_repos": result=await ws.githubRepositories();break;
+        case "github_project": result=await ws.registerGitHubProject(input.repository);break;
         case "project": result=await ws.createProject(input.name,input.url);break;
         case "bind_project": result=await ws.bindProjectRepository(input.projectId,input.repoUrl,input.repoId,input.webUrl);break;
         case "import": {

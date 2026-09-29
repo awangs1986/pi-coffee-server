@@ -9,6 +9,7 @@ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_EXECU
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 page.setDefaultTimeout(30_000);
 const errors=[];page.on('pageerror',error=>errors.push(error.message));
+async function chooseKind(label){await page.locator('#agent-menu-btn').click();await page.locator('#agent-kind-row').click();await page.locator('#agent-kind-pane').getByRole('menuitemradio',{name:new RegExp('^'+label)}).click();}
 try{
  await page.goto(base+'/auth/login');
  if(new URL(page.url()).origin!==new URL(base).origin){
@@ -23,30 +24,31 @@ try{
  await page.getByText('已连接',{exact:true}).first().waitFor({state:'visible'});
  await page.locator('#new-task').click();
  await page.waitForFunction(()=>document.querySelector('#status')?.textContent==='已连接');
- await page.locator('#task-kind').selectOption('chat');
- const chatResponse=page.waitForResponse(r=>r.url().endsWith('/api/workspace') && r.request().postDataJSON()?.action==='conversation');
- await page.locator('#create-task').click();const chat=await (await chatResponse).json();assert.equal(chat.workspaceKind,'chat');assert.equal(chat.creationState,'ready');
- await page.locator('#workspace-context').getByText(chat.cwd,{exact:true}).waitFor();
- await page.waitForFunction(id=>localStorage.getItem('pi-coffee.active.v2')===id,chat.id);
+ await chooseKind('Chat');
+ // There is no separate 创建任务 step: the first attachment (or message) creates the task directory.
  // A real PNG also exercises the inline image path: original bytes must survive in inbox.
  const original=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvLkAAAAASUVORK5CYII=','base64');
- const uploadResponse=page.waitForResponse(r=>r.url().includes('/upload?') && r.request().method()==='POST');
+ const chatResponse=page.waitForResponse(r=>r.url().endsWith('/api/workspace') && r.request().postDataJSON()?.action==='conversation');
+ const uploadResponse=page.waitForResponse(r=>r.url().includes('/upload?') && r.request().method()==='POST',{timeout:120_000});
  await page.locator('#file').setInputFiles({name:'workspace-smoke.png',mimeType:'image/png',buffer:original});
+ const chat=await (await chatResponse).json();assert.equal(chat.workspaceKind,'chat');assert.equal(chat.creationState,'ready');
+ await page.locator('#workspace-context').getByText(chat.cwd,{exact:true}).waitFor({state:'attached'});
+ await page.waitForFunction(id=>localStorage.getItem('pi-coffee.active.v2')===id,chat.id);
  const upload=await uploadResponse;assert.equal(upload.status(),200);const saved=await upload.json();assert.match(saved.path,/^inbox\//);
  const grant=await api({action:'files',id:chat.id});
  const download=await page.request.get(grant.url+'/api/localsend/v2/workspace-download?'+new URLSearchParams({scope:grant.scope,token:grant.token,path:saved.path}));assert.equal(download.status(),200);assert.deepEqual(await download.body(),original);
- const before=chat.cwd;await page.reload();await page.locator('#workspace-context').getByText(before,{exact:true}).waitFor();
+ const before=chat.cwd;await page.reload();await page.locator('#workspace-context').getByText(before,{exact:true}).waitFor({state:'attached'});
  assert.equal((await api()).conversations.find(c=>c.id===chat.id).cwd,before);
  await api({action:'archive',id:chat.id});await api({action:'restore',id:chat.id});assert.equal((await api()).conversations.find(c=>c.id===chat.id).cwd,before);
  const state=await api();const project=state.projects.find(p=>p.id===process.env.PI_COFFEE_SMOKE_PROJECT_ID) || state.projects[0];
  assert.ok(project,'Register a disposable/test Gitea Project before the Work probe');
  await page.locator('#new-task').click();await page.waitForFunction(()=>document.querySelector('#status')?.textContent==='已连接');
- await page.locator('#task-kind').selectOption('project');await page.locator('#project-select').selectOption(project.id);await page.locator('#start-branch').fill(project.branch);
+ await chooseKind('Work');await page.locator('#project-select').selectOption(project.id);await page.locator('#start-branch').fill(project.branch);
  const workResponse=page.waitForResponse(r=>r.url().endsWith('/api/workspace') && r.request().postDataJSON()?.action==='conversation',{timeout:120_000});
- await page.locator('#create-task').click();const response=await workResponse;assert.equal(response.status(),200);const work=await response.json();assert.equal(work.workspaceKind,'project');assert.ok(work.startSha);assert.notEqual(work.cwd,chat.cwd);
- await page.locator('#workspace-context').getByText(work.cwd,{exact:true}).waitFor();
+ await page.locator('#file').setInputFiles({name:'work-smoke.txt',mimeType:'text/plain',buffer:Buffer.from('synthetic work probe\n')});const response=await workResponse;assert.equal(response.status(),200);const work=await response.json();assert.equal(work.workspaceKind,'project');assert.ok(work.startSha);assert.notEqual(work.cwd,chat.cwd);
+ await page.locator('#workspace-context').getByText(work.cwd,{exact:true}).waitFor({state:'attached'});
  const sync=await api({action:'status',id:work.id});assert.equal(sync.state,'synced');assert.equal(sync.branch,work.branch);
- await page.reload();await page.locator('#workspace-context').getByText(work.cwd,{exact:true}).waitFor();
+ await page.reload();await page.locator('#workspace-context').getByText(work.cwd,{exact:true}).waitFor({state:'attached'});
  await page.locator('.workspace-branch').filter({hasText:work.branch}).waitFor();
  await page.locator('#sync-state[data-state="synced"]').waitFor({state:'visible'});
  await page.locator('#workspace-context button').click();

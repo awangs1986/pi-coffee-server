@@ -9,12 +9,13 @@ Preserve the sidebar, conversation/composer and right review pane. Each pane
 scrolls within the viewport. Header actions remain inside the conversation
 column, using a second row when necessary. Buttons keep single-line labels.
 
-For an existing task, the area below the composer occupies exactly one compact row:
-immutable Agent, Chat/Work type, linked Gitea project path, and an up-arrow disclosure.
-The disclosure opens an overlay above the row containing VM, local path, branch,
-readiness, Details, Copy path, compaction. It must not
-increase the footer height or push the composer upward. New or switched tasks
-start collapsed. Long content scrolls within the overlay on short viewports.
+Superseded (2026-09-28, [Arena navigation → Composer](spec/arena-navigation.md#composer)):
+the task row now lives inside the composer card as its bottom strip — repository | branch,
+the branch Diff total and 创建 PR — and stays one row (at most 52px; 44px measured). Agent and
+Chat/Work moved into the toolbar's Agent menu. The up-arrow disclosure became the toolbar's
+任务详情 button, whose popover holds VM, local path, branch, readiness, Details, Copy path and
+compaction. It opens above the card without pushing the composer upward. New or switched tasks
+start with it closed. Long content scrolls within the popover on short viewports.
 
 Long values ellipsize without adding rows. Details exposes the complete task ID,
 Agent, VM, project, local path, current branch, readiness, remote-check timestamp
@@ -58,8 +59,9 @@ node scripts/serve-layout-fixture.mjs
 node scripts/smoke-compact-layout.mjs
 ```
 
-The fixture binds loopback and serves the real public assets with synthetic Host
-responses. No account, provider key, user transcript or VM write is needed.
+The fixture binds loopback (set `PI_COFFEE_LAYOUT_HOST=0.0.0.0` for a remote preview) and
+serves the real public assets with synthetic Host responses, including a multi-file patch, a
+recorded 最近一轮 snapshot and a PR flow that resets on page load. No account, provider key, user transcript or VM write is needed.
 `PLAYWRIGHT_EXECUTABLE_PATH` can select an existing Chromium installation.
 `PI_COFFEE_LAYOUT_PORT` changes the fixture port. The checked-in geometry probe
 matches the read-only measurements executed with the in-app browser; its

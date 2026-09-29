@@ -83,12 +83,10 @@
           </div>
           <div class="topbar-actions">
           <button class="chip-btn hidden" id="usage" type="button" title="帐号用量（5 小时 / 每周额度，两位用户共用）"></button>
-          <button class="chip-btn hidden" id="turn-diff" type="button" title="本轮改动的完整 diff"></button>
 
           <span id="sync-state" class="sync-state hidden" aria-live="polite"></span>
           <button id="migrate-workspace" class="btn small hidden">迁移 Checkout</button>
           <button id="checkpoint-workspace" class="btn small hidden">Checkpoint</button>
-          <button id="pull-request" class="btn small hidden">Gitea PR</button>
           <button id="files-toggle" class="icon-btn" type="button" aria-label="打开变更面板" title="变更文件" aria-expanded="false" aria-controls="workspace-panel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V4h6l3 3h9v13H3V7Zm0 3h18"/></svg></button>
           </div>
           <div class="topbar-meta hidden" id="session-meta"></div>
@@ -144,30 +142,39 @@
           <div class="widgets hidden" id="widgets"></div>
           <div class="queue hidden" id="queue"></div>
           <div class="slash hidden" id="slash" role="listbox"></div>
+          <div class="composer-card" id="composer-card">
           <form class="composer" id="composer" aria-label="消息输入">
             <div class="attachments hidden" id="attachments" aria-label="附件" aria-live="polite"></div>
-            <textarea id="prompt" rows="2" placeholder="给 PI Coffee 发消息…" aria-label="输入"></textarea>
+            <textarea id="prompt" rows="2" placeholder="想让 PI Coffee 做什么？" aria-label="输入"></textarea>
             <div class="composer-bar">
               <div class="composer-left">
-                <button class="icon-btn small" id="attach" type="button" title="上传附件" aria-label="上传附件">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.48-8.48"/></svg>
+                <button class="icon-btn small composer-tool" id="attach" type="button" title="上传附件" aria-label="上传附件">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><path d="M17 13.5v7M13.5 17h7"/></svg>
                 </button>
                 <div class="agent-menu-wrap">
                   <button class="agent-trigger" id="agent-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="agent-menu" title="Agent 设置">
-                    <span>Model</span><span class="agent-caret" aria-hidden="true">⌄</span>
+                    <svg class="agent-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="18.5" r="2.2"/><circle cx="19" cy="18.5" r="2.2"/><path d="M12 7.2V12m0 0-5.4 4.9M12 12l5.4 4.9"/></svg>
+                    <span id="agent-name">Pi</span>
+                    <svg class="agent-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
                   </button>
                   <div class="agent-menu hidden" id="agent-menu" role="menu" aria-label="Agent 设置">
                     <div class="agent-menu-list">
-                      <button class="agent-menu-row" id="agent-source-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>来源</span><span class="agent-row-value"><span id="agent-source-value">Native</span><span aria-hidden="true">›</span></span></button>
-                      <button class="agent-menu-row" id="agent-model-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型</span><span class="agent-row-value"><span id="agent-model-value">—</span><span aria-hidden="true">›</span></span></button>
-                      <button class="agent-menu-row hidden" id="agent-thinking-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>思考深度</span><span class="agent-row-value"><span id="agent-thinking-value">—</span><span aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-engine-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>Agent</span><span class="agent-row-value"><span id="agent-engine-value">Pi</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-kind-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>类型</span><span class="agent-row-value"><span id="agent-kind-value">Chat</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <div class="agent-menu-sep" role="separator"></div>
+                      <button class="agent-menu-row" id="agent-source-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>来源</span><span class="agent-row-value"><span id="agent-source-value">Native</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-model-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型</span><span class="agent-row-value"><span id="agent-model-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row hidden" id="agent-thinking-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>思考深度</span><span class="agent-row-value"><span id="agent-thinking-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <p class="agent-menu-note hidden" id="agent-menu-note"></p>
                     </div>
+                    <div class="agent-pane hidden" id="agent-engine-pane" role="menu" aria-label="Agent"></div>
+                    <div class="agent-pane hidden" id="agent-kind-pane" role="menu" aria-label="任务类型"></div>
                     <div class="agent-pane hidden" id="agent-source-pane" role="menu" aria-label="模型来源"></div>
                     <div class="agent-pane hidden" id="agent-model-pane" role="menu" aria-label="模型"></div>
                     <div class="agent-pane hidden" id="agent-thinking-pane" role="menu" aria-label="思考深度"></div>
                   </div>
                 </div>
-                <span class="hint" id="hint" aria-live="polite">Enter 发送 · Shift+Enter 换行</span>
+                <span class="hint hidden" id="hint" aria-live="polite"></span>
               </div>
               <div class="composer-right">
                 <label class="select-wrap hidden" id="mode-wrap" title="运行中发送方式">
@@ -176,61 +183,82 @@
                     <option value="steer">插话</option>
                   </select>
                 </label>
+                <div class="task-details-wrap">
+                  <button class="icon-btn small composer-tool" id="task-details-btn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="task-details" aria-label="任务详情" title="任务详情">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/></svg>
+                  </button>
+                  <div class="task-details hidden" id="task-details" role="dialog" aria-label="任务详情">
+                    <p class="task-details-empty" id="task-details-empty">发送第一条消息后创建任务目录。</p>
+                    <section id="workspace-context" class="workspace-context" aria-live="polite" aria-label="当前任务目录"></section>
+                    <button type="button" id="sp-compact">本地压缩上下文</button>
+                  </div>
+                </div>
                 <button class="stop hidden" id="stop" type="button" aria-label="停止" title="停止 (Esc)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 </button>
                 <button class="send" id="send" type="submit" disabled aria-label="发送" title="发送">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                 </button>
               </div>
             </div>
             <div class="sr-only" aria-hidden="true">
               <input id="file" type="file" multiple tabindex="-1" />
+              <label>Agent<select id="task-engine" tabindex="-1"><option value="pi">Pi</option><option value="codex" disabled>Codex · 未就绪</option><option value="claude" disabled>Claude Code · 未就绪</option></select></label>
+              <label>新任务类型<select id="task-kind" tabindex="-1"><option value="chat">Chat · 本地目录</option><option value="project">Work · Gitea 项目</option></select></label>
               <label>模型来源<select id="model-source" tabindex="-1"><option value="native">原生 Pi</option><option value="relay">管理员 Relay</option></select></label>
               <label>模型<select id="model" tabindex="-1"><option value="">模型…</option></select></label>
               <label>思考深度<select id="thinking" tabindex="-1"><option value="">思考…</option></select></label>
             </div>
           </form>
-          <section id="project-controls" class="project-context hidden" aria-label="Gitea 仓库和分支">
-            <label class="context-field"><span class="sr-only">Agent</span><select id="task-engine" aria-label="Agent"><option value="pi">Pi</option><option value="codex" disabled>Codex · 未就绪</option><option value="claude" disabled>Claude Code · 未就绪</option></select></label>
-            <label class="context-field"><span class="sr-only">新任务类型</span><select id="task-kind" aria-label="新任务类型"><option value="chat">Chat · 本地目录</option><option value="project">Work · Gitea 项目</option></select></label>
-            <button id="create-task" class="btn small" type="button">创建任务</button>
-            <label class="context-field context-repo">
-              <span class="sr-only">Gitea 仓库</span>
-              <select id="project-select" aria-label="Gitea 仓库"><option value="">选择仓库</option></select>
-            </label>
-            <button id="project-create" class="btn small hidden" type="button" aria-label="新建 Gitea 项目">＋ 新建项目</button>
-            <span class="context-sep" aria-hidden="true">/</span>
-            <label class="context-field context-branch">
-              <span class="context-branch-mark" aria-hidden="true">⎇</span>
-              <input id="start-branch" list="remote-branches" placeholder="默认项目分支" aria-label="起始分支" /><datalist id="remote-branches"></datalist>
-            </label>
-            <a id="task-project" class="task-project hidden" target="_blank" rel="noopener noreferrer"></a>
-            <details class="project-manage">
-              <summary title="展开任务信息" aria-label="展开任务信息"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></summary>
-              <div class="project-manage-menu">
-                <section id="workspace-context" class="workspace-context" aria-live="polite" aria-label="当前任务目录"></section>
-                <button type="button" id="sp-compact">本地压缩上下文</button>
-              </div>
-            </details>
+          <section id="project-controls" class="project-context hidden" aria-label="仓库和分支">
+            <div class="strip-left">
+              <button id="strip-kind" class="strip-kind hidden" type="button" title="切换任务类型" aria-label="任务类型：Chat · 本地目录（点击切换）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V4.8c0-.4.4-.8.8-.8h5l2.5 3H20c.6 0 1 .4 1 1v11.2c0 .4-.4.8-.8.8H3.8a.8.8 0 0 1-.8-.8V7Zm0 3h18"/></svg>
+                <span>Chat · 本地目录</span>
+              </button>
+              <span class="strip-icon strip-repo-icon" aria-hidden="true" title="Gitea 仓库" data-forge="gitea">
+                <svg class="forge-github" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                <svg class="forge-gitea" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8h13v5.5a5.5 5.5 0 0 1-5.5 5.5H9a5.5 5.5 0 0 1-5.5-5.5V8Z"/><path d="M16.5 10h1.8a2.2 2.2 0 0 1 0 4.4h-2.1"/><path d="M8.5 11v4.2m0-2.1h2.8m0-2.1v4.2"/><path d="M8 3.5c.6.8.6 1.7 0 2.5m3.5-2.5c.6.8.6 1.7 0 2.5"/></svg>
+              </span>
+              <label class="context-field context-repo">
+                <span class="sr-only">Gitea 仓库</span>
+                <select id="project-select" aria-label="Gitea 仓库"><option value="">选择仓库</option></select>
+              </label>
+              <a id="task-project" class="task-project hidden" target="_blank" rel="noopener noreferrer"></a>
+              <span class="project-create-wrap hidden">
+                <button id="project-create" class="strip-btn ghost hidden" type="button" aria-label="新建 Gitea 项目" aria-expanded="false">＋ 新建项目</button>
+                <div id="project-create-menu" class="review-scope-menu create-menu hidden" role="menu" aria-label="新建或添加项目">
+                  <button id="project-create-gitea" class="review-scope-option" type="button" role="menuitem"><span class="review-scope-text"><strong>新建 Gitea 项目</strong><small>创建私有 Gitea 仓库</small></span></button>
+                  <button id="project-create-github" class="review-scope-option" type="button" role="menuitem"><span class="review-scope-text"><strong>添加 GitHub 仓库</strong><small>从 Host 令牌可访问的仓库中选择</small></span></button>
+                </div>
+              </span>
+              <span class="context-sep" aria-hidden="true"></span>
+              <label class="context-field context-branch">
+                <span class="strip-icon context-branch-mark" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="7.5" r="2.2"/><path d="M6 7.7v8.6M18 9.7c0 4-3.2 5.4-10.4 6.4"/></svg></span>
+                <input id="start-branch" list="remote-branches" placeholder="默认项目分支" aria-label="起始分支" /><datalist id="remote-branches"></datalist>
+              </label>
+              <span class="context-field task-branch-field hidden" id="task-branch-field">
+                <span class="strip-icon" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="7.5" r="2.2"/><path d="M6 7.7v8.6M18 9.7c0 4-3.2 5.4-10.4 6.4"/></svg></span>
+                <span id="task-branch" class="workspace-branch"></span>
+              </span>
+              <button id="create-task" class="strip-btn hidden" type="button">创建任务</button>
+            </div>
+            <div class="strip-right">
+              <button id="branch-diff" class="strip-btn strip-diff hidden" type="button" aria-controls="diff-dialog" title="查看 Diff（任务分支 vs 基线分支）">
+                <span class="wt-add" id="branch-diff-add"></span><span class="wt-del" id="branch-diff-del"></span><span class="strip-diff-files" id="branch-diff-files"></span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button id="pull-request" class="strip-btn hidden" type="button" title="提交并推送当前改动，然后创建 Gitea PR">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M6 8.4v7.2M18 15.6V9a2 2 0 0 0-2-2h-4m2-2.5L11.5 7l2.5 2.5"/></svg>
+                <span id="pull-request-label">创建 PR</span>
+              </button>
+            </div>
           </section>
+          </div>
         </div>
       </main>
 
 
-      <!-- Docked review of the current / last run's cumulative diff (P2). Narrow screens use the modal below. -->
-      <aside class="diff-panel hidden" id="diff-panel" aria-label="本轮改动">
-        <div class="diff-panel-head">
-          <h2>本轮改动</h2>
-          <span class="plugins-sub" id="dp-sub"></span>
-          <button type="button" class="btn small" id="dp-copy">复制 diff</button>
-          <button type="button" class="icon-btn" id="dp-close" aria-label="关闭">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <ul class="diff-files" id="dp-files"></ul>
-        <div class="diff-body diff-panel-body" id="dp-body"></div>
-      </aside>
       <aside id="workspace-panel" class="workspace-panel hidden" aria-label="Checkout 变更审查">
         <header class="wt-header">
           <div class="wt-tabs" role="tablist" aria-label="工作区审查">
@@ -249,21 +277,33 @@
         </footer>
 
       </aside>
+      <dialog id="diff-dialog" class="review-dialog" aria-labelledby="diff-title">
+        <header class="review-toolbar">
+          <h2 id="diff-title">Diff</h2>
+          <span class="review-tip-wrap">
+            <button id="diff-collapse" class="review-icon-btn" type="button" aria-label="收起全部文件" aria-describedby="diff-collapse-tip" data-state="expanded">
+              <svg class="icon-collapse" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 12h8"/></svg>
+              <svg class="icon-expand" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
+            </button>
+            <span class="review-tip" id="diff-collapse-tip" role="tooltip">收起全部文件</span>
+          </span>
+          <div class="review-scope-wrap">
+            <button id="diff-scope" class="review-scope-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="diff-scope-menu"><span id="diff-scope-label">Branch</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div id="diff-scope-menu" class="review-scope-menu hidden" role="menu" aria-label="Diff 范围">
+              <button id="diff-scope-branch" class="review-scope-option" type="button" role="menuitemradio" aria-checked="true" data-scope="branch"><span class="review-radio" aria-hidden="true"></span><span class="review-scope-text"><strong>Branch</strong><small>相对基线分支的全部改动</small></span></button>
+              <button id="diff-scope-turn" class="review-scope-option" type="button" role="menuitemradio" aria-checked="false" data-scope="turn"><span class="review-radio" aria-hidden="true"></span><span class="review-scope-text"><strong>最近一轮</strong><small id="diff-scope-turn-note">只看最近一轮改动的文件</small></span></button>
+              <div id="diff-scope-info" class="review-scope-info"></div>
+            </div>
+          </div>
+          <div class="review-layout" role="group" aria-label="Diff 布局">
+            <button id="diff-unified" type="button" aria-pressed="true">Unified</button>
+            <button id="diff-split" type="button" aria-pressed="false">Split</button>
+          </div>
+          <button id="diff-close" class="review-icon-btn bordered" type="button" aria-label="关闭 Diff" title="关闭 (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </header>
+        <div id="diff-content" class="review-content"></div>
+      </dialog>
     </div>
-
-    <dialog id="diff-dialog" class="review-dialog" aria-labelledby="diff-title">
-      <header class="review-toolbar">
-        <h2 id="diff-title">Diff</h2>
-        <button id="diff-collapse" class="icon-btn" type="button" aria-label="收起全部文件" title="收起全部文件">⊟</button>
-        <details class="review-scope"><summary>Branch</summary><div id="diff-scope-info"></div></details>
-        <div class="review-layout" role="group" aria-label="Diff 布局">
-          <button id="diff-unified" type="button" aria-pressed="true">Unified</button>
-          <button id="diff-split" type="button" aria-pressed="false">Split</button>
-        </div>
-        <button id="diff-close" class="icon-btn" type="button" aria-label="关闭 Diff" autofocus>×</button>
-      </header>
-      <div id="diff-content" class="review-content"></div>
-    </dialog>
 
     <dialog class="stats-pop" id="stats-pop" aria-labelledby="stats-title">
       <header class="stats-head">
@@ -289,6 +329,22 @@
       </div>
     </div>
 
+    <!-- GitHub repositories the Host token can reach (ADR-0022): add once, then pick from the dropdown -->
+    <div class="modal-backdrop hidden" id="github-modal">
+      <div class="modal github-picker" role="dialog" aria-modal="true" aria-labelledby="github-title">
+        <div class="plugins-head">
+          <h2 id="github-title">添加 GitHub 仓库</h2>
+          <span class="plugins-sub" id="github-sub"></span>
+          <button type="button" class="icon-btn" id="github-close" aria-label="关闭">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <input id="github-search" type="search" autocomplete="off" spellcheck="false" placeholder="搜索仓库，或粘贴 owner/repo、仓库 URL" aria-label="搜索 GitHub 仓库" aria-controls="github-list" />
+        <div class="github-list" id="github-list" role="listbox" aria-label="GitHub 仓库"></div>
+        <div class="stats-note">任务分支 <code>coffee/…</code> 会推送到所选仓库，PR 也在 GitHub 上创建。需要 Host 令牌有写权限，VM 的 Git 能 clone/push 该仓库。</div>
+      </div>
+    </div>
+
     <!-- Plugins panel: what the User VM's Pi has loaded -->
     <div class="modal-backdrop hidden" id="plugins-modal">
       <div class="modal plugins" role="dialog" aria-modal="true" aria-labelledby="plugins-title">
@@ -301,21 +357,6 @@
         </div>
         <div class="plugins-body" id="plugins-body"></div>
         <div class="stats-note">列表来自当前对话的 Pi 进程（User VM 内）实际加载的内容；扩展按注册命令的源文件分组，PI Coffee 通过 <code>--extension</code> 传入的扩展即使没有命令也会显示。</div>
-      </div>
-    </div>
-
-    <!-- Cumulative diff of the current / last run -->
-    <div class="modal-backdrop hidden" id="diff-modal">
-      <div class="modal plugins" role="dialog" aria-modal="true" aria-labelledby="turn-diff-title">
-        <div class="plugins-head">
-          <h2 id="turn-diff-title">本轮改动</h2>
-          <span class="plugins-sub" id="diff-sub"></span>
-          <button type="button" class="btn small" id="diff-copy">复制 diff</button>
-          <button type="button" class="icon-btn" id="diff-close" aria-label="关闭">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="plugins-body diff-body" id="diff-body"></div>
       </div>
     </div>
 
