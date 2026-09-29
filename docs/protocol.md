@@ -20,19 +20,23 @@ does not execute Git.
 | `project` | `name`, optional external `url` | Gitea-backed Project registration |
 | `import` | `name`, uploaded ZIP `scope`/`file` | Gitea-backed Project after bounded import |
 | `discover` | — | locally discovered repositories imported to Gitea |
+| `github_repos` | — | repositories the Host's GitHub token can reach (`fullName`, `private`, `archived`, `defaultBranch`, `canPush`, `projectId` when already added); requires `PI_COFFEE_GITHUB_TOKEN` ([ADR-0022](adr/0022-github-work-projects.md)) |
+| `github_project` | `repository` (`owner/repo` or URL) | idempotent GitHub-backed Project (`forge: "github"`, ID `github-<repository id>`) after push-permission and VM Git checks |
 | `conversation` | `projectId`, optional `branch` | independent Checkout and reserved Conversation branch |
 | `status` | `id`, optional `refresh` | dirty and remote sync state/SHA/time |
 | `changes` | `id` | bounded diff/checks against fetched target branch |
 | `checkpoint` | `id`, selected `paths`, `message` | commit, normal push and exact remote SHA confirmation |
 | `sync` | `id` | retry normal push of the existing local checkpoint |
-| `pull_request` | `id`, `title` | idempotent real Gitea PR record |
+| `pull_request` | `id`, `title` | idempotent real PR record on the Project's forge (Gitea, or GitHub for `forge: "github"`) |
 | `continue` | `projectId`, `sourceBranch`, `sourceSha`, optional new `id` | new Checkout/branch at the verified source SHA |
 | `bind_project` | `projectId`, credential-free `repoUrl` | bind a legacy Project before migration |
 | `migration_plan` / `migrate` | `id` | inspect or execute a legacy-to-Checkout migration while retaining the old directory |
 | `archive` / `restore` / `delete` | `id`; delete also needs exact `confirmation` | visibility or guarded local cleanup; remote branch/PR are retained |
 
 `merge_preview` and `merge` are no longer protocol actions. A client that
-needs integration opens the returned Gitea PR. Health reports
+needs integration opens the returned Gitea or GitHub PR. `GET /api/workspace`
+reports `capabilities.forges` (`{gitea, github}`) so the browser offers only the
+configured code forges; Projects without `forge` are Gitea. Health reports
 `capabilities.giteaCheckouts`, `ownerEnvironment` and `passwordlessRoot`; the
 last two describe observed process capability rather than configuration intent.
 

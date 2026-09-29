@@ -1,19 +1,40 @@
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
+import {parseGitHubRepository} from './github.js';
 import { parseAgentEngine, type AgentEngine } from "../shared/protocol.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, readdir, realpath, rm, stat, cp, lstat, appendFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, readdir, realpath, rm, stat, cp, lstat, appendFile, copyFile } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute, normalize, basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
-export interface Project { id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string }
+/** `forge` is absent on Gitea Projects registered before GitHub support (ADR-0022). */
+export type ProjectForge = "gitea" | "github";
+export interface Project { id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean }
+export interface Conversation { taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
+/**
+ * Working-tree tree object recorded when a run starts, so "last turn" review can
+ * diff exactly what that run changed (tracked, deleted and new files).
+ * `error` replaces `tree` when the snapshot could not be taken; a stale tree from
+ * an older run is never kept.
+ */
+export interface TurnSnapshot { tree?:string; head?:string; startedAt:string; requestId?:string; error?:string }
+/** Engines whose runs record a turn snapshot. Claude Code is not covered yet (owner decision 2026-09-28). */
+export const TURN_SNAPSHOT_ENGINES: ReadonlySet<AgentEngine> = new Set<AgentEngine>(["pi","codex"]);
+const TURN_SNAPSHOT_TIMEOUT_MS = 20000;
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge }
+export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface GitHubRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
+/** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
+export interface GitHubForge {
+  readonly webHost:string;
+  listRepositories():Promise<GitHubRepository[]>;
+  repository(fullName:string):Promise<GitHubRepository>;
+  createPullRequest(project:Project,source:string,target:string,title:string):Promise<PullRequest>;
+}
 export interface CodeForge {
   createRepository?(name:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
   migrateRepository?(name:string,sourceUrl:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
@@ -34,6 +55,22 @@ const displayPath=(path:string)=> {
   const parts=path.split('/').flatMap(part=>part.split(BACKSLASH));
   return !parts.some(part=>part==='..' || part==='.pi-coffee') && !privateParts(parts);
 };
+/** Parse `git diff --name-status -z` + `--numstat -z` into reviewable files, hiding private paths. */
+function diffFiles(nameStatusRaw:string,numstatRaw:string) {
+  const files=new Map<string,{path:string;status:string;additions:number|null;deletions:number|null}>();
+  const nameParts=nameStatusRaw.split('\0').filter(Boolean);
+  for(let index=0;index+1<nameParts.length;index+=2) {
+    const path=String(nameParts[index+1]);if(!displayPath(path))continue;
+    const letter=String(nameParts[index])[0] ?? 'M';
+    files.set(path,{path,status:letter,additions:null,deletions:null});
+  }
+  for(const row of numstatRaw.split('\0').filter(Boolean)) {
+    const [add,del,...pathParts]=row.split('\t');const path=pathParts.join('\t');if(!displayPath(path))continue;
+    const entry=files.get(path) ?? {path,status:'M',additions:null,deletions:null};
+    entry.additions=add==='-' ? null : Number(add);entry.deletions=del==='-' ? null : Number(del);files.set(path,entry);
+  }
+  return files;
+}
 interface State { sidebar?: {showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
@@ -45,6 +82,7 @@ export class Workspaces {
   readonly chatRoot:string;
   private readonly ownerId:string;
   private readonly forge?:CodeForge;
+  private readonly github?:GitHubForge;
   private readonly taskRoot?:string;
   constructor(readonly root: string, options:WorkspaceOptions={}) {
     this.root = resolve(root);
@@ -52,6 +90,7 @@ export class Workspaces {
     if(this.chatRoot===this.root || this.chatRoot.startsWith(this.root+"/") || this.root.startsWith(this.chatRoot+"/"))throw new Error("Chat and Project roots must be separate");
     this.ownerId=slug(options.ownerId ?? process.env.PI_COFFEE_VM_ID ?? 'vm');
     this.forge=options.forge;
+    this.github=options.github;
     this.taskRoot=options.taskRoot ? resolve(options.taskRoot) : undefined;
   }
   private async load() {
@@ -152,15 +191,42 @@ export class Workspaces {
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;
   }); }
-  async list() { await this.load();await this.saveTail;return {...structuredClone(this.state),vmId:this.ownerId,capabilities:{chatWorkspaces:true}}; }
+  async list() { await this.load();await this.saveTail;return {...structuredClone(this.state),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.github)}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async branches(projectId:string):Promise<string[]> {
-    await this.load();const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no Gitea repository');
+    await this.load();const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no remote repository');
     const rows=await this.git(this.root,['ls-remote','--heads',p.repoUrl]);
     return rows.split('\n').filter(Boolean).map(row=>row.split('\t')[1].replace(/^refs\/heads\//,'')).sort();
   }
   async registerProject(name:unknown,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {return this.mutate(async()=>{
     const safe=slug(name);this.assertProjectAvailable(safe,repoId);return this.registerProjectUnlocked(safe,repoUrl,branch,repoId,webUrl);
+  });}
+  /** Repositories the Host's GitHub token can see, marked with the Project that already registers them. */
+  async githubRepositories() {
+    await this.load();
+    if(!this.github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
+    const registered=new Map(this.state.projects.filter(p=>p.forge==='github' && p.repoId).map(p=>[p.repoId,p.id]));
+    return (await this.github.listRepositories()).map(repo=>({...repo,...(registered.has(repo.id) ? {projectId:registered.get(repo.id)} : {})}));
+  }
+  /**
+   * Register a GitHub repository as a Work Project. Idempotent per GitHub repository ID; a rename refreshes
+   * the stored name and URLs. Requires push access (the task branch is pushed there) and verifies that the
+   * VM's own Git credentials can read the repository before anything is recorded.
+   */
+  async registerGitHubProject(input:unknown) {return this.mutate(async()=>{
+    const github=this.github;if(!github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
+    const repo=await github.repository(parseGitHubRepository(input,github.webHost));
+    if(repo.archived)throw new Error(`GitHub repository ${repo.fullName} is archived`);
+    if(!repo.canPush)throw new Error(`The Host GitHub token cannot push to ${repo.fullName}; choose a repository it can write to`);
+    if(!repo.cloneUrl)throw new Error('GitHub did not return a clone URL');
+    const existing=this.state.projects.find(p=>p.forge==='github' && p.repoId===repo.id);
+    const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch).catch(error=>{
+      throw new Error(`VM Git cannot read ${repo.fullName}. Configure GitHub credentials for the VM owner's Git (for example \`gh auth setup-git\`). ${error instanceof Error ? error.message.slice(0,200) : ''}`.trim());
+    });
+    if(existing){existing.name=repo.fullName;existing.repoUrl=repoUrl;existing.webUrl=repo.webUrl;existing.branch=repo.defaultBranch;await this.save();return structuredClone(existing);}
+    if(this.state.projects.some(p=>p.name===repo.fullName))throw new Error('Project is already registered');
+    const project:Project={id:`github-${repo.id}`,name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'github'};
+    this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
   async bindProjectRepository(projectId:string,repoUrl:string,repoId?:string,webUrl?:string) {return this.mutate(async()=>{
     const p=this.project(projectId);const registered=await this.validateRepository(repoUrl,p.branch);
@@ -232,8 +298,9 @@ export class Workspaces {
     const normalized=await this.validateRepository(repoUrl,branch);
     const project={id:repoId ?? randomUUID(),name,path:'',branch,repoUrl:normalized,...(repoId?{repoId}:{}),...(webUrl?{webUrl}:{})};this.state.projects.push(project);await this.save();return project;
   }
-  private assertProjectAvailable(name:string,repoId?:string) {
-    if(this.state.projects.some(project=>project.name===name || (repoId && project.repoId===repoId)))throw new Error('Project is already registered');
+  /** Names are unique across forges; repository IDs only within one forge (Gitea and GitHub IDs overlap). */
+  private assertProjectAvailable(name:string,repoId?:string,forge:ProjectForge='gitea') {
+    if(this.state.projects.some(project=>project.name===name || (repoId && project.repoId===repoId && (project.forge ?? 'gitea')===forge)))throw new Error('Project is already registered');
   }
   private async validateRepository(repoUrl:string,branch:string) {
     if(!repoUrl || /[\r\n\0]/.test(repoUrl))throw new Error('Repository URL is required');
@@ -314,7 +381,7 @@ export class Workspaces {
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
     if(c && (c.projectId!==projectId || (c.startBranch && c.startBranch!==from)))throw new Error('Creation ID belongs to a different task');
     if(c && (!c.creationState || c.creationState==='ready')){await this.checkDirectory(c);return structuredClone(c);}
-    if(!p.repoUrl)throw new Error('Project must be registered to Gitea before creating a code Conversation');
+    if(!p.repoUrl)throw new Error('Project must be registered to Gitea or GitHub before creating a code Conversation');
     await this.git(this.root,['check-ref-format','--branch',from]);
     const cwd=c?.cwd ?? (this.taskRoot ? join(this.taskRoot,id,'workspace') : join(this.root,'checkouts',id)),ownedBranch=`coffee/${this.ownerId}/${id}`;
     await mkdir(join(this.root,'checkouts'),{recursive:true,mode:0o700});
@@ -336,7 +403,7 @@ export class Workspaces {
       if(c.startSha && c.startSha!==head)throw new Error('Failed creation HEAD changed; inspect before retrying');
       c.startSha=head;
       const remote=await this.remoteBranchSha(cwd,ownedBranch);
-      if(remote && (!c.publishStarted || remote!==head))throw new Error('Conversation branch already exists on Gitea; use a new Conversation ID');
+      if(remote && (!c.publishStarted || remote!==head))throw new Error('Conversation branch already exists on the remote; use a new Conversation ID');
       const current=await this.git(cwd,['symbolic-ref','--short','HEAD']);
       if(current!==ownedBranch){if(current!==from)throw new Error('Failed creation branch changed');await this.git(cwd,['checkout','-b',ownedBranch]);}
       c.publishStarted=true;await this.save();
@@ -359,8 +426,67 @@ export class Workspaces {
       if(c.acceptedRequestIds?.includes(requestId))throw new Error("This request was already accepted; it was not replayed. Inspect native history before retrying with a new request.");
       c.acceptedRequestIds=[...(c.acceptedRequestIds??[]),requestId].slice(-256);
     }
+    if(runState==="running" && this.recordsTurns(c)) {
+      // Taken before the Agent receives the prompt; a failure never blocks the run
+      // and never leaves an older run's tree in place.
+      const startedAt=new Date().toISOString();
+      try {c.turnSnapshot={...await this.workingTree(c.cwd),startedAt,...(requestId?{requestId}:{})};}
+      catch(error) {c.turnSnapshot={startedAt,error:(error instanceof Error ? error.message : 'Snapshot failed').slice(0,300)};}
+    }
     c.runState=runState;await this.save();
   },()=>this.state.conversations.some(c=>c.id===id) ? this.conversationLock(id) : 'legacy:'+id);}
+  private recordsTurns(c:Conversation) {
+    return c.workspaceKind!=='chat' && TURN_SNAPSHOT_ENGINES.has(c.engine ?? 'pi') && (!c.creationState || c.creationState==='ready') && !c.workspaceRemoved && !c.cleanupStarted;
+  }
+  /**
+   * Tree object for the whole working tree (tracked edits, deletions and new
+   * non-ignored files) written through a throwaway index, so the checkout's own
+   * index, HEAD and refs are untouched. Runtime data under .pi-coffee is excluded.
+   */
+  private async workingTree(cwd:string):Promise<{tree:string;head?:string}> {
+    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+    const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
+    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_INDEX_FILE:index};
+    const run=(args:string[])=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer:2*1024*1024,env}).then(r=>r.stdout.trim());
+    try {
+      // Reusing the real index's stat cache keeps large, mostly unchanged checkouts fast.
+      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      // Git rejects an exclude pathspec that names an ignored path, so exclude runtime
+      // data explicitly only when info/exclude does not already hide it.
+      const runtimeIgnored=(await this.gitResult(cwd,['check-ignore','-q','.pi-coffee/'])).code===0;
+      await run(['add','-A','--','.',...(runtimeIgnored ? [] : [':(exclude).pi-coffee'])]);
+      const tree=await run(['write-tree']);
+      const head=await this.git(cwd,['rev-parse','--verify','--quiet','HEAD']).catch(()=>'');
+      return {tree,...(head?{head}:{})};
+    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+  }
+  /** Read-only view of what the latest (or running) turn changed, from its start snapshot to now. */
+  async turnChanges(id:string) {
+    await this.load();
+    const c=this.conversation(id);
+    if(c.workspaceKind==='chat')throw new Error('Chat workspace has no project Diff');
+    if(!TURN_SNAPSHOT_ENGINES.has(c.engine ?? 'pi'))throw new Error('Last-turn Diff is not available for this Agent yet');
+    await this.checkDirectory(c);
+    const snapshot=c.turnSnapshot;
+    if(!snapshot?.tree)throw new Error(snapshot?.error ? 'Last-turn snapshot unavailable: '+snapshot.error : 'No turn recorded yet; send a message first');
+    if((await this.gitResult(c.cwd,['cat-file','-e',snapshot.tree+'^{tree}'])).code!==0)throw new Error('Last-turn snapshot is no longer available');
+    const now=await this.workingTree(c.cwd);
+    const range=[snapshot.tree,now.tree];
+    const nameStatusRaw=await this.git(c.cwd,['diff','--no-ext-diff','--no-textconv','--name-status','--no-renames','-z',...range,'--']);
+    const numstatRaw=await this.git(c.cwd,['diff','--no-ext-diff','--no-textconv','--numstat','--no-renames','-z',...range,'--']);
+    const files=diffFiles(nameStatusRaw,numstatRaw);
+    const paths=[...files.keys()];
+    const patchParts:string[]=[];
+    // Never pass an empty pathspec: private paths were filtered above.
+    for(let index=0;index<paths.length;index+=250)patchParts.push(await this.gitBounded(c.cwd,['diff','--no-ext-diff','--no-textconv',...range,'--',...paths.slice(index,index+250)],8*1024*1024));
+    const patch=patchParts.filter(Boolean).join('\n'),limit=150000;
+    return {
+      scope:'turn' as const,sessionId:id,projectId:c.projectId,branch:c.branch,base:snapshot.tree,target:now.tree,
+      startedAt:snapshot.startedAt,running:c.runState==='running',stale:false,refreshedAt:new Date().toISOString(),
+      files:[...files.values()].sort((a,b)=>a.path.localeCompare(b.path)),
+      patch:patch.slice(0,limit),truncated:patch.length>limit,
+    };
+  }
   async settleRuns(isBusy:(id:string)=>boolean|undefined) {
     await this.load();
     if(!this.state.conversations.some(c=>c.runState==="running" && isBusy(c.id)===false))return;
@@ -439,11 +565,12 @@ export class Workspaces {
   async openPullRequest(id:string,title:string) {return this.mutate(async()=>{
     const c=this.conversation(id),p=this.project(c.projectId);
     await this.assertCodeBranch(c);
-    if(!this.forge)throw new Error('Gitea pull request adapter is not configured');
+    const forge=p.forge==='github' ? this.github : this.forge;
+    if(!forge)throw new Error(p.forge==='github' ? 'GitHub pull request adapter is not configured (set PI_COFFEE_GITHUB_TOKEN)' : 'Gitea pull request adapter is not configured');
     if(typeof title!=='string' || !title.trim() || title.length>200)throw new Error('Pull request title is required (maximum 200 characters)');
     const status=await this.syncStatusUnlocked(c);
     if(status.state!=='synced')throw new Error('Push and verify the Conversation checkpoint before creating a pull request');
-    c.pullRequest=await this.forge.createPullRequest(p,c.branch,p.branch,title.trim());await this.save();return c.pullRequest;
+    c.pullRequest=await forge.createPullRequest(p,c.branch,p.branch,title.trim());await this.save();return c.pullRequest;
   },()=>this.conversationLock(id));}
   private async syncStatusUnlocked(c:Conversation) {
     const localSha=await this.git(c.cwd,['rev-parse','HEAD']);
@@ -455,7 +582,7 @@ export class Workspaces {
     this.assertId(id);
     if(!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(expectedSha))throw new Error('Expected remote SHA is invalid');
     if(this.state.conversations.some(c=>c.id===id))throw new Error('Conversation already exists');
-    const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project is not backed by Gitea');
+    const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no remote repository');
     await this.git(this.root,['check-ref-format','--branch',sourceBranch]);
     const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
     const cwd=taskRoot ? join(taskRoot,'workspace') : join(this.root,'checkouts',id);await mkdir(dirname(cwd),{recursive:true});
@@ -465,7 +592,7 @@ export class Workspaces {
       const head=await this.git(cwd,['rev-parse','HEAD']);
       if(head!==expectedSha)throw new Error('Remote checkpoint SHA changed; inspect the source before continuing');
       const branch=`coffee/${this.ownerId}/${id}`;
-      if(await this.remoteBranchSha(cwd,branch))throw new Error('Conversation branch already exists on Gitea; use a new Conversation ID');
+      if(await this.remoteBranchSha(cwd,branch))throw new Error('Conversation branch already exists on the remote; use a new Conversation ID');
       await this.git(cwd,['checkout','-b',branch]);
       await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`]);
       const c:Conversation={...(taskRoot?{taskRoot}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
@@ -485,18 +612,7 @@ export class Workspaces {
     const untrackedRaw=await this.git(c.cwd,['ls-files','--others','--exclude-standard','-z']).catch(()=> '');
     const nameStatusRaw=await this.git(c.cwd,['diff','--no-ext-diff','--no-textconv','--name-status','--no-renames','-z',base,'--']);
     const numstatRaw=await this.git(c.cwd,['diff','--no-ext-diff','--no-textconv','--numstat','--no-renames','-z',base,'--']);
-    const files=new Map<string,{path:string;status:string;additions:number|null;deletions:number|null}>();
-    const nameParts=nameStatusRaw.split('\0').filter(Boolean);
-    for(let index=0;index+1<nameParts.length;index+=2) {
-      const path=String(nameParts[index+1]);if(!displayPath(path))continue;
-      const letter=String(nameParts[index])[0] ?? 'M';
-      files.set(path,{path,status:letter,additions:null,deletions:null});
-    }
-    for(const row of numstatRaw.split('\0').filter(Boolean)) {
-      const [add,del,...pathParts]=row.split('\t');const path=pathParts.join('\t');if(!displayPath(path))continue;
-      const entry=files.get(path) ?? {path,status:'M',additions:null,deletions:null};
-      entry.additions=add==='-' ? null : Number(add);entry.deletions=del==='-' ? null : Number(del);files.set(path,entry);
-    }
+    const files=diffFiles(nameStatusRaw,numstatRaw);
     const untracked=untrackedRaw.split('\0').filter(displayPath);
     const checkpointPaths=new Set([...trackedWorkingRaw.split('\0').filter(displayPath),...untracked]);
     for(const path of untracked)files.set(path,{path,status:'?',additions:null,deletions:null});
@@ -516,13 +632,17 @@ export class Workspaces {
     let patch=patchParts.filter(Boolean).join('\n');
     const untrackedPatches:string[]=[];
     for(const path of untracked.slice(0,100)) {
-      const text=await this.untrackedPatch(id,path);if(text)untrackedPatches.push(text);
+      const text=await this.untrackedPatch(id,path);if(!text)continue;
+      untrackedPatches.push(text);
+      // New text files count like additions so summaries do not read +0 for created files.
+      const added=Number(text.match(/^@@ -0,0 \+1,(\d+) @@/m)?.[1] ?? 0);
+      const entry=files.get(path);if(entry){entry.additions=added;entry.deletions=0;}
     }
     if(untrackedPatches.length)patch=(patch ? patch+'\n' : '')+untrackedPatches.join('\n');
     const stat=statParts.filter(Boolean).join('\n');
     const limit=150000;
     return {
-      sessionId:id,projectId:c.projectId,branch:c.branch,source,target,base,stale,targetBranch:p.branch,refreshedAt:new Date().toISOString(),
+      scope:'branch' as const,sessionId:id,projectId:c.projectId,branch:c.branch,source,target,base,stale,targetBranch:p.branch,refreshedAt:new Date().toISOString(),
       files:[...files.values()].sort((a,b)=>a.path.localeCompare(b.path)),
       checkpointPaths:[...checkpointPaths].sort((a,b)=>a.localeCompare(b)),
       stat:stat || 'no changes',

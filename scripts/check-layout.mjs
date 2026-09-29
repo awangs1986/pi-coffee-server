@@ -4,15 +4,23 @@ export function measureLayout() {
   const visible = selector => r(selector).width > 0;
   const main = r('main');
   const footer = r('#project-controls').height;
+  const card = r('#composer-card');
   const failures = [];
   if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) failures.push('page overflow');
-  for (const selector of ['#sidebar', '#workspace-panel']) {
+  for (const selector of ['#sidebar', '#workspace-panel', '#diff-dialog']) {
     if (visible(selector) && r(selector).bottom > innerHeight + 1) failures.push(`${selector} height`);
   }
-  for (const selector of ['#checkpoint-workspace', '#pull-request', '#files-toggle', '#send']) {
-    if (visible(selector) && (r(selector).right > main.right + 1 || r(selector).bottom > innerHeight + 1 || r(selector).left < main.left - 1)) failures.push(`${selector} bounds`);
+  const filesOpen = document.querySelector('#app').classList.contains('files-open');
+  for (const selector of ['#checkpoint-workspace', '#files-toggle', '#send']) {
+    // With the Checkout panel open, its toggle intentionally sits over the panel's top-right corner.
+    const bounds = selector === '#files-toggle' && filesOpen ? { left: 0, right: innerWidth } : main;
+    if (visible(selector) && (r(selector).right > bounds.right + 1 || r(selector).bottom > innerHeight + 1 || r(selector).left < bounds.left - 1)) failures.push(`${selector} bounds`);
   }
-  if (footer > 30) failures.push('footer exceeds one row');
+  // Diff total and 创建 PR live in the composer card's task strip.
+  for (const selector of ['#branch-diff', '#pull-request']) {
+    if (visible(selector) && (r(selector).right > card.right + 1 || r(selector).left < card.left - 1 || r(selector).bottom > card.bottom + 1)) failures.push(`${selector} bounds`);
+  }
+  if (footer > 52) failures.push('task strip exceeds one row');
   if (r('#prompt').height < 60) failures.push('input too short');
   return { viewport: [innerWidth, innerHeight], footer, failures };
 }

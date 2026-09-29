@@ -36,7 +36,11 @@ class FakePiSession implements PiSession {
   async backgroundState(){return this.background;}
 
 
+  /** Optional Agent side effect, e.g. editing the checkout during the turn. */
+  onPrompt?: (text: string) => Promise<void>;
+
   async prompt(text: string, _images?: ImageInput[]): Promise<void> {
+    await this.onPrompt?.(text);
     this.state = { ...this.state, isStreaming: true };
     this.emit({ type: "agent_start" });
     this.history.push({ kind: "user", id: `u${this.history.length}`, text });
@@ -904,6 +908,33 @@ describe("Host WebSocket seam", () => {
       pi.background={known:true,active:0};expect((await ws.lookup(conversation.id))?.archived).toBe(true);
       expect((await post("delete",{confirmation:conversation.id})).status).toBe(200);
       expect(await ws.lookup(conversation.id)).toBeUndefined();
+    }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it("serves only the latest turn's edits through the workspace API, recorded before the Agent received the prompt",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-turn-http-"));
+    const factory=new FakeFactory();const {workspaces:ws,conversation}=await workspaceConversation(root,"turn");
+    await writeFile(join(conversation.cwd,"README.md"),"base\nbefore the turn\n");
+    const pi=await factory.create({sessionId:conversation.id}) as FakePiSession;
+    pi.onPrompt=async()=>{await writeFile(join(conversation.cwd,"agent.txt"),"written by the agent\n");};
+    server=new HostServer({port:0,host:"127.0.0.1",token:"turn",factory,workspaces:ws});await server.start();
+    const port=server.address().port;
+    const post=(extra={})=>fetch(`http://127.0.0.1:${port}/api/workspace`,{method:"POST",headers:{authorization:"Bearer turn","content-type":"application/json"},body:JSON.stringify({action:"changes",id:conversation.id,...extra})});
+    try {
+      const none=await post({scope:"turn"});expect(none.status).toBe(409);expect((await none.json() as {error:string}).error).toContain("No turn recorded yet");
+      const socket=new WebSocket(`ws://127.0.0.1:${port}/host`,{headers:{authorization:"Bearer turn"}});await once(socket,"open");const frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+      expect(await frames.next()).toMatchObject({type:"opened",sessionId:conversation.id});
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"turn-1",text:"edit"}));
+      await waitFor(()=>pi.history.some(entry=>entry.kind==="assistant"));
+      const turn=await post({scope:"turn"});expect(turn.status).toBe(200);
+      const body=await turn.json() as {scope:string;files:unknown[];patch:string;startedAt:string};
+      expect(body.scope).toBe("turn");expect(body.startedAt).toBeTruthy();
+      expect(body.files).toEqual([{path:"agent.txt",status:"A",additions:1,deletions:0}]);
+      expect(body.patch).toContain("+written by the agent");expect(body.patch).not.toContain("before the turn");
+      const branch=await (await post()).json() as {scope:string;files:Array<{path:string}>};
+      expect(branch.scope).toBe("branch");expect(branch.files.map(file=>file.path)).toEqual(["agent.txt","README.md"]);
+      socket.close();
     }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
