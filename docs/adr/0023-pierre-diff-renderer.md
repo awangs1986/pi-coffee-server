@@ -1,6 +1,6 @@
 # ADR-0023：Diff 面板改用 @pierre/diffs，按文件懒加载并支持行评论
 
-日期：2026-09-29。状态：**accepted**（owner：“diff 功能我想加强一下”；对齐时选择「全部做」：换渲染器、展开上下文、行评论汇总进输入框、大 Diff 懒加载与虚拟滚动）。
+日期：2026-09-29。状态：**accepted**（owner：“diff 功能我想加强一下”；对齐时选择「全部做」：换渲染器、展开上下文、行评论汇总进输入框、大 Diff 懒加载与虚拟滚动）。另有两项不在原需求里，由 agent 提出，owner 于 2026-09-29 复核后确认保留：Web Server 对 1 KB 以上文本资源的 gzip、内存资源缓存和 vendor 长缓存 / ETag；后备渲染器 `public/review.js` 的词级高亮 `wordDiff`。
 
 补充 [Arena navigation](../spec/arena-navigation.md) 的 Diff 一节。面板外壳不变：标题、折叠全部、Branch / 最近一轮、Unified | Split、×、Escape 与焦点返回、创建 PR。Host 的 `changes` 接口也不变。
 

@@ -143,6 +143,55 @@ it('switches to 最近一轮 once the Host has a turn snapshot, and returns the 
   expect(q<HTMLDialogElement>('#diff-dialog').open).toBe(false);expect(hidden('#workspace-panel')).toBe(false);
 });
 
+it('refreshes an open 最近一轮 view while Codex reports turn_diff, throttled and only for that scope',async()=>{
+  const turnPatch='diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10 +10 @@\n-const answer = compute(left);\n+const answer = compute(right);';
+  const app=await setup({task:{engine:'codex',turnSnapshot:{tree:'3333333333',startedAt:'2026-09-28T02:00:00Z'}},turn:{scope:'turn',sessionId:'task-1',branch:'coffee/vm/task-1',base:'3333333333',target:'WORKTREE',startedAt:'2026-09-28T02:00:00Z',running:true,files:[{path:'src/a.ts',status:'M',additions:1,deletions:1}],patch:turnPatch,truncated:false}});
+  const turnReads=()=>app.requests.filter(r=>r.action==='changes' && r.scope==='turn').length;
+  const branchReads=()=>app.requests.filter(r=>r.action==='changes' && r.scope===undefined).length;
+  const turnDiff=()=>app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'turn_diff',diff:turnPatch}});
+  q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#diff-scope').click();q<HTMLButtonElement>('#diff-scope-turn').click();await vi.advanceTimersByTimeAsync(20);
+  expect(q('#diff-scope-label').textContent).toBe('最近一轮');
+  const opened=turnReads();
+  // A burst of edits waits for the interval, then refreshes once in place (still from the Host snapshot).
+  turnDiff();turnDiff();turnDiff();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(turnReads()).toBe(opened);
+  await vi.advanceTimersByTimeAsync(1400);
+  expect(turnReads()).toBe(opened+1);
+  expect([...document.querySelectorAll('#diff-content .review-file-name')].map(n=>n.textContent)).toEqual(['src/a.ts']);
+  expect(q('#diff-scope-info').textContent).toContain('仍在运行');
+  // A comment being typed is not rebuilt under the caret: the refresh waits until focus leaves.
+  const box=document.createElement('form');box.className='diff-comment-box';const input=document.createElement('textarea');box.append(input);q('#diff-content').append(box);input.focus();
+  turnDiff();await vi.advanceTimersByTimeAsync(3200);
+  expect(turnReads()).toBe(opened+1);
+  input.blur();await vi.advanceTimersByTimeAsync(1600);
+  expect(turnReads()).toBe(opened+2);
+  // Branch compares against the base branch and is refreshed after the turn, not per edit.
+  q<HTMLButtonElement>('#diff-scope').click();q<HTMLButtonElement>('#diff-scope-branch').click();await vi.advanceTimersByTimeAsync(20);
+  const branch=branchReads();
+  turnDiff();await vi.advanceTimersByTimeAsync(1600);
+  expect(turnReads()).toBe(opened+2);expect(branchReads()).toBe(branch);
+  // A closed panel ignores the event.
+  q<HTMLButtonElement>('#diff-close').click();
+  turnDiff();await vi.advanceTimersByTimeAsync(1600);
+  expect(turnReads()).toBe(opened+2);
+});
+
+it('lets the settled turn replace a pending turn_diff refresh',async()=>{
+  const app=await setup({task:{engine:'codex',turnSnapshot:{tree:'3333333333',startedAt:'2026-09-28T02:00:00Z'}},turn:{scope:'turn',sessionId:'task-1',branch:'coffee/vm/task-1',base:'3333333333',target:'WORKTREE',startedAt:'2026-09-28T02:00:00Z',running:false,files:[],patch:'',truncated:false}});
+  const turnReads=()=>app.requests.filter(r=>r.action==='changes' && r.scope==='turn').length;
+  const emit=(event:unknown)=>app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event});
+  q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#diff-scope').click();q<HTMLButtonElement>('#diff-scope-turn').click();await vi.advanceTimersByTimeAsync(20);
+  const opened=turnReads();
+  emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
+  emit({type:'agent_settled'});await vi.advanceTimersByTimeAsync(20);
+  expect(turnReads()).toBe(opened+1);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(turnReads()).toBe(opened+1);
+});
+
 it('marks 最近一轮 as unsupported for Claude Code tasks',async()=>{
   await setup({task:{engine:'claude',turnSnapshot:{tree:'3333333333',startedAt:'2026-09-28T02:00:00Z'}}});
   q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
