@@ -595,11 +595,17 @@ class HostSocket implements SessionSink {
           if (!this.session || !this.opened) throw new NotOpenError();
           this.send({ v: 1, type: "stats", sessionId: this.session.id, stats: await this.session.getStats() });
           break;
-        case "compact":
+        case "compact": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.compact();
-          this.send({ v: 1, type: "ack", operation: "compact", ...rid(frame) });
+          const target=this.session;
+          // Keep the socket responsive to abort/reconnect while the session owns the operation.
+          void target.compact().then(()=>{
+            if(this.session===target)this.send({v:1,type:"ack",operation:"compact",...rid(frame)});
+          },error=>{
+            if(this.session===target)this.send({v:1,type:"error",code:error instanceof SessionBusyError ? "busy" : "operation_failed",message:error instanceof Error ? error.message : "Compaction failed",...rid(frame)});
+          });
           break;
+        }
         case "ui_response": {
           if (!this.session || !this.opened) throw new NotOpenError();
           const { v: _v, type: _t, requestId: _r, ...response } = frame;

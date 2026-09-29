@@ -1,3 +1,5 @@
+> Current manual context policy: [experimental Handoff](docs/spec/manual-handoff.md), [GitHub Server #2](https://github.com/awangs1986/pi-coffee-server/issues/2). Automatic compaction remains native Pi.
+
 > Current task storage: [upgrade-safe task bundles](docs/spec/task-storage.md), tracked in [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).
 
 > Current source placement: [ADR-0021](docs/adr/0021-pi-only-source-authority.md). Pi-only development belongs to GitHub pi-coffee; Host, Web, Relay and native Agent adapters remain here. Older placement statements below are historical.

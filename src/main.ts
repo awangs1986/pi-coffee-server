@@ -3,7 +3,8 @@ import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
 import { GitHubClient } from "./host/github.js";
-import { resolvePiExtensions, resolvePiSkills, withCoffeeLspPath } from "pi-coffee";
+import { resolvePiSkills, withCoffeeLspPath } from "pi-coffee";
+import { resolveHostPiExtensions } from "./host/pi-extensions.js";
 import { parseUserRoutes } from "./web/identity.js";
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -91,7 +92,7 @@ async function run(selectedRole: Role): Promise<void> {
     provider: process.env.PI_COFFEE_PROVIDER,
     model: process.env.PI_COFFEE_MODEL,
     allowedModels: process.env.PI_COFFEE_PI_ALLOWED_MODELS === undefined ? undefined : envList("PI_COFFEE_PI_ALLOWED_MODELS", ","),
-    extensions: resolvePiExtensions(),
+    extensions: resolveHostPiExtensions(),
   };
   const sessionRoot = process.env.PI_COFFEE_SESSION_DIR?.trim();
   // Which agent runs behind the seam (ADR-0011): the original Pi (default) or

@@ -1,3 +1,5 @@
+import { HANDOFF_REQUEST, HANDOFF_VERSION } from "context-handoff/protocol";
+import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -208,6 +210,7 @@ class RpcPiSession implements PiSession {
   private healthTimer?: ReturnType<typeof setTimeout>;
   private runGeneration = 0;
   private running = false;
+  private handoffActive = false;
 
   constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[]) {
     this.client = client;
@@ -391,7 +394,7 @@ class RpcPiSession implements PiSession {
     const stats = await this.client.getSessionStats() as unknown as Record<string, unknown>;
     let contextBreakdown:ContextBreakdown | undefined;
     const commands=await this.client.getCommands();
-    if(commands.some(command=>command.name==='coffee-context-usage')){
+    if(!this.handoffActive && commands.some(command=>command.name==='coffee-context-usage')){
       const before=await this.client.getEntries();const since=before.entries.at(-1)?.id;
       const nonce=randomUUID();await this.client.prompt(`/coffee-context-usage ${nonce}`);
       const result=await this.client.getEntries(since);
@@ -433,11 +436,48 @@ class RpcPiSession implements PiSession {
   }
 
   async compact(): Promise<void> {
+    this.handoffActive=true;
+    try {await this.performHandoff();}
+    catch(error) {
+      if(error instanceof Error && /^Agent process exited \(/.test(error.message)) {
+        this.stopWatching();for(const listener of this.listeners)listener({type:"agent_interrupted"});
+      }
+      throw error;
+    } finally {this.handoffActive=false;}
+  }
+
+  private async performHandoff(): Promise<void> {
     const commands = await this.client.getCommands();
-    if (!commands.some(command => command.name === "context-recovery")) {
-      throw new Error("Local recovery extension is not loaded. Restore the default context adapter before using Web compaction; no model summary was requested.");
+    if (!commands.some(command => command.name === "handoff")) {
+      throw new Error("Handoff extension is not loaded; no native fallback was requested.");
     }
-    await this.client.compact();
+    const state=await this.client.getState();
+    if(state.isStreaming || state.isCompacting)throw new Error("Wait for the current Pi operation to finish");
+    if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error("Current Pi model is not allowed; select an approved model before Handoff");
+    const before=await this.client.getEntries(), since=before.entries.at(-1)?.id;
+    const deadline=Date.now()+360_000;
+    try { await this.client.compact(HANDOFF_REQUEST); }
+    catch(error) {
+      if(!(error instanceof Error) || !error.message.startsWith("Timeout waiting for response to compact."))throw error;
+      // RpcClient waits only 30s. Keep ownership of the original request; never retry it.
+      try {
+        while((await this.client.getState()).isCompacting) {
+          if(Date.now()>=deadline)throw new Error("Handoff exceeded its completion deadline");
+          await delay(250);
+        }
+      } catch(waitError) {
+        // If settlement cannot be observed, stop this child before releasing ownership.
+        await this.client.stop();
+        this.stopWatching();for(const listener of this.listeners)listener({type:"agent_interrupted"});
+        throw waitError;
+      }
+    }
+    const after=await this.client.getEntries(since);
+    const committed=after.entries.find(entry=>entry.type==="compaction" &&
+      (entry.details as any)?.plugin==="pi-handoff" && (entry.details as any)?.pluginVersion===HANDOFF_VERSION &&
+      (entry.details as any)?.trigger==="manual");
+    if(!committed || (await this.client.getState()).sessionId!==state.sessionId)
+      throw new Error("Handoff did not commit in the original session; previous history is preserved.");
   }
 
   async respondUi(response: UiResponse): Promise<void> {

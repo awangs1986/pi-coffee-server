@@ -29,6 +29,7 @@ export interface ImageInput {
 }
 
 export interface SessionState {
+  isCompacting?: boolean;
   isStreaming: boolean;
   messageCount: number;
   sessionName?: string;

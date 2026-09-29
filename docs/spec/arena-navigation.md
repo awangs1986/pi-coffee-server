@@ -82,7 +82,7 @@ Unified and Split stay in English.
   `#task-kind` selects stay the source of truth, so Codex/Claude remain Work-only). They lock
   once the task exists; model rows follow the model catalog and are disabled without one.
 - Toolbar right: the running-mode select and Stop while a turn runs; the scroll icon opens
-  任务详情 (VM, branch, readiness, Details, complete path, Copy path, 本地压缩上下文); the send
+  任务详情 (VM, branch, readiness, Details, complete path, Copy path, 交接压缩); the send
   button is a bordered rounded square with →, grey while disabled. The key hint appears only
   while a turn runs.
 - Strip, Work task: Gitea or GitHub repository link | branch, then `+A −D ›` (task branch vs base; a
@@ -227,3 +227,6 @@ placement data or interrupts a turn. Active/archived filtering still applies.
 Host persists `sidebar.showGroups` alongside assignments and collapsed groups.
 The preference survives refresh and Host restart, without affecting other users.
 Failed saves keep the previous choice and list with an explicit error.
+
+Manual Pi compaction follows [experimental Handoff](manual-handoff.md); automatic
+compaction remains native Pi. This supersedes historical local-fold UI wording.

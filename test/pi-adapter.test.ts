@@ -120,7 +120,7 @@ describe("original Pi RPC adapter", () => {
       await session.steer("focus");
       await session.followUp("then summarize");
       await waitFor(() => events.filter((event) => isEvent(event, "queue_update")).length === 2);
-      await expect(session.compact()).rejects.toThrow("Local recovery extension is not loaded");
+      await expect(session.compact()).rejects.toThrow("Handoff extension is not loaded");
 
       // Extension dialog round trip: the request arrives as an event, the
       // answer goes back over the RPC sub-protocol and unblocks the run.
@@ -245,3 +245,20 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 function isEvent(value: unknown, type: string): boolean {
   return typeof value === "object" && value !== null && "type" in value && value.type === type;
 }
+
+ it.each(["success","native","slow"])("verifies committed Handoff through Pi RPC (%s)",async mode=>{
+  const factory=new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),env:{FAKE_HANDOFF:mode}});
+  const session=await factory.create({sessionId:"handoff-adapter"});
+  try {if(mode==="native")await expect(session.compact()).rejects.toThrow("did not commit");
+    else await expect(session.compact()).resolves.toBeUndefined();
+  }finally{await session.stop();}
+},40000);
+
+it("reopens the original Conversation after unobservable Handoff stops its child",async()=>{
+  const registry=new HostSessionRegistry({factory:new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),env:{FAKE_HANDOFF:"unobservable"}})});
+  try {const {session}=await registry.open("handoff-stopped");await expect(session.compact()).rejects.toThrow("cannot observe");
+    expect(session.wasInterrupted).toBe(true);
+    const reopened=await registry.open("handoff-stopped");expect(reopened.session.wasInterrupted).toBe(false);
+    expect(reopened.session.isBusy).toBe(false);
+  }finally{await registry.close();}
+});
