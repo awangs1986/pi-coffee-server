@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+Start with [the repository map](../REPOSITORIES.md) before choosing a source directory or upgrading a plugin.
+
 ## Current authority
 
 [ADR-0021](adr/0021-pi-only-source-authority.md) assigns Pi-only implementation to [pi-coffee](https://github.com/awangs1986/pi-coffee). This repository retains the latest Host, Web, Relay and native Agent adapters and consumes a pinned Pi package. Each GitHub main is authoritative for its scope and has an identical Gitea mirror. ADR-0020 remains historical for the earlier unification.
@@ -24,3 +26,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Harness ffd23ea deployment](deployment/harness-ffd23ea-20260929.md): standalone plugin rollout on the existing Host; Server #29, with the pre-existing slash-command limitation tracked in #30.
 
 - [Experimental manual Handoff](spec/manual-handoff.md): same-Conversation recovery, independent plugin version, native automatic compaction; GitHub Server #2.
+
+- [Versioned plugin monorepo consumption](development/plugin-monorepo.md): unified Pi source, independent release artifacts and preserved legacy integration pin.
