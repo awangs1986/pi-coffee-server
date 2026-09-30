@@ -123,3 +123,13 @@ The selected model is applied after opening the new task and confirmed before it
 first prompt. Existing request correlation, stale-response rejection, old-Host
 capability gating, and failed-selection draft recovery apply to both Pi and Codex.
 Changing the Agent resets the draft selection. Native Claude behavior is unchanged.
+
+## Running-turn input (2026-09-30 verification)
+
+Pi and Codex keep the composer enabled while running. The default send disposition
+is follow-up (wait for the turn to finish); selecting steering sends into the
+active native turn at its supported input boundary. Steering is not an immediate
+OS/tool interruption. Current queue rows are informational: they do not support
+promoting an already queued message into steering. Do not display a promotion
+button until removal and reinsertion can be made duplicate-safe at the adapter
+boundary. Browser disconnect continues to preserve execution.

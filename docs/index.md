@@ -34,3 +34,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - [Pi 0.99 upgrade plan P0–P10](development/pi-099-upgrade-plan-20260930.md): native-first core/plugin upgrades, RPC completion, child-runtime parity and legacy assembly removal; [impact audit](research/pi-099-upgrade-impact-20260930.md).
 - Native Codex Skill completion: [contract](spec/skill-management.md#codex-completion-2026-09-30), [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10).
+
+- Native context presets, Codex totals/compaction and send-gated attachments: [context contract](spec/context-usage.md#native-context-controls-2026-09-30), [attachment boundary](spec/task-storage.md#attachment-send-boundary-2026-09-30), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).

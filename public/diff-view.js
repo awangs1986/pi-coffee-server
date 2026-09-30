@@ -15,8 +15,8 @@ const LINE_PX = 20;
 const MOUNT_MARGIN = '900px 0px';
 const MAX_FETCHES = 4;
 const EXCERPT_LINES = 8;
-const NO_TEXT = '该文件没有可显示的文本 Diff（可能为二进制、重命名或内容超限）。';
-const TOO_LARGE = '该文件的 Diff 超过 4 MB，未在浏览器中显示；请在 VM 上用 git diff 查看。';
+const NO_TEXT = '该文件没有可显示的文本改动（可能为二进制、重命名或内容超限）。';
+const TOO_LARGE = '该文件的改动 超过 4 MB，未在浏览器中显示；请在 VM 上用 git diff 查看。';
 // Pierre renders into a shadow root and its theme sets the colours there; @layer unsafe is the
 // one place that may override them. var() still resolves against the app's inherited tokens.
 const UNSAFE_CSS = ':host{--diffs-font-family:var(--mono);--diffs-header-font-family:var(--font);--diffs-font-size:12.5px;--diffs-line-height:20px;--diffs-light-bg:var(--bg);--diffs-dark-bg:var(--bg)}';
@@ -75,7 +75,7 @@ export function composeCommentMessage(comments) {
     comment.text.split('\n').forEach((line, row) => lines.push((row ? '   ' : '   评论：') + line));
     return lines.join('\n');
   });
-  return [`请根据下面 ${comments.length} 条 Diff 评论修改：`, ...blocks].join('\n\n');
+  return [`请根据下面 ${comments.length} 条改动评论修改：`, ...blocks].join('\n\n');
 }
 
 function sameChanges(before, after) {
@@ -144,7 +144,7 @@ export class DiffView {
     if (this.mode === 'fallback') {
       if (!this.libraryFailed && !this.unsupportedNoticed) {
         this.unsupportedNoticed = true;
-        this.onNotice('当前浏览器不支持增强 Diff，已切换为基础视图');
+        this.onNotice('当前浏览器不支持增强改动视图，已切换为基础视图');
       }
       this.renderFallback(collapsed);
     }
@@ -254,7 +254,7 @@ export class DiffView {
     } catch {
       if (epoch !== this.epoch) return;
       this.libraryFailed = true;
-      this.onNotice('Diff 渲染组件加载失败，已切换为基础视图');
+      this.onNotice('改动渲染组件加载失败，已切换为基础视图');
       this.render(this.data, { taskId: this.taskId, loadFile: this.loadFile, preserve: true });
       return;
     }
@@ -348,7 +348,7 @@ export class DiffView {
     if (typeof result?.oldContents !== 'string' || typeof result?.newContents !== 'string') {
       const reason = result?.contentsUnavailable === 'binary' ? '二进制文件' : result?.contentsUnavailable === 'too_large' ? '文件超过 1 MB' : '文件内容已不可用';
       this.onNotice('无法展开未改动的行：' + reason);
-      throw new Error('Diff context unavailable: ' + reason);
+      throw new Error('改动上下文不可用：' + reason);
     }
     const name = entry.file.path;
     return { oldFile: { name, contents: result.oldContents }, newFile: { name, contents: result.newContents } };
