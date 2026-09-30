@@ -69,6 +69,10 @@ export function buildHostChildEnv(
 ): Record<string, string> {
   const env: Record<string, string | undefined> = { ...overrides };
   for (const key of HOST_STRIPPED_ENV_KEYS) env[key] = undefined;
+  // Upstream child launcher resolves the same installed Pi, never a legacy PATH shim.
+  env.PI_SUBAGENT_PI_BINARY = undefined;
+  env.PI_COFFEE_PI_CLI = undefined;
+  env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT = dirname(dirname(resolvePiCliPath()));
   return env as Record<string, string>;
 }
 
@@ -148,6 +152,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   async delete(sessionId: string): Promise<boolean> {
     const existing = (await this.listWithPaths()).find((session) => session.id === sessionId);
     if (existing === undefined) return false;
+    if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(sessionId)) {
+      await rm(join(dirname(existing.path), "artifacts", sessionId), { recursive: true, force: true });
+    }
     await rm(existing.path, { force: true });
     return true;
   }
@@ -296,7 +303,14 @@ class RpcPiSession implements PiSession {
     // shape used by PI Coffee.  Keep the cast local to this adapter.
     this.running = true;
     this.watchActiveProcess();
-    try { await this.sendChecked({ type: "prompt", message: text, images }); }
+    try {
+      const disposition = await this.sendChecked({ type: "prompt", message: text, images });
+      // A handled command owns no run. Never settle a run started by an input hook.
+      if (disposition === "handled" && !(await this.client.getState()).isStreaming) {
+        this.stopWatching();
+        for (const listener of this.listeners) listener({type:"agent_settled"});
+      }
+    }
     catch (error) {this.stopWatching();throw error;}
   }
 
@@ -308,23 +322,16 @@ class RpcPiSession implements PiSession {
     await this.sendChecked({ type: "follow_up", message: text, images });
   }
 
-  /**
-   * The pinned RpcClient's prompt/steer/followUp resolve on *any* response,
-   * including `success:false` (e.g. "No API key found"), after which Pi emits
-   * no lifecycle events at all. Send the command ourselves and reject on
-   * failure so the Host releases the run instead of staying busy forever.
-   */
-  private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<void> {
+  /** Consume public RPC disposition; failed responses reject in Pi itself. */
+  private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<"started" | "queued" | "handled"> {
     if(this.allowedModels){
       if(/^\/model(?:\s|$)/.test(command.message.trim()))throw new Error('Change models when the current turn has finished');
       const state=await this.client.getState();
       if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');
     }
-    const client = this.client as unknown as { send(command: unknown): Promise<unknown> };
-    const response = await client.send({ ...command, ...(command.images === undefined ? {} : { images: command.images }) }) as { success?: boolean; error?: string } | undefined;
-    if (response && response.success === false) {
-      throw new Error(typeof response.error === "string" && response.error.length > 0 ? response.error : `Pi rejected ${command.type}`);
-    }
+    if (command.type === "steer") return this.client.steer(command.message, command.images);
+    if (command.type === "follow_up") return this.client.followUp(command.message, command.images);
+    return this.client.prompt(command.message, command.images);
   }
 
   async abort(): Promise<void> {
