@@ -405,3 +405,5 @@ Gitea project groups, drag placement and the equivalent conversation menu.
 defines user-scoped persistence and the strict separation from task execution identity.
 
 [Server #25](http://gitea:3000/awangs/pi-coffee-server/issues/25) adds the monochrome pixel coffee brand mark and a default-on, user-persisted Show groups menu option. Disabling preserves placement metadata and restores the original list.
+
+- Codex Skill composer completion: [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10), [native Skill contract](docs/spec/skill-management.md#codex-completion-2026-09-30).

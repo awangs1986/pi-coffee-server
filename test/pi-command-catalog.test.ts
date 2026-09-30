@@ -11,7 +11,7 @@ import {Workspaces} from '../src/host/workspaces.js';
 
 it('discovers current native Pi Skills over authenticated WS without opening a task or creating a transcript',async()=>{
  const root=await mkdtemp(join(tmpdir(),'coffee-command-catalog-')),agentDir=join(root,'agent');
- await mkdir(agentDir);const pi=new RpcPiSessionFactory({cwd:root,agentDir,sessionDir:join(root,'sessions'),args:['--offline','--no-extensions'],env:{PI_OFFLINE:'1'}});
+ await mkdir(agentDir);const pi=new RpcPiSessionFactory({cwd:root,agentDir,sessionDir:join(root,'sessions'),args:['--offline','--no-extensions'],env:{PI_OFFLINE:'1',HOME:root}});
  const factory=new NativeAgentFactory({pi,workspaces:new Workspaces(join(root,'projects'))});
  const host=new HostServer({port:0,token:'command-test',factory});await host.start();
  const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer command-test'}});
@@ -25,6 +25,6 @@ it('discovers current native Pi Skills over authenticated WS without opening a t
   send({type:'get_command_catalog',engine:'pi',requestId:'installed'});
   expect((await next('installed')).commands).toContainEqual({name:'skill:example',description:'Installed after preview.',source:'skill'});
   expect(await pi.list()).toEqual([]);expect(frames.some(f=>f.type==='opened'||f.type==='event')).toBe(false);
-  send({type:'get_command_catalog',engine:'codex',requestId:'invalid'});expect(await next('invalid')).toMatchObject({type:'error',code:'invalid_frame'});
+  send({type:'get_command_catalog',engine:'claude',requestId:'invalid'});expect(await next('invalid')).toMatchObject({type:'error',code:'invalid_frame'});
  }finally{ws.close();await host.close();await rm(root,{recursive:true,force:true});}
 },30000);

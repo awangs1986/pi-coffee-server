@@ -19,10 +19,14 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async capabilities(id:string){
     const task=await this.options.workspaces.lookup(id);
     const engine=task?.engine ?? ((await this.options.legacyCodex?.list().catch(()=>[]) ?? []).some(s=>s.id===id)?"codex":"pi");
-    if(engine==="codex" && this.options.codexSessionFactory)return {...capabilitiesFor("pi"),commands:false,extensions:false,cleanup:false};
+    if(engine==="codex" && this.options.codexSessionFactory)return {...capabilitiesFor("pi"),commands:true,extensions:false,cleanup:false};
     return capabilitiesFor(engine);
   }
-  async commandCatalog(engine:"pi") {
+  async commandCatalog(engine:"pi" | "codex") {
+    if(engine==="codex"){
+      if(!this.options.codex || !this.options.legacyCodex?.commandCatalog)throw new Error("Codex Skill discovery unavailable");
+      return this.options.legacyCodex.commandCatalog(engine);
+    }
     if(engine!=="pi"||!this.options.pi.commandCatalog)throw new Error("Pi command discovery unavailable");
     return this.options.pi.commandCatalog(engine);
   }

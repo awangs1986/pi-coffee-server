@@ -31,3 +31,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Versioned plugin monorepo consumption](development/plugin-monorepo.md): unified Pi source, independent release artifacts and preserved legacy integration pin.
 
 - [Runtime upgrade and plugin composition](development/plugin-monorepo.md#pi-0991-runtime-upgrade-2026-09-29): Pi 0.99.1, independently versioned plugins and Codex CLI 0.159.1; [Server #4](https://github.com/awangs1986/pi-coffee-server/issues/4).
+
+- Native Codex Skill completion: [contract](spec/skill-management.md#codex-completion-2026-09-30), [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10).

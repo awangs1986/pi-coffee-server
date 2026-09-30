@@ -1668,8 +1668,8 @@ function resetSlashCommands(){commands=[];commandRequest=null;commandState='idle
 function loadSlashCommands(){
   if(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)||!connected||commandState!=='idle')return;
   if(opened){if(supports('commands')){commandState='loading';send({v:1,type:'get_commands'});}return;}
-  if(activeId||pendingOpenId||$('#task-engine').value!=='pi')return;
-  commandRequest=requestId('commands');commandState='loading';send({v:1,type:'get_command_catalog',engine:'pi',requestId:commandRequest});
+  if(activeId||pendingOpenId||!['pi','codex'].includes($('#task-engine').value))return;
+  commandRequest=requestId('commands');commandState='loading';send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest});
 }
 function slashItems() {
   const value = ui.prompt.value;
@@ -1691,14 +1691,14 @@ function renderSlash() {
       if(activeId===targetId&&skillReloadScope===targetScope)skillReloadScope=null;
     }catch(e){toast(e.message);reload.disabled=false;}});ui.slash.appendChild(reload);
   }
-  if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(engine!=='pi'?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
+  if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(!['pi','codex'].includes(engine)?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
 
   slashIndex = Math.min(slashIndex, items.length - 1);
   items.forEach((c, index) => {
     const row = el('div', 'slash-item' + (index === slashIndex ? ' active' : ''));
     row.setAttribute('role', 'option');
     row.innerHTML = '<span class="slash-name"></span><span class="slash-desc"></span><span class="slash-src"></span>';
-    row.querySelector('.slash-name').textContent='/'+c.name;
+    row.querySelector('.slash-name').textContent=c.invocation||'/'+c.name;
     row.querySelector('.slash-desc').textContent = c.description || '';
     row.querySelector('.slash-src').textContent = c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
     row.addEventListener('mousedown', (e) => { e.preventDefault(); applySlash(c); });
@@ -1706,7 +1706,7 @@ function renderSlash() {
   });
 }
 function applySlash(command) {
-  ui.prompt.value = '/' + command.name + ' ';
+  ui.prompt.value = (command.invocation||'/' + command.name) + ' ';
   ui.slash.classList.add('hidden');
   ui.prompt.focus();
   autoGrow();
@@ -2176,7 +2176,7 @@ const skillPanel=initSkills({
   context:()=>{const task=workspaceState?.conversations.find(c=>c.id===activeId);return {id:activeId,engine:task?.engine??engine,kind:task?.archived?null:task?.workspaceKind};},
   onOpen:()=>{setSearchOpen(false);setWorkspaceOpen(false);closeDiffDialog();closeBrandMenu();closeSidebarOnMobile();closeTaskDetails();},
   notify:toast,
-  onChanged:target=>{if(target.engine!==engine)return;if(opened&&(target.scope==='user'||target.conversationId===activeId))skillReloadScope=target;resetSlashCommands();},
+  onChanged:target=>{if(target.engine!==engine)return;if(engine==='pi'&&opened&&(target.scope==='user'||target.conversationId===activeId))skillReloadScope=target;resetSlashCommands();},
   onClose:()=>{loadSlashCommands();renderSlash();},
 });
 

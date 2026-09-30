@@ -452,7 +452,7 @@ it('rejects stale Pi command previews after switching engine and explains comman
  chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
  app.sockets.at(-1).receive({type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[{name:'skill:old',source:'skill'}]});
  prompt.dispatchEvent(new Event('input'));expect(document.querySelector('#slash')!.textContent).not.toContain('/skill:old');
- expect(document.querySelector('#slash')!.textContent).toContain('暂不提供');
+ expect(document.querySelector('#slash')!.textContent).toContain('正在读取');
  agent.value='pi';agent.dispatchEvent(new Event('change'));prompt.dispatchEvent(new Event('input'));
  const next=app.frames.filter(f=>f.type==='get_command_catalog').at(-1);
  app.sockets.at(-1).receive({type:'error',code:'operation_failed',requestId:next.requestId,message:'Discovery unavailable'});
@@ -482,4 +482,39 @@ it('invalidates a draft command catalog after Skill installation and requires ex
  expect(document.querySelector('#slash')!.textContent).toContain('需要重新加载');
  document.querySelector<HTMLButtonElement>('#slash button')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='reload')).toMatchObject({conversationId:task.id,engine:'pi',scope:'user'});
+});
+
+
+it('offers Codex Skills before the first message and inserts native dollar invocation',async()=>{
+ const app=await setup();chooseWork();
+ const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='/';prompt.dispatchEvent(new Event('input'));
+ const request=app.frames.find(f=>f.type==='get_command_catalog'&&f.engine==='codex');
+ expect(request).toBeTruthy();
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'codex',requestId:request.requestId,commands:[{name:'tdd',invocation:'$tdd',source:'skill',description:'Test first'}]});
+ expect(document.querySelector('#slash')!.textContent).toContain('$tdd');
+ prompt.value='/td';prompt.dispatchEvent(new Event('input'));prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ expect(prompt.value).toBe('$tdd ');expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+});
+
+
+it('refreshes Codex Skills after installation in an open task without a restart',async()=>{
+ const app=await setup();chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'codex',state:{isStreaming:false},capabilities:{commands:true,models:false,stats:false}});
+ app.sockets.at(-1).receive({type:'commands',commands:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='/';prompt.dispatchEvent(new Event('input'));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ const skillEngine=document.querySelector<HTMLSelectElement>('#skills-engine')!;skillEngine.value='codex';skillEngine.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.click();
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const before=app.frames.filter(f=>f.type==='get_commands').length;
+ document.querySelector<HTMLButtonElement>('#skills-close')!.click();
+ expect(app.frames.filter(f=>f.type==='get_commands')).toHaveLength(before+1);
+ app.sockets.at(-1).receive({type:'commands',commands:[{name:'demo',invocation:'$demo',source:'skill'}]});
+ expect(document.querySelector('#slash')!.textContent).toContain('$demo');expect(document.querySelector('#slash')!.textContent).not.toContain('需要重新加载');
+ expect(app.requests.some(r=>r.action==='reload')).toBe(false);
 });
