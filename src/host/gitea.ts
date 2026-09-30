@@ -1,4 +1,4 @@
-import type { CodeForge, Project, PullRequest } from "./workspaces.js";
+import type { CodeForge, ForgeRepository, Project, PullRequest } from "./workspaces.js";
 
 export interface RepositoryRegistration {repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}
 export interface GiteaOptions {baseUrl:string;token:string;owner:string}
@@ -10,6 +10,28 @@ export class GiteaClient implements CodeForge {
     this.base=new URL(options.baseUrl);
     if(!['http:','https:'].includes(this.base.protocol) || this.base.username || this.base.password)throw new Error('Gitea base URL must be credential-free HTTP(S)');
     if(!options.token || !/^[A-Za-z0-9_.-]+$/.test(options.owner))throw new Error('Gitea token and owner are required');
+  }
+  async listRepositories():Promise<ForgeRepository[]> {
+    const repositories=new Map<string,ForgeRepository>();
+    for(let page=1;;page++){
+      const rows=await this.request(`/api/v1/user/repos?limit=50&page=${page}`,'GET');
+      if(!Array.isArray(rows))throw new Error('Gitea returned an invalid repository list');
+      for(const row of rows){const repo=this.repositoryView(row);repositories.set(repo.id,repo);}
+      // Continue to an empty page: the server may cap the requested page size.
+      if(!rows.length)break;
+    }
+    return [...repositories.values()];
+  }
+  async repository(input:unknown):Promise<ForgeRepository> {
+    if(typeof input!=='string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(input))throw new Error('Choose a Gitea repository as owner/repo');
+    const [owner,name]=input.split('/');
+    return this.repositoryView(await this.request(`/api/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,'GET'));
+  }
+  private repositoryView(value:unknown):ForgeRepository {
+    const repo=value as Record<string,unknown>;
+    if(!repo || !Number.isSafeInteger(repo.id) || Number(repo.id)<=0 || typeof repo.full_name!=='string' || typeof repo.clone_url!=='string' || typeof repo.html_url!=='string')throw new Error('Gitea returned invalid repository metadata');
+    const permissions=repo.permissions as {push?:boolean;admin?:boolean}|undefined;
+    return {id:String(repo.id),fullName:repo.full_name,private:repo.private===true,archived:repo.archived===true,defaultBranch:typeof repo.default_branch==='string' && repo.default_branch ? repo.default_branch : 'main',cloneUrl:repo.clone_url,webUrl:repo.html_url,canPush:permissions?.push===true || permissions?.admin===true,...(typeof repo.description==='string'?{description:repo.description}:{})};
   }
   async createRepository(name:string):Promise<RepositoryRegistration> {
     const repo=await this.request('/api/v1/user/repos','POST',{name,private:true,auto_init:false}) as Record<string,unknown>;

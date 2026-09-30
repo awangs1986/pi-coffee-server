@@ -272,6 +272,8 @@ export class HostServer {
         case "status": result=await ws.syncStatus(input.id,input.refresh!==false);break;
         case "branches": result=await ws.branches(input.projectId);break;
         case "discover": result=await ws.discover();break;
+        case "gitea_repos": result=await ws.giteaRepositories();break;
+        case "gitea_project": result=await ws.registerGiteaProject(input.repository);break;
         case "github_repos": result=await ws.githubRepositories();break;
         case "github_project": result=await ws.registerGitHubProject(input.repository);break;
         case "project": result=await ws.createProject(input.name,input.url);break;
