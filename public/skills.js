@@ -1,7 +1,7 @@
 // Browser management only. Source fetching, native discovery and file changes belong to Host.
 export function initSkills({context,onOpen,onClose,notify}) {
  const $=selector=>document.querySelector(selector),page=$('#skills-page');
- let epoch=0,busy=false,available=false;
+ let epoch=0,busy=false,available=false,preview=null;
  const make=(tag,className,text)=>{const node=document.createElement(tag);node.className=className;node.textContent=text;return node;};
  const scope=()=>({engine:$('#skills-engine').value,scope:$('#skills-scope').value,...($('#skills-scope').value==='project'?{conversationId:context().id}:{})});
  const request=async value=>{
@@ -12,8 +12,25 @@ export function initSkills({context,onOpen,onClose,notify}) {
   const task=context(),project=task.kind==='project'&&task.id&&task.engine===$('#skills-engine').value;
   $('#skills-scope').querySelector('option[value="project"]').disabled=!project;
   if(!project)$('#skills-scope').value='user';
-  for(const node of page.querySelectorAll('input,select,button'))if(node.id!=='skills-close')node.disabled=busy;
-  $('#skills-install').disabled=busy||!available;$('#skills-reload').disabled=busy||!available||!task.id||task.engine!==$('#skills-engine').value;
+  for(const node of page.querySelectorAll('input,select,button'))if(node.id!=='skills-close')node.disabled=busy||node.dataset.skillUnavailable==='true';
+  $('#skills-install').disabled=busy||!available||Boolean(preview&&!selectedSkills().length);$('#skills-install').textContent=preview?`安装所选（${selectedSkills().length}）`:'读取 Skill 列表';$('#skills-reload').disabled=busy||!available||!task.id||task.engine!==$('#skills-engine').value;
+ }
+ function selectedSkills(){return [...$('#skill-candidates').querySelectorAll('input:checked:not([data-skill-unavailable="true"])')].map(node=>node.dataset.skillSubdir);}
+ function resetSource(){preview=null;$('#skill-candidates').replaceChildren();$('#skill-candidates').classList.add('hidden');$('#skills-read-again').classList.add('hidden');}
+ function renderSource(selected=[]){
+  const list=$('#skill-candidates');list.replaceChildren();list.classList.remove('hidden');$('#skills-read-again').classList.remove('hidden');
+  list.append(make('p','skills-help',`${preview.skills.length} 个 Skill · ${preview.revision.slice(0,12)} · 勾选后安装`));
+  const search=document.createElement('input');search.type='search';search.placeholder='搜索 Skill';search.setAttribute('aria-label','搜索仓库中的 Skill');
+  search.addEventListener('input',()=>{const query=search.value.trim().toLowerCase();for(const row of list.querySelectorAll('.skill-candidate'))row.classList.toggle('hidden',!row.textContent.toLowerCase().includes(query));});list.append(search);
+  for(const item of preview.skills){
+   const row=make('label','skill-candidate',''),check=document.createElement('input');check.type='checkbox';check.dataset.skillSubdir=item.subdir;
+   check.dataset.skillUnavailable=String(Boolean(item.installed||item.problem));check.checked=!item.installed&&!item.problem&&selected.includes(item.subdir);check.addEventListener('change',controls);
+   const content=make('span','skill-candidate-content','');content.append(make('strong','',item.name),make('span','skill-path',item.subdir),make('span','skill-description',item.description));
+   if(item.installed||item.problem||item.error)content.append(make('span',item.problem||item.error?'skills-error':'skill-state',item.problem||item.error||'已存在，不会覆盖'));
+   row.append(check,content);list.append(row);
+  }
+  for(const warning of preview.warnings||[])list.append(make('p','skills-error',warning));
+  controls();
  }
  function status(message,error=false){$('#skills-status').textContent=message;$('#skills-status').classList.toggle('error',error);}
  function close(){++epoch;page.classList.add('hidden');$('#app').classList.remove('skills-open');onClose?.();}
@@ -54,18 +71,38 @@ export function initSkills({context,onOpen,onClose,notify}) {
   }
  }
  async function open(){
-  onOpen();$('#skills-engine').value=context().engine||'pi';$('#skills-scope').value='user';page.classList.remove('hidden');$('#app').classList.add('skills-open');await refresh();$('#skills-engine').focus();
+  resetSource();onOpen();$('#skills-engine').value=context().engine||'pi';$('#skills-scope').value='user';page.classList.remove('hidden');$('#app').classList.add('skills-open');await refresh();$('#skills-engine').focus();
  }
  $('#skills-btn').addEventListener('click',open);$('#skills-close').addEventListener('click',()=>{close();$('#brand-menu-btn').focus();});
- for(const id of ['skills-engine','skills-scope'])$('#'+id).addEventListener('change',refresh);
+ for(const id of ['skills-engine','skills-scope'])$('#'+id).addEventListener('change',()=>{resetSource();void refresh();});
  $('#skills-refresh').addEventListener('click',refresh);
  $('#skill-detail-close').addEventListener('click',resetDetail);
+ for(const id of ['skill-url','skill-ref','skill-subdir'])$('#'+id).addEventListener('input',()=>{resetSource();controls();});
+ $('#skills-read-again').addEventListener('click',()=>{resetSource();$('#skills-form').requestSubmit();});
  $('#skills-form').addEventListener('submit',async event=>{
-  event.preventDefault();if(busy||!available)return;const current=epoch,target=scope();busy=true;controls();status('正在从 Git 安装到 VM…');
+  event.preventDefault();if(busy||!available)return;const current=epoch,target=scope();
+  const selected=selectedSkills();if(preview&&!selected.length)return;
+  busy=true;controls();
   try{
-   await request({action:'install',...target,repoUrl:$('#skill-url').value.trim(),ref:$('#skill-ref').value.trim()||'HEAD',subdir:$('#skill-subdir').value.trim()||'.'});
-   if(current!==epoch){notify('Skill 安装已完成。');return;}
-   $('#skills-form').reset();await refresh();status('安装完成。下次启动 Agent 时生效；也可重新加载空闲的当前任务。');
+   if(!preview){
+    status('正在读取仓库中的 Skills…');
+    const source={repoUrl:$('#skill-url').value.trim(),ref:$('#skill-ref').value.trim()||'HEAD',subdir:$('#skill-subdir').value.trim()||'.'};
+    const data=await request({action:'discover',...target,...source});if(current!==epoch)return;
+    if(!Array.isArray(data.skills)||typeof data.revision!=='string')throw new Error('Host 未返回 Skill 列表，请更新 Host 后重试。');
+    preview={...data,source};renderSource();status(data.skills.length?'请选择需要安装的 Skill。':'未发现有效的 SKILL.md，请检查仓库、分支或子目录。',!data.skills.length);
+   }else{
+    const batch=preview;let installed=0,failed=0;
+    for(const subdir of selected){
+     if(current!==epoch)break;
+     const item=batch.skills.find(s=>s.subdir===subdir);status(`正在安装 ${item.name}（${installed+failed+1}/${selected.length}）…`);
+     try{await request({action:'install',...target,...batch.source,subdir,expectedRevision:batch.revision});item.installed=true;delete item.error;installed++;}
+     catch(error){item.error=error.message;failed++;}
+    }
+    const message=`安装结果：${installed} 成功，${failed} 失败。`;
+    if(current!==epoch){notify(message+' 未开始的项目已停止。');return;}
+    renderSource(selected);await refresh();
+    if(!page.classList.contains('hidden'))status(message+(installed?' 新启动的 Agent 会读取变更。':''),failed>0);
+   }
   }catch(error){if(current===epoch)status(error.message,true);else notify(error.message);}
   finally{busy=false;controls();}
  });

@@ -109,9 +109,11 @@
             <details class="skills-install-box"><summary>从 Git 仓库安装</summary>
               <form id="skills-form">
                 <label>仓库地址<input id="skill-url" required autocomplete="off" placeholder="https://gitea/owner/skills.git" /></label>
-                <div class="skills-source-fields"><label>分支 / Tag / Commit<input id="skill-ref" placeholder="HEAD" /></label><label>Skill 子目录<input id="skill-subdir" placeholder="skills/example（根目录填 .）" /></label></div>
-                <p class="skills-help">目录需包含 SKILL.md。脚本和资源一起安装，安装时不执行。私有仓库使用 VM 已配置的 Git 凭据。</p>
-                <button id="skills-install" class="btn small" type="submit">安装到 VM</button>
+                <div class="skills-source-fields"><label>分支 / Tag / Commit<input id="skill-ref" placeholder="HEAD" /></label><label>扫描子目录（可选）<input id="skill-subdir" placeholder="留空读取整个仓库，或填写 skills/example" /></label></div>
+                <p class="skills-help">先读取仓库中的 Skill，再勾选安装。脚本和资源一起安装，安装时不执行。私有仓库使用 VM 已配置的 Git 凭据。</p>
+                <div id="skill-candidates" class="skill-candidates hidden" aria-label="可安装的 Skills"></div>
+                <button id="skills-install" class="btn small" type="submit">读取 Skill 列表</button>
+                <button id="skills-read-again" class="btn small hidden" type="button">重新读取</button>
               </form>
             </details>
             <div id="skills-list" class="skills-list"></div>

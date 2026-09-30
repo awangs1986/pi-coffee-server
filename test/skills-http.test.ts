@@ -87,3 +87,37 @@ it('reviews and checkpoints project Pi Skills while keeping Pi credentials outsi
  const checkpoint=await post('checkpoint',{paths:['.pi/skills/example/SKILL.md','.pi/skills/example/reference.txt'],message:'Share project Skill'});expect(checkpoint.status,JSON.stringify(checkpoint.body)).toBe(200);
  expect((await post('checkpoint',{paths:['.pi/auth.json'],message:'must reject'})).status).toBe(409);
 });
+
+it('discovers a collection despite unrelated root links, then installs only the selected package at the previewed revision',async()=>{
+ const {source,git,call}=await setup();const scope={engine:'pi',scope:'user'};
+ const {symlink}=await import('node:fs/promises');
+ await writeFile(join(source,'CLAUDE.md'),'Repository instructions');await symlink('CLAUDE.md',join(source,'AGENTS.md'));
+ await mkdir(join(source,'skills/second'));await writeFile(join(source,'skills/second/SKILL.md'),'---\nname: second\ndescription: Second skill.\n---\nBody');
+ await symlink('/etc',join(source,'external'));await git('add','.');await git('commit','-m','collection');
+ const result=await call({...scope,action:'discover',repoUrl:source});
+ expect(result.status,JSON.stringify(result.body)).toBe(200);
+ expect(result.body.skills.map((s:any)=>[s.name,s.subdir])).toEqual([['example','skills/example'],['second','skills/second']]);
+ expect((await call({...scope,action:'list'})).body.skills).toEqual([]);
+ const installed=await call({...scope,action:'install',repoUrl:source,subdir:'skills/example',expectedRevision:result.body.revision});
+ expect(installed.status).toBe(200);expect((await call({...scope,action:'list'})).body.skills.map((s:any)=>s.name)).toEqual(['example']);
+ const rootInstall=await call({...scope,action:'install',repoUrl:source});expect(rootInstall.body.error).toContain('SKILL.md');expect(rootInstall.body.error).not.toContain('may not contain symlinks');
+ await writeFile(join(source,'skills/second/new.txt'),'changed since preview');await git('add','.');await git('commit','-m','change');
+ const changed=await call({...scope,action:'install',repoUrl:source,subdir:'skills/second',expectedRevision:result.body.revision});
+ expect(changed.status).toBe(409);expect(changed.body.error).toContain('changed');
+ expect((await call({...scope,action:'list'})).body.skills).toHaveLength(1);
+ const fresh=await call({...scope,action:'discover',repoUrl:source});expect(fresh.body.skills[0].installed).toBe(true);
+});
+
+it('does not follow linked Skill metadata or install linked resources discovered inside a package',async()=>{
+ const {source,git,call}=await setup();const {symlink}=await import('node:fs/promises');
+ await symlink('/etc/passwd',join(source,'skills/example/reference-link'));
+ await mkdir(join(source,'skills/linked'));await symlink('../../skills/example/SKILL.md',join(source,'skills/linked/SKILL.md'));
+ await git('add','.');await git('commit','-m','linked packages');
+ const scope={engine:'pi',scope:'user'};
+ const denied=await call({...scope,action:'discover',repoUrl:source},'invalid');expect(denied.status).toBe(401);
+ const preview=await call({...scope,action:'discover',repoUrl:source});expect(preview.status).toBe(200);
+ expect(preview.body.skills).toHaveLength(1);expect(preview.body.skills[0].problem).toContain('reference-link');
+ expect(preview.body.warnings).toContain('Invalid SKILL.md: skills/linked');
+ expect((await call({...scope,action:'install',repoUrl:source,subdir:'skills/example'})).status).toBe(409);
+ expect((await call({...scope,action:'list'})).body.skills).toEqual([]);
+});

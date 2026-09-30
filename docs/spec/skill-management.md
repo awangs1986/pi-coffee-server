@@ -49,7 +49,8 @@ Native discovery references: [Codex Skills](https://developers.openai.com/codex/
 ## Install and lifecycle
 
 - Supply a credential-free HTTP(S) or `ssh://` clone URL, ref (default HEAD), and
-  directory containing SKILL.md. No executable installation hooks, dependency
+  optional scan subdirectory. Read the repository list, then explicitly select
+  the Skills to install. A repository may contain one Skill or a collection. No executable installation hooks, dependency
   installation, submodule initialization or model calls run during installation.
 - Fetch on the VM, resolve a concrete commit, validate YAML name/description and
   retain supporting files. Packages are bounded to 500 regular files / 10 MB;
@@ -91,8 +92,8 @@ Skills. Project writes use the same task lifecycle exclusion and reject live wri
 ## Public interface and acceptance
 
 Authenticated `POST /api/skills` carries `engine`, `scope` (`user` or `project`), and
-`conversationId` for project scope. Actions: `list`, `detail` (opaque `id`), `install`
-(`repoUrl`, optional `ref`/`subdir`), `update`, `enable`, `disable` (opaque `id`),
+`conversationId` for project scope. Actions: `list`, `detail` (opaque `id`), `discover` (source URL/ref/subdir), `install`
+(`repoUrl`, optional `ref`/`subdir`/`expectedRevision`), `update`, `enable`, `disable` (opaque `id`),
 `reload` (explicit `conversationId`). IDs resolve only within the selected scope.
 Host returns 401 without its bearer, 404 when not configured, 405 for other methods,
 and 409 with an actionable error for invalid/conflicting operations. Responses are
@@ -111,3 +112,33 @@ covers install/detail/actions, stale responses, unsupported Hosts, preserved dra
 and compact desktop/mobile layouts. Run both repositories' `npm run check` from
 independent clean clones. Record deployed evidence in the linked Issues; installing
 a Skill is not evidence that a paid model chose to invoke it.
+
+## Skill collection discovery (2026-09-30)
+
+[Server #7](https://github.com/awangs1986/pi-coffee-server/issues/7) corrects the
+collection-root error reported with `awangs1986/catskills`. The repository root
+has no SKILL.md and contains an unrelated AGENTS.md link; its actual Skills live
+under `skills/<category>/<name>`. Installing the root as one package was invalid.
+No source-repository modification is required.
+
+Discovery uses the same authenticated Agent/scope and VM Git credentials as
+installation. It reads a concrete checkout and returns names, descriptions,
+repository-relative directories, revision, existing-name collisions and package
+validation problems. It never installs or executes files. Scanning skips .git and
+does not follow symlinks; unrelated root links do not reject a collection. It is
+bounded to 5,000 visited entries, depth 12 and 200 Skills; users can narrow the
+subdirectory. Invalid metadata is reported as a warning. Actual managed packages
+still reject all links and special files and retain the existing size limits.
+
+The Web list supports search and explicit checkboxes with nothing preselected.
+Existing native/managed names and invalid packages are unavailable for install.
+Source or Agent/scope changes clear the preview. Installs are sequential and
+independently committed; per-package errors remain visible, and completed
+selections are disabled rather than retried. Closing the page stops unsent
+requests but does not cancel a request already executing on Host.
+
+Each selected install passes the preview revision as `expectedRevision`. Host
+rechecks the fetched revision before publication and rejects a changed source;
+the original ref remains recorded for future explicit updates. Empty or
+collection-root direct installs report missing SKILL.md with discovery guidance,
+rather than misleading users about unrelated root symlinks.
