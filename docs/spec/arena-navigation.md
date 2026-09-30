@@ -230,3 +230,27 @@ Failed saves keep the previous choice and list with an explicit error.
 
 Manual Pi compaction follows [experimental Handoff](manual-handoff.md); automatic
 compaction remains native Pi. This supersedes historical local-fold UI wording.
+
+## Task source and new-task shortcuts (2026-09-30)
+
+[Server #6](https://github.com/awangs1986/pi-coffee-server/issues/6) clarifies task
+creation without changing the overall workbench layout. The settings menu starts
+with **Source** (Chat / Gitea / GitHub), followed by **Agent type** (Pi / Codex /
+Claude Code). Chat maps to the existing `chat` workspace kind and remains Pi-only;
+Gitea and GitHub both map to `project`. The registered Project determines the
+forge. Native / Relay remains a separate **Model source** setting for Pi, with
+its existing protocol and credentials unchanged. Existing task identity is fixed.
+
+The empty new-task hero shows exactly three actions: **New chat (Chat)**,
+**Start task (Gitea)** and **Start task (GitHub)**. These configure the draft,
+opening the existing repository picker for Work. They do not send a prompt or
+create a Conversation; typed text is preserved. Changing forge clears a selected
+repository from the previous forge. Choosing Chat selects Pi. GitHub remains
+visible but disabled with an explanation when Host has no GitHub configuration,
+rather than disappearing. Registered-project selection still reflects the
+selected repository's forge; delayed requests cannot replace a changed draft.
+
+GitHub functionality from ADR-0022 remains authoritative. Host's configured
+GitHub token lists repositories; the VM owner's native Git credentials perform
+Git operations. Web never receives the token. Deployment must validate both
+capability configuration and actual repository selection, not just source code.

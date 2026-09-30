@@ -159,3 +159,38 @@ it('finds an existing Gitea repository without creating a remote or losing the d
   expect(app.requests.filter(r=>r.action==='gitea_project')).toEqual([{action:'gitea_project',repository:'awangs/ArenaModels'}]);
   expect(app.requests.some(r=>['project','discover','conversation'].includes(r.action))).toBe(false);
 });
+
+it('starts Chat, Gitea and GitHub drafts from the hero without sending text or creating a task',async()=>{
+  const app=await setup();
+  expect([...q('#hero').querySelectorAll('button')].map(b=>b.textContent)).toEqual(['新建一个聊天（Chat）','开启一项任务（Gitea）','开启一项任务（GitHub）']);
+  q<HTMLTextAreaElement>('#prompt').value='Keep my prompt';
+  q<HTMLButtonElement>('[data-task-source="github"]').click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLSelectElement>('#task-kind').value).toBe('project');
+  expect(hidden('#github-modal')).toBe(false);expect(q('#github-title').textContent).toBe('添加 GitHub 仓库');
+  rows().find(row=>row.dataset.repo==='acme/tools')!.click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#agent-menu-btn').click();
+  expect([...q('.agent-menu-list').querySelectorAll(':scope > button')].slice(0,2).map(b=>b.id)).toEqual(['agent-kind-row','agent-engine-row']);
+  expect(q('#agent-kind-value').textContent).toBe('GitHub');
+  expect(q('#agent-source-row').textContent).toContain('模型来源');
+  q<HTMLButtonElement>('#agent-menu-btn').click();
+  q<HTMLSelectElement>('#task-engine').value='codex';q('#task-engine').dispatchEvent(new Event('change'));
+  q<HTMLButtonElement>('[data-task-source="gitea"]').click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLSelectElement>('#task-engine').value).toBe('codex');
+  expect(q<HTMLSelectElement>('#project-select').value).toBe('');
+  expect(q('#github-title').textContent).toBe('选择已有 Gitea 仓库');
+  expect(q('.github-picker .stats-note').textContent).not.toContain('GitHub');
+  q<HTMLButtonElement>('#github-close').click();
+  q<HTMLButtonElement>('[data-task-source="chat"]').click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLSelectElement>('#task-kind').value).toBe('chat');expect(q<HTMLSelectElement>('#task-engine').value).toBe('pi');
+  expect(q<HTMLTextAreaElement>('#prompt').value).toBe('Keep my prompt');
+  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+});
+
+it('keeps the GitHub source visible with a configuration explanation when unavailable',async()=>{
+  const app=await setup({github:false});
+  q<HTMLButtonElement>('#agent-menu-btn').click();q<HTMLButtonElement>('#agent-kind-row').click();
+  const github=[...q('#agent-kind-pane').querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent!.includes('GitHub'))!;
+  expect(github.disabled).toBe(true);expect(github.textContent).toContain('未配置');
+  expect(q<HTMLButtonElement>('[data-task-source="github"]').disabled).toBe(true);
+  expect(app.requests.some(r=>r.action==='github_repos')).toBe(false);
+});

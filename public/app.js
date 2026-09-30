@@ -33,7 +33,7 @@ const ui = {
   sessionList: $('#session-list'), search: $('#search'), queue: $('#queue'), slash: $('#slash'),
   attachments: $('#attachments'), attach: $('#attach'), file: $('#file'), hint: $('#hint'),
   agentBtn: $('#agent-menu-btn'), agentMenu: $('#agent-menu'), agentName: $('#agent-name'), agentNote: $('#agent-menu-note'),
-  agentRows: { engine: $('#agent-engine-row'), kind: $('#agent-kind-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row') },
+  agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row') },
   agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane') },
   agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value') },
   modelSource: $('#model-source'), model: $('#model'), thinking: $('#thinking'), modeWrap: $('#mode-wrap'), mode: $('#mode'),
@@ -88,7 +88,7 @@ let projectCreating = false;
 // Code forges (ADR-0022): Gitea Projects (the default) and GitHub repositories added through the picker.
 const FORGE_NAMES = { gitea: 'Gitea', github: 'GitHub' };
 const ADD_GITHUB = '__add_github__', ADD_GITEA = '__add_gitea__';
-let repositoryPickerForge = 'github';
+let repositoryPickerForge = 'github', draftProjectForge = 'gitea';
 let lastProjectValue = '';            // restores the dropdown after the pseudo-option opens the picker
 let githubRepos = null, githubError = '', githubAdding = '', githubSeq = 0;
 function projectForge(project) { return project?.forge === 'github' ? 'github' : 'gitea'; }
@@ -226,7 +226,13 @@ function renderAgentPane(kind) {
   const pane = ui.agentPanes[kind];
   pane.replaceChildren();
   if (kind === 'engine') { renderChoicePane(pane, $('#task-engine'), (option) => ({ label: engineName(option.value), meta: option.textContent.split(' · ').slice(1).join(' · ') })); return; }
-  if (kind === 'kind') { renderChoicePane(pane, $('#task-kind'), (option) => option.value === 'chat' ? { label: 'Chat', meta: '本地目录' } : { label: 'Work', meta: workForgeLabel() }); return; }
+  if (kind === 'kind') {
+    for(const source of ['chat','gitea','github']) {
+      const available=source==='chat' || forgeCapabilities()[source];
+      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'Pi 聊天':available?'Work 项目':'Host 未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
+    }
+    return;
+  }
   if (!models) return;
   const current = selectedModelInfo();
   if (kind === 'source') {
@@ -302,7 +308,7 @@ function renderAgentSettings() {
   if (!ui.agentBtn) return;
   const { task, agent, kind, choiceLocked, modelLocked } = agentMenuState();
   ui.agentValues.engine.textContent = engineName(agent);
-  ui.agentValues.kind.textContent = kind === 'chat' ? 'Chat' : 'Work';
+  ui.agentValues.kind.textContent = kind === 'chat' ? 'Chat' : FORGE_NAMES[taskSource()];
   // A legacy task (open without a workspace record) keeps its Agent; only its directory type is chosen.
   ui.agentRows.engine.disabled = choiceLocked || Boolean(activeId);
   ui.agentRows.kind.disabled = choiceLocked;
@@ -316,7 +322,7 @@ function renderAgentSettings() {
   ui.agentValues.thinking.textContent = models?.thinkingLevel || levels[0] || '—';
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
-    : task && !pendingOpenId ? 'Agent 和类型在任务创建时固定。' : '';
+    : task && !pendingOpenId ? 'Agent 和来源在任务创建时固定。' : '';
   ui.agentNote.textContent = note;
   ui.agentNote.classList.toggle('hidden', !note);
   if (models) ui.agentBtn.dataset.state = `${source} · ${models.current ? models.current.id : 'no model'} · ${models.thinkingLevel || 'default'}`;
@@ -384,19 +390,50 @@ function resetThread() {
   uploadLog = [];
 }
 
+function taskSource() {
+  const task=currentTask();
+  if((task?.workspaceKind || $('#task-kind').value)==='chat')return 'chat';
+  const project=workspaceState?.projects.find(p=>p.id===(task?.projectId || ui.projectSelect.value));
+  return project ? projectForge(project) : draftProjectForge;
+}
+function chooseTaskSource(source) {
+  if(currentTask() || pendingOpenId || (source!=='chat' && !forgeCapabilities()[source]))return;
+  taskSelectionEpoch++;closeAgentMenu();closeGitHubPicker();
+  const project=workspaceState?.projects.find(p=>p.id===ui.projectSelect.value);
+  if(source==='chat' || (project && projectForge(project)!==source)){
+    ui.projectSelect.value='';ui.projectSelect.dispatchEvent(new Event('change'));
+  }
+  if(source!=='chat')draftProjectForge=source;
+  const kind=$('#task-kind'),next=source==='chat'?'chat':'project';
+  if(kind.value!==next){kind.value=next;kind.dispatchEvent(new Event('change'));}
+  renderProjectContext();renderAgentSettings();
+  if(source==='chat')ui.prompt.focus();else void openGitHubPicker(source);
+}
+function refreshHeroChoices() {
+  for(const button of document.querySelectorAll('#hero [data-task-source]')){
+    const source=button.dataset.taskSource,available=source==='chat' || forgeCapabilities()[source];
+    button.disabled=Boolean(activeId || pendingOpenId) || !available;
+    button.title=available?'':`${FORGE_NAMES[source]} 尚未在 Host 配置`;
+  }
+}
 const CHIPS = ['列出当前目录的文件', '解释这个仓库的结构', '写一个 Python 脚本统计文件行数'];
 function renderHero() {
   const hero = el('div', 'hero');
   hero.id = 'hero';
   hero.innerHTML = '<h1>有什么可以帮你？</h1><p>Agent 会在你的 User VM 中直接执行任务。</p><div class="chips"></div>';
   const chips = hero.querySelector('.chips');
-  for (const text of CHIPS) {
+  if(!activeId){
+    for(const [source,label] of [['chat','新建一个聊天（Chat）'],['gitea','开启一项任务（Gitea）'],['github','开启一项任务（GitHub）']]){
+      const chip=el('button','chip',label);chip.type='button';chip.dataset.taskSource=source;
+      chip.addEventListener('click',()=>chooseTaskSource(source));chips.appendChild(chip);
+    }
+  } else for (const text of CHIPS) {
     const chip = el('button', 'chip', text);
     chip.type = 'button';
     chip.addEventListener('click', () => { ui.prompt.value = text; ui.prompt.focus(); autoGrow(); refreshComposer(); });
     chips.appendChild(chip);
   }
-  ui.thread.appendChild(hero);
+  ui.thread.appendChild(hero);refreshHeroChoices();
 }
 const removeHero = () => { const hero = $('#hero'); if (hero) hero.remove(); };
 
@@ -946,6 +983,7 @@ ui.userBtn.addEventListener('click', async () => {
 });
 function renderProjectContext() {
   if (!ui.projectSelect || !ui.startBranch) return;
+  refreshHeroChoices();
   const conversation = workspaceState?.conversations.find((c) => c.id === activeId);
   const activeProject = workspaceState?.projects.find((p) => p.id === conversation?.projectId);
   let projectLabel=activeProject?.name;try{if(activeProject?.webUrl)projectLabel=new URL(activeProject.webUrl).pathname.split('/').filter(Boolean).slice(-2).join('/');}catch{}
@@ -1029,7 +1067,7 @@ function renderProjectContext() {
   }
   ui.projectSelect.title = activeProject ? activeProject.name : forges.github ? 'Gitea / GitHub 仓库' : 'Gitea 仓库';
   ui.projectSelect.setAttribute('aria-label', forges.github ? 'Gitea / GitHub 仓库' : 'Gitea 仓库');
-  if (ui.projectSelect.value !== ADD_GITHUB) lastProjectValue = ui.projectSelect.value;
+  if (![ADD_GITHUB,ADD_GITEA].includes(ui.projectSelect.value)) lastProjectValue = ui.projectSelect.value;
   ui.startBranch.title = conversation ? `当前对话固定使用 ${conversation.branch}` : '新对话起始分支';
   ui.projectSelect.classList.toggle('locked', lockedToConversation);
   ui.startBranch.classList.toggle('locked', lockedToConversation);
@@ -2149,7 +2187,7 @@ function newSession(focus = true) {
   clearExtensionUi();
   taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;
   engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
-  $('#task-kind').value='chat';ui.projectSelect.value='';ui.startBranch.value='';
+  $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
   rememberTask(null);
   streaming = false;
@@ -2303,7 +2341,8 @@ $('#create-task').addEventListener('click',async()=>{
 });
 ui.projectSelect.addEventListener('change',async()=>{
   if([ADD_GITHUB,ADD_GITEA].includes(ui.projectSelect.value)){const forge=ui.projectSelect.value===ADD_GITEA?'gitea':'github';ui.projectSelect.value=lastProjectValue;void openGitHubPicker(forge);return;}
-  creationRequest=null;saveCreation();ui.startBranch.value='';showArchived=false;renderProjectContext();renderSessionList();
+  const selectedProject=workspaceState?.projects.find(p=>p.id===ui.projectSelect.value);if(selectedProject)draftProjectForge=projectForge(selectedProject);
+  creationRequest=null;saveCreation();ui.startBranch.value='';showArchived=false;renderProjectContext();renderAgentSettings();renderSessionList();
   const id=ui.projectSelect.value,list=$('#remote-branches');list.replaceChildren();if(!id || activeId)return;
   try{const branches=await workspaceApi({action:'branches',projectId:id});if(ui.projectSelect.value!==id || activeId)return;for(const branch of branches){const option=document.createElement('option');option.value=branch;list.append(option);}ui.startBranch.value=workspaceState.projects.find(p=>p.id===id)?.branch || branches[0] || '';}
   catch(e){toast('分支列表不可用，可填写已知远端分支：'+e.message);}
