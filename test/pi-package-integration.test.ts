@@ -41,8 +41,8 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
   const toolsFile=join(root,'native-tools.json'), inspector=join(root,'inspect.mjs');
   await writeFile(inspector,`import {writeFileSync} from 'node:fs';export default function(pi){pi.on('session_start',()=>writeFileSync(${JSON.stringify(toolsFile)},JSON.stringify(pi.getAllTools())));}`);
   const host = new HostServer({ host: "127.0.0.1", port: 0, idleTimeoutMs:50, factory: new RpcPiSessionFactory({
-    cwd, agentDir, sessionDir: join(root, "sessions"), provider: "fixture", model: "fixture", args: ["--offline"],
-    extensions: [...resolveHostPiExtensions({}), inspector], skills: runtime.resolvePiSkills({}),
+    cwd, agentDir, sessionDir: join(root, "sessions"), provider: "fixture", model: "fixture", args: ["--offline", "--no-extensions"],
+    extensions: [...resolveHostPiExtensions({}), inspector],
     env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_INITIAL_MODE: "work", PI_COFFEE_SCHEDULER_DIR: join(root, "admission") },
   }) });
   let web: WebServer | undefined;
@@ -67,8 +67,15 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     expect(search.parameters.properties.provider).toBeDefined();
     expect(search.parameters.properties.delegate).toBeUndefined();
     const id = first.frames.find(frame => frame.type === "opened").sessionId;
+    // A native extension command handles input without starting an agent run.
+    first.socket.send(JSON.stringify({v:1,type:"prompt",requestId:"command-first",text:"/harness version"}));
+    await expect.poll(()=>first.frames.filter(f=>f.event?.type==="agent_settled").length,{timeout:3000}).toBe(1);
+    first.socket.send(JSON.stringify({v:1,type:"prompt",requestId:"command-next",text:"/harness version"}));
+    await expect.poll(()=>first.frames.filter(f=>f.event?.type==="agent_settled").length,{timeout:3000}).toBe(2);
+    expect(first.frames.filter(f=>f.type==="error")).toEqual([]);
+
     first.socket.send(JSON.stringify({ v: 1, type: "prompt", requestId: "package-probe", text: "Reply with the test marker." }));
-    await expect.poll(() => first.frames.some(frame => frame.type === "event" && frame.event.type === "agent_settled"), { timeout: 15000 }).toBe(true);
+    await expect.poll(() => first.frames.filter(frame => frame.type === "event" && frame.event.type === "agent_settled").length === 3, { timeout: 15000 }).toBe(true);
     expect(JSON.stringify(first.frames)).toContain("PACKAGE_CONSUMER_OK");
     expect(requests.some(r=>r.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe"))).toBe(true);
     expect(requests.flatMap(r=>r.messages).find((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe").content).not.toMatch(/not found|unknown tool|not active/i);
