@@ -1067,7 +1067,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 
 /* Repository Skill preview: bounded list, native package details stay on the VM. */
 .skill-candidates { max-height: 300px; overflow: auto; margin: 10px 0; border-top: 1px solid var(--border); }
-#skills-form .skill-candidate { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+#skills-form .skill-candidate { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
 #skills-form .skill-candidate input { width: auto; flex: 0 0 auto; margin-top: 3px; }
 .skill-candidate-content { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .skill-candidate-content .skill-path { margin: 0; overflow-wrap: anywhere; }
