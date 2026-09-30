@@ -91,3 +91,30 @@ Harness source commit: 3b1680a3e002a08f461ce8b09aa7d33309873d7b. Its candidate
 archive SHA-256 is bfc45e82b3bbe7b4475b64b40cb00c53bda3ab1ee9d10ba5a366014168d7ebe8.
 Final fresh-clone verdicts are recorded in the Gitea PRs. Synthetic providers replace paid model/API access;
 no real search credential or user transcript is included in test fixtures.
+
+
+## Web rollout follow-up (2026-09-30)
+
+The merged composition uses published Harness 0.2.0 from Pi source a8c5bff,
+Pi 0.99.1, pi-subagents 0.73.1, pi-web-access 0.34.0, LSP 0.4.4 and
+Handoff 0.2.0-experimental.3. The earlier vendor candidate identity above is
+historical. Server main 26f293d passed a fresh-clone check (334 tests); the
+Pi repository passed 227 tests. The owner subsequently authorized Web integration.
+
+Production Web and the primary Host were activated from 26f293d after pausing
+Web submissions and observing no running Host sessions. A browser sent
+`/harness version` and then received the synthetic marker `PI_099_WEB_OK` from
+the configured Muse Contributor model. The six served-workbench asset checks passed.
+Native package registration preserves existing credentials and resource filters.
+
+That browser probe exposed a Pi 0.99 edge case: reselecting the current model
+restores its registry context limit without a model_select notification. The
+Host now reapplies the saved context preset through the public Harness command
+after native model selection. An installed-native regression first observed
+1,000,000 instead of 272,000, then passed for both presets after the fix.
+
+Final release SHAs, fresh-clone results, deployment status and browser acceptance
+are recorded in [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
+This rollout does not certify linux002, replace the terminal default, or claim
+new live-provider coverage for every search/LSP/subagent/Handoff path; their
+installed-package checks remain the evidence described above.
