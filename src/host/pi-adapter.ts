@@ -85,6 +85,22 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     this.options = options;
   }
 
+  private commandDiscovery?:Promise<CommandInfo[]>;
+  async commandCatalog(engine:"pi"):Promise<CommandInfo[]> {
+    if(engine!=="pi")throw new Error("This adapter only discovers Pi commands");
+    if(this.commandDiscovery)return this.commandDiscovery;
+    this.commandDiscovery=this.discoverCommands();
+    try{return await this.commandDiscovery;}finally{this.commandDiscovery=undefined;}
+  }
+  private async discoverCommands():Promise<CommandInfo[]> {
+    const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.options.extensions??[]),this.options.skills??[]);
+    args.push("--no-session");
+    const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
+      provider:this.options.provider,model:this.options.model,args,
+      env:{...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
+    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
+    try{await session.start();return await session.getCommands();}finally{await session.stop();}
+  }
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
     if(engine!=="pi")throw new Error("This adapter only discovers Pi models");
     const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.options.extensions??[]),this.options.skills??[]);

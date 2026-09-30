@@ -84,6 +84,8 @@ export interface ModelChoice {
 
 export interface CommandInfo {
   name: string;
+  /** Native invocation text; Pi defaults to /name. No filesystem paths. */
+  invocation?: string;
   description?: string;
   source: "extension" | "prompt" | "skill";
 }
@@ -212,6 +214,7 @@ export type ClientFrame =
   | { v: typeof PROTOCOL_VERSION; type: "get_models" }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
+  | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: "pi" | "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
   | { v: typeof PROTOCOL_VERSION; type: "get_extensions" }
   | { v: typeof PROTOCOL_VERSION; type: "get_stats" }
@@ -268,7 +271,9 @@ export type ServerFrame =
     }
   | {
       v: typeof PROTOCOL_VERSION;
-      type: "commands";
+      type: "commands" | "command_catalog";
+      engine?: "pi" | "codex";
+      requestId?: string;
       commands: CommandInfo[];
     }
   | {
@@ -370,6 +375,9 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
       return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:value.engine,...withRequestId(value)};
     case "get_models":
       return { v: PROTOCOL_VERSION, type: "get_models" };
+    case "get_command_catalog":
+      if(value.engine!=="pi" && value.engine!=="codex")throw new ProtocolError("invalid_frame","Command catalog requires Pi or Codex");
+      return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:value.engine,...withRequestId(value)};
     case "get_commands":
       return { v: PROTOCOL_VERSION, type: "get_commands" };
     case "get_extensions":

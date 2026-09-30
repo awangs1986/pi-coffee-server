@@ -82,6 +82,7 @@ Host -> Web Server -> Browser: ack | event | error | sessions
 {"v":1,"type":"get_models"}
 {"v":1,"type":"set_model","requestId":"m-1","provider":"cpa","id":"gpt-5.5"}
 {"v":1,"type":"set_thinking","requestId":"t-1","level":"high"}
+{"v":1,"type":"get_command_catalog","engine":"pi","requestId":"commands-1"}
 {"v":1,"type":"get_commands"}
 {"v":1,"type":"get_extensions"}
 {"v":1,"type":"get_stats"}
@@ -297,3 +298,21 @@ registry discovery. `get_model_catalog.engine` and `model_catalog.engine` accept
 `pi` or `codex`; other values remain invalid. The response contains the selected
 engine's choices only, including its configured model policy. No session must be
 opened to query this catalog.
+
+
+### Native draft command catalog
+
+`get_command_catalog` is allowed before opening a session, requires `engine: "pi"` or `"codex"`,
+and returns `command_catalog` with the same optional `requestId`, `engine` and a
+`commands` array using existing CommandInfo fields. It remains scoped to the
+WebSocket's authenticated Host factory. The native adapter performs ephemeral
+read-only discovery without a model turn or durable conversation. Unsupported
+Hosts/engines return an error; the browser displays it rather than inventing
+commands. Open sessions continue using `get_commands` for their loaded state.
+
+Codex catalog entries use `source: "skill"`, the native Skill `name` and optional
+`invocation: "$name"`. Pi entries omit `invocation` and retain `/name` completion.
+Host never accepts Skill filesystem paths from a browser. Codex `get_commands`
+reads fresh `skills/list` for the open task cwd; a leading `$name` in a prompt or
+steering input is resolved again against that native catalog and accompanied by
+a native `skill` input item. Other text and images retain their native format.
