@@ -399,7 +399,11 @@ class RpcPiSession implements PiSession {
 
   async setModel(provider: string, id: string): Promise<void> {
     if(!this.modelAllowed(provider,id))throw new Error("Pi model is not allowed: "+provider+"/"+id);
+    const context = (await this.getModels()).context;
     await this.client.setModel(provider, id);
+    // Native same-model selection restores the registry model without emitting
+    // model_select. Reapply the persisted Host preset through the public command.
+    if (context) await this.setContextPreset(context.preset);
   }
 
   async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{

@@ -1,4 +1,4 @@
-> Current Pi upgrade plan: [P0–P10](docs/development/pi-099-upgrade-plan-20260930.md), based on the [0.99 impact audit](docs/research/pi-099-upgrade-impact-20260930.md). Planned work, not a completed rollout; prioritize upstream capabilities and native package management.
+> Current Pi upgrade plan: [P0–P10](docs/development/pi-099-upgrade-plan-20260930.md), based on the [0.99 impact audit](docs/research/pi-099-upgrade-impact-20260930.md). P0–P9 are merged. The owner authorized Web integration; P10 deployment evidence and remaining environment-specific gates are tracked in GitHub Server #11.
 
 > Current plugin source layout: [repository map](REPOSITORIES.md) and [monorepo consumption](docs/development/plugin-monorepo.md).
 
