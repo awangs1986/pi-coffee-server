@@ -18,7 +18,8 @@ export interface SkillManagerOptions {
 }
 interface Scope {engine:AgentEngine;scope:'user'|'project';conversationId?:string;directory:string;key:string}
 interface RecordEntry {id:string;key:string;name:string;description:string;repoUrl:string;ref:string;subdir:string;revision:string;digest:string;snapshot:string;enabled:boolean;updatedAt:string}
-interface SkillView {id:string;name:string;description:string;path:string;managed:boolean;enabled:boolean;revision?:string;repoUrl?:string;ref?:string;subdir?:string;modified?:boolean;problem?:string}
+interface DisabledNative {id:string;key:string;name:string;description:string;path:string;target:string;backup:string}
+interface SkillView {id:string;name:string;description:string;path:string;managed:boolean;enabled:boolean;revision?:string;repoUrl?:string;ref?:string;subdir?:string;modified?:boolean;problem?:string;canDisable?:boolean;canRestore?:boolean}
 function hash(text:string){return createHash('sha256').update(text).digest('hex');}
 async function exists(path:string){try{await lstat(path);return true;}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return false;throw e;}}
 function text(value:unknown,fallback=''){if(value===undefined)return fallback;if(typeof value!=='string'||value.length>2048||/[\x00-\x1f]/.test(value))throw new Error('Invalid Skill parameter');return value;}
@@ -53,7 +54,54 @@ export class SkillManager {
  private async records():Promise<RecordEntry[]>{
   try{return JSON.parse(await readFile(join(this.root,'state.json'),'utf8'));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw new Error('Skill registry is unreadable; inspect it on the VM');}
  }
- private async save(records:RecordEntry[]){const path=join(this.root,randomUUID()+'.json');await writeFile(path,JSON.stringify(records,null,2),{mode:0o600});await rename(path,join(this.root,'state.json'));}
+ private async save(records:RecordEntry[]){await this.saveFile('state.json',records);}
+ private async saveFile(name:string,records:unknown){const path=join(this.root,randomUUID()+'.json');await writeFile(path,JSON.stringify(records,null,2),{mode:0o600});await rename(path,join(this.root,name));}
+ private async disabledNative():Promise<DisabledNative[]>{
+  try{return JSON.parse(await readFile(join(this.root,'disabled-native.json'),'utf8'));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw new Error('Native Skill backups are unreadable; inspect the VM');}
+ }
+ /** Only self-contained native entries with real parent paths can be relocated. */
+ private async nativeTarget(scope:Scope,path:string):Promise<string|undefined>{
+  const target=basename(path)==='SKILL.md'?dirname(path):path;
+  if(target===scope.directory||!inside(scope.directory,target)||inside(scope.directory,this.root))return;
+  try{
+   if(await realpath(scope.directory)!==scope.directory||await realpath(target)!==target)return;
+   if(!(await lstat(target)).isDirectory()&&!(await lstat(target)).isFile())return;
+   if(scope.engine==='pi')for(const bundle of this.options.bundledPiSkills??[]){
+    const actual=await realpath(bundle);if(inside(actual,target)||inside(target,actual))return;
+   }
+   return target;
+  }catch{return;}
+ }
+ private async mutateNative(scope:Scope,input:any){
+  await mkdir(this.root,{recursive:true,mode:0o700});const lock=join(this.root,'mutation.lock');
+  try{await mkdir(lock);}catch{throw new Error('Skill operation in progress or interrupted; inspect the VM Skill registry before retrying');}
+  let from:string|undefined,to:string|undefined,moved=false,committed=false,safeToUnlock=true;
+  try{
+   const records=await this.disabledNative();let entry:DisabledNative;
+   if(input.action==='disable_native'){
+    const skill=(await this.list(scope)).skills.find(s=>s.id===input.id&&s.enabled&&!s.managed);
+    const target=skill?.canDisable?await this.nativeTarget(scope,skill.path):undefined;
+    if(!skill||!target)throw new Error('This native Skill cannot be disabled here; bundled or linked sources must be managed at their source');
+    const id='disabled-'+randomUUID();entry={id,key:scope.key,name:skill.name,description:skill.description,path:skill.path,target,backup:join(this.root,'disabled-native',id,'package')};
+    from=target;to=entry.backup;await mkdir(dirname(to),{recursive:true,mode:0o700});records.push(entry);
+   }else{
+    const saved=records.find(r=>r.id===input.id&&r.key===scope.key);if(!saved)throw new Error('Unknown native Skill backup in this scope');entry=saved;
+    if(entry.target===scope.directory||!inside(scope.directory,entry.target)||!inside(join(this.root,'disabled-native'),entry.backup))throw new Error('Invalid native Skill backup path');
+    if(await exists(entry.target)||(await this.list(scope)).skills.some(s=>s.enabled&&s.name===entry.name))throw new Error('A Skill with this name or path is active; disable it before restoring the VM version');
+    if(await realpath(dirname(entry.target))!==dirname(entry.target))throw new Error('Native Skill parent changed; inspect it on the VM');
+    if(!await exists(entry.backup))throw new Error('Native Skill backup is missing; inspect the VM');
+    from=entry.backup;to=entry.target;records.splice(records.indexOf(entry),1);
+   }
+   await writeFile(join(lock,'recovery.json'),JSON.stringify({action:input.action,from,to,id:entry.id}),{mode:0o600});
+   // Atomic relocation preserves all native files and permissions; EXDEV fails without deletion.
+   try{await rename(from,to);}catch(e){if((e as NodeJS.ErrnoException).code==='EXDEV')throw new Error('Skill backup is on another filesystem; configure Skill storage on the same filesystem before disabling');throw e;}
+   moved=true;await this.saveFile('disabled-native.json',records);committed=true;
+   return {ok:true,activation:'Native files were retained. Start a new Agent to apply; existing history is unchanged.'};
+  }catch(error){
+   if(moved&&!committed)try{await rename(to!,from!);}catch{safeToUnlock=false;throw new Error('Native Skill recovery needs VM inspection; backup and mutation lock were retained');}
+   throw error;
+  }finally{if(safeToUnlock)await rm(lock,{recursive:true,force:true});}
+ }
  async handle(input:any):Promise<unknown>{
   const scope=await this.scope(input);
   if(input.action==='list')return this.list(scope);
@@ -61,11 +109,12 @@ export class SkillManager {
   if(input.action==='detail'){
    const inventory=await this.list(scope),entry=inventory.skills.find(s=>s.id===input.id);if(!entry)throw new Error('Unknown Skill in this scope');
    const record=(await this.records()).find(r=>r.key===scope.key&&r.id===input.id);
-   const path=record&&!record.enabled?join(record.snapshot,'SKILL.md'):entry.path;
+   const disabled=(await this.disabledNative()).find(r=>r.id===input.id&&r.key===scope.key);
+   const path=disabled?join(disabled.backup,relative(disabled.target,disabled.path)):record&&!record.enabled?join(record.snapshot,'SKILL.md'):entry.path;
    return {...entry,...await metadata(path)};
   }
-  if(!['install','update','enable','disable'].includes(input.action))throw new Error('Unknown Skill action');
-  const next=this.tail.catch(()=>undefined).then(()=>this.mutate(scope,input));this.tail=next;return next;
+  if(!['install','update','enable','disable','disable_native','restore_native'].includes(input.action))throw new Error('Unknown Skill action');
+  const next=this.tail.catch(()=>undefined).then(()=>['disable_native','restore_native'].includes(input.action)?this.mutateNative(scope,input):this.mutate(scope,input));this.tail=next;return next;
  }
  private async list(scope:Scope){
   const records=(await this.records()).filter(r=>r.key===scope.key);const skills:SkillView[]=[];
@@ -73,6 +122,9 @@ export class SkillManager {
    const path=join(scope.directory,record.name,'SKILL.md');let modified=false,problem:string|undefined;
    try{modified=await this.digest(record.enabled?dirname(path):record.snapshot)!==record.digest;}catch{problem='Installed files are missing or unreadable; inspect on the VM';modified=true;}
    skills.push({id:record.id,name:record.name,description:record.description,path,managed:true,enabled:record.enabled,revision:record.revision,repoUrl:record.repoUrl,ref:record.ref,subdir:record.subdir,modified,...(problem?{problem}:{})});
+  }
+  for(const entry of (await this.disabledNative()).filter(r=>r.key===scope.key)){
+   const present=await exists(entry.backup);skills.push({id:entry.id,name:entry.name,description:entry.description,path:entry.path,managed:false,enabled:false,canRestore:present,...(!present?{problem:'Native Skill backup is missing; inspect the VM'}:{})});
   }
   const seen=new Set<string>();let visited=0;const warnings:string[]=[];
   if(await exists(join(this.root,'mutation.lock')))warnings.push('Skill mutation is active or interrupted; refresh later or inspect the VM recovery record');
@@ -83,8 +135,8 @@ export class SkillManager {
     const direct=(await stat(directory)).isFile();
     const file=direct?directory:join(directory,'SKILL.md');
     if(direct||await exists(file)){
-     if(skills.some(s=>s.path===file))return;
-     try{const m=await metadata(file);skills.push({id:'external-'+hash(file).slice(0,24),name:m.name,description:m.description,path:file,managed:false,enabled:true});}catch{warnings.push('Invalid Skill: '+directory);}return;
+     if(skills.some(s=>s.enabled&&s.path===file))return;
+     try{const m=await metadata(file);skills.push({id:'external-'+hash(file).slice(0,24),name:m.name,description:m.description,path:file,managed:false,enabled:true,canDisable:Boolean(await this.nativeTarget(scope,file))});}catch{warnings.push('Invalid Skill: '+directory);}return;
     }
     for(const entry of await readdir(directory,{withFileTypes:true})){if(entry.name.startsWith('.'))continue;if(entry.isDirectory()||entry.isSymbolicLink()||scope.engine==='pi'&&depth===0&&entry.name.endsWith('.md'))await scan(join(directory,entry.name),depth+1);}
    }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')warnings.push('Cannot inspect Skills directory: '+directory);}
@@ -138,7 +190,7 @@ export class SkillManager {
   const skills:Array<{name:string;description:string;subdir:string;installed:boolean;problem?:string}>=[];
   const warnings:string[]=[];let visited=0;
   try{
-   const records=(await this.records()).filter(r=>r.key===scope.key);
+   const inventory=await this.list(scope);
    const walk=async(directory:string,depth:number):Promise<void>=>{
     if(++visited>5000 || depth>12)throw new Error('Skill discovery limit reached; select a narrower subdirectory');
     const info=await lstat(directory);if(info.isSymbolicLink()||!info.isDirectory())return;
@@ -149,7 +201,7 @@ export class SkillManager {
       const fileInfo=await lstat(file);if(!fileInfo.isFile()||fileInfo.isSymbolicLink())throw new Error('SKILL.md must be a regular file');
       const m=await metadata(file);let problem:string|undefined;
       try{await this.digest(directory);}catch(e){problem=e instanceof Error?e.message:'Invalid Skill package';}
-      skills.push({name:m.name,description:m.description,subdir,installed:records.some(r=>r.name===m.name)||await exists(join(scope.directory,m.name)),...(problem?{problem}:{})});
+      skills.push({name:m.name,description:m.description,subdir,installed:inventory.skills.some(s=>s.name===m.name&&(s.enabled||s.managed))||await exists(join(scope.directory,m.name)),...(problem?{problem}:{})});
      }catch{warnings.push('Invalid SKILL.md: '+subdir);}
      if(skills.length>200)throw new Error('More than 200 Skills; select a narrower subdirectory');
      return;
@@ -187,11 +239,12 @@ export class SkillManager {
     fetched=await this.fetch(source);
     if(expectedRevision&&fetched.revision!==expectedRevision)throw new Error('Skill source changed since preview; read the repository list again before installing.');
     if(record&&fetched.name!==record.name)throw new Error('Updated Skill changed its name; install it separately');
-    if(!record&&(records.some(r=>r.key===scope.key&&r.name===fetched!.name)||await exists(join(scope.directory,fetched.name))))throw new Error('A Skill with this name already exists; it was not overwritten');
+    if(!record&&((await this.list(scope)).skills.some(s=>s.name===fetched!.name&&(s.enabled||s.managed))||await exists(join(scope.directory,fetched.name))))throw new Error('A Skill with this name already exists; it was not overwritten');
     const snapshot=join(this.root,'versions',randomUUID());await mkdir(dirname(snapshot),{recursive:true,mode:0o700});
     await cp(fetched.directory,snapshot,{recursive:true,filter:path=>basename(path)!=='.git'});
     record={id:record?.id??randomUUID(),key:scope.key,name:fetched.name,description:fetched.description,...source,revision:fetched.revision,snapshot,digest:await this.digest(snapshot),enabled:record?.enabled??true,updatedAt:new Date().toISOString()};
    }else record={...record!,enabled:input.action==='enable',updatedAt:new Date().toISOString()};
+   if(record.enabled&&(await this.list(scope)).skills.some(s=>s.enabled&&s.name===record!.name&&s.id!==record!.id))throw new Error('Another active Skill has this name; disable it first');
    target=join(scope.directory,record.name);
    const prior=records.find(r=>r.id===record!.id);
    if(prior?.enabled||record.enabled){

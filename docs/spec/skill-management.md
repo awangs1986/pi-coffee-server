@@ -39,8 +39,8 @@ to its system prompt.
 
 The inventory covers these selected native roots and explicitly configured Pi
 bundles. It is not an exhaustive catalog of every plugin, administrator root,
-ancestor directory or package configured outside this manager. Existing native and
-bundled Skills are read-only, and their files are never adopted or overwritten.
+ancestor directory or package configured outside this manager. Eligible existing native Skills can be reversibly disabled and restored; their
+files are never adopted or overwritten. Bundled and linked sources remain read-only.
 
 Native discovery references: [Codex Skills](https://developers.openai.com/codex/skills/),
 [Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.84.4 public
@@ -94,6 +94,7 @@ Skills. Project writes use the same task lifecycle exclusion and reject live wri
 Authenticated `POST /api/skills` carries `engine`, `scope` (`user` or `project`), and
 `conversationId` for project scope. Actions: `list`, `detail` (opaque `id`), `discover` (source URL/ref/subdir), `install`
 (`repoUrl`, optional `ref`/`subdir`/`expectedRevision`), `update`, `enable`, `disable` (opaque `id`),
+`disable_native`, `restore_native` (opaque scoped `id`), and
 `reload` (explicit `conversationId`). IDs resolve only within the selected scope.
 Host returns 401 without its bearer, 404 when not configured, 405 for other methods,
 and 409 with an actionable error for invalid/conflicting operations. Responses are
@@ -142,3 +143,45 @@ rechecks the fetched revision before publication and rejects a changed source;
 the original ref remains recorded for future explicit updates. Empty or
 collection-root direct installs report missing SKILL.md with discovery guidance,
 rather than misleading users about unrelated root symlinks.
+
+
+## Bulk selection and native conflicts (2026-09-30)
+
+[Server #8](https://github.com/awangs1986/pi-coffee-server/issues/8) adds **Select all
+installable** and **Clear selection** to collection discovery. Both operate on the
+currently visible search results and preserve selections outside the filter.
+Existing names and invalid packages remain unavailable. Bulk selection never
+starts installation by itself; the install button shows the total selected count.
+
+Web-managed and manually installed Skills use the same native VM directories.
+Hiding an inventory row does not disable native loading. Eligible manual packages
+therefore offer **Disable (keep backup)**: Host atomically moves the entire native
+package to private manager storage outside the selected native root and records
+its original path. This preserves supporting files, permissions and local edits.
+The operation does not execute the package, automatically adopt it as managed,
+permanently delete it, or stop a running Agent. On a shared Host, user-level changes
+affect every task using that OS user's Agent; the UI states this scope.
+
+Disabled native packages remain listed with **Restore VM version** and readable
+metadata. Backups survive Host restart. Restore refuses an occupied original path
+or another active package with the same metadata name. A managed same-name package
+may be installed after disabling the native version; switching back requires
+first disabling the managed version. Managed enable/update/install and discovery
+also check active inventory names, not merely directory basenames. Disabled
+managed packages still reserve their managed identity for explicit enable/update.
+
+Only real native package directories or supported standalone native Markdown
+files beneath the selected root can be relocated. Symlinked roots, symlinked entry
+paths, ancestor aliases, the native root itself, and configured Pi bundles remain
+read-only. Bundled/plugin changes belong to their package manager. Atomic rename
+across filesystems is refused without deleting the original; the manager's backup
+storage must be on the same filesystem. Inventory remains limited to the roots
+listed above; this is not a global override of arbitrary external plugin loaders.
+
+All actions retain authenticated owner/project authorization, shared mutation
+locking and project task lifecycle exclusion. An interrupted mutation retains a
+recovery record. A failed registry save attempts to restore the original location;
+failed recovery retains the lock and backup for VM inspection. Native management
+and inventory refresh invalidate the source preview, requiring discovery again.
+Already loaded conversation instructions are unchanged; start a new Agent or
+explicitly reload an idle task to apply native discovery changes.

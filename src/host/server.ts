@@ -195,7 +195,7 @@ export class HostServer {
             }
             json(res,200,{ok:true,reloaded:Boolean(live),activation:'Skills will be discovered when the Agent next opens; conversation history is retained.'});
           }finally{slot.lifecycleLocks.delete(id);}
-        } else if(input.scope==='project' && ['install','update','enable','disable'].includes(input.action)) {
+        } else if(input.scope==='project' && ['install','update','enable','disable','disable_native','restore_native'].includes(input.action)) {
           const id=input.conversationId;
           if(typeof id!=='string' || slot.lifecycleLocks.has(id))throw new Error('Project lifecycle operation in progress');
           slot.lifecycleLocks.add(id);
