@@ -1,13 +1,12 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {mkdtemp,writeFile,readFile,rm,mkdir} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
 import {join,dirname,resolve} from 'node:path';
 import {createRequire} from 'node:module';
 import {expect,it} from 'vitest';
 const require=createRequire(import.meta.url);
 it('registers native packages idempotently while preserving private settings and resource filters',async()=>{
- const agent=await mkdtemp(join(tmpdir(),'coffee-package-config-'));
+ const agent=await mkdtemp(join(resolve('node_modules'),'coffee-package-config-'));
  const harness=dirname(require.resolve('pi-coffee-harness/package.json'));
  const legacy=join(agent,'old');await mkdir(legacy);await writeFile(join(legacy,'package.json'),JSON.stringify({name:'pi-coffee'}));await writeFile(join(legacy,'index.js'),'');
  const before={defaultProvider:'fixture',packages:[{source:harness,extensions:[]}],extensions:[join(legacy,'index.js'),'./personal.js']};

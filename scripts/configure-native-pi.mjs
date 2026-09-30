@@ -36,7 +36,7 @@ for(const entry of settings.packages??[]){
  const source=typeof entry==='string'?entry:entry.source;let name;
  if(source.startsWith('npm:'))name=source.slice(4).replace(/@[^@/]+$/,'');
  else{try{name=JSON.parse(await readFile(join(resolve(agentDir,source),'package.json'),'utf8')).name;}catch{}}
- if(owned.has(name)){if(typeof entry==='object')filters.set(name,entry);execFileSync(process.execPath,[cli,'remove',source],{cwd:root,env,stdio:'pipe'});}
+ if(owned.has(name)){if(typeof entry==='object')filters.set(name,entry);execFileSync(process.execPath,[cli,'remove',source.startsWith('npm:')?source:resolve(agentDir,source)],{cwd:root,env,stdio:'pipe'});}
 }
 for(const path of roots)execFileSync(process.execPath,[cli,'install',path],{cwd:root,env,stdio:'pipe'});
 const updated=await configured('settings.json');
