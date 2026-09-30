@@ -110,6 +110,7 @@ let turnDiffTimer=null, turnDiffLoading=false, turnDiffAgain=false;
 let prBusy='';                 // progress label while 创建 PR runs checkpoint → push → pull request
 let workspaceDetailOpen = false; // true while a Diff/Checks document replaces the change list
 let lastChangeCardSignature = '';
+let changeCardEpoch = 0, changeCardChecked = '';
 let filesAwaitingTransfer = []; // picked before the Session/transfer endpoint was known
 let preferSameOriginTransfer = false;
 let renderTimer = null;
@@ -931,6 +932,11 @@ function setConnection(text, kind) {
 function setStreaming(active) {
   if (streaming === active) return;
   streaming = active;
+  if (active) {
+    ++changeCardEpoch;
+    lastChangeCardSignature='';changeCardChecked='';
+    ui.thread.querySelectorAll('.changes-card').forEach(card=>card.remove());
+  }
   if (!active) {
     currentAssistant = undefined;
     showThinking(false);
@@ -1200,7 +1206,7 @@ function handleFrame(frame, ws) {
       clearExtensionUi();
       if(!sameTransfer)resetTransfers();
       void loadWorkspace();
-      workspaceChanges=null;selectedChangedPath=null;lastChangeCardSignature='';if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();renderProjectContext();
+      workspaceChanges=null;selectedChangedPath=null;lastChangeCardSignature='';changeCardChecked='';if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();renderProjectContext();
       streaming = false;
   compacting = false;
       compacting=Boolean(frame.state?.isCompacting);
@@ -1322,7 +1328,7 @@ function handleEvent(event) {
     if(supports('models'))send({v:1,type:'get_models'});
     if(supports('stats'))send({v:1,type:'get_stats'});
     if(event.status!=='completed')pushNote(event.message || (event.status==='interrupted'?'当前轮次已停止':'本轮运行失败，请检查保存的结果'),event.status!=='interrupted');
-    void refreshWorkspaceChanges(false).then(()=>maybeRenderChangesCard()).catch(()=>undefined);
+    void refreshWorkspaceChanges(false).then(()=>maybeRenderChangesCard(true)).catch(()=>undefined);
     cancelTurnDiffRefresh();
     if($('#diff-dialog').open)void loadDiff(null,{preserve:true});
     return;
@@ -1390,7 +1396,7 @@ function handleEvent(event) {
     // Any dialog still open was resolved by Pi (timeout/default); drop it.
     if (uiCurrent || uiQueue.length) { uiQueue.length = 0; closeUiDialog(); }
     send({ v: 1, type: 'get_stats' });
-    void refreshWorkspaceChanges(false).then(() => maybeRenderChangesCard()).catch(() => undefined);
+    void refreshWorkspaceChanges(false).then(() => maybeRenderChangesCard(true)).catch(() => undefined);
     cancelTurnDiffRefresh();
     if ($('#diff-dialog').open) void loadDiff(null, { preserve: true });
   }
@@ -2688,29 +2694,43 @@ function changedFilesCard(data) {
   card.setAttribute('aria-label','本轮 Checkout 变更');
   const head=el('summary','changes-card-head');
   head.append(
-    el('strong','changes-card-title',`已编辑 ${data.files.length} 个文件`),
+    el('strong','changes-card-title',`本轮已编辑 ${data.files.length} 个文件`),
     el('span','changes-card-stats',`+${add} −${del}`),
   );
   card.append(head);
   const list=el('div','changes-card-list');
   for(const file of data.files) {
     const row=changedFileRow(file,{selected:selectedChangedPath===file.path});
-    row.addEventListener('click',()=>showWorkspaceReview('diff',file.path));
+    row.addEventListener('click',()=>showDiffDialog(file.path,{scope:'turn'}));
     list.append(row);
   }
   card.append(list);
   const actions=el('div','changes-card-actions');
   const review=el('button','btn small','查看改动');
-  review.type='button';review.addEventListener('click',()=>showWorkspaceReview('diff'));
+  review.type='button';review.addEventListener('click',()=>showDiffDialog(null,{scope:'turn'}));
   actions.append(review);
   card.append(actions);
   return card;
 }
-function maybeRenderChangesCard(data=workspaceChanges) {
-  if(!data || streaming || !data.files.length) return;
-  const signature=activeId + ':' + data.target + ':' + data.files.map((file) => [file.path,file.status,file.additions,file.deletions].join(':')).join('|');
-  if(signature===lastChangeCardSignature) return;
+async function maybeRenderChangesCard(force=false) {
+  const task=currentTask();
+  if(!task || task.workspaceKind==='chat' || task.engine==='claude' || streaming)return;
+  const id=activeId,selection=taskSelectionEpoch;
+  const checked=id+':'+selection+':'+JSON.stringify(task.turnSnapshot);
+  if(!force && checked===changeCardChecked)return;
+  const epoch=++changeCardEpoch;
+  let data;
+  try{data=await workspaceApi({action:'changes',id,scope:'turn'});}catch{data=null;}
+  if(id!==activeId || selection!==taskSelectionEpoch || epoch!==changeCardEpoch || streaming)return;
+  changeCardChecked=checked;
+  if(!data || data.scope!=='turn' || data.running || !data.files?.length){
+    ui.thread.querySelectorAll('.changes-card').forEach(card=>card.remove());
+    lastChangeCardSignature='';return;
+  }
+  const signature=id+':'+data.base+':'+data.startedAt+':'+data.files.map(file=>[file.path,file.status,file.additions,file.deletions].join(':')).join('|');
+  if(signature===lastChangeCardSignature && ui.thread.querySelector('.changes-card'))return;
   lastChangeCardSignature=signature;
+  ui.thread.querySelectorAll('.changes-card').forEach(card=>card.remove());
   appendNode(changedFilesCard(data));
 }
 function middleTruncate(path,max=24) {
@@ -2862,7 +2882,7 @@ async function showDiffDialog(path=null, {scope}={}) {
   if(task?.workspaceKind==='chat')return toast('聊天没有项目改动');
   if(!workspaceState || !activeId)return toast('请先打开项目对话');
   if(scope)diffScope=scope;
-  if(diffScope==='turn' && !turnScopeState(task).available)diffScope='branch';
+  if(!scope && diffScope==='turn' && !turnScopeState(task).available)diffScope='branch';
   selectedChangedPath=path;
   const dialog=$('#diff-dialog');
   if(!dialog.open) {

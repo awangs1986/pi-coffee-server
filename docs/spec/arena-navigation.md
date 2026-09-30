@@ -265,3 +265,13 @@ Each edited-files summary is collapsed by default and occupies one row with the
 file count and additions/deletions. Its accessible disclosure opens the entire
 file list and review action; clicking again collapses it. Selecting a listed file
 opens that file in Diff. Workspace polling must not reopen a collapsed summary.
+
+The summary is labelled **本轮已编辑 N 个文件** and uses only
+`changes {scope: "turn"}` against the Host's pre-turn snapshot. The right-hand
+Diff entry still defaults to cumulative branch changes. Summary file links and
+its review action explicitly open the latest-turn Diff. An empty, unavailable,
+failed or unsupported turn snapshot produces no summary; branch changes must
+never substitute for missing turn evidence. A new run removes the previous
+summary, and completion replaces it with the latest completed turn's collapsed
+summary. Unchanged workspace polling preserves disclosure state and does not
+repeat turn reads. Late results from another selection or run are ignored.
