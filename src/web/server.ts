@@ -172,7 +172,7 @@ export class WebServer {
       if(path.startsWith('/api/'))json(response,401,{error:"Login required"});
       else {response.writeHead(302,{location:'/login'});response.end();}return;
     }
-    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills") {
+    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}

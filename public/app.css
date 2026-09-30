@@ -1072,3 +1072,25 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .skill-candidate-content { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .skill-candidate-content .skill-path { margin: 0; overflow-wrap: anywhere; }
 .skill-candidate-content .skill-description { margin: 0; font-size: 12px; }
+
+/* Scoped SSH configuration stays in a compact native modal. */
+.runners-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 16px 50px rgb(0 0 0 / .18); }
+.runners-dialog::backdrop { background: rgb(0 0 0 / .3); }
+.runner-heading, .runner-form-foot, .runner-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.runner-heading h2 { margin: 0; font-size: 16px; }
+.runners-dialog h3 { margin: 12px 0 10px; font-size: 13px; }
+.runner-help { margin: 10px 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.runner-help.error { color: var(--danger, #bc3030); }
+.runners-list { max-height: 200px; overflow: auto; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.runner-row { padding: 8px 0; }
+.runner-row > div:first-child { min-width: 0; }
+.runner-row strong, .runner-row span { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.runner-row span { margin-top: 3px; color: var(--text-2); }
+.runner-actions { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+.runner-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.runner-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-width: 0; }
+.runner-fields input, .runner-fields select { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 8px; font: inherit; color: inherit; background: var(--bg); }
+.runner-wide { grid-column: 1 / -1; }
+.runner-form-foot { margin-top: 12px; flex-wrap: wrap; }
+.runner-check { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); }
+@media (max-width: 480px) { .runner-row { align-items: flex-start; flex-direction: column; gap: 6px; } .runner-fields { grid-template-columns: 1fr; } }

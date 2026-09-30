@@ -24,6 +24,7 @@ export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 
 
 export interface RpcPiSessionFactoryOptions {
+  instructions?:()=>Promise<string|undefined>;
   runtimeIdForSession?: (id:string)=>string;
   cwd?: string;
   agentDir?: string;
@@ -118,6 +119,8 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       appendExtensionArgs([...(this.options.args ?? [])], this.options.extensions ?? []),
       this.options.skills ?? [],
     );
+    const instructions=await this.options.instructions?.();
+    if(instructions)args.push("--append-system-prompt",instructions);
     // Resume from the durable store when the conversation already exists there;
     // only a genuinely new conversation gets a fresh file with our id.
     const existing = (await this.listWithPaths()).find((session) => session.id === options.sessionId);

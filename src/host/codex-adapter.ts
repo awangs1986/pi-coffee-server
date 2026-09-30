@@ -46,6 +46,7 @@ const RATE_LIMIT_TTL_MS = 60_000;
  * Login is Codex's own (`codex login` once in the VM, credentials in
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
+  instructions?:()=>Promise<string|undefined>;
   /** The user's working directory; also the `thread/list` filter. */
   cwd: string;
   /** `codex` executable; `codex` on PATH by default. */
@@ -218,7 +219,15 @@ export class CodexSessionFactory implements PiSessionFactory {
     const mapping = await this.loadMapping();
     const known = options.requireExisting ? options.sessionId : mapping.get(options.sessionId) ?? options.sessionId;
     const preset=await this.readContextPreset(known);
+    // Keep the user's native guidance; override on resume as well to retire a removed runner pointer.
+    let developerInstructions:string|undefined;
+    if(this.options.instructions){
+      const configResult=await server.request('config/read',{includeLayers:false,cwd:this.options.cwd}) as Obj;
+      const configured=(configResult.config as Obj)?.developer_instructions;
+      developerInstructions=[typeof configured==='string'?configured:undefined,await this.options.instructions()].filter(Boolean).join('\n');
+    }
     const common = {
+      ...(developerInstructions===undefined?{}:{developerInstructions}),
       config:contextConfig(preset),
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
@@ -248,6 +257,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const session = new CodexSession(server, String(thread.id), {
       cwd: this.options.cwd,
       preset,
+      developerInstructions,
       sandbox:this.options.sandbox,
       savePreset:async(id,preset)=>{const file=this.contextFile(id);await mkdir(dirname(file),{recursive:true});await writeFile(file,JSON.stringify({preset}),{mode:0o600});},
       rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
@@ -367,6 +377,7 @@ function contextConfig(preset:ContextPreset):Obj {
   return preset==='272k'?{model_context_window:272000,model_auto_compact_token_limit:258400}:{};
 }
 interface CodexSessionSettings {
+  developerInstructions?:string;
   preset:ContextPreset;
   sandbox?:string;
   savePreset:(id:string,preset:ContextPreset)=>Promise<void>;
@@ -575,7 +586,7 @@ class CodexSession implements PiSession {
     if(preset===this.preset)return;
     if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
     const history=await this.getHistory(),oldId=this.threadId;
-    const common={cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config:contextConfig(preset),...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
+    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config:contextConfig(preset),...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
     // Native resume ignores changed config on a subscribed thread. Release only
     // this idle thread; no model turn is replayed and other threads keep running.
     let response:Obj;

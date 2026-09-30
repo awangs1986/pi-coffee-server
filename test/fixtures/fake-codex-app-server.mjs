@@ -167,6 +167,7 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < all.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/start": {
+      if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake" };
       threads[thread.id] = thread;
@@ -176,6 +177,7 @@ rl.on("line", (line) => {
       return notify("thread/started", { thread: threadView(thread, false) });
     }
     case "thread/resume": {
+      if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
@@ -221,7 +223,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
-    case "config/read": return reply({config:{model:"gpt-fake-mini"}});
+    case "config/read": return reply({config:{model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
     case "skills/list": {
       if(params.forceReload!==true)return fail("skills discovery must refresh");
       const entries=existsSync(join(home,"fake-skills.json"))?JSON.parse(readFileSync(join(home,"fake-skills.json"),"utf8")):[];

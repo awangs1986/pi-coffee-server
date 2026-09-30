@@ -1,3 +1,4 @@
+import {initRunners} from "./runners.js";
 import { initSkills } from "./skills.js";
 // PI Coffee browser shell — controller. The browser is a view: conversations,
 // history, models and running state live on the Host in the User VM. The only
@@ -2207,6 +2208,8 @@ function submitPrompt(text, images) {
   ui.prompt.focus();
 }
 ui.stop.addEventListener('click', () => { if (opened) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); } });
+
+initRunners({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
 
 const skillPanel=initSkills({
   context:()=>{const task=workspaceState?.conversations.find(c=>c.id===activeId);return {id:activeId,engine:task?.engine??engine,kind:task?.archived?null:task?.workspaceKind};},
