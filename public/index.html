@@ -159,16 +159,16 @@
                   </button>
                   <div class="agent-menu hidden" id="agent-menu" role="menu" aria-label="Agent 设置">
                     <div class="agent-menu-list">
-                      <button class="agent-menu-row" id="agent-engine-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>Agent</span><span class="agent-row-value"><span id="agent-engine-value">Pi</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
-                      <button class="agent-menu-row" id="agent-kind-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>类型</span><span class="agent-row-value"><span id="agent-kind-value">Chat</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-kind-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>来源</span><span class="agent-row-value"><span id="agent-kind-value">Chat</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-engine-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>Agent 类型</span><span class="agent-row-value"><span id="agent-engine-value">Pi</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <div class="agent-menu-sep" role="separator"></div>
-                      <button class="agent-menu-row" id="agent-source-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>来源</span><span class="agent-row-value"><span id="agent-source-value">Native</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-source-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型来源</span><span class="agent-row-value"><span id="agent-source-value">Native</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <button class="agent-menu-row" id="agent-model-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型</span><span class="agent-row-value"><span id="agent-model-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <button class="agent-menu-row hidden" id="agent-thinking-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>思考深度</span><span class="agent-row-value"><span id="agent-thinking-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <p class="agent-menu-note hidden" id="agent-menu-note"></p>
                     </div>
                     <div class="agent-pane hidden" id="agent-engine-pane" role="menu" aria-label="Agent"></div>
-                    <div class="agent-pane hidden" id="agent-kind-pane" role="menu" aria-label="任务类型"></div>
+                    <div class="agent-pane hidden" id="agent-kind-pane" role="menu" aria-label="任务来源"></div>
                     <div class="agent-pane hidden" id="agent-source-pane" role="menu" aria-label="模型来源"></div>
                     <div class="agent-pane hidden" id="agent-model-pane" role="menu" aria-label="模型"></div>
                     <div class="agent-pane hidden" id="agent-thinking-pane" role="menu" aria-label="思考深度"></div>
@@ -347,7 +347,7 @@
         </div>
         <input id="github-search" type="search" autocomplete="off" spellcheck="false" placeholder="搜索仓库，或粘贴 owner/repo、仓库 URL" aria-label="搜索 GitHub 仓库" aria-controls="github-list" />
         <div class="github-list" id="github-list" role="listbox" aria-label="GitHub 仓库"></div>
-        <div class="stats-note">任务分支 <code>coffee/…</code> 会推送到所选仓库，PR 也在 GitHub 上创建。需要 Host 令牌有写权限，VM 的 Git 能 clone/push 该仓库。</div>
+        <div class="stats-note">任务分支 <code>coffee/…</code> 会推送到所选仓库，PR 也在所选平台上创建。需要 Host 令牌有写权限，VM 的 Git 能 clone/push 该仓库。</div>
       </div>
     </div>
 
