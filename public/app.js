@@ -237,8 +237,10 @@ function renderAgentPane(kind) {
   }
   if(kind==='context'){
     for(const preset of ['272k','maximum'])pane.append(agentOption({label:preset==='272k'?'272k（默认）':'模型最大',selected:(opened?models?.context?.preset:draftContextPreset)===preset,onClick:async()=>{
+      const epoch=taskSelectionEpoch,id=activeId;
       closeAgentMenu();
       if(preset==='maximum'&&!await askModal({title:'使用模型最大上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
+      if(epoch!==taskSelectionEpoch||id!==activeId)return;
       if(opened){if(streaming||compacting||!models?.context)return;contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset});}
       else draftContextPreset=preset;
       renderAgentSettings();refreshComposer();
@@ -757,6 +759,7 @@ ui.agentRows.kind?.addEventListener('click', () => openAgentPane('kind'));
 ui.agentRows.source?.addEventListener('click', () => openAgentPane('source'));
 ui.agentRows.model?.addEventListener('click', () => openAgentPane('model'));
 ui.agentRows.thinking?.addEventListener('click', () => openAgentPane('thinking'));
+ui.agentRows.context?.addEventListener('click', () => openAgentPane('context'));
 ui.agentMenu?.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { event.stopPropagation(); closeAgentMenu(); ui.agentBtn.focus(); }
 });
@@ -1784,6 +1787,7 @@ async function uploadFiles(files) {
     renderAttachments();
     refreshComposer();
     const canAutoOpen = !workspaceState || $('#task-kind').value !== 'project' || Boolean(ui.projectSelect.value);
+    if(!canAutoOpen){draftFiles.push(...filesAwaitingTransfer);filesAwaitingTransfer=[];restoreQueuedPrompt();toast('请先选择项目');refreshComposer();return;}
     if (!opened && !pendingOpenId && connected && canAutoOpen) { void openSession(activeId); toast('正在为文件建立对话…'); }
     else if (opened && activeId && workspaceState) {
       const id = activeId;
@@ -1810,11 +1814,11 @@ async function uploadFiles(files) {
   const maxFileBytes = grant.maxFileBytes ?? 256 * 1024 * 1024;
   const maxBatchBytes = grant.maxBatchBytes ?? 1024 * 1024 * 1024;
   const tooBig = files.filter((f) => f.size > maxFileBytes);
-  if (tooBig.length) toast(`已跳过 ${tooBig.length} 个超过 ${formatBytes(maxFileBytes)} 的文件`);
+  if (tooBig.length) {draftFiles.push(...files);restoreQueuedPrompt();toast(`附件超过 ${formatBytes(maxFileBytes)}，请移除后重试`);return;}
   const batch = files.filter((f) => f.size <= maxFileBytes);
   if (batch.length === 0) return;
   const pending = uploads.filter((u) => u.state === 'uploading').reduce((s, u) => s + u.size, 0);
-  if (pending + batch.reduce((s, f) => s + f.size, 0) > maxBatchBytes) { toast(`一次最多传输 ${formatBytes(maxBatchBytes)}`); return; }
+  if (pending + batch.reduce((s, f) => s + f.size, 0) > maxBatchBytes) { draftFiles.push(...files);restoreQueuedPrompt();toast(`一次最多传输 ${formatBytes(maxBatchBytes)}`); return; }
 
   const entries = batch.map((file) => ({
     url:grant.url,scope:grant.scope,id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
@@ -3073,7 +3077,7 @@ $('#diff-comments-send').addEventListener('click',()=>{
 });
 $('#diff-comments-clear').addEventListener('click',()=>{
   const count=getDiffView().comments().length;
-  if(count && confirm(`清空 ${count} 条 Diff 评论？`))getDiffView().clearComments();
+  if(count && confirm(`清空 ${count} 条改动评论？`))getDiffView().clearComments();
 });
 $('#diff-content').addEventListener('toggle',syncCollapseToggle,true);
 $('#diff-collapse').addEventListener('click',()=>{const files=[...$('#diff-content').querySelectorAll('.review-file')];const open=!files.some(file=>file.open);for(const file of files)file.open=open;syncCollapseToggle();});

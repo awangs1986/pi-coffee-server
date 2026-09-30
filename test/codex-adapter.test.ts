@@ -119,11 +119,35 @@ describe("Codex app-server adapter", () => {
     }finally{ws.close();await host.close();}
   });
 
+  it("changes context through authenticated Host WS and rejects invalid presets",async()=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
+    const host=new HostServer({port:0,token:'context-test',factory});await host.start();
+    const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer context-test'}});
+    const frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+    const send=(frame:object)=>ws.send(JSON.stringify({v:1,...frame}));
+    try{
+      await once(ws,'open');send({type:'open',sessionId:'context-ws'});
+      await expect.poll(()=>frames.find(f=>f.type==='opened'||f.type==='error'),{timeout:10000}).toMatchObject({type:'opened'});
+      send({type:'set_context',preset:'maximum',requestId:'maximum'});
+      await expect.poll(()=>frames.find(f=>f.type==='ack'&&f.requestId==='maximum')).toMatchObject({operation:'set_context'});
+      await expect.poll(()=>frames.find(f=>f.type==='models')).toMatchObject({context:{preset:'maximum'}});
+      send({type:'set_context',preset:'invalid',requestId:'invalid'});
+      await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
+      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({});
+    }finally{ws.close();await host.close();}
+  },20000);
+
   it("waits for native compaction completion instead of just request acceptance",async()=>{
     const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-test'});
     const events=recorder(session);let finished=false;const pending=session.compact().then(()=>{finished=true;});
     await new Promise(resolve=>setTimeout(resolve,15));expect(finished).toBe(false);
     await pending;expect(events.events.some(e=>e.type==='compaction_end')).toBe(true);
+  });
+
+  it("rejects pending compaction when its native process exits",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-exit'});
+    const pending=session.compact();const result=expect(pending).rejects.toThrow(/stopped|exited/i);
+    await new Promise(resolve=>setTimeout(resolve,10));await factory.close();await result;
   });
 
   it("applies context presets to native thread config and keeps them across resume",async()=>{

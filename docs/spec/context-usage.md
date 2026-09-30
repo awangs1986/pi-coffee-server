@@ -69,3 +69,34 @@ do not expose supported stats cannot pretend to implement this contract.
 - `node scripts/probe-context-usage.mjs` after build: real Pi Adapter/RPC/extension
   end-to-end preview with synthetic Rules and LSP Skill, no model request.
 - `npm run check` in a fresh clone; Browser acceptance is tracked in Server #4.
+
+## Native context controls (2026-09-30)
+
+Tracked by GitHub Server #11 and Pi #4. Context and diff controls use Chinese
+labels. Codex displays `thread/tokenUsage/updated.last.totalTokens` against the
+native `modelContextWindow`; cumulative token totals are never substituted.
+Codex does not expose the seven-category attribution contract. Its categories
+remain unavailable and its total bar is explicitly unclassified.
+
+Pi and Codex offer task-local `272k` (default) and `maximum` presets beside model
+and reasoning controls. Maximum requires the extra-cost confirmation before any
+change is sent. Host rejects changes while a turn or context operation is active.
+The first message waits for the selected model and context settings to be applied.
+An older Host without context capability disables the setting.
+
+Pi Harness 0.2.0 uses the public native model API, clamps 272k to model registry
+capacity, and restores the original capacity for maximum. Its custom session entry
+persists the selection when native Pi saves the session. Pi automatic compaction
+and reserve remain native. Codex uses `model_context_window=272000` and
+`model_auto_compact_token_limit=258400`; maximum removes Coffee's overrides and
+uses native configuration. Native effective capacity may include a safety margin
+and differ from the selected nominal limit. Neither preset is a hard billing cap.
+Codex persists the preset in scoped Host bookkeeping. Configuration changes
+release and resume only the idle native thread; an unmaterialized empty thread is
+replaced and its platform binding updated without replaying any messages.
+
+Manual Codex compression invokes native `thread/compact/start` and waits for the
+native context-compaction item and successful turn completion. Request acceptance
+is not completion. Native failure, process exit and timeout surface as failures or
+unknown outcomes. Pi manual Handoff remains separate. Provider-specific remote
+compaction behavior is owned by Codex, not reimplemented by the Web gateway.

@@ -409,3 +409,5 @@ defines user-scoped persistence and the strict separation from task execution id
 [Server #25](http://gitea:3000/awangs/pi-coffee-server/issues/25) adds the monochrome pixel coffee brand mark and a default-on, user-persisted Show groups menu option. Disabling preserves placement metadata and restores the original list.
 
 - Codex Skill composer completion: [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10), [native Skill contract](docs/spec/skill-management.md#codex-completion-2026-09-30).
+
+- 2026-09-30: [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11) covers Chinese context/diff controls, browser-local attachment drafts, native Codex usage/completion and Pi/Codex context presets. Running queue promotion remains a distinct unimplemented capability; direct native steering already exists.

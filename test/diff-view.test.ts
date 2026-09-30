@@ -99,7 +99,7 @@ const fileRequests=(requests:any[])=>requests.filter(request=>request.action==='
 
 it('explains the basic Diff view when browser capabilities are missing',async()=>{
   await setup({library:null,unsupported:true,complete:true});
-  expect(q('#toast').textContent).toBe('当前浏览器不支持增强 Diff，已切换为基础视图');
+  expect(q('#toast').textContent).toBe('当前浏览器不支持增强改动视图，已切换为基础视图');
   expect(q('#diff-content table.review-code')).not.toBeNull();
   expect(FakeDiff.instances).toHaveLength(0);
 });
@@ -205,7 +205,7 @@ it('collects line comments in the Diff and summarizes them into one composer mes
   expect(q<HTMLTextAreaElement>('#prompt').value).toBe([
     '先看这个：',
     '',
-    '请根据下面 2 条 Diff 评论修改：',
+    '请根据下面 2 条改动评论修改：',
     '',
     '1. `src/a.ts` L10–L11',
     '   > const answer = compute(right);',
@@ -257,7 +257,7 @@ it('asks before clearing comments',async()=>{
   a.container!.querySelector<HTMLButtonElement>('.diff-comment-box button[type=submit]')!.click();
   const confirm=vi.fn(()=>false);vi.stubGlobal('confirm',confirm);
   q<HTMLButtonElement>('#diff-comments-clear').click();
-  expect(confirm).toHaveBeenCalledWith('清空 1 条 Diff 评论？');expect(q('#diff-comments-count').textContent).toBe('评论 (1)');
+  expect(confirm).toHaveBeenCalledWith('清空 1 条改动评论？');expect(q('#diff-comments-count').textContent).toBe('评论 (1)');
   confirm.mockReturnValue(true);q<HTMLButtonElement>('#diff-comments-clear').click();
   expect(q('#diff-comments').classList.contains('hidden')).toBe(true);expect(a.container!.querySelector('.diff-comment')).toBeNull();
   expect(rangeLabel({start:4,end:5,side:'deletions',scope:'turn'})).toBe('L4–L5（本轮改动前）');
@@ -269,7 +269,7 @@ it('falls back to the built-in renderer when the Diff bundle cannot load, still 
   const offline=Promise.reject(new Error('offline'));offline.catch(()=>undefined);
   const {requests}=await setup({library:offline});
   await vi.advanceTimersByTimeAsync(20);
-  expect(q('#toast').textContent).toBe('Diff 渲染组件加载失败，已切换为基础视图');
+  expect(q('#toast').textContent).toBe('改动渲染组件加载失败，已切换为基础视图');
   expect(FakeDiff.instances).toHaveLength(0);
   expect([...document.querySelectorAll('#diff-content table.review-code')]).toHaveLength(2);
   expect([...document.querySelectorAll('#diff-content mark.review-word')].map(node=>node.textContent)).toEqual(['left','right','1','2']);

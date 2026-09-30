@@ -554,6 +554,7 @@ it('defaults context to 272k and confirms extra cost before choosing model maxim
  app.sockets.at(-1).receive({type:'model_catalog',engine:'pi',requestId:catalog.requestId,models:[{provider:'fixture',id:'large',contextWindow:1000000}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}});
  expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
  document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
+ expect(document.querySelector('#agent-context-pane')!.classList.contains('hidden')).toBe(false);
  const dialog=document.querySelector<HTMLDialogElement>('#modal')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
  const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('模型最大'))!;option.click();
  expect(document.querySelector('#modal-text')!.textContent).toContain('过大的上下文会产生额外费用');

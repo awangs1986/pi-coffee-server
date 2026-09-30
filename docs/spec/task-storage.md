@@ -45,3 +45,15 @@ Before upgrading, preserve compatible binaries and a consistent data backup. Rol
 ## Acceptance
 
 HTTP/WS coverage must prove new Chat/Work/continuation paths, legacy path retention, per-user separation, real clone and transfer, traversal rejection, archive retention, explicit cleanup, restart persistence, and export after browser disconnect. Deployment additionally creates new Pi and Codex tasks through the live interface and checks their paths and native session bindings without relocating existing histories.
+
+## Attachment send boundary (2026-09-30)
+
+GitHub Server #11: pasted/dropped/selected files remain browser-local draft data
+until Send. Pasting alone creates no Conversation, transfer grant, upload or
+workspace artifact. Removing a draft attachment causes no upload. After Send,
+original bytes are uploaded once before prompting; an inline image contributes
+one image representation, without a duplicate uploaded-file chip. Upload failure
+restores the draft and must not silently send only the image representation.
+Input attachments and legacy inbox files are excluded from generated artifact
+cards, while remaining available through authorized file APIs. This does not
+change Agent-generated artifact discovery or native session storage.

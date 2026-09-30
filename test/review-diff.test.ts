@@ -63,7 +63,7 @@ describe('Diff rendering',()=>{
     expect(added.querySelector('.review-file-counts')!.textContent).toBe('+2');
     const binary=renderReviewFile({path:'logo.png',status:'M',additions:null,deletions:null},'','unified');
     expect(binary.querySelector('.review-file-counts')!.textContent).toBe('二进制');
-    expect(binary.textContent).toContain('没有可显示的文本 Diff');
+    expect(binary.textContent).toContain('没有可显示的文本改动');
   });
   it('can start folded so a re-render keeps the files the user collapsed',()=>{
     expect(renderReviewFile(file,PATCH,'unified',{open:false}).open).toBe(false);
