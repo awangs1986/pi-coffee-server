@@ -1,5 +1,5 @@
 // Browser management only. Source fetching, native discovery and file changes belong to Host.
-export function initSkills({context,onOpen,onClose,notify}) {
+export function initSkills({context,onOpen,onClose,onChanged,notify}) {
  const $=selector=>document.querySelector(selector),page=$('#skills-page');
  let epoch=0,busy=false,available=false,preview=null;
  const make=(tag,className,text)=>{const node=document.createElement(tag);node.className=className;node.textContent=text;return node;};
@@ -38,7 +38,7 @@ export function initSkills({context,onOpen,onClose,notify}) {
   controls();
  }
  function status(message,error=false){$('#skills-status').textContent=message;$('#skills-status').classList.toggle('error',error);}
- function close(){++epoch;page.classList.add('hidden');$('#app').classList.remove('skills-open');onClose?.();}
+ function close(){const wasOpen=!page.classList.contains('hidden');++epoch;page.classList.add('hidden');$('#app').classList.remove('skills-open');if(wasOpen)onClose?.();}
  function resetDetail(){$('#skill-detail').classList.add('hidden');$('#skill-content').textContent='';}
  async function refresh(){
   const current=++epoch;controls();resetDetail();available=false;$('#skills-list').replaceChildren();status('正在读取 VM Skills…');controls();
@@ -56,7 +56,7 @@ export function initSkills({context,onOpen,onClose,notify}) {
    const data=await request({action:kind,...target,...(item?{id:item.id}:{})});if(current!==epoch)return;
    if(kind==='detail'){
     $('#skill-detail').classList.remove('hidden');$('#skill-detail-title').textContent=item.name;$('#skill-content').textContent=data.content;$('#skill-detail').scrollIntoView?.({block:'nearest'});
-   }else{resetSource();await refresh();if(!page.classList.contains('hidden'))status('已保存。新启动的 Agent 会读取变更；当前任务空闲时可点击“重新加载当前任务”。');}
+   }else{onChanged?.(target);resetSource();await refresh();if(!page.classList.contains('hidden'))status('已保存。新启动的 Agent 会读取变更；当前任务空闲时可点击“重新加载当前任务”。');}
   }catch(error){if(current===epoch)status(error.message,true);else notify(error.message);}
   finally{busy=false;controls();}
  }
@@ -103,6 +103,7 @@ export function initSkills({context,onOpen,onClose,notify}) {
      try{await request({action:'install',...target,...batch.source,subdir,expectedRevision:batch.revision});item.installed=true;delete item.error;installed++;}
      catch(error){item.error=error.message;failed++;}
     }
+    if(installed)onChanged?.(target);
     const message=`安装结果：${installed} 成功，${failed} 失败。`;
     if(current!==epoch){notify(message+' 未开始的项目已停止。');return;}
     renderSource(selected);await refresh();
