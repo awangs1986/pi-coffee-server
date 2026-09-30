@@ -102,8 +102,8 @@ export interface ExtensionInfo {
   commands: Array<{ name: string; description?: string }>;
 }
 
-import type { ContextBreakdown, ContextCategoryId } from "pi-coffee";
-export type { ContextBreakdown, ContextCategoryId } from "pi-coffee";
+import type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
+export type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
 
 export interface SessionStats {
   userMessages: number;
