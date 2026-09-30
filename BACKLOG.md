@@ -1,3 +1,5 @@
+> Current Pi upgrade plan: [P0–P10](docs/development/pi-099-upgrade-plan-20260930.md), based on the [0.99 impact audit](docs/research/pi-099-upgrade-impact-20260930.md). Planned work, not a completed rollout; prioritize upstream capabilities and native package management.
+
 > Current plugin source layout: [repository map](REPOSITORIES.md) and [monorepo consumption](docs/development/plugin-monorepo.md).
 
 > Current manual context policy: [experimental Handoff](docs/spec/manual-handoff.md), [GitHub Server #2](https://github.com/awangs1986/pi-coffee-server/issues/2). Automatic compaction remains native Pi.
