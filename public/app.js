@@ -1091,7 +1091,7 @@ function connectSocket() {
   ws.onopen = () => {
     setConnection('已连接', 'ready');
     send({ v: 1, type: 'list_sessions' });
-    loadDraftModels();
+    loadDraftModels();resetSlashCommands();loadSlashCommands();renderSlash();
     if (activeId) openSession(activeId).catch(e=>toast(e.message));
     else if(prepareNew){prepareNew=false;openSession(null).catch(e=>toast(e.message));}
   };
@@ -1156,7 +1156,7 @@ async function openSession(id) {
 function afterOpened() {
   refreshComposer();
   if(supports('models') && !modelPending)send({ v: 1, type: 'get_models' });
-  if(supports('commands'))send({ v: 1, type: 'get_commands' });
+  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });}
   if(supports('stats'))send({ v: 1, type: 'get_stats' });
   if (pluginsWaiting && supports('extensions')) send({ v: 1, type: 'get_extensions' });
 }
@@ -1170,7 +1170,7 @@ function handleFrame(frame, ws) {
       return;
     case 'opened':
       if(pendingOpenId && pendingOpenId!=="new" && frame.sessionId!==pendingOpenId)return;
-      engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;commands=[];
+      engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;resetSlashCommands();skillReloadScope=null;
       const sameTransfer=(transfer?.sessionId || transfer?.scope)===frame.sessionId;
       opened = true;
       pendingOpenId = null;
@@ -1211,7 +1211,11 @@ function handleFrame(frame, ws) {
       models = frame;modelPending=null;refreshComposer();
       renderModels();flushFirstPrompt();
       return;
+    case 'command_catalog':
+      if(opened||activeId||frame.engine!==$('#task-engine').value||frame.requestId!==commandRequest)return;
+      commandRequest=null;commandState='ready';commands=Array.isArray(frame.commands)?frame.commands:[];renderSlash();return;
     case 'commands':
+      commandState='ready';
       commands = Array.isArray(frame.commands) ? frame.commands : [];
       renderSlash();
       return;
@@ -1246,6 +1250,7 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error': {
+      if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
       if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
@@ -1658,23 +1663,42 @@ ui.thinking.addEventListener('change', () => {
 });
 
 // ---------- slash commands ----------
-let slashIndex = 0;
+let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null;
+function resetSlashCommands(){commands=[];commandRequest=null;commandState='idle';commandError='';ui.slash.classList.add('hidden');}
+function loadSlashCommands(){
+  if(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)||!connected||commandState!=='idle')return;
+  if(opened){if(supports('commands')){commandState='loading';send({v:1,type:'get_commands'});}return;}
+  if(activeId||pendingOpenId||$('#task-engine').value!=='pi')return;
+  commandRequest=requestId('commands');commandState='loading';send({v:1,type:'get_command_catalog',engine:'pi',requestId:commandRequest});
+}
 function slashItems() {
   const value = ui.prompt.value;
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
-  return commands.filter((c) => c.name.toLowerCase().startsWith(query)).slice(0, 8);
+  return commands.filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
   ui.slash.innerHTML = '';
-  ui.slash.classList.toggle('hidden', items.length === 0);
-  if (items.length === 0) return;
+  const querying=ui.prompt.value.startsWith('/')&&!/\s/.test(ui.prompt.value);
+  ui.slash.classList.toggle('hidden',!querying);
+  if(!querying)return;
+  if(skillReloadScope&&opened){
+    const reload=el('button','btn small');reload.type='button';reload.textContent='新安装或变更的 Skills 需要重新加载（仅空闲时）';
+    reload.addEventListener('click',async()=>{const targetId=activeId,targetScope=skillReloadScope;reload.disabled=true;try{
+      const response=await fetch('/api/skills',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'reload',...targetScope,conversationId:targetId})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error||'重新加载失败');
+      if(activeId===targetId&&skillReloadScope===targetScope)skillReloadScope=null;
+    }catch(e){toast(e.message);reload.disabled=false;}});ui.slash.appendChild(reload);
+  }
+  if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(engine!=='pi'?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
+
   slashIndex = Math.min(slashIndex, items.length - 1);
   items.forEach((c, index) => {
     const row = el('div', 'slash-item' + (index === slashIndex ? ' active' : ''));
     row.setAttribute('role', 'option');
-    row.innerHTML = '<span class="slash-name">/' + c.name + '</span><span class="slash-desc"></span><span class="slash-src"></span>';
+    row.innerHTML = '<span class="slash-name"></span><span class="slash-desc"></span><span class="slash-src"></span>';
+    row.querySelector('.slash-name').textContent='/'+c.name;
     row.querySelector('.slash-desc').textContent = c.description || '';
     row.querySelector('.slash-src').textContent = c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
     row.addEventListener('mousedown', (e) => { e.preventDefault(); applySlash(c); });
@@ -2073,14 +2097,12 @@ ui.prompt.addEventListener('input', () => {
   autoGrow();
   refreshComposer();
   slashIndex = 0;
-  // The command list comes from the Pi process of an open Session. On a legacy Host without
-  // task workspaces, typing "/" before the first message opens the new conversation early.
-  if (ui.prompt.value.startsWith('/') && !opened && !pendingOpenId && connected && !workspaceState) openSession(null);
+  loadSlashCommands();
   renderSlash();
 });
 ui.prompt.addEventListener('keydown', (event) => {
   const slashOpen = !ui.slash.classList.contains('hidden');
-  if (slashOpen) {
+  if (slashOpen && slashItems().length) {
     const items = slashItems();
     if (event.key === 'ArrowDown') { event.preventDefault(); slashIndex = (slashIndex + 1) % items.length; renderSlash(); return; }
     if (event.key === 'ArrowUp') { event.preventDefault(); slashIndex = (slashIndex - 1 + items.length) % items.length; renderSlash(); return; }
@@ -2154,11 +2176,13 @@ const skillPanel=initSkills({
   context:()=>{const task=workspaceState?.conversations.find(c=>c.id===activeId);return {id:activeId,engine:task?.engine??engine,kind:task?.archived?null:task?.workspaceKind};},
   onOpen:()=>{setSearchOpen(false);setWorkspaceOpen(false);closeDiffDialog();closeBrandMenu();closeSidebarOnMobile();closeTaskDetails();},
   notify:toast,
+  onChanged:target=>{if(target.engine!==engine)return;if(opened&&(target.scope==='user'||target.conversationId===activeId))skillReloadScope=target;resetSlashCommands();},
+  onClose:()=>{loadSlashCommands();renderSlash();},
 });
 
 // ---------- session actions ----------
 function switchSession(id) {
-  skillPanel.close();
+  skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return;}
   if (id === activeId && opened) return;
@@ -2180,7 +2204,7 @@ function switchSession(id) {
   connect();
 }
 function newSession(focus = true) {
-  skillPanel.close();
+  skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
@@ -2329,8 +2353,8 @@ async function loadWorkspace() {
     else {workspaceChanges=null;workspaceSync=null;renderSyncState();for(const id of ['migrate-workspace','checkpoint-workspace','pull-request'])$('#'+id).classList.add('hidden');selectedChangedPath=null;if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();}
   } catch(e) {if(workspaceState){workspaceSync={...workspaceSync,state:'unknown',error:e.message};renderSyncState();renderProjectContext();}}
 }
-$('#task-engine').addEventListener('change',()=>{creationRequest=null;catalogRequest=null;draftModel=null;models=null;engine=$('#task-engine').value;closeAgentMenu();saveCreation();refreshComposer();loadDraftModels();});
-$('#task-kind').addEventListener('change',()=>{creationRequest=null;catalogRequest=null;draftModel=null;models=null;closeAgentMenu();saveCreation();refreshComposer();engine=$('#task-engine').value;loadDraftModels();});
+$('#task-engine').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;models=null;engine=$('#task-engine').value;closeAgentMenu();saveCreation();refreshComposer();loadDraftModels();});
+$('#task-kind').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;models=null;closeAgentMenu();saveCreation();refreshComposer();engine=$('#task-engine').value;loadDraftModels();});
 $('#create-task').addEventListener('click',async()=>{
   if(activeId && !workspaceState?.conversations.some(c=>c.id===activeId)){
     const id=activeId,workspaceKind=$('#task-kind').value,projectId=ui.projectSelect.value;

@@ -185,3 +185,31 @@ failed recovery retains the lock and backup for VM inspection. Native management
 and inventory refresh invalidate the source preview, requiring discovery again.
 Already loaded conversation instructions are unchanged; start a new Agent or
 explicitly reload an idle task to apply native discovery changes.
+
+
+## Slash completion after installation (2026-09-30)
+
+[Server #9](https://github.com/awangs1986/pi-coffee-server/issues/9) fixes the empty
+slash menu before a Pi task's first message. Typing `/` in a Pi draft requests a
+native command catalog on the authenticated WebSocket. Host asks the scoped Pi
+Adapter to start an ephemeral `--no-session` process with its configured native
+Skill and extension paths, reads `get_commands`, and stops it. This creates no
+Conversation, clone, transcript or model turn. Concurrent catalog requests within
+one factory share the in-flight discovery; later requests read fresh native files.
+Draft discovery uses the adapter's user cwd, not a not-yet-created project clone;
+project-specific commands become authoritative when the task opens.
+
+The menu shows loading, empty and failure states. Skill names can be searched
+without the `skill:` prefix; selection inserts Pi's actual `/skill:name` command.
+The scrollable menu is not truncated to the first eight extension commands.
+Responses are correlated to the active draft; changing Agent or Conversation
+invalidates the catalog. Command names are rendered as text.
+
+Installing, updating or toggling a Skill through this browser invalidates draft
+completion. A live session continues to use its own `get_commands` result. After
+a relevant Skill change, its slash menu offers an explicit idle-only reload via
+the existing Skills API, preserving the user's draft and task identity. It never
+automatically aborts/restarts a task or pretends a fresh catalog is already loaded
+in an older process. Other browser/CLI changes require refresh/reload as before.
+Codex and Claude retain their native command support; Pi `/skill:` syntax is not
+injected into those engines. Unsupported slash menus display an explanation.

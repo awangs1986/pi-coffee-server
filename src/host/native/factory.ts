@@ -22,6 +22,10 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==="codex" && this.options.codexSessionFactory)return {...capabilitiesFor("pi"),commands:false,extensions:false,cleanup:false};
     return capabilitiesFor(engine);
   }
+  async commandCatalog(engine:"pi") {
+    if(engine!=="pi"||!this.options.pi.commandCatalog)throw new Error("Pi command discovery unavailable");
+    return this.options.pi.commandCatalog(engine);
+  }
   async modelCatalog(engine:"pi" | "codex") {
     if(engine==="pi"){
       if(!this.options.pi.modelCatalog)throw new Error("Pi model discovery unavailable");

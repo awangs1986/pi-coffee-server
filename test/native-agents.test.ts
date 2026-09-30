@@ -431,3 +431,55 @@ it('offers native disable and restore while leaving plugin Skills read-only and 
  document.querySelector<HTMLButtonElement>('[data-skill-action="restore_native"]')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.at(-1)).toMatchObject({action:'restore_native',id:'native'});
 });
+
+it('offers installed Pi Skills on slash in a new draft without creating a task or invoking a model',async()=>{
+ const app=await setup();const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));await vi.advanceTimersByTimeAsync(20);
+ const request=app.frames.find(f=>f.type==='get_command_catalog');expect(request).toMatchObject({engine:'pi'});
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ app.sockets.at(-1).receive({v:1,type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[{name:'skill:tdd',source:'skill',description:'Write tests first'}]});
+ expect(document.querySelector('#slash')!.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#slash')!.textContent).toContain('/skill:tdd');
+ prompt.value='/tdd';prompt.dispatchEvent(new Event('input'));
+ expect(document.querySelector('#slash')!.textContent).toContain('/skill:tdd');
+ prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ expect(prompt.value).toBe('/skill:tdd ');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+});
+
+it('rejects stale Pi command previews after switching engine and explains command discovery failures',async()=>{
+ const app=await setup(),prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));const request=app.frames.find(f=>f.type==='get_command_catalog');
+ chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[{name:'skill:old',source:'skill'}]});
+ prompt.dispatchEvent(new Event('input'));expect(document.querySelector('#slash')!.textContent).not.toContain('/skill:old');
+ expect(document.querySelector('#slash')!.textContent).toContain('暂不提供');
+ agent.value='pi';agent.dispatchEvent(new Event('change'));prompt.dispatchEvent(new Event('input'));
+ const next=app.frames.filter(f=>f.type==='get_command_catalog').at(-1);
+ app.sockets.at(-1).receive({type:'error',code:'operation_failed',requestId:next.requestId,message:'Discovery unavailable'});
+ expect(document.querySelector('#slash')!.textContent).toContain('读取命令失败');
+});
+
+it('invalidates a draft command catalog after Skill installation and requires explicit reload for an open session',async()=>{
+ const app=await setup(),prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));const request=app.frames.find(f=>f.type==='get_command_catalog');
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[]});
+ const install=async()=>{
+  document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.click();
+  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLButtonElement>('#skills-close')!.click();
+ };
+ await install();expect(app.frames.filter(f=>f.type==='get_command_catalog')).toHaveLength(2);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'pi',state:{isStreaming:false},capabilities:{commands:true,models:false,stats:false}});
+ app.sockets.at(-1).receive({type:'commands',commands:[{name:'skill:old',source:'skill'}]});
+ prompt.value='/';await install();
+ expect(app.requests.some(r=>r.action==='reload')).toBe(false);
+ expect(document.querySelector('#slash')!.textContent).toContain('需要重新加载');
+ document.querySelector<HTMLButtonElement>('#slash button')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.find(r=>r.action==='reload')).toMatchObject({conversationId:task.id,engine:'pi',scope:'user'});
+});
