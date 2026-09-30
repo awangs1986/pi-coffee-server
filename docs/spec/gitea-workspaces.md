@@ -63,3 +63,26 @@
 当前 `src/host/workspaces.ts` 已使用每 Conversation 独立 clone、远端独占分支、checkpoint/SHA 确认、Gitea PR、跨主机接续和保留旧目录的迁移器。Host API 与 Server UI 已移除平台本地 merge 动作；原生 Git 工具仍可由用户主动使用 `git worktree`。systemd 继续以 owner 运行，安装脚本可配置并校验 `NOPASSWD: ALL`，但是否已部署必须以目标 VM 的 `/healthz` capability 和 `npm run probe:owner-access` 为准。
 
 设计和代码在本范围内形成闭环：本地执行 → checkpoint → 远端确认 → PR/merge → 新主机按 SHA 接续；同时明示未版本化数据/原生会话不能由 Gitea 恢复。T0–T3 的代码完成不自动关闭部署验收；T4 仍要求两仓 fresh-clone 检查和双用户/双 VM 故障实测。
+
+## Existing Gitea repository selection (2026-09-30)
+
+Tracked in [Server #5](https://github.com/awangs1986/pi-coffee-server/issues/5).
+The Work project dropdown includes **Select existing Gitea repository**. It opens
+the shared repository picker, lists all pages visible to the selected Host scope's
+configured Gitea API credentials, and searches repository names/descriptions.
+Already registered, private, archived and read-only states are visible. Browser
+OAuth authenticates routing; it does not replace the VM owner's forge credentials.
+
+Selecting a new entry resolves `owner/repo` against the configured Gitea instance,
+requires current push permission and a non-archived repository, and verifies the
+VM's Git access to the default branch before saving a Project. Empty repositories
+need an initial commit. Registration is idempotent by forge and repository ID;
+legacy Gitea Projects retain their IDs and names. New IDs use `gitea-<repo-id>`.
+This operation does not create, migrate or clone a remote repository. Independent
+cloning still happens on task creation. The picker preserves unsent text, engine
+selection and task binding; a delayed result must not replace a newer selection.
+
+`gitea_repos` and `gitea_project` use the authenticated `/api/workspace` scope.
+Tokens stay on Host; Browser cannot supply an API origin. **Discover local
+projects** retains its separate local-import behavior. New Gitea project creation
+and the GitHub picker remain available.

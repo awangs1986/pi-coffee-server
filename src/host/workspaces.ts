@@ -32,7 +32,8 @@ export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
 export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
-export interface GitHubRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
+export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
+export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
 export interface GitHubForge {
   readonly webHost:string;
@@ -41,6 +42,8 @@ export interface GitHubForge {
   createPullRequest(project:Project,source:string,target:string,title:string):Promise<PullRequest>;
 }
 export interface CodeForge {
+  listRepositories?():Promise<ForgeRepository[]>;
+  repository?(fullName:unknown):Promise<ForgeRepository>;
   createRepository?(name:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
   migrateRepository?(name:string,sourceUrl:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
   createPullRequest(project:Project,source:string,target:string,title:string):Promise<PullRequest>;
@@ -205,6 +208,28 @@ export class Workspaces {
   }
   async registerProject(name:unknown,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {return this.mutate(async()=>{
     const safe=slug(name);this.assertProjectAvailable(safe,repoId);return this.registerProjectUnlocked(safe,repoUrl,branch,repoId,webUrl);
+  });}
+  /** Existing Gitea repositories visible to this scope's configured Host credentials. */
+  async giteaRepositories() {
+    await this.load();
+    if(!this.forge?.listRepositories)throw new Error('Gitea repository selection is not configured on this Host');
+    const registered=new Map(this.state.projects.filter(p=>(p.forge ?? 'gitea')==='gitea' && p.repoId).map(p=>[p.repoId,p.id]));
+    return (await this.forge.listRepositories()).map(repo=>({...repo,...(registered.has(repo.id)?{projectId:registered.get(repo.id)}:{})}));
+  }
+  async registerGiteaProject(input:unknown) {return this.mutate(async()=>{
+    if(!this.forge?.repository)throw new Error('Gitea repository selection is not configured on this Host');
+    const repo=await this.forge.repository(input);
+    if(repo.archived)throw new Error(`Gitea repository ${repo.fullName} is archived`);
+    if(!repo.canPush)throw new Error(`The Host Gitea token cannot push to ${repo.fullName}`);
+    if(!repo.cloneUrl)throw new Error('Gitea did not return a clone URL');
+    const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch).catch(()=>{
+      throw new Error(`VM Git cannot read ${repo.fullName} at ${repo.defaultBranch}. Check VM Git credentials and that the repository has an initial commit.`);
+    });
+    const existing=this.state.projects.find(p=>(p.forge ?? 'gitea')==='gitea' && p.repoId===repo.id);
+    if(existing){existing.repoUrl=repoUrl;existing.webUrl=repo.webUrl;existing.branch=repo.defaultBranch;await this.save();return structuredClone(existing);}
+    if(this.state.projects.some(p=>p.name===repo.fullName))throw new Error('Project is already registered');
+    const project:Project={id:`gitea-${repo.id}`,name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'gitea'};
+    this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
   /** Repositories the Host's GitHub token can see, marked with the Project that already registers them. */
   async githubRepositories() {

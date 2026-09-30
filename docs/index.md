@@ -10,6 +10,7 @@ Start with [the repository map](../REPOSITORIES.md) before choosing a source dir
 
 - Source reconciliation or release: [comparison and acceptance](reviews/repository-unification-20260927.md), [AGENTS.md](../AGENTS.md), [BACKLOG.md](../BACKLOG.md).
 - Product workbench: [Arena navigation](spec/arena-navigation.md), [Context Usage](spec/context-usage.md), [task directories](spec/conversation-workspaces.md), [upgrade-safe task bundles](spec/task-storage.md), [Skills](spec/skill-management.md).
+- Existing Gitea repository picker: [contract](spec/gitea-workspaces.md#existing-gitea-repository-selection-2026-09-30), [Server #5](https://github.com/awangs1986/pi-coffee-server/issues/5).
 - Code forges: [Gitea workspaces](spec/gitea-workspaces.md) and [GitHub repositories as Work Projects](adr/0022-github-work-projects.md).
 - Diff panel: [@pierre/diffs renderer, per-file loading and line comments](adr/0023-pierre-diff-renderer.md); layout and behavior in [Arena navigation](spec/arena-navigation.md#diff).
 - Agent integration: [native engines](spec/native-agent-engines.md), [native browser](spec/native-agent-browser.md), [shared Host](adr/0010-one-shared-user-vm-with-gitea-identity-and-per-user-folders.md), [Codex adapter](adr/0011-agent-seam-admits-codex-app-server.md).

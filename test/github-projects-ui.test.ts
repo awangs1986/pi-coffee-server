@@ -29,6 +29,8 @@ async function setup({github=true,task=null,reposError,registrationGate}:Options
     const body=init?.body ? JSON.parse(init.body) : null;
     if(!body)return json({projects,conversations,sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true,forges:{gitea:true,github}}});
     requests.push(body);
+    if(body.action==='gitea_repos')return json([{id:'88',fullName:'awangs/ArenaModels',defaultBranch:'trunk',canPush:true}]);
+    if(body.action==='gitea_project'){const project={id:'gitea-88',repoId:'88',name:body.repository,branch:'trunk',forge:'gitea'};projects.push(project);return json(project);}
     if(body.action==='github_repos')return reposError ? json({error:reposError},false) : json(REPOS.map(repo=>({...repo,...(projects.some(p=>p.repoId===repo.id) ? {projectId:'github-'+repo.id} : {})})));
     if(body.action==='github_project'){
       await registrationGate;
@@ -70,7 +72,7 @@ it('groups the repository dropdown by forge and switches the strip icon with the
   const app=await setup();await chooseWork();
   const select=q<HTMLSelectElement>('#project-select');
   const groups=[...select.querySelectorAll('optgroup')].map(group=>[group.label,[...group.querySelectorAll('option')].map(option=>option.textContent)]);
-  expect(groups).toEqual([['Gitea',['demo']],['GitHub',['acme/app','＋ 添加 GitHub 仓库…']]]);
+  expect(groups).toEqual([['Gitea',['demo','＋ 选择已有 Gitea 仓库…']],['GitHub',['acme/app','＋ 添加 GitHub 仓库…']]]);
   expect(q('#task-kind').querySelector('option[value="project"]')!.textContent).toBe('Work · Gitea / GitHub');
   await selectProject('github-101');
   expect(q('.strip-repo-icon').dataset.forge).toBe('github');expect(q('.strip-repo-icon').title).toBe('GitHub 仓库');
@@ -124,10 +126,10 @@ it('keeps the picker open with the Host reason when a repository cannot be added
   expect(hidden('#github-modal')).toBe(false);expect(q('#toast').textContent).toContain('cannot push to acme/readonly');
 });
 
-it('leaves the Gitea-only dropdown and "＋ 新建项目" unchanged when the Host has no GitHub token',async()=>{
+it('preserves Gitea-only creation alongside existing repositories and "＋ 新建项目" unchanged when the Host has no GitHub token',async()=>{
   await setup({github:false});await chooseWork();
   expect(q('#project-select').querySelector('optgroup')).toBeNull();
-  expect([...q<HTMLSelectElement>('#project-select').options].map(option=>option.textContent)).toEqual(['选择项目 / 全部任务','demo']);
+  expect([...q<HTMLSelectElement>('#project-select').options].map(option=>option.textContent)).toEqual(['选择项目 / 全部任务','demo','＋ 选择已有 Gitea 仓库…']);
   const button=q<HTMLButtonElement>('#project-create');expect(button.hasAttribute('aria-haspopup')).toBe(false);
   button.click();expect(hidden('#project-create-menu')).toBe(true);expect(q('#modal-title').textContent).toBe('新建 Gitea 项目');
   expect(q('#task-kind').querySelector('option[value="project"]')!.textContent).toBe('Work · Gitea 项目');
@@ -141,4 +143,19 @@ it('names GitHub in the strip and PR flow of a GitHub task',async()=>{
   q<HTMLButtonElement>('#pull-request').click();await vi.advanceTimersByTimeAsync(20);
   expect(q('#modal-text').textContent).toBe('为当前任务分支创建 GitHub PR；合并在 GitHub 中完成。');
   expect(hidden('#project-create')).toBe(true);expect(hidden('.project-create-wrap')).toBe(true);
+});
+
+it('finds an existing Gitea repository without creating a remote or losing the draft',async()=>{
+  const app=await setup({github:false});await chooseWork();await selectProject('p');
+  q<HTMLTextAreaElement>('#prompt').value='Keep this draft';
+  await selectProject('__add_gitea__');
+  expect(hidden('#github-modal')).toBe(false);
+  expect(q('#github-title').textContent).toBe('选择已有 Gitea 仓库');
+  expect(rows().map(row=>row.dataset.repo)).toContain('awangs/ArenaModels');
+  rows()[0].click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLSelectElement>('#project-select').value).toBe('gitea-88');
+  expect(q<HTMLInputElement>('#start-branch').value).toBe('trunk');
+  expect(q<HTMLTextAreaElement>('#prompt').value).toBe('Keep this draft');
+  expect(app.requests.filter(r=>r.action==='gitea_project')).toEqual([{action:'gitea_project',repository:'awangs/ArenaModels'}]);
+  expect(app.requests.some(r=>['project','discover','conversation'].includes(r.action))).toBe(false);
 });
