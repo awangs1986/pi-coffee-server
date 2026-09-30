@@ -232,9 +232,9 @@ it('lets the settled turn replace a pending turn_diff refresh',async()=>{
   const opened=turnReads();
   emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
   emit({type:'agent_settled'});await vi.advanceTimersByTimeAsync(20);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
   await vi.advanceTimersByTimeAsync(2000);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
 });
 
 it('marks 最近一轮 as unsupported for Claude Code tasks',async()=>{
@@ -304,14 +304,43 @@ it('refreshes the open Diff and renders the changed-files card when a native run
   const opened=turnReads();
   emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
   emit({type:'run_completed',status:'completed'});await vi.advanceTimersByTimeAsync(20);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
   expect(q('#thread .changes-card')).not.toBeNull();
   await vi.advanceTimersByTimeAsync(2000);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
+});
+
+it('uses only latest-turn edits and opens their turn Diff without hiding cumulative branch changes',async()=>{
+ const app=await setup({task:{turnSnapshot:{tree:'turn-base'}},turn:{scope:'turn',base:'turn-base',target:'WORKTREE',startedAt:'2026-09-30T10:00:00Z',running:false,files:[{path:'this-turn.ts',status:'M',additions:1,deletions:0}],patch:''}});
+ const card=q<HTMLDetailsElement>('#thread .changes-card');
+ expect(card.textContent).toContain('已编辑 1 个文件');expect(card.textContent).toContain('this-turn.ts');expect(card.textContent).not.toContain('notes.md');
+ card.querySelector('summary')!.click();card.querySelector<HTMLButtonElement>('.workspace-change-row')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(q('#diff-scope-label').textContent).toBe('最近一轮');
+ q<HTMLButtonElement>('#diff-close').click();q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+ expect(q('#diff-scope-label').textContent).toBe('分支改动');
+ expect(app.requests.filter(r=>r.action==='changes'&&r.scope==='turn').length).toBeGreaterThan(0);
+});
+it.each([undefined,{scope:'turn',files:[],running:false},{scope:'turn',files:[{path:'in-progress.ts',status:'M'}],running:true}])('does not substitute older branch edits when the turn is unavailable, empty or still running',async turn=>{
+ await setup({turn});expect(q('#thread .changes-card')).toBeNull();
+});
+
+it('discards a late summary when another turn starts',async()=>{
+ const turn={scope:'turn',base:'turn-base',files:[{path:'old-turn.ts',status:'M'}],patch:'',running:false};
+ const app=await setup({turn});expect(q('#thread .changes-card')).not.toBeNull();
+ const baseFetch=globalThis.fetch;let finish:any;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):null;
+  if(body?.action==='changes'&&body.scope==='turn')return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>turn});});
+  return baseFetch(url,init);
+ }));
+ app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'run_completed',status:'completed'}});
+ await vi.advanceTimersByTimeAsync(20);expect(finish).toBeTypeOf('function');
+ app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'run_started'}});
+ finish();await vi.advanceTimersByTimeAsync(20);expect(q('#thread .changes-card')).toBeNull();
 });
 
 it('keeps edited files collapsed until clicked and does not insert workspace artifact galleries',async()=>{
-  const app=await setup();
+  const app=await setup({task:{turnSnapshot:{tree:'turn-base'}},turn:{scope:'turn',base:'turn-base',files:[{path:'src/a.ts',status:'M',additions:1,deletions:0},{path:'notes.md',status:'?',additions:1,deletions:0}],patch:PATCH,running:false}});
   const card=q<HTMLDetailsElement>('#thread .changes-card');
   expect(card.tagName).toBe('DETAILS');expect(card.open).toBe(false);
   const summary=card.querySelector('summary')!;expect(summary.textContent).toContain('已编辑 2 个文件');

@@ -87,7 +87,7 @@ describe('Checkout review and Gitea synchronization surfaces', () => {
     expect(app).toContain('function maybeRenderChangesCard');
     // Per-file patches for the Diff body (a section cut by the Host's cap is refetched whole).
     expect(diffView).toContain('export function patchSections(patch, truncated = false)');
-    expect(app).toContain("showWorkspaceReview('diff',file.path)");
+    expect(app).toContain("showDiffDialog(file.path,{scope:'turn'})");
     expect(css).toContain('.changes-card[open] > .changes-card-head::before');
   });
 
