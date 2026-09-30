@@ -1,3 +1,4 @@
+import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -148,6 +149,22 @@ export class CodexSessionFactory implements PiSessionFactory {
     }finally{await server.stop();}
   }
 
+  private commandDiscovery?: Promise<CommandInfo[]>;
+  async commandCatalog(engine:"pi" | "codex"):Promise<CommandInfo[]> {
+    if(engine!=="codex")throw new Error("This adapter only discovers Codex Skills");
+    if(this.commandDiscovery)return this.commandDiscovery;
+    this.commandDiscovery=this.discoverCommands().finally(()=>{this.commandDiscovery=undefined;});
+    return this.commandDiscovery;
+  }
+  private async discoverCommands():Promise<CommandInfo[]> {
+    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+      env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
+    try {
+      await server.start("pi_coffee_skills","0.1.0");
+      return await codexCommands(server,this.options.cwd);
+    }finally{await server.stop();}
+  }
+
   private async loadMapping(): Promise<Map<string, string>> {
     if (this.mapping) return this.mapping;
     try {
@@ -219,6 +236,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const thread = response.thread as Obj;
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
+      cwd: this.options.cwd,
       model: typeof response.model === "string" ? response.model : this.options.model,
       reasoningEffort: typeof response.reasoningEffort === "string" ? response.reasoningEffort : this.options.reasoningEffort,
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -332,6 +350,7 @@ export class CodexSessionFactory implements PiSessionFactory {
 }
 
 interface CodexSessionSettings {
+  cwd: string;
   model?: string;
   reasoningEffort?: string;
   approvalPolicy: string;
@@ -363,9 +382,11 @@ class CodexSession implements PiSession {
   private readonly pendingApprovals = new Map<string, PendingServerRequest>();
   private readonly readRateLimits?: () => Promise<RateLimits | undefined>;
   private stopped = false;
+  private readonly cwd: string;
 
   constructor(server: CodexAppServer, threadId: string, settings: CodexSessionSettings) {
     this.server = server;
+    this.cwd = settings.cwd;
     this.threadId = threadId;
     this.model = settings.model;
     this.effort = settings.reasoningEffort;
@@ -404,10 +425,20 @@ class CodexSession implements PiSession {
     };
   }
 
+  private async input(text: string, images?: ImageInput[]): Promise<Json[]> {
+    const input=toUserInput(text,images);
+    const mention=/^\$([a-zA-Z0-9_-]+)(?=\s|$)/.exec(text);
+    if(mention){
+      const matches=(await codexSkills(this.server,this.cwd)).filter(skill=>skill.name===mention[1]);
+      if(matches.length===1)input.push({type:'skill',name:matches[0].name,path:matches[0].path});
+    }
+    return input;
+  }
+
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
     const result = await this.server.request("turn/start", {
       threadId: this.threadId,
-      input: toUserInput(text, images),
+      input: await this.input(text, images),
       ...this.turnOverrides(),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
@@ -418,7 +449,7 @@ class CodexSession implements PiSession {
     if (this.activeTurnId === undefined) return this.prompt(text, images);
     await this.server.request("turn/steer", {
       threadId: this.threadId,
-      input: toUserInput(text, images),
+      input: await this.input(text, images),
       expectedTurnId: this.activeTurnId,
     });
     this.emit({ type: "queue_update", steering: [text], followUp: this.followUps.map((item) => item.text) });
@@ -520,7 +551,7 @@ class CodexSession implements PiSession {
   }
 
   async getCommands(): Promise<CommandInfo[]> {
-    return [];
+    return codexCommands(this.server,this.cwd);
   }
 
   async getExtensions(): Promise<ExtensionInfo[]> {
