@@ -40,6 +40,7 @@ export type AgentSessionListing = Omit<SessionSummary, "running">;
  * history stay inside the selected Adapter.
  */
 export interface AgentModels {
+  context?: import("../shared/protocol.js").ContextSettings;
   models: ModelChoice[];
   current: { provider: string; id: string; source?: "native" | "relay" } | null;
   thinkingLevel: string;
@@ -61,6 +62,7 @@ export interface AgentSession {
   getModels(): Promise<AgentModels>;
   setModel(provider: string, id: string): Promise<void>;
   setThinkingLevel(level: string): Promise<void>;
+  setContextPreset?(preset: import("../shared/protocol.js").ContextPreset): Promise<void>;
   getCommands(): Promise<CommandInfo[]>;
   /** Extensions exposed by the selected engine (Pi only in this release). */
   getExtensions(): Promise<ExtensionInfo[]>;

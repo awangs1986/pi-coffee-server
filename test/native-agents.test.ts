@@ -114,16 +114,16 @@ it('opens seven-category context usage on click without cumulative data and clos
  trigger.dispatchEvent(new Event('mouseenter'));trigger.focus();await vi.advanceTimersByTimeAsync(1);
  expect(trigger.getAttribute('aria-expanded')).toBe('false');
  trigger.click();expect(panel.open).toBe(true);expect(trigger.getAttribute('aria-expanded')).toBe('true');
- expect(document.querySelector('#sp-capacity')?.textContent).toBe('~10.0K / 40K Tokens');
- expect([...document.querySelectorAll('#sp-context-legend .legend-label')].map(e=>e.textContent)).toEqual(['System prompt','Tool definitions','Rules','Skills','MCP & dynamic tools','Subagent definitions','Conversation']);
+ expect(document.querySelector('#sp-capacity')?.textContent).toBe('~10.0K / 40K 词元');
+ expect([...document.querySelectorAll('#sp-context-legend .legend-label')].map(e=>e.textContent)).toEqual(['系统提示词','工具定义','项目规则','技能','MCP 与动态工具','子代理定义','对话']);
  expect(document.querySelector('#sp-context-legend')?.textContent).toContain('6.0K');
  expect(document.querySelector('#sp-context-legend')?.textContent).not.toContain('90.0K');
  expect(panel.textContent).not.toContain('累计输入');
  document.querySelector<HTMLButtonElement>('#stats-close')!.click();expect(panel.open).toBe(false);expect(document.activeElement).toBe(trigger);
  trigger.click();panel.dispatchEvent(new Event('cancel',{cancelable:true}));expect(panel.open).toBe(false);
  ws.receive({type:'stats',sessionId:id,stats:{contextUsage:{percent:null,tokens:null,contextWindow:40000},tokens:{total:100000},cost:0.1}});
- expect(document.querySelector('#sp-pct')?.textContent).toBe('Usage unavailable');
- expect(document.querySelector('#sp-capacity')?.textContent).toBe('— / 40K Tokens');
+ expect(document.querySelector('#sp-pct')?.textContent).toBe('用量暂不可用');
+ expect(document.querySelector('#sp-capacity')?.textContent).toBe('— / 40K 词元');
  expect(document.querySelector('#sp-context-legend')?.textContent).not.toContain('30.0K');
 });
 
@@ -517,4 +517,47 @@ it('refreshes Codex Skills after installation in an open task without a restart'
  app.sockets.at(-1).receive({type:'commands',commands:[{name:'demo',invocation:'$demo',source:'skill'}]});
  expect(document.querySelector('#slash')!.textContent).toContain('$demo');expect(document.querySelector('#slash')!.textContent).not.toContain('需要重新加载');
  expect(app.requests.some(r=>r.action==='reload')).toBe(false);
+});
+
+it('keeps a pasted image local and shows one removable preview until Send',async()=>{
+ const app=await setup();
+ vi.stubGlobal('FileReader',class{result='data:image/png;base64,aGVsbG8=';onload:any;readAsDataURL(){queueMicrotask(()=>this.onload());}});
+ vi.stubGlobal('Image',class{width=10;height=10;onload:any;set src(_v:string){queueMicrotask(()=>this.onload());}});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!,file=new File(['hello'],'paste.png',{type:'image/png'});
+ const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{items:[{kind:'file',getAsFile:()=>file}]}});prompt.dispatchEvent(event);
+ await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('#attachments img')).toHaveLength(1);
+ expect(document.querySelectorAll('#attachments .upload-chip')).toHaveLength(0);
+ expect(app.requests.filter(r=>['conversation','files'].includes(r.action))).toEqual([]);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ expect(document.querySelector('#generated-artifacts')).toBeNull();
+ document.querySelector<HTMLButtonElement>('#attachments .attachment-remove')!.click();
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+});
+
+it('shows Codex native current context usage without inventing category counts',async()=>{
+ const app=await setup();chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'codex',state:{},capabilities:{stats:true}});
+ app.sockets.at(-1).receive({type:'stats',sessionId:task.id,stats:{tokens:{total:999999},contextUsage:{tokens:68000,contextWindow:272000,percent:25}}});
+ expect(document.querySelector('#sp-pct')!.textContent).toBe('已用 25%');
+ expect(document.querySelector('#sp-capacity')!.textContent).toContain('68.0K');
+ expect(document.querySelector('#sp-status')!.textContent).toContain('不提供分类');
+ expect(document.querySelector('#stats-title')!.textContent).toBe('上下文用量');
+});
+
+
+it('defaults context to 272k and confirms extra cost before choosing model maximum',async()=>{
+ const app=await setup(false,false,true,true);
+ const catalog=app.frames.find(f=>f.type==='get_model_catalog');
+ app.sockets.at(-1).receive({type:'model_catalog',engine:'pi',requestId:catalog.requestId,models:[{provider:'fixture',id:'large',contextWindow:1000000}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}});
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
+ const dialog=document.querySelector<HTMLDialogElement>('#modal')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('模型最大'))!;option.click();
+ expect(document.querySelector('#modal-text')!.textContent).toContain('过大的上下文会产生额外费用');
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
+ document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('模型最大');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
 });

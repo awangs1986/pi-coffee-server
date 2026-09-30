@@ -93,7 +93,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     args.push("--no-session");
     const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
-      env:{...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
+      env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
     const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
     try{await session.start();return await session.getCommands();}finally{await session.stop();}
   }
@@ -104,7 +104,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     args.push("--no-session");
     const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
-      env:{...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
+      env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
     const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
     try{await session.start();return await session.getModels();}finally{await session.stop();}
   }
@@ -132,6 +132,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       env: {
         ...(this.options.agentDir === undefined ? {} : { PI_CODING_AGENT_DIR: this.options.agentDir }),
         ...buildHostChildEnv({...this.options.env,...await this.options.envForSession?.(options.sessionId)}),
+        PI_COFFEE_CONTEXT_CONTROL: "1",
         PI_COFFEE_ROOT_SESSION: this.options.runtimeIdForSession?.(options.sessionId) ?? options.sessionId,
       },
       args,
@@ -366,8 +367,14 @@ class RpcPiSession implements PiSession {
       this.client.getState(),
       this.client.getAvailableThinkingLevels(),
     ]);
+    const commands=await this.client.getCommands();
+    const contextSupported=commands.some(c=>c.name==='coffee-context-window');
+    const entries=contextSupported?(await this.client.getEntries()).entries:[];
+    const setting=entries.filter(e=>e.type==='custom'&&e.customType==='coffee-context-window').at(-1);
+    const preset=setting?.type==='custom'&&(setting.data as {preset?:string})?.preset==='maximum'?'maximum' as const:'272k' as const;
     const current = state.model as { provider?: unknown; id?: unknown } | undefined;
     return {
+      ...(contextSupported?{context:{preset,limit:state.model?.contextWindow,maximum:available.find(m=>m.provider===state.model?.provider&&m.id===state.model?.id)?.contextWindow}}:{}),
       models: available.filter(model=>this.modelAllowed(model.provider,model.id)).map((model) => ({
         source: (process.env.PI_COFFEE_RELAY_PROVIDERS ?? "cpa").split(",").map(v=>v.trim()).includes(model.provider) ? "relay" as const : "native" as const,
         provider: model.provider,
@@ -388,13 +395,20 @@ class RpcPiSession implements PiSession {
     await this.client.setModel(provider, id);
   }
 
+  async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{
+    if(!(await this.client.getCommands()).some(c=>c.name==='coffee-context-window'))throw new Error('Update Harness to use context settings');
+    await this.client.prompt('/coffee-context-window '+preset);
+    const settings=await this.getModels();
+    if(settings.context?.preset!==preset)throw new Error('Pi did not apply the context preset');
+  }
+
   async setThinkingLevel(level: string): Promise<void> {
     await this.client.setThinkingLevel(level as never);
   }
 
   async getCommands(): Promise<CommandInfo[]> {
     const commands = await this.client.getCommands();
-    return commands.map((command) => ({
+    return commands.filter(command=>command.name!=='coffee-context-window').map((command) => ({
       name: command.name,
       ...(command.description === undefined ? {} : { description: command.description }),
       source: command.source,

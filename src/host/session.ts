@@ -174,7 +174,8 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
-  get isBusy(): boolean { return this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
+  private contextChanging=false;
+  get isBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get wasInterrupted(): boolean { return this.interrupted; }
   releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
 
@@ -202,7 +203,7 @@ export class HostSession {
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
   async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[]): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.compacting) throw new SessionBusyError();
+    if (this.compacting || this.contextChanging) throw new SessionBusyError();
     if (mode === "steer") await this.pi.steer(text, images);
     else await this.pi.followUp(text, images);
   }
@@ -250,6 +251,12 @@ export class HostSession {
 
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
   setModel(provider: string, id: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
+  async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{
+    if(this.isBusy)throw new SessionBusyError();
+    const adapter=this.ready();if(!adapter.setContextPreset)throw new Error('Context settings require an updated Host and Agent');
+    this.contextChanging=true;
+    try{await adapter.setContextPreset(preset);}finally{this.contextChanging=false;}
+  }
   setThinkingLevel(level: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
