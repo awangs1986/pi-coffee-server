@@ -185,3 +185,54 @@ failed recovery retains the lock and backup for VM inspection. Native management
 and inventory refresh invalidate the source preview, requiring discovery again.
 Already loaded conversation instructions are unchanged; start a new Agent or
 explicitly reload an idle task to apply native discovery changes.
+
+
+## Slash completion after installation (2026-09-30)
+
+[Server #9](https://github.com/awangs1986/pi-coffee-server/issues/9) fixes the empty
+slash menu before a Pi task's first message. Typing `/` in a Pi draft requests a
+native command catalog on the authenticated WebSocket. Host asks the scoped Pi
+Adapter to start an ephemeral `--no-session` process with its configured native
+Skill and extension paths, reads `get_commands`, and stops it. This creates no
+Conversation, clone, transcript or model turn. Concurrent catalog requests within
+one factory share the in-flight discovery; later requests read fresh native files.
+Draft discovery uses the adapter's user cwd, not a not-yet-created project clone;
+project-specific commands become authoritative when the task opens.
+
+The menu shows loading, empty and failure states. Skill names can be searched
+without the `skill:` prefix; selection inserts Pi's actual `/skill:name` command.
+The scrollable menu is not truncated to the first eight extension commands.
+Responses are correlated to the active draft; changing Agent or Conversation
+invalidates the catalog. Command names are rendered as text.
+
+Installing, updating or toggling a Skill through this browser invalidates draft
+completion. A live session continues to use its own `get_commands` result. After
+a relevant Skill change, its slash menu offers an explicit idle-only reload via
+the existing Skills API, preserving the user's draft and task identity. It never
+automatically aborts/restarts a task or pretends a fresh catalog is already loaded
+in an older process. Other browser/CLI changes require refresh/reload as before.
+Codex and Claude retain their native command support; Pi `/skill:` syntax is not
+injected into those engines. Unsupported slash menus display an explanation.
+
+
+### Codex completion (2026-09-30)
+
+[Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10) extends the
+same composer picker to native Codex. `/` or `/name` opens and filters the list;
+click or Tab inserts `$name `. Host uses native `skills/list` with `forceReload`
+and only enabled entries, preserving discovery order and showing the first
+entry for each name. Invocation resolves the same first entry in fresh native
+discovery and adds its native `skill` input item alongside the original text.
+Filesystem paths stay behind the Adapter; browser text cannot select an arbitrary
+Skill file. No Pi `/skill:` syntax or Pi prompt is injected into Codex.
+
+Draft discovery uses the authenticated factory's user cwd and creates no thread,
+clone or model turn. Once opened, discovery uses the owned Conversation's actual
+cwd, including project Skills. Changing or disabling a Skill in Web invalidates
+the picker; Codex refreshes discovery without restarting the task. A disabled
+Skill is no longer added as explicit input; already-read history is retained.
+Native metadata/discovery errors are shown rather than an invented empty list.
+Claude completion remains unsupported in this change.
+
+Reference: [official App Server Skills and explicit Skill input](https://developers.openai.com/codex/app-server/).
+Verified native release: Codex CLI 0.159.1.

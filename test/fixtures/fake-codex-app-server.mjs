@@ -220,12 +220,18 @@ rl.on("line", (line) => {
       return notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });
     }
     case "config/read": return reply({config:{model:"gpt-fake-mini"}});
+    case "skills/list": {
+      if(params.forceReload!==true)return fail("skills discovery must refresh");
+      const entries=existsSync(join(home,"fake-skills.json"))?JSON.parse(readFileSync(join(home,"fake-skills.json"),"utf8")):[];
+      return reply({data:entries.filter(e=>params.cwds.includes(e.cwd))});
+    }
     case "model/list":
       return reply({ data: [
         { id: "gpt-fake", model: "gpt-fake", displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },
       ], nextCursor: null });
     case "turn/start": {
+      writeFileSync(join(home,"fake-input.json"),JSON.stringify(params.input));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       if (active.has(thread.id)) return fail("turn already active");

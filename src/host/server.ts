@@ -563,6 +563,12 @@ class HostSocket implements SessionSink {
         case "abort":
           await this.abort(frame);
           break;
+        case "get_command_catalog": {
+          if(!this.factory.commandCatalog)throw new Error("Command discovery unavailable on this Host; update Host to preview Skills before starting a task");
+          const commands=await this.factory.commandCatalog(frame.engine);
+          this.send({v:1,type:"command_catalog",engine:frame.engine,...rid(frame),commands});
+          break;
+        }
         case "get_model_catalog": {
           if(!this.factory.modelCatalog)throw new Error("Model discovery unavailable on this Host");
           const catalog=await this.factory.modelCatalog(frame.engine);
