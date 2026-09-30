@@ -57,6 +57,7 @@ export class SkillManager {
  async handle(input:any):Promise<unknown>{
   const scope=await this.scope(input);
   if(input.action==='list')return this.list(scope);
+  if(input.action==='discover')return this.discover(scope,input);
   if(input.action==='detail'){
    const inventory=await this.list(scope),entry=inventory.skills.find(s=>s.id===input.id);if(!entry)throw new Error('Unknown Skill in this scope');
    const record=(await this.records()).find(r=>r.key===scope.key&&r.id===input.id);
@@ -95,7 +96,7 @@ export class SkillManager {
  private async digest(directory:string):Promise<string>{
   const result=createHash('sha256');let size=0,count=0;
   const walk=async(path:string):Promise<void>=>{
-   const info=await lstat(path);if(info.isSymbolicLink())throw new Error('Skill packages may not contain symlinks');
+   const info=await lstat(path);if(info.isSymbolicLink())throw new Error('Skill package contains a symlink: '+(relative(directory,path)||'.'));
    if(info.isDirectory()){for(const name of (await readdir(path)).sort()){if(name==='.git')continue;await walk(join(path,name));}return;}
    if(!info.isFile())throw new Error('Skill package contains a special file');
    if(++count>MAX_FILES||(size+=info.size)>MAX_PACKAGE)throw new Error('Skill package exceeds 500 files or 10 MB');
@@ -116,16 +117,56 @@ export class SkillManager {
   try{return (await exec('git',['-c','core.hooksPath=/dev/null','-c','http.followRedirects=false','-c',`protocol.file.allow=${this.options.allowLocalSources?'always':'never'}`,...args],{cwd,env,timeout:45000,maxBuffer:1024*1024})).stdout.trim();}
   catch{throw new Error('Git source could not be fetched. Check the URL, ref and VM Git credentials; installed Skill was retained.');}
  }
- private async fetch(source:{repoUrl:string;ref:string;subdir:string}){
+ private source(input:any){
+  const source={repoUrl:this.sourceUrl(input.repoUrl),ref:text(input.ref,'HEAD')||'HEAD',subdir:text(input.subdir,'.')||'.'};
+  if(source.ref.startsWith('-')||isAbsolute(source.subdir)||source.subdir.split(/[\\/]/).includes('..'))throw new Error('Invalid Skill ref or subdirectory');
+  return source;
+ }
+ private async checkout(source:{repoUrl:string;ref:string;subdir:string}){
   const temporary=await mkdtemp(join(tmpdir(),'coffee-skill-'));
   try{
    await this.git(temporary,['init','--quiet'],source.repoUrl);await this.git(temporary,['fetch','--quiet','--depth=1','--',source.repoUrl,source.ref],source.repoUrl);
    const revision=await this.git(temporary,['rev-parse','FETCH_HEAD'],source.repoUrl);
    await this.git(temporary,['checkout','--quiet','--detach',revision],source.repoUrl);
    const directory=resolve(temporary,source.subdir);if(!inside(temporary,directory)||!inside(temporary,await realpath(directory)))throw new Error('Skill subdirectory is outside the repository');
-   await this.digest(directory);const m=await metadata(join(directory,'SKILL.md'));
-   return {temporary,directory,revision,...m};
+   if((await lstat(directory)).isSymbolicLink())throw new Error('Select a real Skill directory, not a symlink');
+   return {temporary,directory,revision};
   }catch(e){await rm(temporary,{recursive:true,force:true});throw e;}
+ }
+ private async discover(scope:Scope,input:any){
+  const source=this.source(input),checkout=await this.checkout(source);
+  const skills:Array<{name:string;description:string;subdir:string;installed:boolean;problem?:string}>=[];
+  const warnings:string[]=[];let visited=0;
+  try{
+   const records=(await this.records()).filter(r=>r.key===scope.key);
+   const walk=async(directory:string,depth:number):Promise<void>=>{
+    if(++visited>5000 || depth>12)throw new Error('Skill discovery limit reached; select a narrower subdirectory');
+    const info=await lstat(directory);if(info.isSymbolicLink()||!info.isDirectory())return;
+    const file=join(directory,'SKILL.md');
+    if(await exists(file)){
+     const subdir=relative(checkout.temporary,directory).split(sep).join('/')||'.';
+     try{
+      const fileInfo=await lstat(file);if(!fileInfo.isFile()||fileInfo.isSymbolicLink())throw new Error('SKILL.md must be a regular file');
+      const m=await metadata(file);let problem:string|undefined;
+      try{await this.digest(directory);}catch(e){problem=e instanceof Error?e.message:'Invalid Skill package';}
+      skills.push({name:m.name,description:m.description,subdir,installed:records.some(r=>r.name===m.name)||await exists(join(scope.directory,m.name)),...(problem?{problem}:{})});
+     }catch{warnings.push('Invalid SKILL.md: '+subdir);}
+     if(skills.length>200)throw new Error('More than 200 Skills; select a narrower subdirectory');
+     return;
+    }
+    for(const name of (await readdir(directory)).sort()){if(name!=='.git')await walk(join(directory,name),depth+1);}
+   };
+   await walk(checkout.directory,0);
+   return {...source,revision:checkout.revision,skills,warnings};
+  }finally{await rm(checkout.temporary,{recursive:true,force:true});}
+ }
+ private async fetch(source:{repoUrl:string;ref:string;subdir:string}){
+  const checkout=await this.checkout(source);
+  try{
+   if(!await exists(join(checkout.directory,'SKILL.md')))throw new Error('No SKILL.md in the selected directory. Read the repository Skill list and select packages, or specify a Skill subdirectory.');
+   await this.digest(checkout.directory);const m=await metadata(join(checkout.directory,'SKILL.md'));
+   return {...checkout,...m};
+  }catch(e){await rm(checkout.temporary,{recursive:true,force:true});throw e;}
  }
  private async mutate(scope:Scope,input:any){
   await mkdir(this.root,{recursive:true,mode:0o700});const lock=join(this.root,'mutation.lock');
@@ -140,9 +181,11 @@ export class SkillManager {
     if(await this.digest(current)!==record.digest)throw new Error('Skill has local edits. Preserve or reconcile them on the VM before updating or toggling.');
    }
    if(input.action==='install'||input.action==='update'){
-    const source=record?{repoUrl:record.repoUrl,ref:record.ref,subdir:record.subdir}:{repoUrl:this.sourceUrl(input.repoUrl),ref:text(input.ref,'HEAD')||'HEAD',subdir:text(input.subdir,'.')||'.'};
-    if(source.ref.startsWith('-')||isAbsolute(source.subdir)||source.subdir.split(/[\\/]/).includes('..'))throw new Error('Invalid Skill ref or subdirectory');
+    const source=this.source(record??input);
+    const expectedRevision=text(input.expectedRevision);
+    if(expectedRevision&&!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(expectedRevision))throw new Error('Invalid preview revision');
     fetched=await this.fetch(source);
+    if(expectedRevision&&fetched.revision!==expectedRevision)throw new Error('Skill source changed since preview; read the repository list again before installing.');
     if(record&&fetched.name!==record.name)throw new Error('Updated Skill changed its name; install it separately');
     if(!record&&(records.some(r=>r.key===scope.key&&r.name===fetched!.name)||await exists(join(scope.directory,fetched.name))))throw new Error('A Skill with this name already exists; it was not overwritten');
     const snapshot=join(this.root,'versions',randomUUID());await mkdir(dirname(snapshot),{recursive:true,mode:0o700});

@@ -10,7 +10,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
-  if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
+  if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='discover'?{revision:'a'.repeat(40),skills:[{name:'demo',description:'Demo skill',subdir:'skills/demo',installed:false},{name:'other',description:'Other skill',subdir:'skills/other',installed:false}],warnings:[]}:body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
@@ -240,6 +240,9 @@ it('installs a Skill with explicit source and scope, and handles legacy Hosts wi
  const app=await setup();document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
  for(const [id,value] of [['skill-url','https://example.com/skills.git'],['skill-ref','v1'],['skill-subdir','skills/demo']])(document.querySelector('#'+id) as HTMLInputElement).value=value;
  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.some(r=>r.action==='install')).toBe(false);
+ const check=document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!;check.checked=true;check.dispatchEvent(new Event('change'));
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='install')).toMatchObject({engine:'pi',scope:'user',repoUrl:'https://example.com/skills.git',ref:'v1',subdir:'skills/demo'});
  const original=fetch;vi.stubGlobal('fetch',vi.fn((url:any,init:any)=>url==='/api/skills'?Promise.resolve({ok:false,status:404,json:async()=>({error:'Unavailable'})}):original(url,init)));
  document.querySelector<HTMLButtonElement>('#skills-refresh')!.click();await vi.advanceTimersByTimeAsync(20);
@@ -355,4 +358,29 @@ it('defaults to groups, restores the original list when unchecked, and keeps sav
  toggle().click();await vi.advanceTimersByTimeAsync(20);
  expect(toggle().getAttribute('aria-checked')).toBe('true');expect(document.querySelector<HTMLUListElement>('.project-group-list')!.hidden).toBe(true);
  expect(app.frames.filter(f=>f.type==='open')).toHaveLength(openCount);
+});
+
+it('previews a Skill collection and reports partial installation without retrying successful selections',async()=>{
+ const app=await setup();const original=fetch;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):{};
+  if(url==='/api/skills'&&body.action==='install'&&body.subdir==='skills/other'){app.requests.push(body);return {ok:false,status:409,json:async()=>({error:'Package was changed; inspect source'})};}
+  return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/collection.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install')).toHaveLength(0);
+ const choices=[...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]')];expect(choices).toHaveLength(2);
+ expect(choices.every(c=>!c.checked)).toBe(true);
+ for(const checkbox of choices){checkbox.checked=true;checkbox.dispatchEvent(new Event('change'));}
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install').map(r=>[r.subdir,r.expectedRevision])).toEqual([['skills/demo','a'.repeat(40)],['skills/other','a'.repeat(40)]]);
+ expect(document.querySelector('#skills-status')!.textContent).toContain('1 成功，1 失败');
+ expect(document.querySelector('#skill-candidates')!.textContent).toContain('Package was changed');
+ expect(document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.disabled).toBe(true);
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install'&&r.subdir==='skills/demo')).toHaveLength(1);
+ const agent=document.querySelector<HTMLSelectElement>('#skills-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('[data-skill-subdir]')).toHaveLength(0);
 });
