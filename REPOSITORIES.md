@@ -20,10 +20,12 @@ do not alter native Codex or Claude tools or authentication.
 
 Server's `package.json` and `package-lock.json` specify the actual immutable plugin
 artifacts. A Pi repository's latest main does not automatically update this Server.
-The old aggregate `pi-coffee` dependency remains pinned at `1ec49a9` for unaffected
-legacy integrations; it does not supply the current Harness or Handoff. The source
-of that historical distribution is preserved under Pi `compatibility/aggregate`;
-upgrading/removing it requires its own native-subagent/LSP compatibility acceptance.
+The P0–P9 candidate removes the historical aggregate. Maintained package roots
+are discovered by native Pi; Host starts with --no-extensions plus the selected
+explicit roots to avoid executing a second configured/discovered plugin copy.
+User/project Skills and context remain native Pi resources. An explicit
+PI_COFFEE_EXTENSIONS list replaces the default set; off loads no extensions.
+See [candidate evidence](docs/development/pi-099-p0-p9-evidence.md).
 
 Use [the release runbook](docs/deployment/unified-release.md) and recorded deployment
 evidence to identify the running service. A source push or package release alone is
