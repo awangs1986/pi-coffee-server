@@ -36,3 +36,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Native Codex Skill completion: [contract](spec/skill-management.md#codex-completion-2026-09-30), [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10).
 
 - Native context presets, Codex totals/compaction and send-gated attachments: [context contract](spec/context-usage.md#native-context-controls-2026-09-30), [attachment boundary](spec/task-storage.md#attachment-send-boundary-2026-09-30), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
+
+- Compact transcript file summaries: [contract](spec/arena-navigation.md#compact-transcript-file-summaries-2026-09-30), [Server #12](https://github.com/awangs1986/pi-coffee-server/issues/12).

@@ -254,3 +254,14 @@ GitHub functionality from ADR-0022 remains authoritative. Host's configured
 GitHub token lists repositories; the VM owner's native Git credentials perform
 Git operations. Web never receives the token. Deployment must validate both
 capability configuration and actual repository selection, not just source code.
+
+## Compact transcript file summaries (2026-09-30)
+
+The conversation does not automatically append a workspace artifact gallery on
+load, polling or turn completion. Explicit Agent file links, previews and downloads
+remain available. This display policy does not delete or relocate task files.
+
+Each edited-files summary is collapsed by default and occupies one row with the
+file count and additions/deletions. Its accessible disclosure opens the entire
+file list and review action; clicking again collapses it. Selecting a listed file
+opens that file in Diff. Workspace polling must not reopen a collapsed summary.

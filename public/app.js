@@ -1247,7 +1247,7 @@ function handleFrame(frame, ws) {
       renderPlugins(Array.isArray(frame.extensions) ? frame.extensions : []);
       return;
     case 'transfer':
-      setTimeout(()=>{if(workspaceState) {renderWorkspaceList();void refreshArtifactCards();void refreshWorkspaceChanges(false).catch(()=>undefined);}},0);
+      setTimeout(()=>{if(workspaceState) {renderWorkspaceList();void refreshWorkspaceChanges(false).catch(()=>undefined);}},0);
       if (frame.sessionId !== activeId) return;
       transfer = normalizeTransferGrant(frame, frame.sessionId);
       refreshToolDownloadLinks();
@@ -2373,7 +2373,6 @@ async function loadWorkspace() {
           refreshToolDownloadLinks();
           renderUploadLogCard();
           bindWorkspaceArtifacts();
-          void refreshArtifactCards();
           if(filesAwaitingTransfer.length){const queued=filesAwaitingTransfer;filesAwaitingTransfer=[];void uploadFiles(queued);}
         }
         void refreshWorkspaceStatus();
@@ -2685,9 +2684,9 @@ function changedFileRow(file, { selected = false } = {}) {
 function changedFilesCard(data) {
   const add=data.files.reduce((sum,file)=>sum+(typeof file.additions==='number' ? file.additions : 0),0);
   const del=data.files.reduce((sum,file)=>sum+(typeof file.deletions==='number' ? file.deletions : 0),0);
-  const card=el('section','changes-card');
+  const card=el('details','changes-card');
   card.setAttribute('aria-label','本轮 Checkout 变更');
-  const head=el('div','changes-card-head');
+  const head=el('summary','changes-card-head');
   head.append(
     el('strong','changes-card-title',`已编辑 ${data.files.length} 个文件`),
     el('span','changes-card-stats',`+${add} −${del}`),
@@ -2700,12 +2699,6 @@ function changedFilesCard(data) {
     list.append(row);
   }
   card.append(list);
-  if(data.files.length>3) {
-    const more=el('button','changes-card-more',`展开其余 ${data.files.length - 3} 个文件`);
-    more.type='button';
-    more.addEventListener('click',()=>{const expanded=card.classList.toggle('expanded');more.textContent=expanded ? '收起文件列表' : `展开其余 ${data.files.length - 3} 个文件`;});
-    card.append(more);
-  }
   const actions=el('div','changes-card-actions');
   const review=el('button','btn small','查看改动');
   review.type='button';review.addEventListener('click',()=>showWorkspaceReview('diff'));
@@ -2980,45 +2973,6 @@ function bindWorkspaceArtifacts() {
  }
 }
 new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});
-
-let artifactSignature='';
-async function refreshArtifactCards() {
- if(!workspaceState || !transfer || !activeId)return;
- const id=activeId;
- try {
-  let r;
-  try {
-    r=await fetch(fileEndpoint('artifacts'));
-  } catch (err) {
-    if (transfer && transfer.url !== location.origin) {
-      preferSameOriginTransfer = true;
-      transfer = { ...transfer, url: location.origin };
-      refreshToolDownloadLinks();
-      renderUploadLogCard();
-      bindWorkspaceArtifacts();
-      r=await fetch(fileEndpoint('artifacts'));
-    } else throw err;
-  }
-  if(!r.ok)return;const data=await r.json();if(id!==activeId)return;
-  data.artifacts=data.artifacts?.filter(file=>!/^(?:\.\.\/attachments|(?:\.pi-coffee\/)?inbox)(?:\/|$)/.test(file.path));
-  const signature=id+JSON.stringify(data.artifacts)+transfer.token;
-  if(signature===artifactSignature && $('#generated-artifacts'))return;
-  artifactSignature=signature;$('#generated-artifacts')?.remove();
-  if(!data.artifacts?.length)return;
-  const section=el('section','generated-artifacts');section.id='generated-artifacts';section.append(el('h3','','工作区产物'));
-  for(const file of data.artifacts.slice(0,20)) {
-    const card=el('div','generated-card');card.append(el('span','',file.path));
-    if(!file.available)card.append(el('span','', '文件已移除或不可访问'));
-    else {
-      const open=el('a','','打开');open.href=fileEndpoint('preview',file.path);open.target='_blank';open.rel='noopener noreferrer';open.addEventListener('click',(e)=>{e.preventDefault();void showWorkspacePreview(file.path);});
-      const download=el('a','','下载');download.href=fileEndpoint('workspace-download',file.path);download.target='_blank';download.rel='noopener noreferrer';card.append(open,download);
-      if(/\.(png|jpe?g|gif|webp|svg)$/i.test(file.path)){const img=document.createElement('img');img.src=open.href;img.alt=file.path;img.onerror=()=>{img.alt='预览不可用：'+file.path;};const link=open.cloneNode(false);link.append(img);card.append(link);}
-    }
-    section.append(card);
-  }
-  ui.thread.append(section);
- }catch { /* Browsing failure must not fail the running chat. Refresh/reconnect can retry. */ }
-}
 
 // restore=true when the user closes the panel: bring back the Checkout panel it replaced and the focus.
 function closeDiffDialog(restore=false) {

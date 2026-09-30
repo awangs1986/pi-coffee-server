@@ -30,6 +30,7 @@ async function setup({task={},changes={},turn,status,failCreate=false}:Options={
   vi.stubGlobal('WebSocket',Socket);vi.stubGlobal('open',vi.fn());
   const json=(value:unknown,ok=true)=>({ok,status:ok ? 200 : 409,json:async()=>value});
   vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+    if(String(url).includes('/artifacts?'))return json({artifacts:[{path:'output/report.html',available:true}]});
     if(url==='/api/engines')return json({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true},{id:'claude',name:'Claude Code',available:true}]});
     if(url==='/api/me')return json(null);
     if(url==='/auth/me')return json({auth:false});
@@ -307,6 +308,24 @@ it('refreshes the open Diff and renders the changed-files card when a native run
   expect(q('#thread .changes-card')).not.toBeNull();
   await vi.advanceTimersByTimeAsync(2000);
   expect(turnReads()).toBe(opened+1);
+});
+
+it('keeps edited files collapsed until clicked and does not insert workspace artifact galleries',async()=>{
+  const app=await setup();
+  const card=q<HTMLDetailsElement>('#thread .changes-card');
+  expect(card.tagName).toBe('DETAILS');expect(card.open).toBe(false);
+  const summary=card.querySelector('summary')!;expect(summary.textContent).toContain('已编辑 2 个文件');
+  summary.click();expect(card.open).toBe(true);
+  expect(card.querySelectorAll('.workspace-change-row')).toHaveLength(2);
+  card.querySelector<HTMLButtonElement>('.workspace-change-row')!.click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLDialogElement>('#diff-dialog').open).toBe(true);
+  summary.click();expect(card.open).toBe(false);
+  for(let turn=0;turn<2;turn++){
+    app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'agent_end'}});
+    await vi.advanceTimersByTimeAsync(5100);
+    expect(q('#thread').textContent).not.toContain('工作区产物');
+    expect(q('#thread').textContent).not.toContain('output/report.html');
+  }
 });
 
 it('uploads attachments with hashed authenticated scopes, refreshes expired tokens, and includes new-task files in the first prompt',async()=>{
