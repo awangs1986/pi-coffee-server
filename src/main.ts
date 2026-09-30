@@ -1,3 +1,5 @@
+import {homedir} from "node:os";
+import {RunnerManager} from "./host/runners.js";
 import {taskRootForScope} from './host/task-storage.js';
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
@@ -115,11 +117,13 @@ async function run(selectedRole: Role): Promise<void> {
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,github});
     await workspaces.list();
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
-    const codexOptions={cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
+    const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
+    const instructions=()=>runners.instruction();
+    const codexOptions={instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
-    const factory=new NativeAgentFactory({workspaces,
-      pi:new RpcPiSessionFactory({...piOptions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:withCoffeeLspPath(),
+    const factory=new NativeAgentFactory({workspaces,instructions,
+      pi:new RpcPiSessionFactory({...piOptions,instructions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:withCoffeeLspPath(),
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
         envForSession:async id=>await workspaces.lookup(id) ? workspaces.runtimeEnvironment(id) : {},
       }),
@@ -130,7 +134,7 @@ async function run(selectedRole: Role): Promise<void> {
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
+    return {workdir:cwd,workspaces,factory,runners,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);

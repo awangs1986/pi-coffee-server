@@ -1,4 +1,5 @@
 
+import type { RunnerManager } from "./runners.js";
 import { createHash } from "node:crypto";
 import { SkillManager, type SkillManagerOptions } from "./skills.js";
 import { capabilitiesFor } from "../shared/protocol.js";
@@ -41,6 +42,7 @@ export interface UserScope {
   workdir?: string;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  runners?: RunnerManager;
 }
 
 export interface HostServerOptions {
@@ -68,6 +70,7 @@ export interface HostServerOptions {
   transfer?: TransferServer;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  runners?: RunnerManager;
 
   /** Poll interval for turns driven outside this Host (terminal take-over); default 3 s. */
   externalPollMs?: number;
@@ -82,6 +85,7 @@ interface UserSlot {
   broadcastTimer?: ReturnType<typeof setTimeout>;
   workspaces?: Workspaces;
   skills?: SkillManager;
+  runners?: RunnerManager;
   lifecycleLocks: Set<string>;
 
 }
@@ -115,6 +119,7 @@ export class HostServer {
   private readonly workspaces?: Workspaces;
   private execution?:ExecutionCapability;
   private readonly skillsOptions?: SkillManagerOptions;
+  private readonly runners?: RunnerManager;
 
   constructor(options: HostServerOptions) {
     this.factory = options.factory;
@@ -129,6 +134,7 @@ export class HostServer {
     this.sharedSkillOwner = options.sharedSkillOwner;
     this.workspaces = options.workspaces;
     this.skillsOptions = options.skills;
+    this.runners = options.runners;
     this.registryOptions = {
 
       eventBufferSize: options.eventBufferSize,
@@ -171,6 +177,13 @@ export class HostServer {
     if(req.url === "/api/engines" && req.method === "GET") {
       try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
+      return;
+    }
+    if(req.url === "/api/runners") {
+      if(!slot.runners){json(res,404,{error:"Runner management is unavailable on this Host"});return;}
+      if(req.method!=="POST"){json(res,405,{error:"Use POST for scoped runner requests"});return;}
+      try {json(res,200,await slot.runners.handle(await readJson(req)));}
+      catch(error){json(res,409,{error:error instanceof Error ? error.message : "Runner operation failed"});}
       return;
     }
     if(req.url === "/api/skills") {
@@ -331,9 +344,9 @@ export class HostServer {
     const created = (async (): Promise<UserSlot> => {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
-        : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions };
+        : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners };
       const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history)} : {}) });
-      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         this.broadcastSessions(slot);
         if(session?.wasInterrupted) void slot.workspaces?.markRun(session.id,"interrupted").catch(()=>undefined);

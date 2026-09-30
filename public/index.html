@@ -28,6 +28,7 @@
               <button id="show-archive" class="brand-menu-item" type="button" role="menuitem">归档对话</button>
               <button id="skills-btn" class="brand-menu-item" type="button" role="menuitem">Skills</button>
               <div class="brand-menu-label">设置</div>
+              <button id="runners-btn" class="brand-menu-item" type="button" role="menuitem">配置测试服务器</button>
               <button class="brand-menu-item" id="show-groups" type="button" role="menuitemcheckbox" aria-checked="true"><span class="group-check" aria-hidden="true">✓</span><span>显示分组</span></button>
               <button class="brand-menu-item theme-toggle" id="theme-toggle" type="button" role="menuitem" aria-pressed="false">
                 <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
@@ -391,5 +392,25 @@
     <div class="toast hidden" id="toast"></div>
 
     <script type="module" src="/app.js"></script>
+
+    <dialog id="runners-dialog" class="runners-dialog" aria-labelledby="runners-title">
+      <div class="runner-heading"><h2 id="runners-title">配置测试服务器</h2><button id="runners-close" type="button" class="icon-btn" aria-label="关闭测试服务器配置">✕</button></div>
+      <p class="runner-help">配置后，Agent 按需读取服务器资料，通过 SSH 执行或测试。密码保存在 VM，不写入项目。</p>
+      <div id="runners-list" class="runners-list"></div>
+      <form id="runner-form" autocomplete="off">
+        <h3 id="runner-form-title">添加服务器</h3>
+        <div class="runner-fields">
+          <label>名称<input id="runner-name" required maxlength="80" placeholder="例如 Linux 测试机" /></label>
+          <label>系统<select id="runner-platform"><option value="linux">Linux</option><option value="windows">Windows · PowerShell</option><option value="wsl">WSL · 直接 SSH</option></select></label>
+          <label>SSH 地址<input id="runner-host" required maxlength="253" placeholder="IP 或主机名" /></label>
+          <label>端口<input id="runner-port" type="number" min="1" max="65535" value="22" required /></label>
+          <label>用户名<input id="runner-username" required maxlength="64" autocomplete="off" /></label>
+          <label>密码<input id="runner-password" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空使用 VM 的 SSH 密钥" /></label>
+          <label class="runner-wide">工作目录（可选）<input id="runner-workdir" maxlength="1024" placeholder="服务器上的完整路径" /></label>
+        </div>
+        <div class="runner-form-foot"><label class="runner-check"><input id="runner-clear-password" type="checkbox" />清除已存密码，使用 SSH 密钥</label><div class="runner-actions"><button id="runner-cancel-edit" type="button" class="btn small hidden">取消编辑</button><button id="runner-save" class="btn small primary" type="submit">保存</button></div></div>
+      </form>
+      <p id="runners-status" class="runner-help" role="status" aria-live="polite"></p>
+    </dialog>
   </body>
 </html>

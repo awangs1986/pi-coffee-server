@@ -1,3 +1,5 @@
+import {writeFileSync} from "node:fs";
+if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(process.argv));
 // Claude 2.1.280 native stream-json and session-file boundary fixture.
 import {createInterface} from 'node:readline';import {mkdir,appendFile,readFile} from 'node:fs/promises';import {join} from 'node:path';
 if(process.argv.includes('--version')){console.log('2.1.280 (Claude Code)');process.exit(0);}

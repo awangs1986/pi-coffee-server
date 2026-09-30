@@ -16,11 +16,13 @@ export class CodexSession implements AgentSession {
   private questions=new NativeQuestions(event=>this.emit(event));
   private requests=new Map<string,{id:string|number;method:string;params:any}>();
   private readonly process:NativeProcess;
-  constructor(command:NativeCommand,private cwd:string){this.process=new NativeProcess(command,["app-server"],cwd);}
+  constructor(command:NativeCommand,private cwd:string,private instructions?:()=>Promise<string|undefined>){this.process=new NativeProcess(command,["app-server"],cwd);}
   async start(nativeId:string|undefined,bind:(id:string)=>Promise<void>) {
     await this.process.call("initialize",{clientInfo:{name:"pi_coffee",version:"0.1.0"},capabilities:{experimentalApi:true}});
     this.process.send({method:"initialized"});
-    const result=await this.process.call(nativeId?"thread/resume":"thread/start",nativeId?{threadId:nativeId}:{cwd:this.cwd});
+    let extra:{}|{developerInstructions:string}={};
+    if(this.instructions){const result=await this.process.call('config/read',{includeLayers:false,cwd:this.cwd});const configured=result.config?.developer_instructions;extra={developerInstructions:[typeof configured==='string'?configured:undefined,await this.instructions()].filter(Boolean).join('\n')};}
+    const result=await this.process.call(nativeId?"thread/resume":"thread/start",nativeId?{threadId:nativeId,...extra}:{cwd:this.cwd,...extra});
     this.initialThread=result.thread;this.threadId=result.thread.id;this.model=result.model??result.thread.model;
     if(nativeId && this.threadId!==nativeId)throw new Error("Native resume changed the Session identity");
     await bind(this.threadId);

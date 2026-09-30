@@ -9,7 +9,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
@@ -84,14 +84,14 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(task.engine==="claude"){
       if(!task.nativeBinding)await this.options.workspaces.setNativeBinding(sessionId,{state:"prepared",requestedId:randomUUID()});
       const extraDirs=task.taskRoot?[await this.options.workspaces.dataRoot(sessionId)]:[];
-      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs);
+      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs,await this.options.instructions?.());
       try{return await session.start();}catch(error){await session.stop();throw error;}
     }
     const nativeId=task.nativeBinding?.id;
     if(!nativeId)await this.options.workspaces.setNativeBinding(sessionId,{state:"starting"});
     const advanced=this.codexFactory(sessionId,cwd);
     if(advanced)return advanced.create({sessionId:nativeId ?? sessionId,requireExisting:Boolean(nativeId)});
-    const session=new CodexSession(config,cwd);
+    const session=new CodexSession(config,cwd,this.options.instructions);
     try{return await session.start(nativeId,id=>this.options.workspaces.setNativeBinding(sessionId,{state:"bound",id}));}
     catch(error){await session.stop();throw error;}
   }
