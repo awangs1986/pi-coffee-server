@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,7 +39,7 @@ describe("original Pi RPC adapter", () => {
     session.attach({send:frame=>frames.push(frame)});
     try {
       session.reservePrompt("r1");
-      // The pinned RpcClient.prompt() swallows success:false; the adapter must not.
+      // Native RPC rejects failed input; Host must release its reservation.
       await expect(session.prompt("r1","reject: no key")).rejects.toThrow(/No API key/);
       expect(session.isBusy).toBe(false);
       // The next prompt is accepted normally.
@@ -47,6 +47,22 @@ describe("original Pi RPC adapter", () => {
       await waitFor(()=>frames.some(frame=>frame.type==="event" && isEvent(frame.event,"agent_settled")));
     }finally{await registry.close();rmSync(sessionDir,{recursive:true,force:true});}
   },10_000);
+  it("does not settle an active run when steering or follow-up input is handled", async()=>{
+    const factory=new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs")});
+    const registry=new HostSessionRegistry({factory,idleTimeoutMs:0});
+    const {session}=await registry.open("handled-during-run");
+    const frames:ServerFrame[]=[];session.attach({send:f=>frames.push(f)});
+    try{
+      session.reservePrompt("active");await session.prompt("active","ask: stay active");
+      await waitFor(()=>session.isStreaming);
+      await session.enqueue("steer","handled: no new run");await session.enqueue("follow_up","handled: no new run");
+      expect(session.isBusy).toBe(true);expect(()=>session.reservePrompt("other")).toThrow(/already running/);
+      expect(frames.some(f=>f.type==="event" && isEvent(f.event,"agent_settled"))).toBe(false);
+      const dialog=frames.find(f=>f.type==="event" && isEvent(f.event,"extension_ui_request")) as any;
+      await session.respondUi({id:dialog.event.id,confirmed:true});await waitFor(()=>!session.isBusy);
+    }finally{await registry.close();}
+  });
+
   it("strips Relay credentials from the spawned Host Pi environment", () => {
     const env = buildHostChildEnv({ PI_COFFEE_UPSTREAM_KEY: "override", SAFE_SETTING: "kept" });
     expect(env.SAFE_SETTING).toBe("kept");
@@ -172,8 +188,14 @@ describe("original Pi RPC adapter", () => {
       } finally {
         await session.stop();
       }
-      // Deleting removes the file from the store; unknown ids are reported, not thrown.
+      const evidence=join(sessionDir,"artifacts",id);
+      const otherEvidence=join(sessionDir,"artifacts","another-session");
+      mkdirSync(evidence,{recursive:true});mkdirSync(otherEvidence,{recursive:true});
+      writeFileSync(join(evidence,"result.txt"),"retained research");
+      // Permanent session deletion removes its evidence without touching other sessions.
       expect(await factory.delete(id)).toBe(true);
+      expect(existsSync(evidence)).toBe(false);
+      expect(existsSync(otherEvidence)).toBe(true);
       expect(await factory.list()).toEqual([]);
       expect(await factory.delete(id)).toBe(false);
     } finally {

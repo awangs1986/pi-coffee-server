@@ -93,6 +93,7 @@ async function run(selectedRole: Role): Promise<void> {
     model: process.env.PI_COFFEE_MODEL,
     allowedModels: process.env.PI_COFFEE_PI_ALLOWED_MODELS === undefined ? undefined : envList("PI_COFFEE_PI_ALLOWED_MODELS", ","),
     extensions: resolveHostPiExtensions(),
+    args: ["--no-extensions"], // Only the reviewed package roots execute in Host sessions.
   };
   const sessionRoot = process.env.PI_COFFEE_SESSION_DIR?.trim();
   // Which agent runs behind the seam (ADR-0011): the original Pi (default) or
@@ -118,7 +119,7 @@ async function run(selectedRole: Role): Promise<void> {
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,
-      pi:new RpcPiSessionFactory({...piOptions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),skills:resolvePiSkills(),env:withCoffeeLspPath(),
+      pi:new RpcPiSessionFactory({...piOptions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:withCoffeeLspPath(),
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
         envForSession:async id=>await workspaces.lookup(id) ? workspaces.runtimeEnvironment(id) : {},
       }),
