@@ -9,12 +9,12 @@ import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
 const exec=promisify(execFile);let server:HostServer|undefined;let root='';
 afterEach(async()=>{await server?.close();server=undefined;if(root)await rm(root,{recursive:true,force:true});});
-async function setup(){
+async function setup(bundledPiSkills:string[]=[]){
  root=await mkdtemp(join(tmpdir(),'coffee-skills-'));const source=join(root,'source');await mkdir(join(source,'skills','example'),{recursive:true});
  await cp('test/fixtures/skills/example',join(source,'skills/example'),{recursive:true});
  const git=(...args:string[])=>exec('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:source});await git('init','-b','main');await git('add','.');await git('commit','-m','skill');
  const workspaces=new Workspaces(join(root,'projects'),{chatRoot:join(root,'chats')});
- const start=async()=>{server=new HostServer({port:0,token:'skills-test',factory:{list:async()=>[],delete:async()=>false,create:async()=>({getState:async()=>({isStreaming:false,messageCount:0}),getHistory:async()=>({entries:[],leafId:null}),onEvent:()=>()=>{},stop:async()=>{},backgroundState:async()=>({known:true,active:0}),prompt:async()=>{throw new Error('No model calls');}} as any)},workspaces,skills:{home:join(root,'home'),root:join(root,'managed'),allowLocalSources:true}});
+ const start=async()=>{server=new HostServer({port:0,token:'skills-test',factory:{list:async()=>[],delete:async()=>false,create:async()=>({getState:async()=>({isStreaming:false,messageCount:0}),getHistory:async()=>({entries:[],leafId:null}),onEvent:()=>()=>{},stop:async()=>{},backgroundState:async()=>({known:true,active:0}),prompt:async()=>{throw new Error('No model calls');}} as any)},workspaces,skills:{home:join(root,'home'),root:join(root,'managed'),allowLocalSources:true,bundledPiSkills}});
  await server.start();};await start();const url=`http://127.0.0.1:${server.address().port}/api/skills`;
  const call=async(body:any,token='skills-test')=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/skills`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
  return {source,git,call,workspaces,url,start};
@@ -120,4 +120,62 @@ it('does not follow linked Skill metadata or install linked resources discovered
  expect(preview.body.warnings).toContain('Invalid SKILL.md: skills/linked');
  expect((await call({...scope,action:'install',repoUrl:source,subdir:'skills/example'})).status).toBe(409);
  expect((await call({...scope,action:'list'})).body.skills).toEqual([]);
+});
+
+it('reversibly disables a native Skill, permits a managed replacement and refuses conflicting restore',async()=>{
+ const {source,call,start}=await setup(),scope={engine:'pi',scope:'user'};
+ const native=join(root,'home/.pi/agent/skills/manual-folder');await cp('test/fixtures/skills/example',native,{recursive:true});
+ await writeFile(join(native,'reference.txt'),'native original');
+ const original=(await call({...scope,action:'list'})).body.skills[0];expect(original).toMatchObject({managed:false,enabled:true,canDisable:true});
+ const preview=await call({...scope,action:'discover',repoUrl:source});expect(preview.body.skills[0].installed).toBe(true);
+ expect((await call({...scope,action:'install',repoUrl:source,subdir:'skills/example'})).status).toBe(409);
+ expect((await call({...scope,engine:'claude',action:'disable_native',id:original.id})).status).toBe(409);
+ expect((await call({...scope,action:'disable_native',id:original.id})).status).toBe(200);
+ const load=()=>loadSkills({cwd:root,skillPaths:[],includeDefaults:true,agentDir:join(root,'home/.pi/agent')}).skills.map(s=>s.name);
+ expect(load()).not.toContain('example');
+ await server!.close();await start();
+ const disabled=(await call({...scope,action:'list'})).body.skills[0];expect(disabled).toMatchObject({enabled:false,canRestore:true,managed:false});
+ expect((await call({...scope,action:'detail',id:disabled.id})).body.content).toContain('Use the reference.');
+ expect((await call({...scope,action:'discover',repoUrl:source})).body.skills[0].installed).toBe(false);
+ const installed=await call({...scope,action:'install',repoUrl:source,subdir:'skills/example'});expect(installed.status).toBe(200);
+ expect((await call({...scope,action:'restore_native',id:disabled.id})).status).toBe(409);
+ expect((await call({...scope,action:'disable',id:installed.body.skill.id})).status).toBe(200);
+ expect((await call({...scope,action:'restore_native',id:disabled.id})).status).toBe(200);
+ expect(load()).toEqual(['example']);expect(await readFile(join(native,'reference.txt'),'utf8')).toBe('native original');
+ expect((await call({...scope,action:'enable',id:installed.body.skill.id})).status).toBe(409);
+});
+
+
+it('keeps bundled and linked native sources read-only and never restores over newly occupied paths',async()=>{
+ const bundles:string[]=[];const {call}=await setup(bundles),scope={engine:'pi',scope:'user'};
+ const {symlink}=await import('node:fs/promises');
+ const native=join(root,'home/.pi/agent/skills/manual');await cp('test/fixtures/skills/example',native,{recursive:true});
+ bundles.push(native);
+ let item=(await call({...scope,action:'list'})).body.skills[0];expect(item.canDisable).toBe(false);
+ expect((await call({...scope,action:'disable_native',id:item.id})).status).toBe(409);
+ bundles.pop();
+ await symlink(native,join(root,'home/.pi/agent/skills/alias'));
+ item=(await call({...scope,action:'list'})).body.skills.find((s:any)=>s.path.includes('/alias/'));
+ expect(item.canDisable).toBe(false);expect((await call({...scope,action:'disable_native',id:item.id})).status).toBe(409);
+ await rm(join(root,'home/.pi/agent/skills/alias'));
+ item=(await call({...scope,action:'list'})).body.skills[0];
+ expect((await call({...scope,action:'disable_native',id:item.id},'wrong')).status).toBe(401);
+ expect((await call({...scope,action:'disable_native',id:item.id})).status).toBe(200);
+ const disabled=(await call({...scope,action:'list'})).body.skills[0];
+ await mkdir(native);await writeFile(join(native,'keep.txt'),'keep');
+ expect((await call({...scope,action:'restore_native',id:disabled.id})).status).toBe(409);
+ expect(await readFile(join(native,'keep.txt'),'utf8')).toBe('keep');
+ expect((await call({...scope,action:'detail',id:disabled.id})).body.content).toContain('Use the reference.');
+});
+
+it.each(['codex','claude'])('disables and restores native %s Skills without touching the other engine roots',async(engine)=>{
+ const {call}=await setup(),scope={engine,scope:'user'};
+ const native=join(root,'home',engine==='codex'?'.agents/skills':'.claude/skills','manual');
+ await cp('test/fixtures/skills/example',native,{recursive:true});
+ const item=(await call({...scope,action:'list'})).body.skills[0];
+ expect((await call({...scope,action:'disable_native',id:item.id})).status).toBe(200);
+ const disabled=(await call({...scope,action:'list'})).body.skills[0];
+ expect((await call({...scope,action:'restore_native',id:disabled.id})).status).toBe(200);
+ expect(await readFile(join(native,'reference.txt'),'utf8')).toBe('original');
+ expect((await call({engine:'pi',scope:'user',action:'list'})).body.skills).toEqual([]);
 });

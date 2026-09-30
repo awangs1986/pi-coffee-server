@@ -384,3 +384,50 @@ it('previews a Skill collection and reports partial installation without retryin
  const agent=document.querySelector<HTMLSelectElement>('#skills-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelectorAll('[data-skill-subdir]')).toHaveLength(0);
 });
+
+it('selects only visible installable Skills and clears that selection without installing anything',async()=>{
+ const app=await setup(),original=fetch;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  if(url==='/api/skills'&&JSON.parse(init.body).action==='discover')return {ok:true,json:async()=>({revision:'a'.repeat(40),skills:[
+   {name:'demo',description:'Demo',subdir:'demo'}, {name:'other',description:'Other',subdir:'other'},
+   {name:'existing',description:'Existing',subdir:'existing',installed:true}, {name:'invalid',description:'Invalid',subdir:'invalid',problem:'symlink'}
+  ]})};return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/collection.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const all=document.querySelector<HTMLButtonElement>('#skills-select-all');expect(all).not.toBeNull();
+ const search=document.querySelector<HTMLInputElement>('#skill-candidates input[type=search]')!;
+ search.value='demo';search.dispatchEvent(new Event('input'));all!.click();
+ expect([...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]:checked')].map(c=>c.dataset.skillSubdir)).toEqual(['demo']);
+ search.value='';search.dispatchEvent(new Event('input'));all!.click();
+ expect([...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]:checked')].map(c=>c.dataset.skillSubdir)).toEqual(['demo','other']);
+ expect(document.querySelector('#skills-install')!.textContent).toContain('2');
+ document.querySelector<HTMLButtonElement>('#skills-select-none')!.click();
+ expect(document.querySelectorAll('[data-skill-subdir]:checked')).toHaveLength(0);
+ expect(app.requests.filter(r=>r.action==='install')).toHaveLength(0);
+});
+
+it('offers native disable and restore while leaving plugin Skills read-only and invalidating stale previews',async()=>{
+ const app=await setup(),original=fetch;let disabled=false;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):{};
+  if(url==='/api/skills'&&body.action==='list')return {ok:true,json:async()=>({directory:'/native',skills:[
+   {id:'native',name:'native',description:'Native',managed:false,enabled:!disabled,canDisable:!disabled,canRestore:disabled,path:'/native/native/SKILL.md'},
+   {id:'bundled',name:'lsp',description:'Bundled',managed:false,enabled:true,path:'/plugin/lsp/SKILL.md'}
+  ]})};
+  if(url==='/api/skills'&&['disable_native','restore_native'].includes(body.action)){app.requests.push(body);disabled=body.action==='disable_native';return {ok:true,json:async()=>({ok:true})};}
+  return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('[data-skill-subdir]').length).toBeGreaterThan(0);
+ const disable=document.querySelector<HTMLButtonElement>('[data-skill-action="disable_native"]');expect(disable).not.toBeNull();disable!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.at(-1)).toMatchObject({action:'disable_native',engine:'pi',scope:'user',id:'native'});
+ expect(document.querySelectorAll('[data-skill-subdir]')).toHaveLength(0);
+ expect(document.querySelector('#skills-list')!.textContent).toContain('已停用 · 保留备份');
+ const plugin=[...document.querySelectorAll('.skill-card')].find(e=>e.textContent!.includes('Bundled'))!;expect(plugin.querySelectorAll('button')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('[data-skill-action="restore_native"]')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.at(-1)).toMatchObject({action:'restore_native',id:'native'});
+});
