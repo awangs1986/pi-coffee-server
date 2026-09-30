@@ -167,6 +167,7 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < all.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/start": {
+      writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake" };
       threads[thread.id] = thread;
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
@@ -175,6 +176,7 @@ rl.on("line", (line) => {
       return notify("thread/started", { thread: threadView(thread, false) });
     }
     case "thread/resume": {
+      writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
@@ -217,7 +219,7 @@ rl.on("line", (line) => {
     case "thread/compact/start": {
       reply({});
       const item = { type: "contextCompaction", id: uid("item") };
-      return notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });
+      setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
     case "config/read": return reply({config:{model:"gpt-fake-mini"}});
     case "skills/list": {

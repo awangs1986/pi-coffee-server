@@ -86,7 +86,7 @@
 
           <span id="sync-state" class="sync-state hidden" aria-live="polite"></span>
           <button id="migrate-workspace" class="btn small hidden">迁移 Checkout</button>
-          <button id="checkpoint-workspace" class="btn small hidden">Checkpoint</button>
+          <button id="checkpoint-workspace" class="btn small hidden">提交并推送</button>
           <button id="files-toggle" class="icon-btn" type="button" aria-label="打开变更面板" title="变更文件" aria-expanded="false" aria-controls="workspace-panel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V4h6l3 3h9v13H3V7Zm0 3h18"/></svg></button>
           </div>
           <div class="topbar-meta hidden" id="session-meta"></div>
@@ -168,12 +168,14 @@
                       <button class="agent-menu-row" id="agent-source-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型来源</span><span class="agent-row-value"><span id="agent-source-value">Native</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <button class="agent-menu-row" id="agent-model-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>模型</span><span class="agent-row-value"><span id="agent-model-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <button class="agent-menu-row hidden" id="agent-thinking-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>思考深度</span><span class="agent-row-value"><span id="agent-thinking-value">—</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
+                      <button class="agent-menu-row" id="agent-context-row" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span>上下文</span><span class="agent-row-value"><span id="agent-context-value">272k</span><span class="agent-row-caret" aria-hidden="true">›</span></span></button>
                       <p class="agent-menu-note hidden" id="agent-menu-note"></p>
                     </div>
                     <div class="agent-pane hidden" id="agent-engine-pane" role="menu" aria-label="Agent"></div>
                     <div class="agent-pane hidden" id="agent-kind-pane" role="menu" aria-label="任务来源"></div>
                     <div class="agent-pane hidden" id="agent-source-pane" role="menu" aria-label="模型来源"></div>
                     <div class="agent-pane hidden" id="agent-model-pane" role="menu" aria-label="模型"></div>
+                    <div class="agent-pane hidden" id="agent-context-pane" role="menu" aria-label="上下文设置"></div>
                     <div class="agent-pane hidden" id="agent-thinking-pane" role="menu" aria-label="思考深度"></div>
                   </div>
                 </div>
@@ -247,7 +249,7 @@
               <button id="create-task" class="strip-btn hidden" type="button">创建任务</button>
             </div>
             <div class="strip-right">
-              <button id="branch-diff" class="strip-btn strip-diff hidden" type="button" aria-controls="diff-dialog" title="查看 Diff（任务分支 vs 基线分支）">
+              <button id="branch-diff" class="strip-btn strip-diff hidden" type="button" aria-controls="diff-dialog" title="查看改动（任务分支 vs 基线分支）">
                 <span class="wt-add" id="branch-diff-add"></span><span class="wt-del" id="branch-diff-del"></span><span class="strip-diff-files" id="branch-diff-files"></span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
               </button>
@@ -265,7 +267,7 @@
       <aside id="workspace-panel" class="workspace-panel hidden" aria-label="Checkout 变更审查">
         <header class="wt-header">
           <div class="wt-tabs" role="tablist" aria-label="工作区审查">
-            <button id="files-diff" class="wt-tab active" type="button" role="tab" aria-selected="true">Diff <span id="workspace-summary" class="wt-summary"></span></button>
+            <button id="files-diff" class="wt-tab active" type="button" role="tab" aria-selected="true">改动 <span id="workspace-summary" class="wt-summary"></span></button>
             <button id="files-checks" class="wt-tab" type="button" role="tab" aria-selected="false">Checks</button>
           </div>
           <div class="wt-actions">
@@ -282,7 +284,7 @@
       </aside>
       <dialog id="diff-dialog" class="review-dialog" aria-labelledby="diff-title">
         <header class="review-toolbar">
-          <h2 id="diff-title">Diff</h2>
+          <h2 id="diff-title">文件改动</h2>
           <span class="review-tip-wrap">
             <button id="diff-collapse" class="review-icon-btn" type="button" aria-label="收起全部文件" aria-describedby="diff-collapse-tip" data-state="expanded">
               <svg class="icon-collapse" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 12h8"/></svg>
@@ -291,21 +293,21 @@
             <span class="review-tip" id="diff-collapse-tip" role="tooltip">收起全部文件</span>
           </span>
           <div class="review-scope-wrap">
-            <button id="diff-scope" class="review-scope-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="diff-scope-menu"><span id="diff-scope-label">Branch</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
-            <div id="diff-scope-menu" class="review-scope-menu hidden" role="menu" aria-label="Diff 范围">
-              <button id="diff-scope-branch" class="review-scope-option" type="button" role="menuitemradio" aria-checked="true" data-scope="branch"><span class="review-radio" aria-hidden="true"></span><span class="review-scope-text"><strong>Branch</strong><small>相对基线分支的全部改动</small></span></button>
+            <button id="diff-scope" class="review-scope-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="diff-scope-menu"><span id="diff-scope-label">分支改动</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div id="diff-scope-menu" class="review-scope-menu hidden" role="menu" aria-label="改动范围">
+              <button id="diff-scope-branch" class="review-scope-option" type="button" role="menuitemradio" aria-checked="true" data-scope="branch"><span class="review-radio" aria-hidden="true"></span><span class="review-scope-text"><strong>分支改动</strong><small>相对基线分支的全部改动</small></span></button>
               <button id="diff-scope-turn" class="review-scope-option" type="button" role="menuitemradio" aria-checked="false" data-scope="turn"><span class="review-radio" aria-hidden="true"></span><span class="review-scope-text"><strong>最近一轮</strong><small id="diff-scope-turn-note">只看最近一轮改动的文件</small></span></button>
               <div id="diff-scope-info" class="review-scope-info"></div>
             </div>
           </div>
-          <div class="review-layout" role="group" aria-label="Diff 布局">
-            <button id="diff-unified" type="button" aria-pressed="true">Unified</button>
-            <button id="diff-split" type="button" aria-pressed="false">Split</button>
+          <div class="review-layout" role="group" aria-label="改动布局">
+            <button id="diff-unified" type="button" aria-pressed="true">合并视图</button>
+            <button id="diff-split" type="button" aria-pressed="false">并排视图</button>
           </div>
-          <button id="diff-close" class="review-icon-btn bordered" type="button" aria-label="关闭 Diff" title="关闭 (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          <button id="diff-close" class="review-icon-btn bordered" type="button" aria-label="关闭改动" title="关闭 (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
         </header>
         <div id="diff-content" class="review-content"></div>
-        <div id="diff-comments" class="diff-comment-tray hidden" role="region" aria-label="Diff 评论">
+        <div id="diff-comments" class="diff-comment-tray hidden" role="region" aria-label="改动评论">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           <span id="diff-comments-count" class="diff-comment-count">评论 (0)</span>
           <button id="diff-comments-clear" class="btn small" type="button">清空</button>
@@ -316,7 +318,7 @@
 
     <dialog class="stats-pop" id="stats-pop" aria-labelledby="stats-title">
       <header class="stats-head">
-        <h2 id="stats-title">Context Usage</h2>
+        <h2 id="stats-title">上下文用量</h2>
         <button type="button" class="icon-btn" id="stats-close" aria-label="关闭上下文用量" autofocus>×</button>
       </header>
       <div class="stats-sub"><span class="stats-num" id="sp-pct"></span><span id="sp-capacity"></span></div>

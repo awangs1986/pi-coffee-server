@@ -82,6 +82,9 @@ export interface ModelChoice {
   reasoning?: boolean;
 }
 
+export type ContextPreset = "272k" | "maximum";
+export interface ContextSettings { preset: ContextPreset; limit?: number; maximum?: number; }
+
 export interface CommandInfo {
   name: string;
   /** Native invocation text; Pi defaults to /name. No filesystem paths. */
@@ -148,6 +151,7 @@ export type AckOperation =
   | "rename_session"
   | "delete_session"
   | "set_model"
+  | "set_context"
   | "set_thinking"
   | "compact"
   | "ui_response";
@@ -213,6 +217,7 @@ export type ClientFrame =
   | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: "pi" | "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_models" }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
+  | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: "pi" | "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
@@ -266,6 +271,7 @@ export type ServerFrame =
       requestId?: string;
       models: ModelChoice[];
       current: { provider: string; id: string; source?: "native" | "relay" } | null;
+      context?: ContextSettings;
       thinkingLevel: string;
       thinkingLevels: string[];
     }
@@ -378,6 +384,9 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
     case "get_command_catalog":
       if(value.engine!=="pi" && value.engine!=="codex")throw new ProtocolError("invalid_frame","Command catalog requires Pi or Codex");
       return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:value.engine,...withRequestId(value)};
+    case "set_context":
+      if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");
+      return {v:PROTOCOL_VERSION,type:"set_context",preset:value.preset,...withRequestId(value)};
     case "get_commands":
       return { v: PROTOCOL_VERSION, type: "get_commands" };
     case "get_extensions":

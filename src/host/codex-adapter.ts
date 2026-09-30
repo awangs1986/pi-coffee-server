@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { ContextPreset } from "../shared/protocol.js";
 import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
@@ -145,7 +147,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       const config=configResult.config as Obj | undefined;
       const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
       const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
-      return codexModelChoices(await server.request("model/list",{}) as Obj,model,effort);
+      return {...codexModelChoices(await server.request("model/list",{}) as Obj,model,effort),context:{preset:"272k"}};
     }finally{await server.stop();}
   }
 
@@ -163,6 +165,12 @@ export class CodexSessionFactory implements PiSessionFactory {
       await server.start("pi_coffee_skills","0.1.0");
       return await codexCommands(server,this.options.cwd);
     }finally{await server.stop();}
+  }
+
+  private contextFile(id:string):string{return join(dirname(this.mappingFile),'codex-context',createHash('sha256').update(id).digest('hex')+'.json');}
+  private async readContextPreset(id:string):Promise<ContextPreset>{
+    try{return JSON.parse(await readFile(this.contextFile(id),'utf8')).preset==='maximum'?'maximum':'272k';}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return '272k';}
   }
 
   private async loadMapping(): Promise<Map<string, string>> {
@@ -209,7 +217,9 @@ export class CodexSessionFactory implements PiSessionFactory {
     const server = await this.connection();
     const mapping = await this.loadMapping();
     const known = options.requireExisting ? options.sessionId : mapping.get(options.sessionId) ?? options.sessionId;
+    const preset=await this.readContextPreset(known);
     const common = {
+      config:contextConfig(preset),
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -237,6 +247,10 @@ export class CodexSessionFactory implements PiSessionFactory {
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
       cwd: this.options.cwd,
+      preset,
+      sandbox:this.options.sandbox,
+      savePreset:async(id,preset)=>{const file=this.contextFile(id);await mkdir(dirname(file),{recursive:true});await writeFile(file,JSON.stringify({preset}),{mode:0o600});},
+      rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
       model: typeof response.model === "string" ? response.model : this.options.model,
       reasoningEffort: typeof response.reasoningEffort === "string" ? response.reasoningEffort : this.options.reasoningEffort,
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -349,7 +363,14 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 }
 
+function contextConfig(preset:ContextPreset):Obj {
+  return preset==='272k'?{model_context_window:272000,model_auto_compact_token_limit:258400}:{};
+}
 interface CodexSessionSettings {
+  preset:ContextPreset;
+  sandbox?:string;
+  savePreset:(id:string,preset:ContextPreset)=>Promise<void>;
+  rebind:(id:string)=>Promise<void>;
   cwd: string;
   model?: string;
   reasoningEffort?: string;
@@ -360,11 +381,13 @@ interface CodexSessionSettings {
 
 class CodexSession implements PiSession {
   private readonly server: CodexAppServer;
-  readonly threadId: string;
+  threadId: string;
   /** Set by the factory so it can count open sessions. */
   onStop?: () => void;
   private readonly listeners = new Set<(event: unknown) => void>();
-  private readonly unsubscribe: () => void;
+  private unsubscribe: () => void;
+  private settings:CodexSessionSettings;
+  private preset:ContextPreset;
   private model?: string;
   private effort?: string;
   private sessionName?: string;
@@ -382,9 +405,11 @@ class CodexSession implements PiSession {
   private readonly pendingApprovals = new Map<string, PendingServerRequest>();
   private readonly readRateLimits?: () => Promise<RateLimits | undefined>;
   private stopped = false;
+  private compactionPending?: {resolve:()=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;observed:boolean};
   private readonly cwd: string;
 
   constructor(server: CodexAppServer, threadId: string, settings: CodexSessionSettings) {
+    this.settings=settings;this.preset=settings.preset;
     this.server = server;
     this.cwd = settings.cwd;
     this.threadId = threadId;
@@ -538,12 +563,33 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {}) as Obj;
-    return codexModelChoices(result,this.model,this.effort);
+    return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,...(this.preset==='272k'?{limit:272000}:{})}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
     // Applied as an override on the next turn; Codex has no per-thread setter.
     this.model = id;
+  }
+
+  async setContextPreset(preset:ContextPreset):Promise<void>{
+    if(preset===this.preset)return;
+    if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
+    const history=await this.getHistory(),oldId=this.threadId;
+    const common={cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config:contextConfig(preset),...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
+    // Native resume ignores changed config on a subscribed thread. Release only
+    // this idle thread; no model turn is replayed and other threads keep running.
+    let response:Obj;
+    if(history.entries.length){
+      await this.server.request('thread/unsubscribe',{threadId:oldId});
+      try{response=await this.server.request('thread/resume',{...common,threadId:oldId}) as Obj;}
+      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:contextConfig(this.preset)}).catch(()=>undefined);throw error;}
+    }else{response=await this.server.request('thread/start',common) as Obj;}
+    const thread=response.thread as Obj;
+    const id=String(thread.id);
+    if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
+      this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
+    await this.settings.savePreset(id,preset);this.preset=preset;this.tokenUsage=undefined;
+    this.absorbThread(thread);
   }
 
   async setThinkingLevel(level: string): Promise<void> {
@@ -585,7 +631,20 @@ class CodexSession implements PiSession {
   }
 
   async compact(): Promise<void> {
-    await this.server.request("thread/compact/start", { threadId: this.threadId });
+    if(this.compactionPending)throw new Error('Codex compaction already running');
+    const completion=new Promise<void>((resolve,reject)=>{
+      const timer=setTimeout(()=>this.finishCompaction(new Error('Codex compaction outcome is still unknown; inspect the native task before retrying')),300000);
+      this.compactionPending={resolve,reject,timer,observed:false};
+    });
+    void completion.catch(()=>undefined);
+    try{await this.server.request("thread/compact/start", { threadId: this.threadId });}
+    catch(error){this.finishCompaction(error instanceof Error?error:new Error('Compaction request failed'));}
+    await completion;
+  }
+
+  private finishCompaction(error?:Error):void{
+    const pending=this.compactionPending;if(!pending)return;this.compactionPending=undefined;clearTimeout(pending.timer);
+    if(error)pending.reject(error);else pending.resolve();
   }
 
   async respondUi(response: UiResponse): Promise<void> {
@@ -598,6 +657,7 @@ class CodexSession implements PiSession {
   }
 
   async stop(): Promise<void> {
+    this.finishCompaction(new Error('Codex stopped before compaction completed'));
     this.questions.clear();
     if (this.stopped) return;
     this.stopped = true;
@@ -672,6 +732,7 @@ class CodexSession implements PiSession {
       }
       case "turn/completed": {
         const turn = params.turn as Obj | undefined;
+        if(this.compactionPending)this.finishCompaction(turn?.status==='completed'&&this.compactionPending.observed?undefined:new Error('Codex compaction did not complete successfully'));
         if (turn?.status === "failed") {
           const error = turn.error as Obj | null | undefined;
           const message = typeof error?.message === "string" ? error.message : "Codex turn failed";
@@ -729,6 +790,7 @@ class CodexSession implements PiSession {
         return;
       }
       case "contextCompaction":
+        if(this.compactionPending)this.compactionPending.observed=true;
         this.emit({ type: "compaction_end" });
         return;
       default: {
@@ -782,6 +844,7 @@ class CodexSession implements PiSession {
   }
 
   private onServerExit(): void {
+    this.finishCompaction(new Error("Codex app-server exited during compaction"));
     this.questions.clear();
     if (this.streaming) {
       this.emit({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "Codex app-server exited" } });

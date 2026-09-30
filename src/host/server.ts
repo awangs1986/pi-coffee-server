@@ -586,6 +586,12 @@ class HostSocket implements SessionSink {
           await this.session.setModel(frame.provider, frame.id);
           this.send({ v: 1, type: "ack", operation: "set_model", ...rid(frame) });
           break;
+        case "set_context":
+          if (!this.session || !this.opened) throw new NotOpenError();
+          await this.session.setContextPreset(frame.preset);
+          this.send({v:1,type:"ack",operation:"set_context",...rid(frame)});
+          this.send({v:1,type:"models",...await this.session.getModels()});
+          break;
         case "set_thinking":
           if (!this.session || !this.opened) throw new NotOpenError();
           await this.session.setThinkingLevel(frame.level);

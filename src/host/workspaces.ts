@@ -833,9 +833,11 @@ export class Workspaces {
   }
   async artifacts(id:string):Promise<Artifact[]> {
     await this.load();const c=this.conversation(id);if(c.workspaceRemoved)return [];
-    const tracked=new Map((c.artifacts ?? []).map(a=>[a.path,{...a,available:false}]));
+    const inputAttachment=(path:string)=>/^(?:\.\.\/attachments|(?:\.pi-coffee\/)?inbox)(?:\/|$)/.test(path);
+    const tracked=new Map((c.artifacts ?? []).filter(a=>!inputAttachment(a.path)).map(a=>[a.path,{...a,available:false}]));
     const files=await this.scanFiles(c);
     for(const path of files.slice(0,5000)) {
+      if(inputAttachment(path))continue;
       if(!/\.(png|jpe?g|gif|webp|svg|md|pdf)$/i.test(path) || path.replace(/^\.\.\//,'').split(/[\\/]/).some(p=>(p.startsWith('.') && p!=='.pi-coffee') || /secret|credential|token/i.test(p)))continue;
       try {
         const full=await this.file(id,path);const info=await stat(full);

@@ -119,6 +119,24 @@ describe("Codex app-server adapter", () => {
     }finally{ws.close();await host.close();}
   });
 
+  it("waits for native compaction completion instead of just request acceptance",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-test'});
+    const events=recorder(session);let finished=false;const pending=session.compact().then(()=>{finished=true;});
+    await new Promise(resolve=>setTimeout(resolve,15));expect(finished).toBe(false);
+    await pending;expect(events.events.some(e=>e.type==='compaction_end')).toBe(true);
+  });
+
+  it("applies context presets to native thread config and keeps them across resume",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'context-test'});
+    expect((await session.getModels()).context?.preset).toBe('272k');
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
+    await session.setContextPreset!('maximum');expect((await session.getModels()).context?.preset).toBe('maximum');
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({});
+    const events=recorder(session);await session.prompt('fixture');await events.until(settled);await session.stop();await factory.close();
+    const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context?.preset).toBe('maximum');
+    await resumed.setContextPreset!('272k');expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
+  });
+
   it("creates a thread per PI Coffee session id, lists it under that id, and resumes it from a fresh server", async () => {
     const b = setup();
     const factory = b.factory();

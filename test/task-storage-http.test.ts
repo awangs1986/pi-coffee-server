@@ -41,7 +41,9 @@ it('creates new task bundles through Host HTTP, keeps legacy paths and confines 
   expect((await fetch(base+'download?'+params+'&fileId=../task.json')).status).toBe(403);
   await symlink(join(taskRoot,'new-chat'),join(taskRoot,'new-work/attachments/escape'));
   expect((await fetch(base+'download?'+params+'&fileId=../attachments/escape/task.json')).status).toBe(403);
+  await writeFile(join(taskRoot,'new-work/attachments/paste.png'),'input image');
   await writeFile(join(taskRoot,'new-work/artifacts/report.md'),'report');
+  expect((await (await fetch(base+'artifacts?'+params)).json()).artifacts.map((a:any)=>a.path)).not.toContain('../attachments/paste.png');
   expect((await (await fetch(base+'artifacts?'+params)).json()).artifacts.map((a:any)=>a.path)).toContain('../artifacts/report.md');
   const continued=await post({action:'continue',projectId:project.id,sourceBranch:work.branch,sourceSha:work.startSha,id:'continued'});
   expect(continued.cwd).toBe(join(taskRoot,'continued/workspace'));

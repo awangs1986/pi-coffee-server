@@ -311,6 +311,7 @@ it('refreshes the open Diff and renders the changed-files card when a native run
 
 it('uploads attachments with hashed authenticated scopes, refreshes expired tokens, and includes new-task files in the first prompt',async()=>{
   const app=await setup();
+  app.sockets.at(-1).receive({type:'history',sessionId:'task-1',entries:[]});
   Object.defineProperty(crypto,'subtle',{configurable:true,value:{digest:async()=>new ArrayBuffer(32)}});
   const xhrRequests:{url:string;body:any}[]=[];
   class FakeXHR{
@@ -342,17 +343,27 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
 
   // 1. Existing task with authenticated hashed scope (`scope !== activeId`), unreachable direct URL -> same-origin fallback, and expired 401 token -> auto-refresh
   app.sockets.at(-1).receive({type:'transfer',sessionId:'task-1',scope:'hashed-user-scope-task-1',url:'http://unreachable.vm:53317',token:'stale-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
-  const file1=new File(['spec'],'spec.pdf',{type:'application/pdf'});
+  vi.stubGlobal('FileReader',class{result='data:image/png;base64,aGVsbG8=';onload:any;readAsDataURL(){queueMicrotask(()=>this.onload());}});
+  vi.stubGlobal('Image',class{width=10;height=10;onload:any;set src(_v:string){queueMicrotask(()=>this.onload());}});
+  const file1=new File(['spec'],'paste.png',{type:'image/png'});
   Object.defineProperty(file1,'arrayBuffer',{value:async()=>new ArrayBuffer(4)});
   const input=q<HTMLInputElement>('#file');
   Object.defineProperty(input,'files',{configurable:true,value:[file1]});
   input.dispatchEvent(new Event('change'));
   await vi.advanceTimersByTimeAsync(30);
 
+  expect(document.querySelectorAll('#attachments img')).toHaveLength(1);
+  expect(document.querySelectorAll('#attachments .upload-chip')).toHaveLength(0);
+  expect(prepareUrls).toHaveLength(0);
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(30);
   expect(prepareUrls.some(u=>u.startsWith('http://unreachable.vm:53317'))).toBe(true);
   expect(prepareUrls.some(u=>u.startsWith(location.origin) && u.includes('token=fresh-tok-'))).toBe(true);
   expect(xhrRequests).toHaveLength(1);
-  expect(q('#attachments .upload-chip.done')).not.toBeNull();
+  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+  expect(app.frames.find(f=>f.type==='prompt').images).toHaveLength(1);
+  expect(app.frames.find(f=>f.type==='prompt').text).not.toContain('[已上传到工作目录的文件]');
+  app.frames.length=0;
 
   // 2. New Work task: attaching a file before selecting a repository queues the file visibly without prematurely failing openSession, and sends it with the first prompt once submitted
   q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
@@ -363,7 +374,7 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
   Object.defineProperty(input,'files',{configurable:true,value:[file2]});
   input.dispatchEvent(new Event('change'));
   await vi.advanceTimersByTimeAsync(20);
-  expect(q('#attachments .upload-chip')?.textContent).toContain('等待建立对话');
+  expect(q('#attachments .upload-chip')?.textContent).toContain('待发送');
   expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
 
   q<HTMLSelectElement>('#project-select').value='p';q<HTMLSelectElement>('#project-select').dispatchEvent(new Event('change'));
@@ -379,6 +390,7 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
   ws.receive({type:'transfer',sessionId:created.id,scope:'hashed-user-scope-'+created.id,url:location.origin,token:'new-task-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
   await vi.advanceTimersByTimeAsync(30);
 
+  ws.receive({type:'models',sessionId:created.id,models:[],context:{preset:'272k'}});
   const sentPrompt=app.frames.find(f=>f.type==='prompt');
   expect(sentPrompt).toBeDefined();
   expect(sentPrompt.text).toContain('请总结附件');

@@ -33,9 +33,9 @@ const ui = {
   sessionList: $('#session-list'), search: $('#search'), queue: $('#queue'), slash: $('#slash'),
   attachments: $('#attachments'), attach: $('#attach'), file: $('#file'), hint: $('#hint'),
   agentBtn: $('#agent-menu-btn'), agentMenu: $('#agent-menu'), agentName: $('#agent-name'), agentNote: $('#agent-menu-note'),
-  agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row') },
-  agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane') },
-  agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value') },
+  agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row'), context: $('#agent-context-row') },
+  agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane'), context: $('#agent-context-pane') },
+  agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value'), context: $('#agent-context-value') },
   modelSource: $('#model-source'), model: $('#model'), thinking: $('#thinking'), modeWrap: $('#mode-wrap'), mode: $('#mode'),
   projectSelect: $('#project-select'), startBranch: $('#start-branch'), taskDetails: $('#task-details'), taskDetailsBtn: $('#task-details-btn'),
   modal: $('#modal'), modalTitle: $('#modal-title'), modalText: $('#modal-text'), modalInput: $('#modal-input'),
@@ -60,6 +60,8 @@ let activeId = null;
 let currentUser = null;
 function rememberTask(id){if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
 let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
+let draftFiles = [];
+let draftContextPreset='272k', contextToApply=null, contextPending=null;
 let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
@@ -156,7 +158,7 @@ function loadDraftModels() {
   send({v:1,type:"get_model_catalog",engine:draftModelEngine(),requestId:catalogRequest});
 }
 function flushFirstPrompt() {
-  if (!historyReady || modelPending || queuedPrompt === null || uploadsBusy()) return;
+  if (!historyReady || modelPending || contextPending || contextToApply || queuedPrompt === null || uploadsBusy() || uploads.some(u=>u.state==='failed')) return;
   const q=queuedPrompt;queuedPrompt=null;
   const files=completedUploads();
   submitPrompt(q.text || (files.length ? '（附件）' : '（图片）'),q.images);
@@ -232,6 +234,15 @@ function renderAgentPane(kind) {
       pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'Pi 聊天':available?'Work 项目':'Host 未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
     }
     return;
+  }
+  if(kind==='context'){
+    for(const preset of ['272k','maximum'])pane.append(agentOption({label:preset==='272k'?'272k（默认）':'模型最大',selected:(opened?models?.context?.preset:draftContextPreset)===preset,onClick:async()=>{
+      closeAgentMenu();
+      if(preset==='maximum'&&!await askModal({title:'使用模型最大上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
+      if(opened){if(streaming||compacting||!models?.context)return;contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset});}
+      else draftContextPreset=preset;
+      renderAgentSettings();refreshComposer();
+    }}));return;
   }
   if (!models) return;
   const current = selectedModelInfo();
@@ -321,13 +332,16 @@ function renderAgentSettings() {
   ui.agentRows.thinking.classList.toggle('hidden', levels.length === 0);
   ui.agentValues.thinking.textContent = models?.thinkingLevel || levels[0] || '—';
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
+  ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(agent));
+  ui.agentRows.context.disabled=streaming||compacting||Boolean(contextPending)||!models?.context;
+  ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'模型最大':'272k';
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
     : task && !pendingOpenId ? 'Agent 和来源在任务创建时固定。' : '';
   ui.agentNote.textContent = note;
   ui.agentNote.classList.toggle('hidden', !note);
   if (models) ui.agentBtn.dataset.state = `${source} · ${models.current ? models.current.id : 'no model'} · ${models.thinkingLevel || 'default'}`;
   renderAgentTrigger();
-  for (const pane of ['source', 'model', 'thinking']) renderAgentPane(pane);
+  for (const pane of ['source', 'model', 'thinking', 'context']) renderAgentPane(pane);
 }
 // 任务详情 (scroll button): VM, path, copy path and local compaction.
 function closeTaskDetails() {
@@ -817,8 +831,8 @@ function renderUsage() {
   ui.usage.title = lines.join('\n');
 }
 const CONTEXT_CATEGORIES = [
-  ['system','System prompt'], ['tools','Tool definitions'], ['rules','Rules'],
-  ['skills','Skills'], ['dynamic','MCP & dynamic tools'], ['subagents','Subagent definitions'], ['conversation','Conversation'],
+  ['system','系统提示词'], ['tools','工具定义'], ['rules','项目规则'],
+  ['skills','技能'], ['dynamic','MCP 与动态工具'], ['subagents','子代理定义'], ['conversation','对话'],
 ];
 
 function renderStats() {
@@ -827,23 +841,25 @@ function renderStats() {
   const snapshot=statsCache.contextBreakdown;
   const valid=snapshot?.version===1 && snapshot.categories?.length===7 && CONTEXT_CATEGORIES.every(([id])=>snapshot.categories.some(c=>c.id===id && Number.isSafeInteger(c.tokens) && c.tokens>=0));
   const capacity=valid?snapshot.contextWindow:statsCache.contextUsage?.contextWindow;
-  const used=valid?snapshot.categories.reduce((n,c)=>n+c.tokens,0):null;
+  const nativeUsed=statsCache.contextUsage?.tokens;
+  const used=valid?snapshot.categories.reduce((n,c)=>n+c.tokens,0):(Number.isFinite(nativeUsed)&&nativeUsed>=0?nativeUsed:null);
   const pct=used!==null && capacity>0?100*used/capacity:null;
   ui.stats.textContent=pct!==null?'上下文 '+Math.floor(pct)+'%':'上下文';
   ui.stats.classList.remove('hidden');ui.stats.classList.toggle('warn',pct!==null && pct>=75);
-  ui.spPct.textContent=pct!==null?Math.floor(pct)+'% Full':'Usage unavailable';
-  ui.spCapacity.textContent=`${used!==null?'~'+fmtTokens(used):'—'} / ${fmtTokens(capacity).replace(/\.0([KM])$/,'$1')} Tokens`;
-  ui.spCapacity.title=valid?`本地 o200k_base 估算 · ${snapshot.basis==='last_request'?'最近一次实际请求':'当前已加载上下文预览'} · ${snapshot.capturedAt}`:'等待引擎分类统计';
+  ui.spPct.textContent=pct!==null?'已用 '+Math.floor(pct)+'%':'用量暂不可用';
+  ui.spCapacity.textContent=`${used!==null?(valid?'~':'')+fmtTokens(used):'—'} / ${fmtTokens(capacity).replace(/\.0([KM])$/,'$1')} 词元`;
+  ui.spCapacity.title=valid?`本地 o200k_base 估算 · ${snapshot.basis==='last_request'?'最近一次实际请求':'当前已加载上下文预览'} · ${snapshot.capturedAt}`:'原生引擎当前上下文用量；不使用累计账单量';
   ui.spBar.replaceChildren();ui.spContextLegend.replaceChildren();
   for(const [id,label] of CONTEXT_CATEGORIES){
     const value=valid?snapshot.categories.find(c=>c.id===id).tokens:null;
     const row=el('div','legend-row');row.append(el('span','dot-sq c-'+id),el('span','legend-label',label),el('span','legend-val',fmtTokens(value)));ui.spContextLegend.append(row);
     if(value>0 && capacity>0){const seg=el('span','seg c-'+id);seg.style.width=(value/Math.max(capacity,used)*100)+'%';seg.style.flexShrink='0';ui.spBar.append(seg);}
   }
+  if(!valid&&used!==null&&capacity>0){const seg=el('span','seg c-conversation');seg.style.width=Math.min(100,used/capacity*100)+'%';seg.title='当前上下文总用量（未分类）';ui.spBar.append(seg);}
   const status=$('#sp-status');
-  status.textContent=!valid?'分类统计暂不可用，请检查所属 VM 的 Agent 版本。':snapshot.mediaOmitted?'~ 本地文本估算；图片、音频等媒体占用未计入。':'';
+  status.textContent=!valid?(engine==='codex'?'Codex 原生接口提供当前总用量，不提供分类统计；分类显示 —。':'分类统计暂不可用，请检查所属 VM 的 Agent 版本。'):snapshot.mediaOmitted?'~ 本地文本估算；图片、音频等媒体占用未计入。':'';
   status.classList.toggle('hidden',!status.textContent);
-  ui.spBar.setAttribute('aria-valuetext',pct!==null?Math.floor(pct)+'% Full':'Usage unavailable');
+  ui.spBar.setAttribute('aria-valuetext',pct!==null?'已用 '+Math.floor(pct)+'%':'用量暂不可用');
   if(pct!==null)ui.spBar.setAttribute('aria-valuenow',String(Math.min(100,pct)));else ui.spBar.removeAttribute('aria-valuenow');
   ui.spCompact.textContent=engine==='pi' ? '交接压缩' : '压缩上下文';
   ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
@@ -928,8 +944,8 @@ function setStreaming(active) {
 function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
-  const hasText = ui.prompt.value.trim().length > 0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || (streaming && !supports("steer") && !supports("followUp"));
+  const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
+  ui.send.disabled = compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -1114,14 +1130,13 @@ function connectSocket() {
   ws.onerror = () => { if (socket === ws) setConnection('连接错误', 'error'); };
 }
 function restoreQueuedPrompt() {
-  if (queuedPrompt === null || opened) return;
+  if (queuedPrompt === null) return;
   ui.prompt.value = queuedPrompt.text;
   attachments = queuedPrompt.images || [];
   queuedPrompt = null;
   renderAttachments();
   autoGrow();
-  setStreaming(false);
-  showThinking(false);
+  if(!opened){setStreaming(false);showThinking(false);}
 }
 async function openSession(id) {
   if(!connected){restoreQueuedPrompt();toast('等待 VM 连接就绪');return;}
@@ -1139,7 +1154,7 @@ async function openSession(id) {
     saveCreation();pendingOpenId='creating';refreshComposer();$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
     try {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
-      id=c.id;activeId=id;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
+      id=c.id;activeId=id;contextToApply=draftContextPreset;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
     }catch(e){
       pendingOpenId=null;toast(e.message);
       // The first message started this creation: give the draft back instead of a stuck "running" state.
@@ -1208,7 +1223,9 @@ function handleFrame(frame, ws) {
       renderModels();refreshComposer();return;
     case 'models':
       if(frame.sessionId && frame.sessionId!==activeId)return;
-      models = frame;modelPending=null;refreshComposer();
+      models = frame;modelPending=null;
+      if(contextToApply){const wanted=contextToApply;contextToApply=null;if(frame.context&&wanted!==frame.context.preset){contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset:wanted});}else if(wanted==='maximum'&&!frame.context){toast('Host 尚不支持上下文设置，请稍后刷新');restoreQueuedPrompt();}}
+      refreshComposer();
       renderModels();flushFirstPrompt();
       return;
     case 'command_catalog':
@@ -1239,6 +1256,7 @@ function handleFrame(frame, ws) {
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
       if (frame.operation === 'set_model' || frame.operation === 'set_thinking') send({ v: 1, type: 'get_models' });
+      if(frame.operation==='set_context'&&frame.requestId===contextPending){contextPending=null;send({v:1,type:'get_stats'});}
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
     case 'resync_required':
@@ -1249,7 +1267,8 @@ function handleFrame(frame, ws) {
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       handleEvent(frame.event || {});
       return;
-    case 'error': {
+    case 'error':
+      if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
       if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
@@ -1745,15 +1764,16 @@ async function addFiles(files) {
     if (isSmallImage) {
       // Small images go inline with the prompt so the model can see them.
       if (attachments.length >= 8) { toast('最多 8 张内联图片，其余作为文件上传'); toUpload.push(file); continue; }
-      try { const image=await encodeImage(file);if(epoch!==taskSelectionEpoch)return;attachments.push(image);file.__inlineAttached=true; } catch { toast('无法读取图片'); }
+      try { const image=await encodeImage(file);if(epoch!==taskSelectionEpoch)return;Object.defineProperty(image,'file',{value:file});attachments.push(image);file.__inlineAttached=true; } catch { toast('无法读取图片'); }
       toUpload.push(file); // Persist original bytes before sending the inline representation.
     } else {
       toUpload.push(file);
     }
   }
+  if(epoch!==taskSelectionEpoch)return;
+  draftFiles.push(...toUpload);
   renderAttachments();
   refreshComposer();
-  if (epoch===taskSelectionEpoch && toUpload.length) await uploadFiles(toUpload);
 }
 
 // Files go straight from the browser to the User VM over the LocalSend v2 API
@@ -1772,16 +1792,16 @@ async function uploadFiles(files) {
         transfer = normalizeTransferGrant(grant, id);
         if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
       }).catch(() => {
-        const hadNonInline = filesAwaitingTransfer.some((f) => !f.__inlineAttached);
+        draftFiles.push(...filesAwaitingTransfer);
         filesAwaitingTransfer = [];
         renderAttachments(); refreshComposer();
-        if (hadNonInline) { toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt(); } else flushFirstPrompt();
+        toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt();
       });
     } else if (opened) {
-      const hadNonInline = filesAwaitingTransfer.some((f) => !f.__inlineAttached);
+      draftFiles.push(...filesAwaitingTransfer);
       filesAwaitingTransfer = [];
       renderAttachments(); refreshComposer();
-      if (hadNonInline) { toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt(); } else flushFirstPrompt();
+      toast('这个 Host 没有开启文件传输'); restoreQueuedPrompt();
     }
     return;
   }
@@ -1845,16 +1865,14 @@ async function uploadFiles(files) {
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || ('HTTP ' + response.status));
     prepared = await response.json();
   } catch (error) {
-    uploads = uploads.filter((u) => !(entries.includes(u) && u.file?.__inlineAttached));
     for (const u of entries) {
-      if (u.file?.__inlineAttached) continue;
       u.state = 'failed';
       u.error = '无法连接 User VM 的传输端点：' + (error.message || error);
     }
     renderAttachments(); refreshComposer();
     if (uploads.some((u) => u.state === 'failed')) restoreQueuedPrompt();
     else flushFirstPrompt();
-    if (entries.some((u) => !u.file?.__inlineAttached)) toast('文件传输失败：浏览器无法直连 User VM（' + grant.url + '）');
+    toast('文件传输失败：浏览器无法直连 User VM（' + grant.url + '）');
     return;
   }
   if(activeId!==targetSessionId)return;
@@ -1864,6 +1882,7 @@ async function uploadFiles(files) {
     if (!u.token) { u.state = 'failed'; u.error = '服务端未接受该文件'; continue; }
     void sendFile(u);
   }
+  if(entries.some(u=>u.state==='failed'))restoreQueuedPrompt();
   renderAttachments();
 }
 
@@ -1875,7 +1894,6 @@ function sendFile(u) {
     xhr.upload.onprogress = (e) => { if (e.lengthComputable && u.state === 'uploading') { u.received = Math.max(u.received, e.loaded); renderAttachmentProgress(u); } };
     xhr.onload = () => {
       if (xhr.status === 200) { if (u.state === 'uploading') { try{const result=JSON.parse(xhr.responseText);u.path=result.path;u.sha256=result.sha256;}catch{} u.received = u.size; u.state = u.path ? 'done' : 'finishing'; } }
-      else if (u.file?.__inlineAttached) { uploads = uploads.filter((x) => x !== u); }
       else { u.state = 'failed'; u.error = xhr.status === 422 ? '校验失败（SHA-256 不匹配）' : xhr.status === 403 ? '令牌无效' : 'HTTP ' + xhr.status; }
       renderAttachments(); refreshComposer();
       if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
@@ -1883,8 +1901,7 @@ function sendFile(u) {
     };
     xhr.onerror = () => {
       if (u.state !== 'cancelled') {
-        if (u.file?.__inlineAttached) uploads = uploads.filter((x) => x !== u);
-        else { u.state = 'failed'; u.error = '网络错误'; }
+        { u.state = 'failed'; u.error = '网络错误'; }
       }
       renderAttachments(); refreshComposer();
       if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
@@ -1910,12 +1927,11 @@ function handleTransferEvent(event) {
     renderAttachments(); refreshComposer();
     flushFirstPrompt();
     // Keep a transcript-side aggregate so uploads stay discoverable after the rail rolls on.
-    if (!uploadLog.some((f) => f.path === u.path)) { uploadLog.push({ name: u.name, size: u.size, path: u.path }); renderUploadLogCard(); }
+    if (!u.file?.__inlineAttached && !uploadLog.some((f) => f.path === u.path)) { uploadLog.push({ name: u.name, size: u.size, path: u.path }); renderUploadLogCard(); }
     return;
   }
   if (event.type === 'transfer_failed' && u.state !== 'cancelled') {
-    if (u.file?.__inlineAttached) uploads = uploads.filter((x) => x !== u);
-    else { u.state = 'failed'; u.error = event.message || '传输失败'; }
+    { u.state = 'failed'; u.error = event.message || '传输失败'; }
     renderAttachments(); refreshComposer();
     if (u.state === 'failed') restoreQueuedPrompt(); else flushFirstPrompt();
   }
@@ -2004,17 +2020,20 @@ function encodeImage(file) {
 }
 function renderAttachments() {
   ui.attachments.innerHTML = '';
-  const visibleQueued = filesAwaitingTransfer.filter((f) => !f.__inlineAttached);
+  const visibleQueued = [...draftFiles,...filesAwaitingTransfer].filter((f) => !f.__inlineAttached);
   ui.attachments.classList.toggle('hidden', attachments.length === 0 && uploads.length === 0 && visibleQueued.length === 0);
   attachments.forEach((image, index) => {
     const wrap = el('div', 'attachment');
     const img = document.createElement('img');
     img.src = 'data:' + image.mimeType + ';base64,' + image.data;
     img.alt = '附图 ' + (index + 1);
+    const original=uploads.find(u=>u.file===image.file);
+    if(original?.state==='failed')wrap.append(el('span','upload-meta',original.error||'上传失败，请移除后重试')); 
     const remove = el('button', 'attachment-remove', '×');
     remove.type = 'button';
     remove.title = '移除';
-    remove.addEventListener('click', () => { attachments.splice(index, 1); renderAttachments(); refreshComposer(); });
+    remove.disabled=!!queuedPrompt;
+    remove.addEventListener('click', () => { draftFiles=draftFiles.filter(file=>file!==image.file);filesAwaitingTransfer=filesAwaitingTransfer.filter(file=>file!==image.file);for(const u of uploads.filter(u=>u.file===image.file))u.xhr?.abort();uploads=uploads.filter(u=>u.file!==image.file);attachments.splice(index, 1); renderAttachments(); refreshComposer(); });
     wrap.append(img, remove);
     ui.attachments.appendChild(wrap);
   });
@@ -2022,18 +2041,18 @@ function renderAttachments() {
     const chip = el('div', 'upload-chip uploading');
     chip.innerHTML = '<span class="file-ico">📄</span><span class="upload-main"><span class="upload-name"></span><span class="upload-meta"></span><span class="upload-bar"><span class="upload-fill" style="width:0%"></span></span></span>';
     chip.querySelector('.upload-name').textContent = file.name;
-    chip.querySelector('.upload-meta').textContent = `${formatBytes(file.size)} · 等待建立对话…`;
+    chip.querySelector('.upload-meta').textContent = `${formatBytes(file.size)} · ${draftFiles.includes(file)?'待发送':'等待建立对话…'}`;
     const remove = el('button', 'attachment-remove', '×');
     remove.type = 'button';
     remove.title = '移除';
     remove.addEventListener('click', () => {
-      filesAwaitingTransfer = filesAwaitingTransfer.filter((x) => x !== file);
+      draftFiles=draftFiles.filter(x=>x!==file);filesAwaitingTransfer = filesAwaitingTransfer.filter((x) => x !== file);
       renderAttachments(); refreshComposer();
     });
     chip.appendChild(remove);
     ui.attachments.appendChild(chip);
   }
-  for (const u of uploads) {
+  for (const u of uploads.filter(u=>!u.file?.__inlineAttached)) {
     const chip = el('div', 'upload-chip ' + u.state);
     chip.dataset.id = u.id;
     chip.innerHTML = '<span class="file-ico">📄</span><span class="upload-main"><span class="upload-name"></span><span class="upload-meta"></span><span class="upload-bar"><span class="upload-fill"></span></span></span>';
@@ -2118,11 +2137,18 @@ $('#composer').addEventListener('submit', (event) => {
   const text = ui.prompt.value.trim();
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
-  if ((!text && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
-  if(modelPending){toast('等待模型来源切换确认');return;}
+  if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if(modelPending||contextPending){toast('等待模型或上下文设置确认');return;}
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   if (activeUploadsBusy || uploads.some(u=>u.state==='failed')) { toast('请等待原始附件上传成功，或移除失败附件'); return; }
   const images = attachments.slice();
+  if(draftFiles.length){
+    queuedPrompt={text,images};
+    const pending=draftFiles;draftFiles=[];
+    ui.prompt.value='';autoGrow();refreshComposer();
+    void uploadFiles(pending).then(()=>flushFirstPrompt());
+    return;
+  }
   if (!opened) {
     // First message of a brand-new conversation: (re)use the in-flight open
     // and send once `history` confirms the Session.
@@ -2143,7 +2169,7 @@ function submitPrompt(text, images) {
   if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return;}
   const mode = streaming ? ui.mode.value : 'prompt';
   requestNotifyPermission();   // first prompt is the moment the user has context for the browser's ask
-  const files = completedUploads().map((u) => ({ name: u.name, size: u.size, path: u.path, href: downloadUrl(u.path) }));
+  const files = completedUploads().filter(u=>!u.file?.__inlineAttached).map((u) => ({ name: u.name, size: u.size, path: u.path, href: downloadUrl(u.path) }));
   // Files are already on the User VM's disk; the model gets their paths, not their bytes.
   const wireText = files.length
     ? text + '\n\n[已上传到工作目录的文件]\n' + files.map((f) => `- ${f.path} (${formatBytes(f.size)})`).join('\n')
@@ -2189,7 +2215,7 @@ function switchSession(id) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;workspaceSync=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
   activeId = id;
   rememberTask(id);
   streaming = false;
@@ -2209,7 +2235,7 @@ function newSession(focus = true) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];attachments=[];queuedPrompt=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;
   engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
@@ -2537,7 +2563,7 @@ $('#checkpoint-workspace').addEventListener('click',async()=>{
       if(!message || id!==activeId)return;
       result=await workspaceApi({action:'checkpoint',id,paths,message});
     }
-    if(id!==activeId)return;workspaceSync=result;renderSyncState();await refreshWorkspaceChanges(false);toast('Checkpoint 已由远端 SHA 确认');
+    if(id!==activeId)return;workspaceSync=result;renderSyncState();await refreshWorkspaceChanges(false);toast('提交已由远端 SHA 确认');
   }catch(e){if(id===activeId){await refreshWorkspaceStatus();toast(e.message);}}
 });
 // 创建 PR is one click: commit + push what is pending (Checkpoint), then open the PR on the Project's forge.
@@ -2605,7 +2631,7 @@ function renderStripActions(task=currentTask()) {
     const del=files.reduce((sum,file)=>sum+(typeof file.deletions==='number' ? file.deletions : 0),0);
     $('#branch-diff-add').textContent=add ? '+'+add : '';$('#branch-diff-del').textContent=del ? '−'+del : '';
     $('#branch-diff-files').textContent=add || del ? '' : files.length+' 个文件';
-    diff.setAttribute('aria-label',`查看 Diff：${files.length} 个文件，新增 ${add} 行，删除 ${del} 行`);
+    diff.setAttribute('aria-label',`查看改动：${files.length} 个文件，新增 ${add} 行，删除 ${del} 行`);
   }
   diff.setAttribute('aria-expanded',String($('#diff-dialog').open));
   const pr=$('#pull-request'),label=$('#pull-request-label'),hasCheckout=work && Boolean(task.startSha);
@@ -2629,7 +2655,7 @@ function renderWorkspaceSummary(data=workspaceChanges) {
 }
 async function refreshWorkspaceChanges(announce=true) {
   if(!workspaceState || !activeId || !workspaceState.conversations.some(c=>c.id===activeId)){workspaceChanges=null;selectedChangedPath=null;renderWorkspaceSummary();renderWorkspaceList();return null;}
-  if(announce)toast('正在读取 Diff 与 Checks…');
+  if(announce)toast('正在读取改动与检查结果…');
   if(workspaceState.conversations.find(c=>c.id===activeId)?.workspaceKind==='chat'){workspaceChanges=null;selectedChangedPath=null;renderWorkspaceSummary();renderWorkspaceList();return null;}
   const id=activeId;const changes=await workspaceApi({action:'changes',id});if(id!==activeId)return null;workspaceChanges=changes;
   if(selectedChangedPath && !workspaceChanges.files.some((file) => file.path === selectedChangedPath)) selectedChangedPath=null;
@@ -2644,7 +2670,7 @@ function changedFileRow(file, { selected = false } = {}) {
   const code=file.status==='?' ? 'U' : String(file.status).toUpperCase();
   const row=el('button','file-row workspace-change-row' + (selected ? ' selected' : ''));
   row.type='button';
-  row.title=`查看 ${file.path} 的 Diff`;
+  row.title=`查看 ${file.path} 的改动`;
   row.setAttribute('aria-current',selected ? 'true' : 'false');
   const status=el('span','workspace-change-status '+code.toLowerCase(),code);
   const path=el('span','workspace-change-path',file.path);path.title=file.path;
@@ -2677,7 +2703,7 @@ function changedFilesCard(data) {
     card.append(more);
   }
   const actions=el('div','changes-card-actions');
-  const review=el('button','btn small','Review changes');
+  const review=el('button','btn small','查看改动');
   review.type='button';review.addEventListener('click',()=>showWorkspaceReview('diff'));
   actions.append(review);
   card.append(actions);
@@ -2708,7 +2734,7 @@ function renderWorkspaceList(data=workspaceChanges) {
   for(const file of data.files) {
     const row=el('button','wt-file'+(selectedChangedPath===file.path ? ' selected' : ''));
     row.type='button';
-    row.title=file.path;row.setAttribute('aria-label',`查看 ${file.path} 的 Diff`);
+    row.title=file.path;row.setAttribute('aria-label',`查看 ${file.path} 的改动`);
     const stats=el('span','wt-file-stats');
     if(typeof file.additions==='number' && file.additions>0)stats.append(el('span','wt-add','+'+file.additions));
     if(typeof file.deletions==='number' && file.deletions>0)stats.append(el('span','wt-del','−'+file.deletions));
@@ -2747,7 +2773,7 @@ function shortSha(value) { return typeof value==='string' && value ? value.slice
 function clockTime(value) { const date=new Date(value);return Number.isNaN(date.getTime()) ? String(value || '') : date.toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
 // 最近一轮 needs the Host's start-of-turn snapshot (Pi and Codex Work tasks).
 function turnScopeState(task=currentTask()) {
-  if(!task || task.workspaceKind==='chat')return {available:false,reason:'Chat 没有项目 Diff'};
+  if(!task || task.workspaceKind==='chat')return {available:false,reason:'聊天没有项目改动'};
   if((task.engine || 'pi')==='claude')return {available:false,reason:'Claude Code 暂不支持最近一轮'};
   if(!task.turnSnapshot)return {available:false,reason:'发送消息后开始记录最近一轮'};
   if(!task.turnSnapshot.tree)return {available:false,reason:'最近一轮快照不可用'};
@@ -2755,11 +2781,11 @@ function turnScopeState(task=currentTask()) {
 }
 function diffScopeInfo(data) {
   if(data.scope==='turn')return `最近一轮 · 开始于 ${clockTime(data.startedAt)}${data.running?' · 仍在运行':''}\n快照 ${shortSha(data.base)} → 当前工作区`;
-  return `${data.branch}\nbase ${shortSha(data.base)} · target ${shortSha(data.target)}\n${data.stale?'远端刷新失败 · 基线可能陈旧':'刷新 '+clockTime(data.refreshedAt)}`;
+  return `${data.branch}\n基线 ${shortSha(data.base)} · 目标 ${shortSha(data.target)}\n${data.stale?'远端刷新失败 · 基线可能陈旧':'刷新 '+clockTime(data.refreshedAt)}`;
 }
 function renderDiffScope() {
   const turn=turnScopeState();
-  $('#diff-scope-label').textContent=diffScope==='turn' ? '最近一轮' : 'Branch';
+  $('#diff-scope-label').textContent=diffScope==='turn' ? '最近一轮' : '分支改动';
   for(const scope of ['branch','turn'])$('#diff-scope-'+scope).setAttribute('aria-checked',String(scope===diffScope));
   $('#diff-scope-turn').disabled=!turn.available && diffScope!=='turn';
   $('#diff-scope-turn-note').textContent=turn.available ? '只看最近一轮改动的文件' : turn.reason;
@@ -2807,11 +2833,11 @@ function showDiffMessage(node) {
 async function loadDiff(focusPath=null, {preserve=false}={}) {
   const id=activeId,epoch=++diffEpoch,scope=diffScope,dialog=$('#diff-dialog');diffTaskId=id;
   renderDiffScope();
-  if(!preserve)showDiffMessage(el('p','workspace-empty','正在读取 Diff…'));
+  if(!preserve)showDiffMessage(el('p','workspace-empty','正在读取改动…'));
   try {
     const data=scope==='turn' ? await workspaceApi({action:'changes',id,scope:'turn'}) : await refreshWorkspaceChanges(false);
     if(!data || id!==activeId || epoch!==diffEpoch || !dialog.open)return;
-    if(scope==='turn' && data.scope!=='turn')throw new Error('当前 Host 不支持「最近一轮」Diff，请更新 VM 上的 PI Coffee');
+    if(scope==='turn' && data.scope!=='turn')throw new Error('当前 Host 不支持「最近一轮」改动，请更新 VM 上的 PI Coffee');
     diffData={...data,scope};
     renderWorkspaceDiff(diffData,focusPath,{preserve});
   } catch(e) {
@@ -2836,7 +2862,7 @@ async function runTurnDiffRefresh(){
 function cancelTurnDiffRefresh(){clearTimeout(turnDiffTimer);turnDiffTimer=null;turnDiffAgain=false;}
 async function showDiffDialog(path=null, {scope}={}) {
   const task=currentTask();
-  if(task?.workspaceKind==='chat')return toast('Chat 没有项目 Diff');
+  if(task?.workspaceKind==='chat')return toast('聊天没有项目改动');
   if(!workspaceState || !activeId)return toast('请先打开项目对话');
   if(scope)diffScope=scope;
   if(diffScope==='turn' && !turnScopeState(task).available)diffScope='branch';
@@ -2856,15 +2882,15 @@ async function showDiffDialog(path=null, {scope}={}) {
 }
 function renderWorkspaceChecks(data) {
   const detail=$('#workspace-detail');detail.replaceChildren();
-  detail.append(reviewHead('Checks · '+data.branch,{wrapToggle:false}));
+  detail.append(reviewHead('检查 · '+data.branch,{wrapToggle:false}));
   for(const check of data.checks) {
     const card=el('div','workspace-check '+(check.ok ? 'ok' : 'failed'));
     const head=el('div','workspace-check-head');
     head.append(el('span','workspace-check-icon',check.ok ? '✓' : '!'),el('strong','',check.command),el('span','workspace-check-state',check.ok ? '通过' : '发现问题'));
-    card.append(head,el('pre','workspace-check-output',check.output || (check.ok ? 'clean' : '无输出')));
+    card.append(head,el('pre','workspace-check-output',check.output || (check.ok ? '无问题' : '无输出')));
     detail.append(card);
   }
-  detail.append(el('p','workspace-note','当前 Checks 是 Checkout 的本地 git diff --check；不会自动运行测试或远程 CI。'));
+  detail.append(el('p','workspace-note','当前检查针对本地项目运行 git diff --check；不会自动运行测试或远程 CI。'));
 }
 async function showWorkspacePreview(path) {
   if(!workspaceState || !transfer || !activeId){toast('请先打开项目对话');return;}
@@ -2970,6 +2996,7 @@ async function refreshArtifactCards() {
     } else throw err;
   }
   if(!r.ok)return;const data=await r.json();if(id!==activeId)return;
+  data.artifacts=data.artifacts?.filter(file=>!/^(?:\.\.\/attachments|(?:\.pi-coffee\/)?inbox)(?:\/|$)/.test(file.path));
   const signature=id+JSON.stringify(data.artifacts)+transfer.token;
   if(signature===artifactSignature && $('#generated-artifacts'))return;
   artifactSignature=signature;$('#generated-artifacts')?.remove();
