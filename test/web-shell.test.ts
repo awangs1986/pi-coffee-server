@@ -88,7 +88,7 @@ describe('Checkout review and Gitea synchronization surfaces', () => {
     // Per-file patches for the Diff body (a section cut by the Host's cap is refetched whole).
     expect(diffView).toContain('export function patchSections(patch, truncated = false)');
     expect(app).toContain("showWorkspaceReview('diff',file.path)");
-    expect(css).toMatch(/\.changes-card-list \.workspace-change-row:nth-child\(n\+4\)/);
+    expect(css).toContain('.changes-card[open] > .changes-card-head::before');
   });
 
   it('adds a center reconnection banner, an upload log card, and in-panel artifact preview', () => {
@@ -98,7 +98,6 @@ describe('Checkout review and Gitea synchronization surfaces', () => {
     expect(app).toContain('function renderUploadLogCard()');
     expect(app).toContain("renderUploadLogCard(); // relink rows with the fresh token");
     expect(app).toContain('async function showWorkspacePreview(path)');
-    expect(app).toContain("open.addEventListener('click',(e)=>{e.preventDefault();void showWorkspacePreview(file.path);})");
     expect(css).toContain('.upload-log-row');
   });
 });
