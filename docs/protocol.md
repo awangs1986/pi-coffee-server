@@ -316,3 +316,24 @@ Host never accepts Skill filesystem paths from a browser. Codex `get_commands`
 reads fresh `skills/list` for the open task cwd; a leading `$name` in a prompt or
 steering input is resolved again against that native catalog and accompanied by
 a native `skill` input item. Other text and images retain their native format.
+
+## Confirmed dialog answers (2026-10-01)
+
+[Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23): an
+`ui_response` acknowledgement means the native adapter accepted the answer.
+Native continuation events may precede this acknowledgement. An adapter failure
+returns an error without success acknowledgement; the pending question remains
+available for explicit retry. Duplicate or expired answers cannot claim success.
+
+The browser keeps a dialog open until acknowledgement and never reports an
+answer sent when its socket cannot send. Ordinary text drafts survive replay of
+the same question within the page, keyed by user, conversation and question, with
+at most ten retained drafts. Secret answers are not retained in that draft cache
+or copied into the normal composer. No answer is automatically retried or chosen.
+An expired question reports failure and returns a non-secret typed answer to the
+composer so the user can explicitly send it as a message. Error/disconnect feedback
+does not mark the ongoing model turn as completed.
+
+Conversation history is assembled in a detached document fragment and attached
+once; layout measurements must not grow per historical message. This prevents
+repeated synchronous layout while loading long conversations.

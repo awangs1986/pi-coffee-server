@@ -682,10 +682,9 @@ class HostSocket implements SessionSink {
             this.send({ v: 1, type: "error", code: "unknown_ui_request", message: "That dialog is no longer waiting for an answer", ...rid(frame) });
             break;
           }
-          // Ack first: the answer crossed the seam. Pi's follow-on events
-          // (the run resuming) arrive after it.
+          // Success means the native adapter accepted the answer, not merely that it arrived.
+          if(!await this.session.respondUi(response))throw new Error("Answer is already being processed or the question has ended");
           this.send({ v: 1, type: "ack", operation: "ui_response", ...rid(frame) });
-          await this.session.respondUi(response);
           break;
         }
         case "ping":

@@ -514,6 +514,19 @@ describe("Host WebSocket seam", () => {
     }finally{spy.mockRestore();socket.close();}
   });
 
+  it("does not acknowledge a dialog answer rejected by the native adapter", async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();
+    if(opened.type!=='opened')throw Error('Expected opened');await frames.next();
+    const pi=factory.sessions.get(opened.sessionId)!;pi.askUser('answer-failure');await frames.next();
+    const spy=vi.spyOn(pi,'respondUi').mockRejectedValue(Error('Native answer failed'));
+    try{
+      socket.send(encodeFrame({v:1,type:'ui_response',requestId:'answer-failed',id:'answer-failure',confirmed:true}));
+      expect(await frames.next()).toMatchObject({type:'error',requestId:'answer-failed',message:'Native answer failed'});
+    }finally{spy.mockRestore();socket.close();}
+  });
+
   it("stops an idle Pi process and resumes the conversation from the store on the next open", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory, idleTimeoutMs: 60 });
@@ -758,12 +771,13 @@ describe("Host WebSocket seam", () => {
     expect(requests).toHaveLength(1);
 
     second.send(encodeFrame({ v: 1, type: "ui_response", requestId: "a1", id: "ui-1", confirmed: true }));
-    expect(await secondFrames.next()).toMatchObject({ type: "ack", operation: "ui_response", requestId: "a1" });
+    // The fake synchronously resumes the run during respondUi; acknowledgment follows native acceptance.
+    const answered=[];for(let i=0;i<4;i++)answered.push(await secondFrames.next());
+    expect(answered).toContainEqual(expect.objectContaining({type:"ack",operation:"ui_response",requestId:"a1"}));
     expect(pi.uiAnswers).toEqual([{ id: "ui-1", confirmed: true }]);
-    // The fake finishes the turn once answered.
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { assistantMessageEvent: { delta: "echo: asked" } } });
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "message_end" } });
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "agent_settled" } });
+    expect(answered.filter(f=>f.type==='event')).toMatchObject([
+      {type:'event',event:{assistantMessageEvent:{delta:'echo: asked'}}},
+      {type:'event',event:{type:'message_end'}},{type:'event',event:{type:'agent_settled'}}]);
     // Once settled, the dialog is gone: a second answer is unknown.
     second.send(encodeFrame({ v: 1, type: "ui_response", id: "ui-1", cancelled: true }));
     expect(await secondFrames.next()).toMatchObject({ type: "error", code: "unknown_ui_request" });

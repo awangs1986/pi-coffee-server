@@ -429,3 +429,5 @@ defines user-scoped persistence and the strict separation from task execution id
 - 2026-10-01: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21) adds bounded page-memory conversation previews, prioritizes selected-task opening, fixes concurrent Codex startup and abandoned-open subscribers, and routes Host/check temporary storage to private disk directories. See [contract](docs/spec/conversation-switching.md); deployment status remains in the Issue.
 
 - 2026-10-01: [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22) removes complete-history work from native title changes and confirms visible rename only after Host acknowledgement, with explicit failure/disconnection feedback.
+
+- 2026-10-01: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23) confirms dialog answers after native acceptance, retains unsent text through reconnect replay, and batches long-history DOM construction to avoid per-message layout measurement. The reported task's native history was readable; production browser-specific send failure still requires visual verification.
