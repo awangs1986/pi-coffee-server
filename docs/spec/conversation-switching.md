@@ -98,3 +98,24 @@ project directory. Discovery RPCs have a ten-second bound. A timed-out directory
 scan cools down for sixty seconds, and its metadata process can be recycled only
 when it has no live sessions or in-progress session creation. No task execution
 process is killed as a discovery recovery action.
+
+## Workspace reads and shutdown (2026-10-01)
+
+Overlapping HTTP status/diff requests share one outstanding read inside the
+selected user slot, keyed by task, action and effective refresh/diff scope.
+Completed and failed reads are discarded. Periodic browser refreshes must not
+accumulate equivalent remote Git queries while an earlier read is still pending.
+
+A disconnected HTTP client does not cancel the workspace operation it started.
+Graceful Host shutdown stops accepting requests/upgrades, closes browser sockets,
+and waits for accepted API handlers to finish their cleanup before closing native
+factories and returning to the process exit path. Concurrent shutdown callers
+share that completion. Hard termination may still leave a durable operation lock;
+an administrator must inspect Git work before moving a stale marker aside.
+
+Regression evidence: an aborted authenticated project-registration request held
+an actual workspace lock. Before the fix, Host close returned while the lock was
+still held. After the fix, close waited for operation settlement, the marker was
+removed, and a restarted workspace owner could mutate normally. Six overlapping
+HTTP status/diff requests likewise reproduced six underlying reads before the
+fix and one after it, including retry after a failed shared read.

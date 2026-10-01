@@ -91,6 +91,7 @@ interface UserSlot {
   runners?: RunnerManager;
   sshme?: RunnerManager;
   lifecycleLocks: Set<string>;
+  workspaceReads: Map<string, Promise<unknown>>;
 
 }
 
@@ -120,6 +121,9 @@ export class HostServer {
   private readonly sockets = new Set<HostSocket>();
   private readonly wsServer: WebSocketServer;
   private started = false;
+  private closing = false;
+  private closePromise?: Promise<void>;
+  private readonly apiOperations = new Set<Promise<void>>();
   private readonly workspaces?: Workspaces;
   private execution?:ExecutionCapability;
   private readonly skillsOptions?: SkillManagerOptions;
@@ -147,7 +151,13 @@ export class HostServer {
       ...(options.externalPollMs === undefined ? {} : { externalPollMs: options.externalPollMs }),
     };
     this.http = createServer((request, response) => {
-      if(request.url?.startsWith("/api/")) { void this.handleApi(request,response).catch(()=>{if(!response.headersSent)json(response,500,{error:"Host operation failed"});else response.destroy();}); return; }
+      if(this.closing){json(response,503,{error:"Host is stopping"});return;}
+      if(request.url?.startsWith("/api/")) {
+        const operation=this.handleApi(request,response).catch(()=>{if(!response.headersSent)json(response,500,{error:"Host operation failed"});else response.destroy();});
+        this.apiOperations.add(operation);
+        void operation.then(()=>this.apiOperations.delete(operation),()=>this.apiOperations.delete(operation));
+        return;
+      }
       if (request.url === "/healthz") {
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         response.end(JSON.stringify({ ok: true, role: "host", protocolVersion: PROTOCOL_VERSION, capabilities:{giteaCheckouts:Boolean(this.workspaces),chatWorkspaces:Boolean(this.workspaces),ownerEnvironment:this.execution?.ownerEnvironment ?? false,passwordlessRoot:this.execution?.passwordlessRoot ?? false} }));
@@ -311,9 +321,9 @@ export class HostServer {
           this.transferTargets.set(scope,{slot:Promise.resolve(slot),sessionId:input.id});
           result={url:this.transfer.publicUrl(),sessionId:input.id,scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
-        case "changes": result=input.scope==="turn" ? await ws.turnChanges(input.id) : await ws.changes(input.id);break;
+        case "changes": result=await this.workspaceRead(slot,JSON.stringify(['changes',input.id,input.scope==='turn']),()=>input.scope==="turn" ? ws.turnChanges(input.id) : ws.changes(input.id));break;
         case "change_file": result=await ws.changeFile(input.id,input);break;
-        case "status": result=await ws.syncStatus(input.id,input.refresh!==false);break;
+        case "status": result=await this.workspaceRead(slot,JSON.stringify(['status',input.id,input.refresh!==false]),()=>ws.syncStatus(input.id,input.refresh!==false));break;
         case "branches": result=await ws.branches(input.projectId);break;
         case "discover": result=await ws.discover();break;
         case "gitea_repos": result=await ws.giteaRepositories();break;
@@ -377,8 +387,9 @@ export class HostServer {
         ? await this.scopeForUser(user)
         : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history)} : {}) });
-      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
+        if(this.closing)return;
         this.broadcastSessions(slot);
         if(session?.wasInterrupted) void slot.workspaces?.markRun(session.id,"interrupted").catch(()=>undefined);
         void slot.workspaces?.settleRuns(id=>registry.get(id)?.wasInterrupted ? undefined : registry.get(id)?.isBusy).catch(()=>undefined);
@@ -388,6 +399,14 @@ export class HostServer {
     this.slots.set(key, created);
     created.catch(() => this.slots.delete(key));
     return created;
+  }
+
+  private workspaceRead(slot: UserSlot, key: string, read: () => Promise<unknown>): Promise<unknown> {
+    const existing = slot.workspaceReads.get(key);
+    if (existing) return existing;
+    const pending = read().finally(() => { slot.workspaceReads.delete(key); });
+    slot.workspaceReads.set(key, pending);
+    return pending;
   }
 
   private broadcastSessions(slot: UserSlot): void {
@@ -446,10 +465,21 @@ export class HostServer {
     if (target) void target.slot.then((slot) => slot.registry.get(target.sessionId)?.announce(event)).catch(() => undefined);
   }
 
-  async close(): Promise<void> {
-    if (!this.started) return;
+  close(): Promise<void> {
+    if (!this.started) return Promise.resolve();
+    return this.closePromise ??= this.finishClose().finally(() => { this.closePromise = undefined; });
+  }
+
+  private async finishClose(): Promise<void> {
+    this.closing = true;
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      this.http.close(error => error ? reject(error) : resolve());
+    });
     for (const socket of this.sockets) socket.close();
     this.sockets.clear();
+    // A disconnected HTTP client does not cancel its workspace mutation. Wait
+    // for its finally block to release the durable lock before main exits.
+    await Promise.allSettled([...this.apiOperations]);
     const slots = await Promise.allSettled([...this.slots.values()]);
     this.slots.clear();
     this.transferTargets.clear();
@@ -460,13 +490,13 @@ export class HostServer {
       await slot.value.factory.close?.().catch(() => undefined);
     }
     this.wsServer.close();
-    await new Promise<void>((resolve, reject) => {
-      this.http.close((error) => (error ? reject(error) : resolve()));
-    });
+    await httpClosed;
     this.started = false;
+    this.closing = false;
   }
 
   private handleUpgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
+    if (this.closing) { socket.destroy(); return; }
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
     if (requestUrl.pathname !== "/host") {
       socket.destroy();
