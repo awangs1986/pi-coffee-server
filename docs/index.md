@@ -51,3 +51,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - Work Pi/Codex takeover: [current contract](spec/agent-takeover.md), [Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19).
 - [2026-10-01 specification freshness audit](reviews/spec-freshness-20261001.md): current behavior, corrected stale clauses and historical boundaries.
+
+- Readable first-user title fallback: [navigation contract](spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).

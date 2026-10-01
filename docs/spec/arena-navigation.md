@@ -275,3 +275,14 @@ never substitute for missing turn evidence. A new run removes the previous
 summary, and completion replaces it with the latest completed turn's collapsed
 summary. Unchanged workspace polling preserves disclosure state and does not
 repeat turn reads. Late results from another selection or run are ignored.
+
+
+### First-user title fallback (2026-10-01)
+
+A conversation without an explicit name uses a readable excerpt of its first user
+message. For native Pi Skill expansions, unwrap the Skill before whitespace
+normalization and truncation: use the user's supplied request, or the original
+`/skill:<name>` invocation if no request was supplied. Never use the expanded Skill
+body, its XML wrapper or its local path as the title. Explicit user renames remain
+unchanged. Existing native transcripts are read through the same projection;
+correcting a title must not rewrite messages or invoke a model.

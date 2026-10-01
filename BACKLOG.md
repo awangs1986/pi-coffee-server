@@ -1,3 +1,5 @@
+> Skill invocation title fallback: [contract](docs/spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).
+
 > Current Work Agent switching: [automatic Pi/Codex takeover](docs/spec/agent-takeover.md), [GitHub Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19). This supersedes the 2026-09-23 blanket immutable-engine decision. Chat cannot upgrade.
 
 > Pending instruction controls: [contract](docs/spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
