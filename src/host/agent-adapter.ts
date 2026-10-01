@@ -76,6 +76,7 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
+  prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   close?(): Promise<void>;
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
@@ -83,7 +84,7 @@ export interface AgentSessionFactory {
   commandCatalog?(engine: "pi" | "codex"): Promise<CommandInfo[]>;
   modelCatalog?(engine: "pi" | "codex"): Promise<AgentModels>;
   /** Start (or resume, when the store already has it) the session with this id. */
-  create(options: { sessionId: string; requireExisting?: boolean }): Promise<AgentSession>;
+  create(options: { sessionId: string; workspaceSessionId?: string; requireExisting?: boolean }): Promise<AgentSession>;
   /** Conversations in the durable store, newest first. */
   list(): Promise<AgentSessionListing[]>;
   /** Remove a conversation from the durable store. Resolves false when unknown. */

@@ -393,6 +393,13 @@
 
     <script type="module" src="/app.js"></script>
 
+    <dialog id="takeover-dialog" class="runners-dialog" aria-labelledby="takeover-title">
+      <div class="runner-heading"><h2 id="takeover-title">切换 Agent</h2></div>
+      <p id="takeover-target"></p>
+      <p class="runner-help">将自动读取任务记录并核对项目，由目标 Agent 在新会话中接手。上下文无法完整互通，可能造成信息遗漏、理解偏差或信息漂移。</p>
+      <p class="runner-help">项目文件、附件和历史记录会保留。交接需要调用目标模型，可能产生费用；失败时保留原 Agent。是否接受并继续？</p>
+      <div class="runner-form-foot"><button id="takeover-cancel" type="button" class="btn small">取消</button><button id="takeover-confirm" type="button" class="btn small primary">接受并交接</button></div>
+    </dialog>
     <dialog id="queue-edit-dialog" class="runners-dialog" aria-labelledby="queue-edit-title">
       <div class="runner-heading"><h2 id="queue-edit-title">编辑排队指令</h2><button id="queue-edit-close" type="button" class="icon-btn" aria-label="关闭编辑">✕</button></div>
       <form id="queue-edit-form"><textarea id="queue-edit-text" aria-label="排队指令" rows="6" maxlength="65536" required></textarea><p id="queue-edit-status" class="runner-help" role="status"></p><div class="runner-form-foot"><span></span><button class="btn small primary" type="submit">保存修改</button></div></form>

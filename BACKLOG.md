@@ -1,3 +1,5 @@
+> Current Work Agent switching: [automatic Pi/Codex takeover](docs/spec/agent-takeover.md), [GitHub Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19). This supersedes the 2026-09-23 blanket immutable-engine decision. Chat cannot upgrade.
+
 > Pending instruction controls: [contract](docs/spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
 
 > `/sshme` Web remote assistance: [contract](docs/spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
@@ -85,7 +87,7 @@ Gitea 入口：[Issue #13：PI Coffee 今日讨论全量 Backlog](http://testpc:
 
 - **D-046 / DECIDED**: support the user's own native Codex and Claude Code through Host Adapters; preserve their native design and official user authentication. Pi prompts, Chat/Work behavior, tools, LSP, plugins and context policies remain Pi-only.
 - **Implementation sequence**: [M0–M5](./docs/development/native-agents-m0-m5.md) defines six delivery Issues under Agent #48 and Server #6. M0 validates native interfaces; M1 establishes the shared contract; M2/M3 deliver Adapters; M4 adds Browser support; M5 proves and releases the integrated workflow. M0–M5 are merged and deployed on both User VMs and the separate Web host. See [M5 evidence](./docs/reviews/native-agents-m5-20260923.md) and the bounded [M0–M4 checks](./docs/reviews/native-agents-m0-m4-20260923.md).
-- **Owner-confirmed selection rule**: new Tasks choose Pi, Codex or Claude Code once at creation. The engine is immutable; model selection stays within that engine. Another engine requires a new Task.
+- **Owner-confirmed selection rule**: new Tasks choose Pi, Codex or Claude Code once at creation. Ordinary model selection stays within that engine. Since 2026-10-01, explicit Work Pi/Codex takeover is the sole switching exception; Chat and Claude remain fixed.
 - **M0–M5 implemented and deployed**: [maintained SPEC](./docs/spec/native-agent-engines.md), [ADR-0013](./docs/adr/0013-native-agent-engines.md), Agent delivery [Agent #48](http://gitea:3000/awangs/pi-coffee/issues/48) and Server companion [Server #6](http://gitea:3000/awangs/pi-coffee-server/issues/6). Existing Pi behavior remains supported.
 - Reuse fixed User VM routing, one Conversation/Workspace, independent clones and Gitea Checkpoint/PR management. No platform worktree, new provider account system, subscription relay or wholesale UI redesign.
 - Primary acceptance remains the existing public Host HTTP/WebSocket seam plus a small real-engine workflow. Issues own implementation status; this entry records design and scope only.

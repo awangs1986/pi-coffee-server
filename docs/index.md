@@ -48,3 +48,6 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - SSHME assistance on the Web user’s computer: [contract](spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
 
 - Editable pending instructions: [contract](spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
+
+- Work Pi/Codex takeover: [current contract](spec/agent-takeover.md), [Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19).
+- [2026-10-01 specification freshness audit](reviews/spec-freshness-20261001.md): current behavior, corrected stale clauses and historical boundaries.

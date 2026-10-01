@@ -1,3 +1,4 @@
+import {initTakeoverControls} from "./takeover-controls.js";
 import {initQueueControls} from './queue-controls.js';
 import {initRunners} from "./runners.js";
 import {initSshme,parseSshme,SSHME_COMMAND} from './sshme.js';
@@ -72,11 +73,14 @@ let catalogRequest = null, draftModel = null, historyReady = false;
 let entries = [];
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
-let engine="pi", capabilities=null, engineAvailability=[];
+let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false;
+const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{if(id===activeId)connect();},toast:message=>toast(message)});
+const takeoverBusy=()=>Boolean(activeId&&takeoverControls.busy(activeId));
+function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok)available=(await response.json()).engines??[];}catch{}
+  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
 }
 void loadEngines();
@@ -231,6 +235,11 @@ function renderChoicePane(pane, select, describe) {
 function renderAgentPane(kind) {
   const pane = ui.agentPanes[kind];
   pane.replaceChildren();
+  if (kind === 'engine' && activeId) {
+    const task=currentTask();
+    for(const target of ['pi','codex']){const ready=engineAvailability.find(e=>e.id===target);pane.append(agentOption({label:engineName(target),meta:target===task?.engine?'当前 Agent':'自动交接',selected:target===task?.engine,disabled:!canTakeover()||!ready?.available||target===task?.engine,onClick:()=>{closeAgentMenu();takeoverControls.open(target);}}));}
+    return;
+  }
   if (kind === 'engine') { renderChoicePane(pane, $('#task-engine'), (option) => ({ label: engineName(option.value), meta: option.textContent.split(' · ').slice(1).join(' · ') })); return; }
   if (kind === 'kind') {
     for(const source of ['chat','gitea','github']) {
@@ -318,7 +327,7 @@ function renderAgentTrigger() {
   ui.agentName.textContent = engineName(agent);
   ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}`);
   ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', models?.current ? `模型 ${models.current.provider}/${models.current.id}` : '', models?.thinkingLevel ? `思考 ${models.thinkingLevel}` : ''].filter(Boolean).join(' · ');
-  ui.agentBtn.disabled = !connected || (choiceLocked && modelLocked);
+  ui.agentBtn.disabled = !connected || (choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');
 }
 function renderAgentSettings() {
@@ -327,7 +336,7 @@ function renderAgentSettings() {
   ui.agentValues.engine.textContent = engineName(agent);
   ui.agentValues.kind.textContent = kind === 'chat' ? 'Chat' : FORGE_NAMES[taskSource()];
   // A legacy task (open without a workspace record) keeps its Agent; only its directory type is chosen.
-  ui.agentRows.engine.disabled = choiceLocked || Boolean(activeId);
+  ui.agentRows.engine.disabled = activeId ? !canTakeover() : choiceLocked;
   ui.agentRows.kind.disabled = choiceLocked;
   const current = selectedModelInfo();
   const source = models?.current?.source || current?.source || 'native';
@@ -342,7 +351,7 @@ function renderAgentSettings() {
   ui.agentRows.context.disabled=streaming||compacting||Boolean(contextPending)||!models?.context;
   ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'模型最大':'272k';
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
-    : task && !pendingOpenId ? 'Agent 和来源在任务创建时固定。' : '';
+    : task && !pendingOpenId ? (task.workspaceKind==='project'&&['pi','codex'].includes(task.engine||'pi')?'来源固定；Pi／Codex 可通过交接切换。':'此任务的 Agent 和来源固定。') : '';
   ui.agentNote.textContent = note;
   ui.agentNote.classList.toggle('hidden', !note);
   if (models) ui.agentBtn.dataset.state = `${source} · ${models.current ? models.current.id : 'no model'} · ${models.thinkingLevel || 'default'}`;
@@ -813,7 +822,7 @@ function renderHeader() {
 
   const pending = attentionCount();
   document.title = (finishedWhileHidden ? '✅ ' : '') + (pending ? '(' + pending + ') ' : '') + (activeId && title !== '新对话' ? title + ' · ' : '') + 'PI Coffee';
-  ui.topbarState.replaceChildren();if(streaming)ui.topbarState.append(el('span','dot busy'),document.createTextNode(engineName()+' 正在工作…'));
+  ui.topbarState.replaceChildren();if(takeoverBusy())ui.topbarState.append(el('span','dot busy'),document.createTextNode('正在交接 Agent…'));else if(streaming)ui.topbarState.append(el('span','dot busy'),document.createTextNode(engineName()+' 正在工作…'));
 
   renderStats();
 }
@@ -959,7 +968,7 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.send.disabled = takeoverBusy() || compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -968,7 +977,8 @@ function refreshComposer() {
   ui.pluginsBtn.classList.toggle("hidden",!supports("extensions"));ui.statsWrap.classList.toggle("hidden",!supports("stats"));
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
-  if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
+  if(takeoverBusy())ui.hint.textContent='正在交接 Agent… 可以保留草稿，完成后继续发送。';
+  else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
   ui.hint.classList.toggle('hidden', !streaming && !compacting);
   ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
   if (connected) {
@@ -2371,7 +2381,7 @@ function setWorkspaceOpen(open) {
 async function loadWorkspace() {
   const seq=++workspaceRequestSeq;
   try {
-    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;workspaceState=data;
+    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;workspaceState=data;takeoverControls.sync(currentTask());
     $('#project-controls').classList.remove('hidden');$('#files-toggle').classList.remove('hidden');
     const select=ui.projectSelect, old=select.value;select.replaceChildren();
     const all=document.createElement("option");all.value="";all.textContent="选择项目 / 全部任务";select.append(all);

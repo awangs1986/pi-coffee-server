@@ -239,7 +239,7 @@ with **Source** (Chat / Gitea / GitHub), followed by **Agent type** (Pi / Codex 
 Claude Code). Chat maps to the existing `chat` workspace kind and remains Pi-only;
 Gitea and GitHub both map to `project`. The registered Project determines the
 forge. Native / Relay remains a separate **Model source** setting for Pi, with
-its existing protocol and credentials unchanged. Existing task identity is fixed.
+its existing protocol and credentials unchanged. The task source and directory remain fixed. Explicit [Work Pi/Codex takeover](agent-takeover.md) is available from Agent type; Chat cannot upgrade or switch.
 
 The empty new-task hero shows exactly three actions: **New chat (Chat)**,
 **Start task (Gitea)** and **Start task (GitHub)**. These configure the draft,

@@ -1,3 +1,4 @@
+import {takeoverId,type TakeoverState} from "./takeover.js";
 
 import type { RunnerManager } from "./runners.js";
 import { createHash } from "node:crypto";
@@ -179,7 +180,7 @@ export class HostServer {
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES}); }
+      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover)}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }
@@ -234,6 +235,30 @@ export class HostServer {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
       const input=await readJson(req);
+      if(input.action==='takeover'){
+        const id=input.id;
+        if(typeof id!=='string'||input.acceptDrift!==true||!['pi','codex'].includes(input.engine)||!['pi','codex'].includes(input.expectedEngine))throw new Error('Confirm context drift and select Pi or Codex');
+        const task=await ws.lookup(id);
+        if(!task||task.workspaceKind!=='project'||task.archived||task.engine!==input.expectedEngine||task.engine===input.engine)throw new Error('Select an active Work task with an unchanged source Agent');
+        if(!slot.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
+        if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
+        slot.lifecycleLocks.add(id);locked=id;
+        const readiness=(await slot.factory.engines?.())?.find(e=>e.id===input.engine);if(!readiness?.available)throw new Error(readiness?.reason??'Target Agent unavailable');
+        const session=(await slot.registry.open(id)).session;
+        if(session.isBusy||session.pendingUiRequests.length)throw new Error('Finish running and queued instructions before switching Agent');
+        const background=await session.backgroundState();if(!background.known||background.active)throw new Error('Source background work is active or unknown');
+        const listing=(await slot.registry.list()).find(s=>s.id===id);
+        const title=listing?.name||listing?.preview;
+        const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
+        await ws.beginTakeover(id,operation);
+        // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
+        void session.takeover(operation).then(async()=>{
+          for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
+        }).catch(async(error)=>{
+          await ws.updateTakeover(id,operation.id,{status:'failed',error:error instanceof Error?error.message:'Takeover failed'});
+        }).finally(()=>{slot.lifecycleLocks.delete(id);void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
+        locked=undefined;json(res,202,operation);return;
+      }
       // Reject mutating lifecycle operations while the parent is streaming. External commands remain trusted VM operations.
       const target=input.id;
       if(input.action==="conversation" || input.action==="continue") {
@@ -246,6 +271,7 @@ export class HostServer {
       }
       if(input.action==="delete" && target) {
         const task=await ws.lookup(target);
+        if(task?.takeoverSegments?.length)throw new Error("Takeover history is retained; archive this Task instead");
         if(task?.engine && task.engine!=="pi")throw new Error("Native cleanup is unavailable; Workspace and native history are retained. Archive this Task instead.");
       }
       if(target && !["files","changes","change_file","status","sidebar_move","sidebar_collapse","sidebar_display"].includes(input.action)) {
@@ -544,6 +570,7 @@ class HostSocket implements SessionSink {
     }
 
     try {
+      if(this.session&&this.lifecycleLocks.has(this.session.id)&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
           await this.open(frame);
