@@ -300,3 +300,12 @@ Host renames through the authenticated user's native binding without projecting
 or exporting the transcript. This applies to active and stored conversations;
 a metadata-only resume follows ordinary idle retirement. Native rename failures
 retain the old title and do not change the running turn's UI state.
+
+## Transcript readability (2026-10-01)
+
+[Server #24](https://github.com/awangs1986/pi-coffee-server/issues/24): copyable
+reply code blocks use white text on `#7C9CC3` in both themes, including their
+language header, copy control and syntax spans. Copying preserves the original
+command text. User message text is italic in the shared live/history rendering;
+assistant prose retains its existing style. This is presentation only and does
+not rewrite native transcripts or modify the Diff panel's syntax palette.
