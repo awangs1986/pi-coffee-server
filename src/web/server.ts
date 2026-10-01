@@ -179,7 +179,7 @@ export class WebServer {
       response.setHeader('cache-control','no-store');
       json(response,200,clientAddress(request.socket.remoteAddress));return;
     }
-    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners") {
+    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}

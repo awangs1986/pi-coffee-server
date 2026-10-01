@@ -120,6 +120,7 @@ async function run(selectedRole: Role): Promise<void> {
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
+    const sshme=new RunnerManager(join(runners.root,'sshme'),'sshme');
     const instructions=async()=>hostSessionInstructions(await runners.instruction());
     const codexOptions={instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
@@ -135,7 +136,7 @@ async function run(selectedRole: Role): Promise<void> {
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,runners,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
+    return {workdir:cwd,workspaces,factory,runners,sshme,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);

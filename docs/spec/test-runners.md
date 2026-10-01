@@ -105,3 +105,9 @@ CLI execution remains compatible; new/edited Web configurations require Windows.
 
 - The WSL invocation must use exactly the same SSH endpoint/options as Windows,
   preserve script bytes and propagate the WSL exit code. A separate WSL IP is never requested.
+
+## Separation from user-computer assistance (2026-10-01)
+
+`/sshme` is a separate feature for helping the Web user on their own Windows,
+Linux or macOS computer. It does not consume or modify this test-server record.
+Only the SSH transport/CLI implementation is shared. See [SSHME](sshme.md).

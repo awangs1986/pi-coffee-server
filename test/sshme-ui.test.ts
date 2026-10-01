@@ -11,7 +11,7 @@ function setup({fail=false,changed=false}={}){
  const calls:any[]=[],ready=vi.fn();let current=!changed;
  vi.stubGlobal('fetch',vi.fn(async(url,init)=>{
   if(url==='/api/client-address')return {ok:true,json:async()=>({address:'192.168.1.10',suggestedHost:'192.168.1.10'})};
-  const body=JSON.parse(init.body);calls.push(body);
+  expect(url).toBe('/api/sshme');const body=JSON.parse(init.body);calls.push(body);
   const data=body.action==='list'?{runners:[]} : body.action==='save'?{runner:{...body.runner,password:undefined,id:'id-1',hasPassword:true}}:fail?{error:'Windows 连接失败'}:{prompt:'Safe model request without credentials.'};
   return {ok:!(body.action==='sshme'&&fail),json:async()=>data};
  }));
@@ -49,4 +49,24 @@ it.each(['switch','close'])('never dispatches when the user changes context duri
  if(action==='close')(document.getElementById('sshme-close') as HTMLButtonElement).click();
  else setCurrent(false);
  finish({ok:true,json:async()=>({prompt:'Stale request must not run'})});await tick();expect(ready).not.toHaveBeenCalled();
+});
+
+it.each(['windows','linux','macos'])('saves the selected local-computer OS through the independent endpoint: %s',async platform=>{
+ const {controller,calls}=setup();await controller.open({request:'Check system',context:'task-a'});
+ input('sshme-platform').value=platform;input('sshme-username').value='tester';
+ document.getElementById('sshme-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
+ expect(calls.find(c=>c.action==='save').runner.platform).toBe(platform);
+ expect(document.getElementById('sshme-dialog')!.textContent).not.toContain('配置测试服务器');
+});
+
+it('can forget an assistance credential in its own dialog without a model request',async()=>{
+ const {controller,calls,ready}=setup();let original=globalThis.fetch;
+ vi.stubGlobal('fetch',vi.fn(async(url,init)=>{
+  if(init?.body&&JSON.parse(String(init.body)).action==='list')return {ok:true,json:async()=>({runners:[{id:'saved',host:'192.168.1.10',port:22,username:'tester',platform:'macos',hasPassword:true}]})};
+  return original(url,init);
+ }));
+ await controller.open({request:'Check system',context:'task-a'});expect(input('sshme-platform').value).toBe('macos');
+ (document.getElementById('sshme-forget') as HTMLButtonElement).click();await tick();
+ expect(calls).toContainEqual({action:'delete',id:'saved'});expect(ready).not.toHaveBeenCalled();
+ expect(document.getElementById('sshme-forget')!.hidden).toBe(true);
 });

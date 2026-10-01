@@ -54,3 +54,9 @@ it('runs Linux commands through the same Windows SSH connection and default WSL 
  expect(script).toContain("FileName='wsl.exe'");expect(script).toContain("Arguments='--exec sh'");expect(script).toContain('RedirectStandardInput=$true');expect(script).toContain(Buffer.from(command+'\n','utf8').toString('base64'));expect(script).toContain('exit $p.ExitCode');
  expect(script).not.toContain(command);expect(()=>runnerInvocation(runner,'/private/known_hosts',{kind:'exec',environment:'wsl',command},false)).toThrow('Windows');
 });
+
+it('uses native POSIX SSH on macOS without PowerShell or WSL',()=>{
+ const command=runnerInvocation({...runner,platform:'macos'},'/private/known_hosts',{kind:'exec',command:'uname -s'},false);
+ expect(command.args.at(-1)).toBe("cd -- '/tmp/a'\\'' b' && sh -lc 'uname -s'");
+ expect(command.args.join(' ')).not.toMatch(/powershell|wsl.exe/i);
+});

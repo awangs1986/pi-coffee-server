@@ -11,10 +11,12 @@ afterEach(async()=>{await web?.close();await host?.close();if(root)await rm(root
 async function setup(){
  root=await mkdtemp(join(tmpdir(),'coffee-runners-'));const managers=new Map<string,RunnerManager>();
  const manager=(user:string)=>{let m=managers.get(user);if(!m){m=new RunnerManager(join(root,user));managers.set(user,m);}return m;};
- host=new HostServer({port:0,token:'runner-test',factory,requireUser:true,scopeForUser:user=>({factory,runners:manager(user)})});await host.start();
+ const assistants=new Map<string,RunnerManager>();
+ const assistance=(user:string)=>{let m=assistants.get(user);if(!m){m=new RunnerManager(join(root,user,'sshme'),'sshme');assistants.set(user,m);}return m;};
+ host=new HostServer({port:0,token:'runner-test',factory,requireUser:true,scopeForUser:user=>({factory,runners:manager(user),sshme:assistance(user)})});await host.start();
  const base=`http://127.0.0.1:${host.address().port}`;
- const call=async(body:object,user='alice',token='runner-test')=>{const r=await fetch(base+'/api/runners',{method:'POST',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
- return {manager,base,call};
+ const call=async(body:object,user='alice',token='runner-test',path='/api/runners')=>{const r=await fetch(base+path,{method:'POST',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+ return {manager,assistance,base,call,assist:(body:object,user='alice')=>call(body,user,'runner-test','/api/sshme')};
 }
 const input={name:'Windows test',host:'192.0.2.10',port:22,username:'tester',platform:'windows',workdir:'C:/work',password:'fixture-private-password'};
 it('scopes runner CRUD, redacts secrets, preserves passwords on edit and conditionally adds one pointer',async()=>{
@@ -64,16 +66,26 @@ it('reports optional WSL readiness separately from Windows connectivity over the
  run.mockResolvedValue({code:255,stdout:'',stderr:'Connection failed'});expect((await call({action:'test',id})).body.ok).toBe(false);run.mockRestore();
 });
 
-it('prepares /sshme only after Windows is reachable and keeps credentials out of model text',async()=>{
- const {call,manager}=await setup();const saved=await call({action:'save',runner:input}),id=saved.body.runner.id;
- const run=vi.spyOn(manager('alice'),'run').mockResolvedValue({code:255,stdout:'',stderr:'private failure'});
- const failed=await call({action:'sshme',id,request:'Install a text editor.'});expect(failed.status).toBe(409);expect(failed.body.prompt).toBeUndefined();
- run.mockResolvedValue({code:0,stdout:'coffee-runner-ready\r\n',stderr:''});
- const ready=await call({action:'sshme',id,request:'Install a text editor.'});expect(ready.status).toBe(200);
- expect(ready.body.prompt).toContain('Install a text editor.');expect(ready.body.prompt).toContain("the Web user's Windows computer");expect(ready.body.prompt).toContain('Linux Host');expect(ready.body.prompt).toContain(input.host);expect(ready.body.prompt).toContain(id);expect(ready.body.prompt).not.toContain(input.password);expect(ready.body.prompt).not.toContain('.password');
- expect((await call({action:'sshme',id,request:'Install.'},'bob')).status).toBe(409);
- expect((await call({action:'sshme',id,request:''})).status).toBe(409);
- run.mockRestore();
+it.each(['windows','linux','macos'])('keeps %s user assistance separate from test servers and other users',async platform=>{
+ const {call,assist,assistance,manager}=await setup();
+ const test=await call({action:'save',runner:input});
+ const saved=await assist({action:'save',runner:{...input,platform,workdir:''}}),id=saved.body.runner?.id;
+ expect(saved.status).toBe(200);expect(id).not.toBe(test.body.runner.id);
+ expect((await assist({action:'list'},'bob')).body.runners).toEqual([]);
+ expect((await assist({action:'sshme',id:test.body.runner.id,request:'Help'})).status).toBe(409);
+ expect((await call({action:'sshme',id:test.body.runner.id,request:'Help'})).status).toBe(409);
+ const run=vi.spyOn(assistance('alice'),'run').mockResolvedValue({code:255,stdout:'',stderr:'private failure'});
+ expect((await assist({action:'sshme',id,request:'Install editor'})).status).toBe(409);
+ run.mockResolvedValue({code:0,stdout:'coffee-runner-ready\n',stderr:''});
+ const ready=await assist({action:'sshme',id,request:'Install editor'});expect(ready.status).toBe(200);
+ expect(ready.body.prompt).toContain("Web user's");expect(ready.body.prompt).toContain(platform==='macos'?'macOS':platform==='linux'?'Linux':'Windows');
+ expect(ready.body.prompt).toContain('Linux Host');expect(ready.body.prompt).toContain(id);expect(ready.body.prompt).not.toContain(input.password);
+ if(platform!=='windows'){expect(ready.body.prompt).not.toContain('PowerShell');expect(run.mock.calls.every(c=>!c[1].environment)).toBe(true);}
+ expect((await assist({action:'sshme',id,request:'Help'},'bob')).status).toBe(409);
+ expect((await assist({action:'sshme',id,request:''})).status).toBe(409);
+ expect(await manager('alice').instruction()).not.toContain('/sshme/');
+ expect((await assist({action:'delete',id})).status).toBe(200);
+ expect((await call({action:'list'})).body.runners).toEqual([test.body.runner]);run.mockRestore();
 });
 
 it('does not reuse a saved password after the SSH target changes without an explicit credential choice',async()=>{
