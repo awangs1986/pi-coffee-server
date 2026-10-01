@@ -1,3 +1,5 @@
+> 2026-10-01 amendment: blanket engine immutability is superseded only by [explicit Work Pi/Codex takeover](../spec/agent-takeover.md). Chat cannot upgrade or switch. The rest of this dated decision remains applicable.
+
 # Native agent engines behind the existing Host boundary
 
 Status: accepted, 2026-09-23. M0–M5 implemented, merged and deployed on the two dedicated User VMs and separate Web host.

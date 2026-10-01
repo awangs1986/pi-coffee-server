@@ -1,3 +1,4 @@
+import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
 import {parseGitHubRepository} from './github.js';
@@ -13,7 +14,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation {takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -120,6 +121,7 @@ export class Workspaces {
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
     let interrupted=false;
+    for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
     for(const c of this.state.conversations) if(c.runState==="running") {c.runState="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
     if(interrupted)await this.save();
@@ -375,6 +377,23 @@ export class Workspaces {
     await checkedTaskRoot(c.taskRoot);
     await writeTaskJson(join(c.taskRoot,'history'),'conversation.json',{schemaVersion:1,role:'display-export-only',conversationId:id,engine:c.engine ?? 'pi',exportedAt:new Date().toISOString(),...history});
   }
+  async beginTakeover(id:string,operation:TakeoverState){return this.mutate(async()=>{
+    const c=this.conversation(id);
+    if(c.workspaceKind!=='project'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only active Work tasks can switch Agent');
+    if((c.engine??'pi')!==operation.from || operation.from===operation.to || c.takeover?.status==='preparing')throw new Error('Agent changed or takeover already in progress');
+    c.takeover=operation;c.retainedNativeIds=[...(c.retainedNativeIds??[]),operation.id];await this.save();
+  },()=>this.conversationLock(id));}
+  async updateTakeover(id:string,operationId:string,patch:Partial<TakeoverState>){return this.mutate(async()=>{
+    const c=this.conversation(id);if(c.takeover?.id!==operationId)throw new Error('Stale takeover');
+    Object.assign(c.takeover,patch);if(patch.nativeId&&!c.retainedNativeIds?.includes(patch.nativeId))c.retainedNativeIds=[...(c.retainedNativeIds??[]),patch.nativeId];await this.save();
+  },()=>this.conversationLock(id));}
+  async commitTakeover(id:string,operation:TakeoverState,binding:NativeBinding){return this.mutate(async()=>{
+    const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
+    const old={...c};
+    c.takeoverSegments=[...(c.takeoverSegments??[]),{id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
+    c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';
+    try{await this.save();}catch(error){Object.assign(c,old);throw error;}
+  },()=>this.conversationLock(id));}
   async setNativeBinding(id:string,binding:NativeBinding) {return this.mutate(async()=>{
     const c=this.conversation(id);
     if(c.nativeBinding?.id && c.nativeBinding.id!==binding.id)throw new Error("Native Session binding cannot change");

@@ -237,7 +237,7 @@ provider authorization. The Web gateway forwards this endpoint as read-only to
 the user's fixed Host.
 
 Workspace `conversation` and `continue` accept `engine` (legacy default `pi`).
-Engine identity is fixed at creation and preserved through retry/archive/restore.
+Engine identity is preserved through ordinary retry/archive/restore. The scoped HTTP Work takeover operation is the only Pi/Codex switching exception; see [the takeover contract](spec/agent-takeover.md).
 Native IDs are Host-owned binding metadata, never an `open` or `prompt` input.
 `opened` adds `engine` and boolean `capabilities`: models, images, stop, questions,
 tools, thinking, steer, followUp, stats, commands, extensions, compact, rename,

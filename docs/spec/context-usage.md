@@ -5,19 +5,19 @@ This specializes PA-006 and replaces the aggregate/cumulative-only UI assumption
 
 ## CU-01 — Display contract
 
-The supplied reference is the required structure: `Context Usage`, close button,
-`N% Full` at left, `~used / capacity Tokens` at right, a single segmented capacity
+The supplied reference is the required structure: `上下文用量`, close button,
+`已使用 N%` at left, `~used / capacity 词元` at right, a single segmented capacity
 bar, then exactly these rows in this order and colors:
 
 | ID | Label | Color | Counted content |
 |---|---|---|---|
-| system | System prompt | Gray | Effective system/developer instructions after separately attributed sections are removed |
-| tools | Tool definitions | Purple | Resident tool schemas actually included in the request |
-| rules | Rules | Green | Injected project instructions and instruction-file reads in the active context |
-| skills | Skills | Ochre | Injected skill catalog and loaded SKILL.md tool results retained in context |
-| dynamic | MCP & dynamic tools | Magenta | Other active schemas, including optional capabilities and MCP tools |
-| subagents | Subagent definitions | Blue | Agent-definition blocks included in the parent prompt and retained reads of `.pi/agents/*.md` |
-| conversation | Conversation | Red | Remaining messages, tool calls and results in the request |
+| system | 系统提示词 | Gray | Effective system/developer instructions after separately attributed sections are removed |
+| tools | 工具定义 | Purple | Resident tool schemas actually included in the request |
+| rules | 项目规则 | Green | Injected project instructions and instruction-file reads in the active context |
+| skills | 技能 | Ochre | Injected skill catalog and loaded SKILL.md tool results retained in context |
+| dynamic | MCP 与动态工具 | Magenta | Other active schemas, including optional capabilities and MCP tools |
+| subagents | 子代理定义 | Blue | Agent-definition blocks included in the parent prompt and retained reads of `.pi/agents/*.md` |
+| conversation | 对话 | Red | Remaining messages, tool calls and results in the request |
 
 Zero means no content of that category is included. Installed tools, on-disk
 Skills, registered child definitions and child-only prompts do not count merely
@@ -29,7 +29,7 @@ used total. Cumulative input/output/cache billing MUST NOT replace these rows.
 
 An observer loads after the payload-changing Harness and reads Pi's public
 `before_provider_request` event. It does not modify the payload, add tools, call
-a model, or alter Chat's zero-system contract. The observation is the most recent
+a model, or alter Chat's minimal-system contract (including the [Host environment sentence](session-environment.md)). The observation is the most recent
 request's model-visible content, after context transformations. System wrappers
 `project_context`, `available_skills`, and `available_agents` establish source
 attribution. Read-result attribution uses actual tool-call IDs/paths, not text
@@ -62,7 +62,7 @@ do not expose supported stats cannot pretend to implement this contract.
 
 ## Acceptance
 
-- `test/context-usage.test.ts`: seven disjoint categories, Chat zero system,
+- `test/context-usage.test.ts`: seven disjoint categories, Chat excludes Work prompts,
   dynamic schemas, model invalidation, media omission, and numeric-only output.
 - `test/chat-work-rpc.test.ts`: real pinned Pi + all default plugins + LSP Skill,
   local fixture provider, actual Work/Chat payload attribution. No paid provider.

@@ -12,7 +12,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='discover'?{revision:'a'.repeat(40),skills:[{name:'demo',description:'Demo skill',subdir:'skills/demo',installed:false},{name:'other',description:'Other skill',subdir:'skills/other',installed:false}],warnings:[]}:body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_display'){sidebar.showGroups=body.showGroups;return {ok:true,json:async()=>structuredClone(sidebar)};}
@@ -570,4 +570,20 @@ it('offers cancel, edit and immediate insertion for a pending queue item',async(
  ws.receive({type:'queue_state',sessionId:id,items:[{id:'q-1',revision:1,text:'queued instruction',status:'pending',imageCount:0}]});
  const row=document.querySelector('#queue')!;
  expect(row.textContent).toContain('取消');expect(row.textContent).toContain('编辑');expect(row.textContent).toContain('立即插入');
+});
+it('offers Work takeover in the Agent menu, requires drift consent and keeps the composer draft',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ app.sockets[0].receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true}});
+ app.sockets[0].receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='unsent draft';
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();
+ const row=document.querySelector<HTMLButtonElement>('#agent-engine-row')!;expect(row.disabled).toBe(false);
+ const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ expect(dialog.open).toBe(true);expect(dialog.textContent).toContain('信息漂移');expect(app.requests.some(r=>r.action==='takeover')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#takeover-cancel')!.click();expect(dialog.open).toBe(false);expect(prompt.value).toBe('unsent draft');
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.find(r=>r.action==='takeover')).toMatchObject({id,engine:'codex',expectedEngine:'pi',acceptDrift:true});expect(prompt.value).toBe('unsent draft');
 });

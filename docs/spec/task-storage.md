@@ -57,3 +57,12 @@ restores the draft and must not silently send only the image representation.
 Input attachments and legacy inbox files are excluded from generated artifact
 cards, while remaining available through authorized file APIs. This does not
 change Agent-generated artifact discovery or native session storage.
+
+## Work takeover records (2026-10-01)
+
+Explicit [Pi/Codex takeover](agent-takeover.md) adds private `takeover/` records
+and multiple retained native bindings to a task. These are retrieval evidence and
+display history, never native restore files or attachment grants. Archive retains
+them; complete cleanup remains unavailable. A pre-takeover binary cannot safely resume
+a switched Pi binding, so deployment rollback requires compatible code or a
+consistent pre-switch registry/native-store backup.

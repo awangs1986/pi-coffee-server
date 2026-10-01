@@ -114,7 +114,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     try{await session.start();return await session.getModels();}finally{await session.stop();}
   }
 
-  async create(options: { sessionId: string }): Promise<PiSession> {
+  async create(options: { sessionId: string; workspaceSessionId?:string; requireExisting?:boolean }): Promise<PiSession> {
     const args = appendSkillArgs(
       appendExtensionArgs([...(this.options.args ?? [])], this.options.extensions ?? []),
       this.options.skills ?? [],
@@ -126,6 +126,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     // Resume from the durable store when the conversation already exists there;
     // only a genuinely new conversation gets a fresh file with our id.
     const existing = (await this.listWithPaths()).find((session) => session.id === options.sessionId);
+    if(options.requireExisting&&!existing)throw new Error("Native Pi history is missing; restore its original store before reopening this task");
     if (!args.includes("--session") && !args.includes("--session-id")) {
       if (existing?.path !== undefined) args.push("--session", existing.path);
       else args.push("--session-id", options.sessionId);
@@ -135,14 +136,14 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     }
     const client = new RpcClient({
       cliPath: this.options.cliPath ?? resolvePiCliPath(),
-      cwd: this.options.cwdForSession ? await this.options.cwdForSession(options.sessionId, existing !== undefined) : this.options.cwd,
+      cwd: this.options.cwdForSession ? await this.options.cwdForSession(options.workspaceSessionId ?? options.sessionId, existing !== undefined) : this.options.cwd,
       provider: this.options.provider,
       model: this.options.model,
       env: {
         ...(this.options.agentDir === undefined ? {} : { PI_CODING_AGENT_DIR: this.options.agentDir }),
-        ...buildHostChildEnv({...this.options.env,...await this.options.envForSession?.(options.sessionId)}),
+        ...buildHostChildEnv({...this.options.env,...await this.options.envForSession?.(options.workspaceSessionId ?? options.sessionId)}),
         PI_COFFEE_CONTEXT_CONTROL: "1",
-        PI_COFFEE_ROOT_SESSION: this.options.runtimeIdForSession?.(options.sessionId) ?? options.sessionId,
+        PI_COFFEE_ROOT_SESSION: this.options.runtimeIdForSession?.(options.workspaceSessionId ?? options.sessionId) ?? options.sessionId,
       },
       args,
     });

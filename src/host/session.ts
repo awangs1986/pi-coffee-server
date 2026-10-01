@@ -186,6 +186,7 @@ export class HostSession {
   }
   private contextChanging=false;
   private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
+  get isTransitioning():boolean {return this.contextChanging||this.compacting;}
   get isBusy():boolean {return this.executionBusy||this.inputs.items.length>0;}
   get wasInterrupted(): boolean { return this.interrupted; }
   releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
@@ -232,7 +233,7 @@ export class HostSession {
   }
 
   async rename(name: string): Promise<void> {
-    if (this.compacting)throw new SessionBusyError();
+    if (this.compacting||this.contextChanging)throw new SessionBusyError();
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     await this.pi.rename(name);
     this.state = { ...this.state, sessionName: name };
@@ -267,15 +268,39 @@ export class HostSession {
 
   backgroundState():Promise<{known:boolean;active:number}> {return this.ready().backgroundState?.() ?? Promise.resolve({known:false,active:0});}
 
+  async takeover(operation:import('./takeover.js').TakeoverState):Promise<void>{
+    if(this.isBusy||this.pendingUi.size)throw new SessionBusyError();
+    if(!this.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
+    this.contextChanging=true;this.clearIdleTimer();this.onLifecycle?.(this);
+    const original=this.ready();let sourceStopped=false,committed=false;let prepared:Awaited<ReturnType<NonNullable<PiSessionFactory['prepareTakeover']>>>|undefined;
+    try{
+      const state=await original.getState(),background=await this.backgroundState();
+      if(state.isStreaming||!background.known||background.active)throw new Error('Source has active or unknown work');
+      prepared=await this.factory.prepareTakeover(this.id,operation,await original.getHistory());
+      const nextState=await prepared.session.getState();
+      const finalState=await original.getState(),finalBackground=await original.backgroundState?.();
+      if(finalState.isStreaming||!finalBackground?.known||finalBackground.active)throw new Error('Source resumed during takeover; it was not stopped');
+      sourceStopped=true;await original.stop();
+      await prepared.commit();committed=true;
+      this.unsubscribe?.();this.pi=prepared.session;this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));
+      this.events.length=0;this.lastMessageEndCursor=this.cursor;this.state=nextState;
+      await this.exportHistory();
+    }catch(error){
+      if(!committed)await prepared?.rollback().catch(()=>undefined);
+      if(sourceStopped&&!committed){this.unsubscribe?.();this.pi=await this.factory.create({sessionId:this.id});this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));this.state=await this.pi.getState();}
+      // The committed binding is changed only after preparation succeeds.
+      throw error;
+    }finally{this.contextChanging=false;this.onLifecycle?.(this);this.scheduleIdleCheck();}
+  }
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
-  setModel(provider: string, id: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
+  setModel(provider: string, id: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
   async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{
     if(this.isBusy)throw new SessionBusyError();
     const adapter=this.ready();if(!adapter.setContextPreset)throw new Error('Context settings require an updated Host and Agent');
     this.contextChanging=true;
     try{await adapter.setContextPreset(preset);}finally{this.contextChanging=false;}
   }
-  setThinkingLevel(level: string): Promise<void> { if(this.compacting)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
+  setThinkingLevel(level: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
   getStats(): Promise<SessionStats> { return this.ready().getStats(); }
@@ -547,7 +572,7 @@ export class HostSessionRegistry {
       .map((item) => {
         const live = this.sessions.get(item.id);
         const attention = live?.attention;
-        return { ...item, running: live?.isStreaming ?? false, ...(live?.queueFrame.items.length?{queued:live.queueFrame.items.length}:{}), ...(attention === undefined ? {} : { attention }) };
+        return { ...item, running: Boolean(live?.isStreaming||live?.isTransitioning), ...(live?.queueFrame.items.length?{queued:live.queueFrame.items.length}:{}), ...(attention === undefined ? {} : { attention }) };
       });
 
     // A conversation that was just opened has no file yet (Pi writes it with
@@ -562,7 +587,7 @@ export class HostSessionRegistry {
         updatedAt: now,
         messageCount: session.currentState.messageCount,
         preview: "",
-        running: session.isStreaming,
+        running: session.isStreaming||session.isTransitioning,
         ...(session.queueFrame.items.length?{queued:session.queueFrame.items.length}:{}),
         ...(session.attention === undefined ? {} : { attention: session.attention }),
       });

@@ -30,11 +30,11 @@ is displayed as a read-only bundled Pi Skill, not injected into native engines.
 | Claude Code | configured Claude directory / `skills`, default `~/.claude/skills` | `.claude/skills` |
 
 Project means the selected active Work Conversation's independent checkout, not
-all clones of a registered Project. The Task's fixed Agent must match. Its copied
+all clones of a registered Project. The Task's currently active Agent must match; takeover does not copy Skills across engines. Its copied
 Skill files are ordinary project changes that can be reviewed, checkpointed and
 published through Gitea. Other clones receive them only through normal Git flows.
-Chat uses user-level Skills; Pi Chat's zero-system-prompt rule remains unchanged,
-so explicit `/skill:name` invocation is available without adding a Skill catalog
+Chat uses user-level Skills; Pi Chat excludes Work prompts and the Skill catalog while retaining the
+[Host environment sentence](session-environment.md); explicit `/skill:name` invocation is available without adding a Skill catalog
 to its system prompt.
 
 The inventory covers these selected native roots and explicitly configured Pi
@@ -43,7 +43,7 @@ ancestor directory or package configured outside this manager. Eligible existing
 files are never adopted or overwritten. Bundled and linked sources remain read-only.
 
 Native discovery references: [Codex Skills](https://developers.openai.com/codex/skills/),
-[Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.84.4 public
+[Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.99.1 public
 `loadSkills` interface. Engine-native precedence and metadata semantics remain intact.
 
 ## Install and lifecycle
