@@ -60,3 +60,16 @@ contents and attribution could not be verified. Multiple live Codex app-servers
 were observed under the workbench Host. A deterministic 12-way sidebar discovery
 reproduced 12 process starts before the fix and one after it. This confirms the
 startup race, not a complete retrospective attribution of the earlier OOM.
+
+## Sidebar request isolation (2026-10-01)
+
+[Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23) additionally
+fixes an observed native metadata stall. A socket's sidebar list request runs
+independently of its ordered task-control messages; a blocked listing cannot
+hold up ping, answers or prompts. Concurrent listings in one authenticated user
+registry share a single discovery operation. Bound Codex tasks read metadata
+by native ID and verify its cwd, instead of scanning the native store once per
+project directory. Discovery RPCs have a ten-second bound. A timed-out directory
+scan cools down for sixty seconds, and its metadata process can be recycled only
+when it has no live sessions or in-progress session creation. No task execution
+process is killed as a discovery recovery action.

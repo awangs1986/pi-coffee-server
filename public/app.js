@@ -1365,6 +1365,7 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error':
+      if(frame.code==='list_unavailable'){toast('对话列表暂时加载失败，当前对话仍可使用',5000);return;}
       if(rejectUiAnswer(frame))return;
       if(pendingRenames.delete(frame.requestId)){toast('重命名失败：'+frame.message,5000);return;}
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}

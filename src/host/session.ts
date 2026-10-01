@@ -11,7 +11,7 @@ import type {
   SessionSummary,
   UiResponse,
 } from "../shared/protocol.js";
-import type { AgentHistory as PiHistory, AgentModels as PiModels, AgentSessionFactory as PiSessionFactory, AgentSession as PiSession } from "./agent-adapter.js";
+import type { AgentSessionListing as PiSessionListing, AgentHistory as PiHistory, AgentModels as PiModels, AgentSessionFactory as PiSessionFactory, AgentSession as PiSession } from "./agent-adapter.js";
 
 export interface SessionSink {
   send(frame: ServerFrame): void;
@@ -492,6 +492,7 @@ export class HostSessionRegistry {
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
   private readonly sessions = new Map<string, HostSession>();
+  private listing?:Promise<PiSessionListing[]>;
   private readonly changeListeners = new Set<(session?:HostSession) => void>();
 
   private readonly externalPollMs?: number;
@@ -576,7 +577,7 @@ export class HostSessionRegistry {
 
   /** Durable conversations from the store, decorated with what is live right now. */
   async list(): Promise<SessionSummary[]> {
-    const stored = await this.factory.list();
+    const stored = await (this.listing ??= this.factory.list().finally(()=>{this.listing=undefined;}));
     const known = new Set(stored.map((item) => item.id));
     // Pi writes the session file at startup; a conversation nobody has spoken
     // in yet is noise in a shared list (the opening browser shows it locally).

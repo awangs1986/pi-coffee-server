@@ -68,6 +68,7 @@ const RATE_LIMIT_TTL_MS = 60_000;
   mappingFile?: string;
   /** Stop the user's app-server after this long with no open session; 0 keeps it for the Host's lifetime. */
   idleTimeoutMs?: number;
+  metadataTimeoutMs?: number;
   clientName?: string;
   clientVersion?: string;
 }
@@ -83,6 +84,8 @@ export class CodexSessionFactory implements PiSessionFactory {
   private server?: CodexAppServer;
   private connecting?: Promise<CodexAppServer>;
   private listingReads = 0;
+  private readonly failedListingsUntil=new Map<string,number>();
+  private recycleMetadata=false;
   private creating = 0;
   private readonly mappingFile: string;
   /** PI Coffee session id → Codex thread id, for conversations the Host named before Codex did. */
@@ -215,7 +218,7 @@ export class CodexSessionFactory implements PiSessionFactory {
         sortKey: "updated_at",
         sourceKinds: ["appServer", "vscode", "cli", "exec"],
         ...(cursor === undefined ? {} : { cursor }),
-      }) as Obj;
+      },this.options.metadataTimeoutMs??10000) as Obj;
       const data = Array.isArray(result.data) ? (result.data as Obj[]) : [];
       threads.push(...data);
       const next = result.nextCursor;
@@ -315,9 +318,35 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Host-owned workspace paths only; never accepts a browser-supplied directory. */
   async listForCwd(cwd:string): Promise<PiSessionListing[]> {
+    if((this.failedListingsUntil.get(cwd)??0)>Date.now())throw new Error('Codex metadata request recently timed out; discovery is cooling down');
     this.listingReads++;
     try { return await this.readListings(cwd); }
-    finally { this.listingReads--; this.scheduleIdleStop(); }
+    catch(error){
+      if(error instanceof Error && error.message.startsWith('Codex metadata request timed out:')){
+        this.failedListingsUntil.set(cwd,Date.now()+60000);this.recycleMetadata=true;
+      }
+      throw error;
+    }finally{await this.finishMetadataRead();}
+  }
+
+  private async finishMetadataRead():Promise<void>{
+    this.listingReads--;
+    if(this.recycleMetadata && this.listingReads===0 && this.creating===0 && this.live.size===0){this.recycleMetadata=false;await this.close();}
+    else this.scheduleIdleStop();
+  }
+
+  /** Direct bound-thread metadata avoids a whole store scan for each task directory. */
+  async summaryForCwd(cwd:string,id:string):Promise<PiSessionListing|undefined>{
+    this.listingReads++;
+    try{
+      const server=await this.connection();
+      const result=await server.request('thread/read',{threadId:id,includeTurns:false},this.options.metadataTimeoutMs??10000) as Obj;
+      const thread=result.thread as Obj|undefined;
+      if(!thread || typeof thread.cwd!=='string' || resolve(thread.cwd)!==resolve(cwd))return undefined;
+      const preview=typeof thread.preview==='string'?thread.preview.replace(/\s+/g,' ').trim().slice(0,120):'';
+      return {id,createdAt:toIso(thread.createdAt),updatedAt:toIso(thread.updatedAt),preview,messageCount:preview?1:0,
+        ...(typeof thread.name==='string'?{name:thread.name}:{}),...(typeof thread.source==='string'?{source:thread.source}:{})};
+    }finally{await this.finishMetadataRead();}
   }
 
   private async readListings(cwd:string): Promise<PiSessionListing[]> {
@@ -391,7 +420,7 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Stop the user's app-server; sessions resume from Codex's rollouts next time. */
   async close(): Promise<void> {
-    await this.connecting?.catch(() => undefined);
+    if(this.connecting)await this.connecting.catch(() => undefined);
     this.cancelIdleStop();
     this.unsubscribeAccount?.();
     this.unsubscribeAccount = undefined;
