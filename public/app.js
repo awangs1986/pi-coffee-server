@@ -250,10 +250,10 @@ function renderAgentPane(kind) {
     return;
   }
   if(kind==='context'){
-    for(const preset of ['272k','maximum'])pane.append(agentOption({label:preset==='272k'?'272k（默认）':'模型最大',selected:(opened?models?.context?.preset:draftContextPreset)===preset,onClick:async()=>{
+    for(const preset of ['272k','maximum'])pane.append(agentOption({label:preset==='272k'?'272k（默认）':'500K',selected:(opened?models?.context?.preset:draftContextPreset)===preset,onClick:async()=>{
       const epoch=taskSelectionEpoch,id=activeId;
       closeAgentMenu();
-      if(preset==='maximum'&&!await askModal({title:'使用模型最大上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
+      if(preset==='maximum'&&!await askModal({title:'使用 500K 上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
       if(epoch!==taskSelectionEpoch||id!==activeId)return;
       if(opened){if(streaming||compacting||!models?.context)return;contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset});}
       else draftContextPreset=preset;
@@ -350,7 +350,7 @@ function renderAgentSettings() {
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
   ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(agent));
   ui.agentRows.context.disabled=takeoverBusy()||streaming||compacting||Boolean(contextPending)||!models?.context;
-  ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'模型最大':'272k';
+  ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'500K':'272k';
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
     : task && !pendingOpenId ? (task.workspaceKind==='project'&&['pi','codex'].includes(task.engine||'pi')?'来源固定；Pi／Codex 可通过交接切换。':'此任务的 Agent 和来源固定。') : '';
   ui.agentNote.textContent = note;

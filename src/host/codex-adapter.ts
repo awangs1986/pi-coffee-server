@@ -374,7 +374,8 @@ export class CodexSessionFactory implements PiSessionFactory {
 }
 
 function contextConfig(preset:ContextPreset):Obj {
-  return preset==='272k'?{model_context_window:272000,model_auto_compact_token_limit:258400}:{};
+  const limit=preset==='272k'?272000:500000;
+  return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95)};
 }
 interface CodexSessionSettings {
   developerInstructions?:string;
@@ -574,7 +575,7 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {}) as Obj;
-    return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,...(this.preset==='272k'?{limit:272000}:{})}};
+    return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {

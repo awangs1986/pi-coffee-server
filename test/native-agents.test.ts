@@ -549,7 +549,7 @@ it('shows Codex native current context usage without inventing category counts',
 });
 
 
-it('defaults context to 272k and confirms extra cost before choosing model maximum',async()=>{
+it('defaults context to 272k and confirms extra cost before choosing fixed 500K',async()=>{
  const app=await setup(false,false,true,true);
  const catalog=app.frames.find(f=>f.type==='get_model_catalog');
  app.sockets.at(-1).receive({type:'model_catalog',engine:'pi',requestId:catalog.requestId,models:[{provider:'fixture',id:'large',contextWindow:1000000}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}});
@@ -557,11 +557,11 @@ it('defaults context to 272k and confirms extra cost before choosing model maxim
  document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
  expect(document.querySelector('#agent-context-pane')!.classList.contains('hidden')).toBe(false);
  const dialog=document.querySelector<HTMLDialogElement>('#modal')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
- const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('模型最大'))!;option.click();
+ const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!;option.click();
  expect(document.querySelector('#modal-text')!.textContent).toContain('过大的上下文会产生额外费用');
  expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
  document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
- expect(document.querySelector('#agent-context-value')!.textContent).toBe('模型最大');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('500K');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
 });
 
 it('offers cancel, edit and immediate insertion for a pending queue item',async()=>{

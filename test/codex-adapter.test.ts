@@ -134,7 +134,7 @@ describe("Codex app-server adapter", () => {
       await expect.poll(()=>frames.find(f=>f.type==='models')).toMatchObject({context:{preset:'maximum'}});
       send({type:'set_context',preset:'invalid',requestId:'invalid'});
       await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
-      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({});
+      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
     }finally{ws.close();await host.close();}
   },20000);
 
@@ -156,9 +156,11 @@ describe("Codex app-server adapter", () => {
     expect((await session.getModels()).context?.preset).toBe('272k');
     expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
     await session.setContextPreset!('maximum');expect((await session.getModels()).context?.preset).toBe('maximum');
-    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    expect((await session.getModels()).context?.limit).toBe(500000);
     const events=recorder(session);await session.prompt('fixture');await events.until(settled);await session.stop();await factory.close();
-    const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context?.preset).toBe('maximum');
+    const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context).toMatchObject({preset:'maximum',limit:500000});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
     await resumed.setContextPreset!('272k');expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
   });
 
