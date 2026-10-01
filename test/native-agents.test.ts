@@ -562,3 +562,12 @@ it('defaults context to 272k and confirms extra cost before choosing model maxim
  document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelector('#agent-context-value')!.textContent).toBe('模型最大');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
 });
+
+it('offers cancel, edit and immediate insertion for a pending queue item',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'queue_state',sessionId:id,items:[{id:'q-1',revision:1,text:'queued instruction',status:'pending',imageCount:0}]});
+ const row=document.querySelector('#queue')!;
+ expect(row.textContent).toContain('取消');expect(row.textContent).toContain('编辑');expect(row.textContent).toContain('立即插入');
+});

@@ -324,6 +324,16 @@ class RpcPiSession implements PiSession {
     await this.sendChecked({ type: "steer", message: text, images });
   }
 
+  async validateFollowUp(text:string):Promise<void>{
+    const command=/^\/(\S+)/.exec(text)?.[1];
+    if(command&&(await this.getCommands()).some(c=>c.name===command&&c.source==='extension'))throw new Error('Extension commands cannot be queued.');
+    if(this.allowedModels){
+      if(/^\/model(?:\s|$)/.test(text.trim()))throw new Error('Change models when the current turn has finished');
+      const state=await this.client.getState();
+      if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');
+    }
+  }
+
   async followUp(text: string, images?: ImageInput[]): Promise<void> {
     await this.sendChecked({ type: "follow_up", message: text, images });
   }

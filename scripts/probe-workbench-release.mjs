@@ -15,6 +15,7 @@ const controls = {
   'Pi/Codex/Claude task selection': ['task-engine', 'task-kind'],
   'Context categories': ['sp-context-legend'],
   'Files and Diff': ['files-toggle', 'workspace-panel', 'files-diff', 'diff-dialog'],
+  'Pending instruction editor': ['queue', 'queue-edit-dialog', 'queue-edit-text'],
   'SSHME connection dialog': ['sshme-dialog', 'sshme-form', 'sshme-connect', 'sshme-platform', 'sshme-forget'],
   'Task details footer': ['project-controls', 'workspace-context'],
 };
@@ -25,7 +26,7 @@ for (const [name, ids] of Object.entries(controls)) {
   if (missing.length) failures++;
 }
 if (!failures) {
-  for (const path of ['app.js', 'app.css', 'context-status.js', 'review.js', 'diff.js', 'skills.js', 'runners.js', 'sshme.js']) {
+  for (const path of ['app.js', 'app.css', 'context-status.js', 'review.js', 'diff.js', 'skills.js', 'runners.js', 'sshme.js', 'queue-controls.js']) {
     const asset = await fetch(new URL(path, base), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     const text = await asset.text();
     assert.equal(asset.status, 200, `Asset ${path}`);

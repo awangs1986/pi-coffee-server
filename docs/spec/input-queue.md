@@ -1,0 +1,50 @@
+# Pending Web instructions
+
+Delivery: [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
+
+While Pi or Codex is running, Web follow-up instructions remain in a Host-owned
+queue until their turn. Every row has a stable random ID, revision, text and
+private image payload. Native adapters still own prompts, tools, transcripts and
+steering. Claude currently does not advertise follow-up/steering support.
+
+- **Cancel** removes only the selected pending instruction. It does not abort the
+  active run, change other entries or delete already-uploaded task attachments.
+- **Edit** opens a separate text editor; it preserves the composer's unsent draft,
+  queue position and image attachments. Saving compares the row's revision. The
+  original instruction can start while the editor is open; a stale save fails
+  explicitly and retains the edit text for the user to recover.
+- **Insert now** submits the selected instruction through native steering while
+  running, or a normal prompt if the turn has just ended. It never aborts the
+  current task. Pi consumes steering at its next native opportunity; Codex uses
+  native turn/steer. This does not promise instantaneous interruption of a tool.
+
+Rows become immutable once sending starts. Concurrent tabs and double clicks
+cannot send the same queued row twice. A failed or uncertain delivery is retained
+as **Needs confirmation**, blocks automatic continuation, and is never retried
+implicitly. The user can cancel it or explicitly retry after checking history;
+retry warns that the prior delivery might already have executed. Failed rows can
+be edited but remain paused. Ordinary native steering entries are informational:
+they have already crossed the delivery boundary and are not retractable here.
+
+The authenticated WebSocket's open session determines scope; requests cannot name
+another user's or conversation's queue. Actions include ID and revision. State
+snapshots restore rows after refresh or reconnection. Pending text, images and
+mutations are never saved in browser storage. The queue holds at most 100 rows,
+512 KiB of UTF-8 text and 16 MiB of encoded image data per live session.
+
+Like the previous native follow-up queues, this is live Host memory, not a new
+persistent job scheduler. Browser disconnects do not lose it. Pending/failed rows
+prevent idle retirement, task lifecycle changes and context replacement. Session
+summaries expose a queued count so deployments wait for both active turns and
+queued instructions. Host restart must not be used to cancel or edit a queue.
+An unexpected native exit pauses remaining instructions for explicit recovery.
+
+Pi extension commands are rejected before buffering. Native input hooks, Skill
+expansion and prompt templates run when an instruction is actually delivered,
+using the native prompt/steer interface; editing does not run them. No Pi package
+or installed native Agent files are modified by this feature.
+
+Acceptance covers scoped WebSocket mutations, stale revisions, preserved images,
+FIFO delivery, failure without automatic replay, cancellation/reconnection,
+separate editor drafts and the Pi/Codex adapter delivery paths. The compact
+queue shows roughly three rows before scrolling; it does not expand the page.

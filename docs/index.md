@@ -46,3 +46,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Session environment and consent guidance: [contract](spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
 
 - SSHME assistance on the Web user’s computer: [contract](spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
+
+- Editable pending instructions: [contract](spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).

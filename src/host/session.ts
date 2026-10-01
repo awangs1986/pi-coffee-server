@@ -1,3 +1,4 @@
+import {InputQueue} from "./input-queue.js";
 import { randomUUID } from "node:crypto";
 import type {
   CommandInfo,
@@ -48,6 +49,7 @@ export interface SessionOpenResult {
  */
 export class HostSession {
   readonly id: string;
+  private readonly inputs:InputQueue;
   private readonly factory: PiSessionFactory;
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
@@ -80,6 +82,14 @@ export class HostSession {
 
   constructor(options: HostSessionOptions) {
     this.id = options.id ?? randomUUID();
+    this.inputs=new InputQueue({busy:()=>this.executionBusy,
+      validate:async text=>{await this.ready().validateFollowUp?.(text);},
+      deliver:async(text,images,promote)=>{
+        if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+        if(promote&&this.state.isStreaming){await this.ready().steer(text,images);return;}
+        const requestId=randomUUID();this.reservePrompt(requestId,true);await this.prompt(requestId,text,images);
+      },changed:()=>{for(const sink of this.sinks)sink.send(this.queueFrame);this.onLifecycle?.(this);}
+    });
     this.factory = options.factory;
     this.eventBufferSize = Math.max(1, options.eventBufferSize ?? 256);
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
@@ -97,7 +107,7 @@ export class HostSession {
       this.unsubscribe = this.pi.onEvent((event) => this.handlePiEvent(event));
       try {
         this.state = await this.pi.getState();
-        this.started = true;
+        this.started = true;this.inputs.resume();
         this.watchExternalTurn();
       } catch (error) {
         this.unsubscribe?.();
@@ -175,15 +185,16 @@ export class HostSession {
     return undefined;
   }
   private contextChanging=false;
-  get isBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
+  private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
+  get isBusy():boolean {return this.executionBusy||this.inputs.items.length>0;}
   get wasInterrupted(): boolean { return this.interrupted; }
   releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
 
 
-  reservePrompt(requestId: string): void {
+  reservePrompt(requestId: string,fromQueue=false): void {
     if (this.interrupted) throw new Error("Agent was interrupted. Reopen the conversation before retrying; the previous request was not replayed.");
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.isBusy) {
+    if (fromQueue?this.executionBusy:this.isBusy) {
       throw new SessionBusyError();
     }
     this.activeRequestId = requestId;
@@ -205,11 +216,18 @@ export class HostSession {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     if (this.compacting || this.contextChanging) throw new SessionBusyError();
     if (mode === "steer") await this.pi.steer(text, images);
-    else await this.pi.followUp(text, images);
+    else await this.inputs.add(text, images);
   }
 
+  get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
+  async changeQueue(action:import('../shared/protocol.js').QueueAction){
+    if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+    await this.inputs.change(action);
+  }
   async abort(): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
+    this.inputs.clear();
+    await this.inputs.waitForDelivery();
     await this.pi.abort();
   }
 
@@ -282,6 +300,7 @@ export class HostSession {
   }
 
   async stop(): Promise<void> {
+    this.inputs.stop();
     this.clearIdleTimer();
     if (this.externalTimer !== undefined) clearTimeout(this.externalTimer);
     this.externalTimer = undefined;
@@ -363,7 +382,7 @@ export class HostSession {
     let lifecycle = false;
     if (isRecord(safeEvent) && typeof safeEvent.type === "string") {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
-        this.interrupted = true;
+        this.interrupted = true;this.inputs.pause();
         this.state = {...this.state,isStreaming:false};
         this.activeRequestId = undefined;
         this.pendingUi.clear();
@@ -387,7 +406,6 @@ export class HostSession {
         // Whatever dialogs were open have been answered or timed out by now.
         this.pendingUi.clear();
         if (this.sinks.size === 0) this.unseenSettle = true;
-        void this.refreshState();
       }
     }
     this.cursor += 1;
@@ -411,7 +429,7 @@ export class HostSession {
       lifecycle = true; // the list's "waiting" flag changed
     }
     for (const sink of this.sinks) sink.send(frame);
-    if (settled) {void this.exportHistory();this.scheduleIdleCheck();}
+    if (settled) {void this.refreshState();void this.exportHistory();this.scheduleIdleCheck();this.inputs.wake();}
     if (lifecycle) this.onLifecycle?.(this);
   }
 
@@ -427,7 +445,8 @@ export class HostSession {
   private async refreshState(): Promise<void> {
     if (!this.pi) return;
     try {
-      this.state = await this.pi.getState();
+      const cursor=this.cursor;const state=await this.pi.getState();
+      if(this.cursor===cursor)this.state=state;
     } catch {
       // The authoritative lifecycle event has already been forwarded. A
       // transient state refresh failure must not tear down a live session.
@@ -528,14 +547,14 @@ export class HostSessionRegistry {
       .map((item) => {
         const live = this.sessions.get(item.id);
         const attention = live?.attention;
-        return { ...item, running: live?.isStreaming ?? false, ...(attention === undefined ? {} : { attention }) };
+        return { ...item, running: live?.isStreaming ?? false, ...(live?.queueFrame.items.length?{queued:live.queueFrame.items.length}:{}), ...(attention === undefined ? {} : { attention }) };
       });
 
     // A conversation that was just opened has no file yet (Pi writes it with
     // the first message). Like Codex, it only appears in everyone's list once
     // it has content; the browser that opened it shows it locally meanwhile.
     for (const session of this.sessions.values()) {
-      if (known.has(session.id) || session.currentState.messageCount === 0) continue;
+      if (known.has(session.id) || (session.currentState.messageCount === 0 && !session.queueFrame.items.length)) continue;
       const now = new Date().toISOString();
       summaries.unshift({
         id: session.id,
@@ -544,6 +563,7 @@ export class HostSessionRegistry {
         messageCount: session.currentState.messageCount,
         preview: "",
         running: session.isStreaming,
+        ...(session.queueFrame.items.length?{queued:session.queueFrame.items.length}:{}),
         ...(session.attention === undefined ? {} : { attention: session.attention }),
       });
     }

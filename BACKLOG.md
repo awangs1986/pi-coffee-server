@@ -1,3 +1,5 @@
+> Pending instruction controls: [contract](docs/spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
+
 > `/sshme` Web remote assistance: [contract](docs/spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
 
 > Host environment sentence for every Agent, including Pi Chat: [contract](docs/spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
@@ -418,4 +420,4 @@ defines user-scoped persistence and the strict separation from task execution id
 
 - Codex Skill composer completion: [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10), [native Skill contract](docs/spec/skill-management.md#codex-completion-2026-09-30).
 
-- 2026-09-30: [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11) covers Chinese context/diff controls, browser-local attachment drafts, native Codex usage/completion and Pi/Codex context presets. Running queue promotion remains a distinct unimplemented capability; direct native steering already exists.
+- 2026-09-30: [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11) covers Chinese context/diff controls, browser-local attachment drafts, native Codex usage/completion and Pi/Codex context presets. Pending queue cancel/edit/promotion is tracked in Server #18; direct native steering already exists.

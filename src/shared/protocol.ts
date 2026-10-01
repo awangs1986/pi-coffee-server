@@ -48,6 +48,7 @@ export interface SessionSummary {
   messageCount: number;
   preview: string;
   running: boolean;
+  queued?:number;
   /**
    * Why this conversation wants the user's eyes: an agent dialog is waiting
    * for an answer, or a run finished while no browser was attached. Absent
@@ -143,7 +144,11 @@ export interface RateLimits {
  */
 export type PromptMode = "prompt" | "steer" | "follow_up";
 
+export interface QueueItem {id:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
+export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote";text?:string;}
+
 export type AckOperation =
+  | "queue_action"
   | "prompt"
   | "steer"
   | "follow_up"
@@ -180,6 +185,8 @@ export interface UiResponse {
 }
 
 export type ClientFrame =
+  | ({v:typeof PROTOCOL_VERSION;type:"queue_action";requestId:string} & QueueAction)
+  | {v:typeof PROTOCOL_VERSION;type:"get_queue"}
   | {
       v: typeof PROTOCOL_VERSION;
       type: "open";
@@ -241,6 +248,7 @@ export type ClientFrame =
     };
 
 export type ServerFrame =
+  | {v:typeof PROTOCOL_VERSION;type:"queue_state";sessionId:string;items:QueueItem[]}
   | {
       v: typeof PROTOCOL_VERSION;
       type: "opened";
@@ -438,6 +446,14 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
         ...(hasConfirmed ? { confirmed: value.confirmed as boolean } : {}),
         ...(hasCancelled ? { cancelled: true } : {}),
       };
+    }
+    case "get_queue": return {v:PROTOCOL_VERSION,type:"get_queue"};
+    case "queue_action": {
+      if(!['cancel','edit','promote'].includes(String(value.action)))throw new ProtocolError('invalid_field','Invalid queue action');
+      if(!Number.isSafeInteger(value.revision)||Number(value.revision)<1)throw new ProtocolError('invalid_field','Invalid queue revision');
+      const text=value.action==='edit'?requiredString(value.text,'text',MAX_PROMPT_CHARS):undefined;
+      if(text!==undefined&&!text.trim())throw new ProtocolError('invalid_field','Empty queue text');
+      return {v:PROTOCOL_VERSION,type:'queue_action',requestId:requiredString(value.requestId,'requestId',256),id:requiredString(value.id,'id',256),revision:Number(value.revision),action:value.action as QueueAction['action'],...(text!==undefined?{text}:{})};
     }
     case "prompt":
       return parsePrompt(value);
