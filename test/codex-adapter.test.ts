@@ -1,3 +1,4 @@
+import {HostSessionRegistry} from '../src/host/session.js';
 import { HostServer } from '../src/host/server.js';
 import { WebSocket } from 'ws';
 import { once } from 'node:events';
@@ -364,6 +365,27 @@ describe("Codex app-server adapter", () => {
     await rec2.until((event) => event.type === "queue_update");
     await rec2.until((event) => event.type === "agent_settled" && text(rec2.events).includes("echo: third"));
     expect(text(rec2.events)).toContain("echo: second");
+  });
+
+  it("delivers Host queue edits through native Codex steering without a duplicate follow-up",async()=>{
+    const b=setup(),factory=b.factory(),registry=new HostSessionRegistry({factory,idleTimeoutMs:0});
+    try{
+      const {session}=await registry.open('queue-codex');const frames:any[]=[];session.attach({send:frame=>frames.push(frame)});
+      session.reservePrompt('run');await session.prompt('run','ask structured');
+      await expect.poll(()=>frames.find(f=>f.event?.type==='native_request')).toBeTruthy();
+      await session.enqueue('follow_up','original');const first=session.queueFrame.items[0];
+      await session.changeQueue({...first,action:'edit',text:'edited steering'});
+      await session.enqueue('follow_up','cancelled');await session.changeQueue({...session.queueFrame.items[1],action:'cancel'});
+      await session.changeQueue({...session.queueFrame.items[0],action:'promote'});
+      expect(session.queueFrame.items).toEqual([]);
+      const question=frames.find(f=>f.event?.type==='native_request').event;
+      await session.respondUi({id:question.id,value:'Blue'});
+      await expect.poll(()=>session.isStreaming).toBe(false);
+      const history=(await factory.create({sessionId:'queue-codex'})).getHistory();
+      expect(frames.filter(f=>f.event?.type==='queue_update'&&f.event.steering?.includes('edited steering'))).toHaveLength(1);
+      expect(JSON.stringify(await history)).not.toContain('cancelled');
+      expect(frames.filter(f=>f.event?.type==='agent_start')).toHaveLength(1);
+    }finally{await registry.close();}
   });
 
   it("renames, reports models and stats, and deletes", async () => {

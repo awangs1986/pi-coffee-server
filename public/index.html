@@ -393,6 +393,10 @@
 
     <script type="module" src="/app.js"></script>
 
+    <dialog id="queue-edit-dialog" class="runners-dialog" aria-labelledby="queue-edit-title">
+      <div class="runner-heading"><h2 id="queue-edit-title">编辑排队指令</h2><button id="queue-edit-close" type="button" class="icon-btn" aria-label="关闭编辑">✕</button></div>
+      <form id="queue-edit-form"><textarea id="queue-edit-text" aria-label="排队指令" rows="6" maxlength="65536" required></textarea><p id="queue-edit-status" class="runner-help" role="status"></p><div class="runner-form-foot"><span></span><button class="btn small primary" type="submit">保存修改</button></div></form>
+    </dialog>
     <dialog id="sshme-dialog" class="runners-dialog" aria-labelledby="sshme-title">
       <div class="runner-heading"><h2 id="sshme-title">连接我的电脑</h2><button id="sshme-close" type="button" class="icon-btn" aria-label="取消 SSH 协助">✕</button></div>
       <p id="sshme-request" class="runner-help"></p>

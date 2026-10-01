@@ -53,6 +53,7 @@ export interface AgentSession {
   /** Interrupt a running turn after its current tool calls. */
   steer(text: string, images?: ImageInput[]): Promise<void>;
   /** Queue a message for after the current run finishes. */
+  validateFollowUp?(text:string):Promise<void>;
   followUp(text: string, images?: ImageInput[]): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<SessionState>;

@@ -1094,3 +1094,12 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .runner-form-foot { margin-top: 12px; flex-wrap: wrap; }
 .runner-check { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); }
 @media (max-width: 480px) { .runner-row { align-items: flex-start; flex-direction: column; gap: 6px; } .runner-fields { grid-template-columns: 1fr; } }
+
+/* Pending instructions stay compact; editing has its own draft. */
+.queue { max-height: 108px; overflow-y:auto; }
+.queue-item { flex-wrap:wrap; align-items:center; }
+.queue-text { flex:1; min-width:80px; }
+.queue-actions { display:flex; gap:4px; flex:none; margin-left:auto; }
+.queue-images { font-size:11px; white-space:nowrap; }
+.queue-warning { font-size:11px; color:var(--text-2); flex-basis:100%; }
+#queue-edit-text { box-sizing:border-box; width:100%; resize:vertical; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; }

@@ -1,3 +1,4 @@
+import {initQueueControls} from './queue-controls.js';
 import {initRunners} from "./runners.js";
 import {initSshme,parseSshme,SSHME_COMMAND} from './sshme.js';
 import { initSkills } from "./skills.js";
@@ -397,6 +398,7 @@ function askModal({ title, text, input, okLabel = '确定', danger = false }) {
 
 // ---------- thread rendering ----------
 function resetThread() {
+  queueControls.reset();
   ui.thread.innerHTML = '';
   nativeItems.clear();nativeCursor=0;
   entries = [];
@@ -926,6 +928,7 @@ function setConnection(text, kind) {
   ui.status.textContent = text;
   ui.dot.className = 'dot' + (kind ? ' ' + kind : '');
   connected = kind === 'ready' || kind === 'busy';
+  queueControls.connection(connected);
   // The footer dot is too subtle: the center column must also announce a lost link.
   ui.connBanner.classList.toggle('hidden', connected);
   if (!connected) ui.connBanner.textContent = text || '连接已断开，正在自动重连…';
@@ -1262,7 +1265,10 @@ function handleFrame(frame, ws) {
       renderUploadLogCard(); // relink rows with the fresh token
       if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
       return;
+    case 'queue_state':
+      if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
+      if(frame.operation==='queue_action'&&queueControls.ack(frame.requestId))return;
       // Host treats queued input as a new prompt if the previous run already ended.
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
@@ -1279,6 +1285,7 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error':
+      if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
       if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
@@ -1629,17 +1636,8 @@ ui.pluginsClose.addEventListener('click', closePlugins);
 ui.pluginsModal.addEventListener('click', (e) => { if (e.target === ui.pluginsModal) closePlugins(); });
 
 // ---------- queue strip ----------
-function renderQueue(event) {
-  const items = [...(event.steering || []).map((t) => ({ kind: '插话', t })), ...(event.followUp || []).map((t) => ({ kind: '排队', t }))];
-  ui.queue.innerHTML = '';
-  ui.queue.classList.toggle('hidden', items.length === 0);
-  for (const item of items) {
-    const row = el('div', 'queue-item');
-    row.appendChild(el('span', 'queue-kind', item.kind));
-    row.appendChild(el('span', 'queue-text', item.t));
-    ui.queue.appendChild(row);
-  }
-}
+const queueControls=initQueueControls({container:ui.queue,send,requestId,toast,canPromote:()=>supports('steer')});
+function renderQueue(event){queueControls.native(event);}
 
 // ---------- models ----------
 function renderModels() {

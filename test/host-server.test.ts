@@ -520,10 +520,10 @@ describe("Host WebSocket seam", () => {
     for (let i = 0; i < 3; i++) await frames.next(); // ack, agent_start, delta
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p3", text: "also do this", mode: "follow_up" }));
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "follow_up", requestId: "p3" });
-    expect(await frames.next()).toMatchObject({ type: "event", event: { type: "queue_update", followUp: ["also do this"] } });
+    expect(await frames.next()).toMatchObject({ type: "queue_state", items:[{text:"also do this"}] });
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p4", text: "actually stop", mode: "steer" }));
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "steer", requestId: "p4" });
-    expect(pi.queued).toEqual([{ mode: "follow_up", text: "also do this" }, { mode: "steer", text: "actually stop" }]);
+    expect(pi.queued).toEqual([{ mode: "steer", text: "actually stop" }]);
     // A plain prompt while busy is still refused.
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p5", text: "plain" }));
     await frames.next(); // queue_update from steer
@@ -1105,4 +1105,32 @@ it('exports display history via the Agent seam without replacing native recovery
   await server.close();server=undefined;
   expect(factory.sessions.get('export-task')!.history).toHaveLength(2);
  }finally{await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+});
+
+it('manages individual pending instructions over WS and preserves images, ordering and reconnect state',async()=>{
+ const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+ const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+ const next=async(type:string)=>{for(let i=0;i<30;i++){const frame=await frames.next();if(frame.type===type)return frame as any;}throw Error('Missing '+type);};
+ socket.send(encodeFrame({v:1,type:'open'}));const opened=await next('opened');await next('history');
+ const pi=factory.sessions.get(opened.sessionId)!;pi.holdAfterDelta=true;const prompt=vi.spyOn(pi,'prompt'),steer=vi.spyOn(pi,'steer');
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'run',text:'working'}));await next('ack');await next('event');
+ const images:ImageInput[]=[{type:'image',mimeType:'image/png',data:'aGVsbG8='}];
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'q1',mode:'follow_up',text:'first',images}));await next('ack');let state=await next('queue_state');const first=state.items[0];
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'q2',mode:'follow_up',text:'second'}));await next('ack');state=await next('queue_state');const second=state.items[1];
+ expect(prompt.mock.calls).toHaveLength(1);expect(pi.queued).toEqual([]);
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'edit',id:first.id,revision:1,action:'edit',text:'edited first'}));state=await next('queue_state');await next('ack');
+ expect(state.items[0]).toMatchObject({text:'edited first',revision:2,imageCount:1});
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'stale',id:first.id,revision:1,action:'cancel'}));expect(await next('error')).toMatchObject({requestId:'stale'});
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'cancel',id:second.id,revision:1,action:'cancel'}));await next('ack');
+ const other=await connect(server.address().port),otherFrames=new FrameQueue(other);other.send(encodeFrame({v:1,type:'open'}));await otherFrames.next();await otherFrames.next();
+ other.send(encodeFrame({v:1,type:'queue_action',requestId:'foreign',id:first.id,revision:2,action:'promote'}));
+ let denied=await otherFrames.next();if(denied.type==='queue_state')denied=await otherFrames.next();expect(denied).toMatchObject({type:'error',requestId:'foreign'});other.close();
+ socket.close();await once(socket,'close');
+ const again=await connect(server.address().port),replay=new FrameQueue(again);again.send(encodeFrame({v:1,type:'open',sessionId:opened.sessionId}));
+ let restored:any;for(let i=0;i<30;i++){const f=await replay.next();if(f.type==='queue_state'){restored=f;break;}}
+ expect(restored.items).toMatchObject([{id:first.id,text:'edited first',revision:2}]);
+ again.send(encodeFrame({v:1,type:'queue_action',requestId:'promote',id:first.id,revision:2,action:'promote'}));
+ await expect.poll(()=>steer.mock.calls.length).toBe(1);expect(steer.mock.calls[0]).toEqual(['edited first',images]);
+ pi.finish('working');await new Promise(r=>setTimeout(r,30));expect(prompt.mock.calls).toHaveLength(1);
+ again.close();
 });

@@ -575,6 +575,16 @@ class HostSocket implements SessionSink {
           }
           this.send({ v: 1, type: "ack", operation: "rename_session", ...rid(frame) });
           break;
+        case "get_queue":
+          if(!this.session||!this.opened)throw new NotOpenError();
+          this.send(this.session.queueFrame);break;
+        case "queue_action": {
+          if(!this.session||!this.opened)throw new NotOpenError();
+          if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
+          try {await this.session.changeQueue(frame);this.send({v:1,type:'ack',operation:'queue_action',requestId:frame.requestId});}
+          finally {this.send(this.session.queueFrame);}
+          break;
+        }
         case "prompt":
           await this.prompt(frame);
           break;
@@ -733,6 +743,7 @@ class HostSocket implements SessionSink {
       });
     }
     for (const replay of result.replay) this.send(replay);
+    if(result.session.queueFrame.items.length)this.send(result.session.queueFrame);
     // A dialog Pi is still blocked on must reach this browser even if the
     // request itself predates the replay window (e.g. after a reload).
     const replayed = new Set(result.replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
@@ -747,13 +758,15 @@ class HostSocket implements SessionSink {
     if (!this.session || !this.opened) throw new NotOpenError();
     if(await this.workspaces?.lookup(this.session.id))await this.workspaces!.cwd(this.session.id);
     if (frame.mode === "steer" || frame.mode === "follow_up") {
-      // Joining a busy run: Pi owns the queue and reports it via queue_update.
+      // Follow-ups remain editable in the Host until native delivery; steering is native.
       // If nothing is running, treat it as a plain prompt so the message is
       // never silently parked.
       if (this.session.isStreaming) {
-        // Same contract as prompt: the ack means "accepted at the seam"; Pi's
-        // queue_update event follows and is the authoritative queue state.
+        // The ack accepts the request; queue_state/native events report delivery.
         this.send({ v: 1, type: "ack", operation: frame.mode, requestId: frame.requestId });
+        const engine=(await this.workspaces?.lookup(this.session.id))?.engine??'pi';
+        const capabilities=await this.factory.capabilities?.(this.session.id)??capabilitiesFor(engine);
+        if(frame.mode==='follow_up'&&!capabilities.followUp)throw new Error('Queueing unavailable for this Agent');
         await this.session.enqueue(frame.mode, frame.text, frame.images);
         return;
       }
