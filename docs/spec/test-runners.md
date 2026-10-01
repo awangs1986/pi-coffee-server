@@ -39,7 +39,9 @@ system prompts and other project instructions remain native. The external JSON
 contains all server metadata, credential references and CLI usage. Pi Chat retains
 its Harness boundary: it removes runner and Work instructions and does not gain
 additional tools. The shared [Host environment sentence](session-environment.md)
-is retained independently of runner configuration. Use a Work task for remote execution/testing.
+is retained independently of runner configuration. Explicit [SSHME requests](sshme.md)
+may supply the runner pointer as user context in Chat without changing its tools;
+ordinary automatic runner discovery remains Work-only.
 
 Changes apply on the next native session start/resume. Saving configuration does
 not interrupt or restart an existing task. Historical context can still contain

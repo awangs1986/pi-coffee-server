@@ -1,4 +1,5 @@
 import { USER_HEADER } from "../shared/identity.js";
+import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json } from "../shared/http.js";
 import { Identity, type IdentityOptions } from "./identity.js";
@@ -171,6 +172,12 @@ export class WebServer {
     if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || path==='/' || path==='/index.html')) {
       if(path.startsWith('/api/'))json(response,401,{error:"Login required"});
       else {response.writeHead(302,{location:'/login'});response.end();}return;
+    }
+    if(path === '/api/client-address') {
+      if(this.identity && !await this.identity.authorize(request)) {json(response,401,{error:'Login required'});return;}
+      if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
+      response.setHeader('cache-control','no-store');
+      json(response,200,clientAddress(request.socket.remoteAddress));return;
     }
     if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners") {
       try {
