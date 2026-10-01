@@ -36,7 +36,7 @@ async function setup({task={},changes={},turn,status,failCreate=false}:Options={
     if(url==='/auth/me')return json({auth:false});
     const body=init?.body ? JSON.parse(init.body) : null;
     if(url==='/api/client-address')return json({address:'192.168.1.10',suggestedHost:'192.168.1.10'});
-    if(url==='/api/runners'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
+    if(url==='/api/sshme'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
     if(!body)return json({projects,conversations:[conversation],sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true}});
     requests.push(body);
     if(body.action==='files')return json({url:'http://vm.example',scope:conversation.id,token:'t',files:[]});
@@ -385,7 +385,7 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
     }
     const body=init?.body ? JSON.parse(init.body) : null;
     if(url==='/api/client-address')return json({address:'192.168.1.10',suggestedHost:'192.168.1.10'});
-    if(url==='/api/runners'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
+    if(url==='/api/sshme'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
     if(body?.action==='files'){
       tokenCount+=1;
       return {ok:true,status:200,json:async()=>({url:'http://unreachable.vm:53317',scope:'hashed-user-scope-'+body.id,sessionId:body.id,token:'fresh-tok-'+tokenCount,maxFileBytes:10_000_000,maxBatchBytes:50_000_000,files:[]})};

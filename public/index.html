@@ -398,13 +398,14 @@
       <p id="sshme-request" class="runner-help"></p>
       <form id="sshme-form" autocomplete="off">
         <div class="runner-fields">
-          <label>Windows SSH 地址<input id="sshme-host" required maxlength="253" placeholder="确认你的电脑 IP" /></label>
+          <label class="runner-wide">你的电脑系统<select id="sshme-platform"><option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows</option></select></label>
+          <label>SSH 地址<input id="sshme-host" required maxlength="253" placeholder="确认你的电脑 IP" /></label>
           <label>端口<input id="sshme-port" type="number" min="1" max="65535" value="22" required /></label>
           <label>用户名<input id="sshme-username" required maxlength="64" autocomplete="off" /></label>
           <label>密码<input id="sshme-password" type="password" maxlength="4096" autocomplete="new-password" /></label>
         </div>
-        <p class="runner-help">电脑需已开启 Windows SSH 服务；Linux 操作使用它的 WSL。连接保存到当前账号，可在“配置测试服务器”中修改或清除。</p>
-        <div class="runner-form-foot"><span class="runner-help">密码不会发送给模型。</span><button id="sshme-connect" class="btn small primary" type="submit">保存连接并继续</button></div>
+        <p class="runner-help">让远程 Agent 通过 SSH 协助你正在使用的电脑。请开启该电脑的 SSH 服务（macOS 为“远程登录”），并确认地址和系统。连接仅用于本机协助，保存到当前账号；可在此修改或清除。</p>
+        <div class="runner-form-foot"><span class="runner-help">密码不会发送给模型。</span><button id="sshme-forget" class="btn small" type="button" hidden>清除已保存连接</button><button id="sshme-connect" class="btn small primary" type="submit">保存连接并继续</button></div>
       </form>
       <p id="sshme-status" class="runner-help" role="status" aria-live="polite"></p>
     </dialog>

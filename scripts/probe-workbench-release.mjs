@@ -15,7 +15,7 @@ const controls = {
   'Pi/Codex/Claude task selection': ['task-engine', 'task-kind'],
   'Context categories': ['sp-context-legend'],
   'Files and Diff': ['files-toggle', 'workspace-panel', 'files-diff', 'diff-dialog'],
-  'SSHME connection dialog': ['sshme-dialog', 'sshme-form', 'sshme-connect'],
+  'SSHME connection dialog': ['sshme-dialog', 'sshme-form', 'sshme-connect', 'sshme-platform', 'sshme-forget'],
   'Task details footer': ['project-controls', 'workspace-context'],
 };
 let failures = 0;
