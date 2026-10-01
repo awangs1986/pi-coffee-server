@@ -82,6 +82,7 @@ async function setup({library={parsePatchFiles,VirtualizedFileDiff:FakeDiff,Virt
   }));
   vi.useFakeTimers();await import('../public/app.js');await vi.advanceTimersByTimeAsync(20);
   sockets.at(-1).receive({type:'opened',sessionId:conversation.id,engine:'pi',state:{}});
+  sockets.at(-1).receive({type:'history',sessionId:conversation.id,entries:[]});
   await vi.advanceTimersByTimeAsync(20);
   q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
   const settle=async()=>{sockets.at(-1).receive({type:'event',sessionId:conversation.id,event:{type:'agent_settled'}});await vi.advanceTimersByTimeAsync(20);};

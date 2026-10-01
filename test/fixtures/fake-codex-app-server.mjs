@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 // "never" the command first asks the client for approval.
 const home = process.env.CODEX_HOME ?? ".";
 mkdirSync(home, { recursive: true });
+appendFileSync(join(home, "started-pids"), process.pid + "\n");
 const store = join(home, "fake-threads.json");
 const threads = existsSync(store) ? JSON.parse(readFileSync(store, "utf8")) : {};
 const save = () => writeFileSync(store, JSON.stringify(threads));

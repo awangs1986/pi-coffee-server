@@ -476,6 +476,23 @@ describe("Host WebSocket seam", () => {
     socket.close();
   });
 
+  it("retires a session when the browser leaves before history finishes loading", async () => {
+    const factory=new FakeFactory();
+    let release!:()=>void,started!:()=>void;
+    const entered=new Promise<void>(resolve=>{started=resolve;});
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const original=FakePiSession.prototype.getHistory;
+    const spy=vi.spyOn(FakePiSession.prototype,'getHistory').mockImplementationOnce(async function(this:FakePiSession){started();await gate;return original.call(this);});
+    server=new HostServer({port:0,host:'127.0.0.1',factory,idleTimeoutMs:30});
+    try {
+      await server.start();const socket=await connect(server.address().port);
+      socket.send(encodeFrame({v:1,type:'open'}));await entered;
+      socket.close();await once(socket,'close');release();
+      await new Promise(resolve=>setTimeout(resolve,150));
+      expect([...factory.sessions.values()].every(session=>session.stopped)).toBe(true);
+    }finally{release();spy.mockRestore();}
+  });
+
   it("stops an idle Pi process and resumes the conversation from the store on the next open", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory, idleTimeoutMs: 60 });

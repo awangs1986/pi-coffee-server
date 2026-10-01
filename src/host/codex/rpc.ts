@@ -57,6 +57,7 @@ export class CodexAppServer {
       cwd: this.options.cwd,
       env: this.options.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     this.child = child;
     child.stdin.on("error", (error) => this.onExit(`codex app-server input closed: ${error.message}`));
@@ -125,13 +126,18 @@ export class CodexAppServer {
 
   async stop(): Promise<void> {
     const child = this.child;
-    if (!child || this.exited) return;
+    if (!child?.pid) return;
     const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.stdin.end();
-    const timer = setTimeout(() => child.kill("SIGKILL"), 3000);
-    child.kill("SIGTERM");
+    const kill = (signal:NodeJS.Signals) => {
+      try {if(child.pid && process.platform!=="win32")process.kill(-child.pid,signal);else child.kill(signal);}catch{}
+    };
+    if(child.exitCode!==null || child.signalCode!==null){kill("SIGKILL");return;}
+    const timer = setTimeout(() => kill("SIGKILL"), 3000);
+    kill("SIGTERM");
     await gone;
     clearTimeout(timer);
+    kill("SIGKILL"); // The CLI wrapper can exit before its native child.
   }
 
   private onLine(line: string): void {

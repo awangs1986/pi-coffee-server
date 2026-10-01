@@ -81,6 +81,9 @@ const MAX_LIST_PAGES = 100;
 export class CodexSessionFactory implements PiSessionFactory {
   private readonly options: CodexSessionFactoryOptions;
   private server?: CodexAppServer;
+  private connecting?: Promise<CodexAppServer>;
+  private listingReads = 0;
+  private creating = 0;
   private readonly mappingFile: string;
   /** PI Coffee session id → Codex thread id, for conversations the Host named before Codex did. */
   private mapping?: Map<string, string>;
@@ -105,6 +108,13 @@ export class CodexSessionFactory implements PiSessionFactory {
   private async connection(): Promise<CodexAppServer> {
     this.cancelIdleStop();
     if (this.server && this.server.alive) return this.server;
+    if (this.connecting) return this.connecting;
+    this.connecting = this.startConnection();
+    try { return await this.connecting; }
+    finally { this.connecting = undefined; }
+  }
+
+  private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? [])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment(this.options.env),
@@ -116,7 +126,8 @@ export class CodexSessionFactory implements PiSessionFactory {
       cwd: this.options.cwd,
       env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     });
-    await server.start(this.options.clientName ?? "pi_coffee", this.options.clientVersion ?? "0.1.0");
+    try { await server.start(this.options.clientName ?? "pi_coffee", this.options.clientVersion ?? "0.1.0"); }
+    catch (error) { await server.stop(); throw error; }
     this.server = server;
     this.rateLimits = undefined;
     this.rateLimitsReadAt = 0;
@@ -215,6 +226,12 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   async create(options: { sessionId: string; requireExisting?: boolean }): Promise<PiSession> {
+    this.creating++;
+    try {return await this.createSession(options);}
+    finally {this.creating--;this.scheduleIdleStop();}
+  }
+
+  private async createSession(options: { sessionId: string; requireExisting?: boolean }): Promise<PiSession> {
     const server = await this.connection();
     const mapping = await this.loadMapping();
     const known = options.requireExisting ? options.sessionId : mapping.get(options.sessionId) ?? options.sessionId;
@@ -274,7 +291,11 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   private release(session: CodexSession): void {
     this.live.delete(session);
-    if (this.live.size > 0 || !this.options.idleTimeoutMs) return;
+    this.scheduleIdleStop();
+  }
+
+  private scheduleIdleStop(): void {
+    if (this.live.size > 0 || this.creating > 0 || this.listingReads > 0 || !this.options.idleTimeoutMs) return;
     this.cancelIdleStop();
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
@@ -294,6 +315,12 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Host-owned workspace paths only; never accepts a browser-supplied directory. */
   async listForCwd(cwd:string): Promise<PiSessionListing[]> {
+    this.listingReads++;
+    try { return await this.readListings(cwd); }
+    finally { this.listingReads--; this.scheduleIdleStop(); }
+  }
+
+  private async readListings(cwd:string): Promise<PiSessionListing[]> {
     const threads = await this.threads(cwd);
     const mapping = await this.loadMapping();
     const reverse = new Map<string, string>();
@@ -364,6 +391,7 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Stop the user's app-server; sessions resume from Codex's rollouts next time. */
   async close(): Promise<void> {
+    await this.connecting?.catch(() => undefined);
     this.cancelIdleStop();
     this.unsubscribeAccount?.();
     this.unsubscribeAccount = undefined;
