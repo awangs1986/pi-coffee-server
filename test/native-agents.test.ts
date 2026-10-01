@@ -719,3 +719,19 @@ it('builds long history without measuring page layout for every entry',async()=>
  expect(document.querySelector('#thread')!.textContent).toContain('Synthetic history 119');
  expect(measurements).toBeLessThan(5);
 });
+it('never copies a secret answer into history, composer or a replayed draft',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'secret-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'secret-task',entries:[]});
+ const question={type:'event',sessionId:'secret-task',cursor:1,event:{type:'native_request',method:'input',id:'secret-q',title:'Secret',secret:true}};
+ socket.receive(question);const input=document.querySelector<HTMLInputElement>('#ui-input')!;
+ input.value='synthetic-secret-marker';input.dispatchEvent(new Event('input'));document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const reply=app.frames.find(f=>f.type==='ui_response');
+ socket.receive({type:'error',code:'unknown_ui_request',requestId:reply.requestId,message:'Expired question'});
+ expect(document.querySelector<HTMLTextAreaElement>('#prompt')!.value).not.toContain('synthetic-secret-marker');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('synthetic-secret-marker');expect(input.value).toBe('');
+ socket.onclose();await vi.advanceTimersByTimeAsync(1300);
+ const next=app.sockets.at(-1);next.receive({type:'opened',sessionId:'secret-task',engine:'codex',state:{isStreaming:true}});
+ next.receive({type:'history',sessionId:'secret-task',entries:[]});next.receive(question);
+ expect(input.value).toBe('');
+});
