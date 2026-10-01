@@ -327,6 +327,7 @@ export type ServerFrame =
       v: typeof PROTOCOL_VERSION;
       type: "error";
       code: string;
+      operation?:ClientFrame["type"];
       message: string;
       requestId?: string;
       fatal?: boolean;

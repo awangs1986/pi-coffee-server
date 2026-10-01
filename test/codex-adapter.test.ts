@@ -6,7 +6,7 @@ import { mkdirSync, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexSessionFactory, projectTurns } from "../src/host/codex-adapter.js";
 import type { PiSession } from "../src/host/pi-adapter.js";
 
@@ -81,6 +81,18 @@ describe("Codex app-server adapter", () => {
       for (const factory of b.factories) await factory.close();
       rmSync(b.root, { recursive: true, force: true });
     }
+  });
+
+  it("bounds a silent native model lookup without killing the live conversation",async()=>{
+    const b=setup();const factory=b.factory();const session=await factory.create({sessionId:'metadata-timeout'});
+    writeFileSync(join(b.codexHome,'fake-hang-model-list'),'');
+    vi.useFakeTimers();let failure='';
+    const models=session.getModels().catch(error=>{failure=error.message;});
+    try{await vi.advanceTimersByTimeAsync(10010);expect(failure).toContain('timed out: model/list');await models;}
+    finally{vi.useRealTimers();}
+    expect(await session.getState()).toMatchObject({isStreaming:false});
+    const events=recorder(session);await session.prompt('still usable');await events.until(settled);
+    expect(text(events.events)).toContain('still usable');
   });
 
   it("exposes the native model catalog over authenticated WS without creating a thread",async()=>{

@@ -1392,6 +1392,12 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error':
+      if(frame.code==='metadata_unavailable'){
+        if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令超时或失败';renderSlash();}
+        if(frame.operation==='get_commands'){commandState='error';commandError='读取命令超时或失败';renderSlash();}
+        if(frame.operation==='get_model_catalog'&&frame.requestId===catalogRequest){catalogRequest=null;refreshComposer();}
+        toast('辅助信息读取失败，当前任务仍可继续：'+frame.message,5000);return;
+      }
       if(frame.code==='list_unavailable'){toast('对话列表暂时加载失败，当前对话仍可使用',5000);return;}
       if(rejectUiAnswer(frame))return;
       if(pendingRenames.delete(frame.requestId)){toast('重命名失败：'+frame.message,5000);return;}

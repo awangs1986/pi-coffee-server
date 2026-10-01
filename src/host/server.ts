@@ -77,6 +77,8 @@ export interface HostServerOptions {
 
   /** Poll interval for turns driven outside this Host (terminal take-over); default 3 s. */
   externalPollMs?: number;
+  /** Deadline for auxiliary native reads; they never occupy the task command queue. */
+  metadataTimeoutMs?: number;
 }
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
@@ -176,7 +178,7 @@ export class HostServer {
       const slot = this.slotFor(user);
       const hostSocket = new HostSocket(socket, slot, this.transfer, (scope, sessionId) => {
         this.transferTargets.set(scope, { slot, sessionId });
-      });
+      }, options.metadataTimeoutMs ?? 10000);
       this.sockets.add(hostSocket);
       hostSocket.onClose = () => this.sockets.delete(hostSocket);
     });
@@ -536,11 +538,13 @@ class HostSocket implements SessionSink {
   private opened = false;
   private closed = false;
   private listing=false;
+  private readonly metadataReads=new Map<string,Promise<ServerFrame>>();
+  private metadataEpoch=0;
   private messageQueue: Promise<void>;
   onClose: () => void = () => undefined;
 
 
-  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void) {
+  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void, private readonly metadataTimeoutMs=10000) {
 
     this.socket = socket;
     this.slot = slot;
@@ -581,6 +585,30 @@ class HostSocket implements SessionSink {
     this.closed = true;
     this.socket.close();
     void this.detach();
+  }
+
+  /** Auxiliary reads share work, have a deadline, and cannot block prompts or answers. */
+  private readMetadata(frame:ClientFrame,key:string,run:()=>Promise<ServerFrame>):void {
+    const target=this.session,epoch=this.metadataEpoch;
+    const scopedKey=epoch+':'+key;
+    let read=this.metadataReads.get(scopedKey);
+    if(!read){
+      if(this.metadataReads.size>=16){this.send({v:1,type:'error',code:'metadata_unavailable',operation:frame.type,message:'Too many pending metadata reads',...rid(frame)});return;}
+      let timer:ReturnType<typeof setTimeout>;
+      const work=Promise.resolve().then(run);
+      read=Promise.race([work,new Promise<never>((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('Auxiliary Agent read timed out')),this.metadataTimeoutMs);timer.unref();
+      })]);
+      this.metadataReads.set(scopedKey,read);
+      // Keep the shared entry until the actual read settles, even after the deadline.
+      // Repeated polls must not accumulate underlying reads if an adapter hangs.
+      void work.then(()=>{clearTimeout(timer);this.metadataReads.delete(scopedKey);},()=>{clearTimeout(timer);this.metadataReads.delete(scopedKey);});
+    }
+    void read.then(value=>{
+      if(this.session===target&&this.metadataEpoch===epoch)this.send({...value,...rid(frame)});
+    },error=>{
+      if(this.session===target&&this.metadataEpoch===epoch)this.send({v:1,type:'error',code:'metadata_unavailable',operation:frame.type,message:error instanceof Error?error.message:'Auxiliary Agent read failed',...rid(frame)});
+    });
   }
 
   private async handleMessage(data: RawData): Promise<void> {
@@ -654,50 +682,56 @@ class HostSocket implements SessionSink {
           break;
         case "get_command_catalog": {
           if(!this.factory.commandCatalog)throw new Error("Command discovery unavailable on this Host; update Host to preview Skills before starting a task");
-          const commands=await this.factory.commandCatalog(frame.engine);
-          this.send({v:1,type:"command_catalog",engine:frame.engine,...rid(frame),commands});
+          this.readMetadata(frame,frame.type+":"+frame.engine,async()=>({v:1,type:"command_catalog",engine:frame.engine,commands:await this.factory.commandCatalog!(frame.engine)}));
           break;
         }
         case "get_model_catalog": {
           if(!this.factory.modelCatalog)throw new Error("Model discovery unavailable on this Host");
-          const catalog=await this.factory.modelCatalog(frame.engine);
-          this.send({v:1,type:"model_catalog",engine:frame.engine,...rid(frame),...catalog});
+          this.readMetadata(frame,frame.type+":"+frame.engine,async()=>({v:1,type:"model_catalog",engine:frame.engine,...await this.factory.modelCatalog!(frame.engine)}));
           break;
         }
         case "get_models": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          const models = await this.session.getModels();
-          this.send({ v: 1, type: "models", ...models });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"models",...await target.getModels()}));
           break;
         }
         case "set_model":
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.setModel(frame.provider, frame.id);
+          await this.session.setModel(frame.provider, frame.id);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_model", ...rid(frame) });
           break;
         case "set_context":
           if (!this.session || !this.opened) throw new NotOpenError();
           await this.session.setContextPreset(frame.preset);
           this.send({v:1,type:"ack",operation:"set_context",...rid(frame)});
-          this.send({v:1,type:"models",...await this.session.getModels()});
+          this.metadataEpoch++;
+          const target=this.session;
+          this.readMetadata(frame,"get_models",async()=>({v:1,type:"models",...await target.getModels()}));
           break;
         case "set_thinking":
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.setThinkingLevel(frame.level);
+          await this.session.setThinkingLevel(frame.level);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_thinking", ...rid(frame) });
           break;
-        case "get_commands":
+        case "get_commands": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "commands", commands: await this.session.getCommands() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"commands",commands:await target.getCommands()}));
           break;
-        case "get_extensions":
+        }
+        case "get_extensions": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "extensions", sessionId: this.session.id, extensions: await this.session.getExtensions() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"extensions",sessionId:target.id,extensions:await target.getExtensions()}));
           break;
-        case "get_stats":
+        }
+        case "get_stats": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "stats", sessionId: this.session.id, stats: await this.session.getStats() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"stats",sessionId:target.id,stats:await target.getStats()}));
           break;
+        }
         case "compact": {
           if (!this.session || !this.opened) throw new NotOpenError();
           const target=this.session;
@@ -758,6 +792,7 @@ class HostSocket implements SessionSink {
     const result = await this.registry.open(frame.sessionId, frame.after);
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
+    this.metadataEpoch++;
     this.session = result.session;
     this.opened = true;
     const state = result.session.currentState;

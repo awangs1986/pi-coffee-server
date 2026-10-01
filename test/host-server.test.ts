@@ -631,6 +631,64 @@ describe("Host WebSocket seam", () => {
     }finally{spy.mockRestore();socket.close();}
   });
 
+  it.each([
+    ['get_models','getModels'],['get_commands','getCommands'],
+    ['get_stats','getStats'],['get_extensions','getExtensions'],
+  ] as const)("delivers a prompt while %s is stalled",async(type,method)=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+    const original=pi[method].bind(pi);
+    const spy=vi.spyOn(pi,method).mockImplementation(async()=>{await gate;return original();});
+    try{
+      socket.send(encodeFrame({v:1,type}));
+      socket.send(encodeFrame({v:1,type:'prompt',requestId:'deliver-now',text:'durable instruction'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'ack',operation:'prompt',requestId:'deliver-now'});
+      await waitFor(()=>pi.history.some(e=>e.kind==='user'&&e.text==='durable instruction'));
+    }finally{release();spy.mockRestore();socket.close();}
+  });
+
+  it("delivers a prompt while a read-only sync check waits on remote Git",async()=>{
+    const root=mkdtempSync(join(tmpdir(),'pi-coffee-send-lock-'));
+    const {workspaces,conversation}=await workspaceConversation(root,'send-lock');
+    const marker=join(root,'fetch-started'),release=join(root,'release-fetch'),uploadPack=join(root,'upload-pack');
+    await writeFile(uploadPack,`#!/bin/sh\nprintf started > '${marker}'\nwhile [ ! -f '${release}' ]; do sleep 0.01; done\nexec git-upload-pack "$@"\n`,{mode:0o755});
+    await exec('git',['config','remote.origin.uploadpack',uploadPack],{cwd:conversation.cwd});
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory,workspaces});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open',sessionId:conversation.id}));await frames.next();await frames.next();
+    const status=workspaces.syncStatus(conversation.id);
+    try{
+      await waitFor(()=>existsSync(marker));
+      socket.send(encodeFrame({v:1,type:'prompt',requestId:'git-read-independent',text:'send despite slow remote'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'ack',operation:'prompt',requestId:'git-read-independent'});
+      await waitFor(()=>factory.sessions.get(conversation.id)!.history.some(e=>e.kind==='user'&&e.text==='send despite slow remote'));
+    }finally{await writeFile(release,'');await status;socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it("coalesces slow metadata reads, reports their timeout, and recovers after settlement",async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory,metadataTimeoutMs:30});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});const original=pi.getStats.bind(pi);
+    const spy=vi.spyOn(pi,'getStats').mockImplementation(async()=>{await gate;return original();});
+    try{
+      for(let i=0;i<6;i++)socket.send(encodeFrame({v:1,type:'get_stats'}));
+      for(let i=0;i<6;i++)expect(await frames.next()).toMatchObject({type:'error',code:'metadata_unavailable',operation:'get_stats'});
+      expect(spy).toHaveBeenCalledTimes(1);
+      socket.send(encodeFrame({v:1,type:'get_stats'}));expect(await frames.next()).toMatchObject({type:'error',code:'metadata_unavailable'});expect(spy).toHaveBeenCalledTimes(1);
+      release();await gate;await new Promise(r=>setTimeout(r,10));spy.mockRestore();
+      socket.send(encodeFrame({v:1,type:'get_stats'}));expect(await frames.next()).toMatchObject({type:'stats'});
+    }finally{release();spy.mockRestore();socket.close();}
+  });
+
   it("keeps an opened socket responsive while sidebar discovery is stalled",async()=>{
     const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
     const socket=await connect(server.address().port),frames=new FrameQueue(socket);

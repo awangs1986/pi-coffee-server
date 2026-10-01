@@ -4,7 +4,7 @@ import type { CodexAppServer, Obj } from './rpc.js';
 
 /** Native discovery owns precedence, configured roots and enabled state. */
 export async function codexSkills(server: CodexAppServer, cwd: string): Promise<Array<{name:string;description:string;path:string}>> {
-  const result = await server.request('skills/list', {cwds:[cwd], forceReload:true}) as Obj;
+  const result = await server.request('skills/list', {cwds:[cwd], forceReload:true},10000) as Obj;
   if (!Array.isArray(result.data)) throw new Error('Invalid native Codex Skill catalog');
   const entry = (result.data as Obj[]).find(item => typeof item.cwd==='string' && resolve(item.cwd)===resolve(cwd));
   if (!entry || !Array.isArray(entry.skills)) throw new Error('Native Codex Skill catalog missing this workspace');

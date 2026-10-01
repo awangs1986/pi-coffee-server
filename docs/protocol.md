@@ -341,3 +341,13 @@ repeated synchronous layout while loading long conversations.
 `list_sessions` is independent of the socket's task-command queue. Its response
 may arrive after later task frames. A failed listing sends `list_unavailable`,
 which does not mark the active run as stopped. Per-user discovery is coalesced.
+
+
+## Auxiliary metadata failures (2026-10-01)
+
+A model, command, extension, statistics or draft-catalog read can return an error
+with `code: "metadata_unavailable"` and `operation` naming its originating client
+frame. Its optional `requestId` remains correlated to that read. The browser must
+report the read failure without ending an active turn, clearing prompt delivery
+state or dropping queued instructions. These reads run independently of ordered
+prompt, answer, model-setting and lifecycle commands, with bounded native reads.
