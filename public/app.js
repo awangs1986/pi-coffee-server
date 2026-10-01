@@ -1204,7 +1204,7 @@ function connectSocket() {
     abandonRenames();unconfirmedUiAnswers();
     if(pendingDelivery){uncertainTask=activeId;pendingDelivery=null;}
     queuedRequests.clear();
-    modelPending=null;
+    modelPending=null;contextPending=null;
     opened = false;
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
@@ -1341,6 +1341,8 @@ function handleFrame(frame, ws) {
     case 'queue_state':
       if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
+      // Acceptance is known even if the connection drops before the turn ends.
+      if(['prompt','steer','follow_up'].includes(frame.operation) && frame.requestId===pendingDelivery)pendingDelivery=null;
       if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
       if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
         const renamed=pendingRenames.get(frame.requestId);pendingRenames.delete(frame.requestId);
