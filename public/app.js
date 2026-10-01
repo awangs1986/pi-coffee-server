@@ -183,7 +183,11 @@ function toast(text, ms = 1800) {
 function send(frame) {
   if(takeoverBusy() && !['list_sessions','get_state','get_queue'].includes(frame.type))return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-  try {socket.send(JSON.stringify(frame));return true;}catch{return false;}
+  try {
+    const encoded=JSON.stringify(frame);
+    if(new TextEncoder().encode(encoded).byteLength>1024*1024){toast('消息超过 1 MiB 传输上限，内容仍保留，请拆分或改为附件',6000);return false;}
+    socket.send(encoded);return true;
+  }catch{return false;}
 }
 function requestId(prefix) { return prefix + '-' + Date.now() + '-' + (++requestNumber); }
 function isMobileSidebar() { return window.matchMedia('(max-width: 820px)').matches; }
@@ -2363,7 +2367,7 @@ function submitPrompt(text, images) {
   if (images && images.length && supports("images")) frame.images = images;
   if (mode !== 'prompt') frame.mode = mode;
   const bytes=new TextEncoder().encode(JSON.stringify(frame)).byteLength;
-  if(bytes>1024*1024 || wireText.length>64*1024){toast('消息或图片超出发送上限，请缩小图片或拆分内容；内容仍保留在输入框',6000);return false;}
+  if(bytes>1024*1024){toast('消息或图片超出发送上限，请缩小图片或拆分内容；内容仍保留在输入框',6000);return false;}
   if(promptOutbox.size>=20 || [...promptOutbox.values()].reduce((sum,item)=>sum+item.bytes,bytes)>8*1024*1024){toast('请先核查并处理未确认消息，内容仍保留在输入框',6000);return false;}
   promptOutbox.set(frame.requestId,{task:activeId,user:currentUser,text:wireText,images:(frame.images||[]).map(({type,data,mimeType})=>({type,data,mimeType})),bytes,uncertain:false});
   if (mode !== 'prompt') queuedRequests.add(frame.requestId);

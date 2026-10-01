@@ -788,7 +788,7 @@ it('rejects an oversized prompt before sending and keeps the composer draft',asy
  const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
  ws.receive({type:'opened',sessionId:id,engine:'pi',state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
- const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(65537);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(1024*1024);
  prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);expect(prompt.value).toBe(text);
  expect(document.querySelector('#toast')!.textContent).toContain('超出发送上限');
@@ -823,4 +823,23 @@ it.each(['pi','codex'])('does not interrupt a running %s reply when metadata que
  expect(document.querySelector('#stop')!.classList.contains('hidden')).toBe(false);expect(document.querySelector('#mode-wrap')!.classList.contains('hidden')).toBe(false);
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='still queue this';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.find(f=>f.type==='prompt')).toMatchObject({text:'still queue this',mode:'follow_up'});
+});
+
+it.each(['pi','codex'])('sends long %s text that fits the transport budget',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];ws.receive({type:'opened',sessionId:id,engine,state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(71636);prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const prompts=app.frames.filter(f=>f.type==='prompt');expect(prompts).toHaveLength(1);expect(prompts[0].text).toBe(text);
+});
+it.each([false,true])('keeps queued edits consistent with the frame byte budget (oversize=%s)',async(oversize)=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'queue_state',sessionId:id,items:[{id:'q-long',revision:1,text:'original instruction',status:'pending',imageCount:0}]});
+ const dialog=document.querySelector<HTMLDialogElement>('#queue-edit-dialog')!;dialog.showModal=()=>{dialog.setAttribute('open','');};dialog.close=()=>{dialog.removeAttribute('open');};
+ document.querySelector<HTMLButtonElement>('[data-queue-action="edit"]')!.click();
+ const editor=document.querySelector<HTMLTextAreaElement>('#queue-edit-text')!;const text=oversize?'你'.repeat(350000):'a'.repeat(71636);expect(editor.maxLength).toBeGreaterThanOrEqual(text.length);editor.value=text;
+ document.querySelector('#queue-edit-form')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const sent=app.frames.filter(f=>f.type==='queue_action');expect(sent).toHaveLength(oversize?0:1);
+ if(!oversize){expect(sent[0].text).toBe(text);ws.receive({type:'ack',operation:'queue_action',requestId:sent[0].requestId});expect(dialog.open).toBe(false);}
+ else{expect(editor.value).toBe(text);expect(dialog.open).toBe(true);expect(document.querySelector('#queue-edit-status')!.textContent).toContain('1 MiB');}
 });
