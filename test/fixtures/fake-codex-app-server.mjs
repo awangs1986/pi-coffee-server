@@ -234,6 +234,7 @@ rl.on("line", (line) => {
       return reply({data:entries.filter(e=>params.cwds.includes(e.cwd))});
     }
     case "model/list":
+      if(existsSync(join(home,"fake-hang-model-list")))return;
       return reply({ data: [
         { id: "gpt-fake", model: "gpt-fake", displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },

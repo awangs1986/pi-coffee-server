@@ -76,7 +76,7 @@ export class CodexAppServer {
     });
     exit.catch(() => undefined);
     await Promise.race([
-      this.request("initialize", { clientInfo: { name: clientName, title: "PI Coffee", version: clientVersion } }),
+      this.request("initialize", { clientInfo: { name: clientName, title: "PI Coffee", version: clientVersion } },10000),
       exit,
     ]);
     this.notify("initialized", {});

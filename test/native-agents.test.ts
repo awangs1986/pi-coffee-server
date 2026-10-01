@@ -814,3 +814,13 @@ it('shows a recoverable message on acknowledgment timeout without retrying the r
  const frame=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:'prompt',requestId:frame.requestId});expect(document.querySelector('#thread')!.textContent).not.toContain('20 秒内未收到发送确认');
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
 });
+
+it.each(['pi','codex'])('does not interrupt a running %s reply when metadata queries fail',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine,state:{isStreaming:true},capabilities:{stop:true,steer:true,followUp:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'error',code:'metadata_unavailable',operation:'get_stats',message:'Auxiliary Agent read timed out'});
+ expect(document.querySelector('#stop')!.classList.contains('hidden')).toBe(false);expect(document.querySelector('#mode-wrap')!.classList.contains('hidden')).toBe(false);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='still queue this';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.find(f=>f.type==='prompt')).toMatchObject({text:'still queue this',mode:'follow_up'});
+});

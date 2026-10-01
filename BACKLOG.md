@@ -431,3 +431,10 @@ defines user-scoped persistence and the strict separation from task execution id
 - 2026-10-01: [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22) removes complete-history work from native title changes and confirms visible rename only after Host acknowledgement, with explicit failure/disconnection feedback.
 
 - 2026-10-01: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23) confirms dialog answers after native acceptance, retains unsent text through reconnect replay, and batches long-history DOM construction to avoid per-message layout measurement. The reported task's native history was readable; production browser-specific send failure still requires visual verification.
+
+
+- 2026-10-01: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23)
+  additionally reproduces prompt starvation behind auxiliary metadata queries and
+  remote Git status locks. Native read deadlines, independent read lanes and
+  bounded unacknowledged-message recovery cover these delivery paths; production
+  activation is recorded separately from source publication.

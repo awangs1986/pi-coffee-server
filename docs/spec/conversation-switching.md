@@ -120,6 +120,33 @@ removed, and a restarted workspace owner could mutate normally. Six overlapping
 HTTP status/diff requests likewise reproduced six underlying reads before the
 fix and one after it, including retry after a failed shared read.
 
+## Auxiliary reads cannot block delivery (2026-10-01)
+
+The socket's ordered command lane is reserved for task operations. Model, Skill
+command, extension, usage and draft-catalog reads run outside it. Each socket
+coalesces equivalent outstanding reads, limits outstanding keys and applies a
+ten-second deadline. A timed-out underlying read remains shared until it settles,
+so polling cannot create more hung native requests. Results are dropped after the
+socket disconnects, opens a session or changes model/context/thinking settings.
+Metadata failures use `metadata_unavailable` with their originating operation;
+they leave the running turn and editable input queue intact.
+
+Codex initialize, model/config discovery, native Skill discovery and account-meter
+reads also have a ten-second native RPC deadline, removing pending request entries
+without stopping a live task. The deadline does not apply to model turns.
+
+Sync status reads serialize under a separate status key. Waiting for remote Git
+must not hold the conversation lock needed to reserve a run and record its turn
+snapshot. Existing lifecycle exclusion and stale-marker inspection remain in
+force for archive, takeover, checkpoint and permanent cleanup.
+
+Regression feedback loops: a suspended auxiliary read followed by a prompt; a
+real repository whose upload-pack waits on a gate during a status refresh; a
+silent native Codex model/list; and a complete Web-to-Host prompt followed by
+reconnection and native history inspection. Before correction, the first two
+blocked prompt acceptance and produced no native user entry. After correction,
+the prompt is acknowledged and reaches native history while the read is pending.
+
 ### Unacknowledged prompt recovery
 
 A socket write is not delivery confirmation. Until a matching prompt/steer/follow-up

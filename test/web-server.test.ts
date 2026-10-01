@@ -67,7 +67,7 @@ class FakePiSession implements PiSession {
 }
 
 class FakeFactory implements PiSessionFactory {
-  private readonly sessions = new Map<string, FakePiSession>();
+  readonly sessions = new Map<string, FakePiSession>();
 
   async create(options: { sessionId: string }): Promise<PiSession> {
     const existing = this.sessions.get(options.sessionId);
@@ -185,6 +185,26 @@ describe("Web Server seam", () => {
       entries: [{ kind: "user", text: "hello web" }, { kind: "assistant", text: "echo: hello web" }],
     });
     reconnected.close();
+  });
+
+  it("delivers through Web and retains native history while an auxiliary query is hung",async()=>{
+    const factory=new FakeFactory();host=new HostServer({host:'127.0.0.1',port:0,token:'delivery-test',factory});await host.start();
+    web=new WebServer({host:'127.0.0.1',port:0,hostUrl:`ws://127.0.0.1:${host.address().port}/host`,hostToken:'delivery-test'});await web.start();
+    const url=`ws://127.0.0.1:${web.address().port}/ws`,browser=await connect(url),frames=new FrameQueue(browser);
+    browser.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});const pi=factory.sessions.get(opened.sessionId)!;
+    const original=pi.getStats.bind(pi);pi.getStats=async()=>{await gate;return original();};
+    try{
+      browser.send(encodeFrame({v:1,type:'get_stats'}));
+      browser.send(encodeFrame({v:1,type:'prompt',requestId:'web-delivery',text:'preserved through the complete bridge'}));
+      const ack=await Promise.race([frames.next(),new Promise(r=>setTimeout(()=>r({type:'blocked'}),300))]);expect(ack).toMatchObject({type:'ack',requestId:'web-delivery'});
+      for(let i=0;i<4;i++)await frames.next();
+      browser.close();await once(browser,'close');
+      const reconnect=await connect(url),historyFrames=new FrameQueue(reconnect);
+      try{reconnect.send(encodeFrame({v:1,type:'open',sessionId:opened.sessionId}));await historyFrames.next();expect(await historyFrames.next()).toMatchObject({type:'history',entries:expect.arrayContaining([{kind:'user',id:'u0',text:'preserved through the complete bridge'}])});expect(pi.history.filter(e=>e.kind==='user')).toHaveLength(1);}
+      finally{reconnect.close();}
+    }finally{release();browser.close();}
   });
 
   it("serves the shell assets from public/ and nothing else", async () => {

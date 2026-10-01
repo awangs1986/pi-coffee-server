@@ -158,11 +158,11 @@ export class CodexSessionFactory implements PiSessionFactory {
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
-      const configResult=await server.request("config/read",{includeLayers:false}) as Obj;
+      const configResult=await server.request("config/read",{includeLayers:false},10000) as Obj;
       const config=configResult.config as Obj | undefined;
       const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
       const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
-      return {...codexModelChoices(await server.request("model/list",{}) as Obj,model,effort),context:{preset:"272k"}};
+      return {...codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),context:{preset:"272k"}};
     }finally{await server.stop();}
   }
 
@@ -409,7 +409,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     if (this.rateLimits && Date.now() - this.rateLimitsReadAt < RATE_LIMIT_TTL_MS) return this.rateLimits;
     try {
       const server = await this.connection();
-      const result = await server.request("account/rateLimits/read", {}) as Obj;
+      const result = await server.request("account/rateLimits/read", {},10000) as Obj;
       const parsed = parseRateLimits(result.rateLimits);
       if (parsed) { this.rateLimits = parsed; this.rateLimitsReadAt = Date.now(); }
       return parsed ?? this.rateLimits;
@@ -633,7 +633,7 @@ class CodexSession implements PiSession {
   }
 
   async getModels(): Promise<PiModels> {
-    const result = await this.server.request("model/list", {}) as Obj;
+    const result = await this.server.request("model/list", {},10000) as Obj;
     return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 

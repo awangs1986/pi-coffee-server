@@ -573,7 +573,9 @@ export class Workspaces {
       c.syncError=error instanceof Error ? error.message.slice(0,500) : 'Remote status failed';await this.save();
       return {state:'unknown' as const,dirty,localSha,remoteSha:c.lastRemoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch,error:c.syncError};
     }
-  },()=>this.conversationLock(id));}
+  // Status only updates remote-tracking refs and sync metadata. It must not hold
+  // the run/lifecycle lock while waiting for a remote repository.
+  },()=>`status:${id}`);}
   async checkpoint(id:string,paths:string[],message:string) {return this.mutate(async()=>{
     const c=this.conversation(id);
     await this.assertCodeBranch(c);
