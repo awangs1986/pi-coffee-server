@@ -1,4 +1,4 @@
-import {afterEach,it,expect} from 'vitest';
+import {afterEach,it,expect,vi} from 'vitest';
 import {mkdtemp,readFile,rm,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -16,7 +16,7 @@ async function setup(){
  const call=async(body:object,user='alice',token='runner-test')=>{const r=await fetch(base+'/api/runners',{method:'POST',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
  return {manager,base,call};
 }
-const input={name:'Linux test',host:'192.0.2.10',port:22,username:'tester',platform:'linux',workdir:'/tmp/work',password:'fixture-private-password'};
+const input={name:'Windows test',host:'192.0.2.10',port:22,username:'tester',platform:'windows',workdir:'C:/work',password:'fixture-private-password'};
 it('scopes runner CRUD, redacts secrets, preserves passwords on edit and conditionally adds one pointer',async()=>{
  const {call,manager}=await setup();expect((await call({action:'list'},'alice','wrong')).status).toBe(401);
  expect(await manager('alice').instruction()).toBeUndefined();
@@ -42,4 +42,24 @@ it('rejects option injection, unknown ids, invalid fields and cross-site Web cha
  expect((await fetch(url+'/api/runners',{method:'POST',headers:{origin:'http://evil.invalid','content-type':'application/json'},body:JSON.stringify({action:'save',runner:input})})).status).toBe(403);
  const r=await fetch(url+'/api/runners',{method:'POST',headers:{origin:url,'content-type':'application/json'},body:JSON.stringify({action:'save',runner:input})});expect(r.status).toBe(200);
  expect((await call({action:'list'})).body.runners).toHaveLength(1);
+});
+it('accepts only one Windows computer and describes WSL through the same SSH endpoint',async()=>{
+ const {call,manager}=await setup();const windows={...input,platform:'windows',workdir:'C:/work'};
+ expect((await call({action:'save',runner:{...windows,platform:'wsl',workdir:'/tmp'}})).status).toBe(409);
+ expect((await call({action:'save',runner:{...windows,platform:'linux',workdir:'/tmp'}})).status).toBe(409);
+ const first=await call({action:'save',runner:windows});expect(first.status).toBe(200);
+ expect((await call({action:'save',runner:{...windows,name:'second'}})).status).toBe(409);
+ const update=await call({action:'save',runner:{...windows,id:first.body.runner.id,name:'same computer'}});expect(update.status).toBe(200);
+ expect((await call({action:'list'})).body.runners).toHaveLength(1);
+ await manager('alice').instruction();const config=JSON.parse(await readFile(join(root,'alice/runners.json'),'utf8'));
+ expect(config.usage.operations.join(' ')).toContain('--env');expect(config.usage.notes).toContain('wsl.exe');
+});
+
+it('reports optional WSL readiness separately from Windows connectivity over the public API',async()=>{
+ const {call,manager}=await setup();const saved=await call({action:'save',runner:input}),id=saved.body.runner.id;
+ const run=vi.spyOn(manager('alice'),'run').mockResolvedValueOnce({code:0,stdout:'coffee-runner-ready\r\n',stderr:''}).mockResolvedValueOnce({code:1,stdout:'',stderr:'No default distribution'});
+ const response=await call({action:'test',id});expect(response.body).toMatchObject({ok:true,wslReady:false});expect(response.body.message).toContain('Windows 连接正常');
+ expect(run.mock.calls).toEqual([[id,{kind:'test'}],[id,{kind:'test',environment:'wsl'}]]);
+ run.mockResolvedValue({code:0,stdout:'coffee-runner-ready\n',stderr:''});expect((await call({action:'test',id})).body).toMatchObject({ok:true,wslReady:true});
+ run.mockResolvedValue({code:255,stdout:'',stderr:'Connection failed'});expect((await call({action:'test',id})).body.ok).toBe(false);run.mockRestore();
 });

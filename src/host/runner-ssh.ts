@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
 import type {Writable} from 'node:stream';
 import type {Runner} from './runners.js';
-export type RunnerOperation={kind:'test'}|{kind:'exec';command:string}|{kind:'upload';local:string;remote:string}|{kind:'download';local:string;remote:string};
+export type RunnerOperation={kind:'test';environment?:'windows'|'wsl'}|{kind:'exec';command:string;environment?:'windows'|'wsl'}|{kind:'upload';local:string;remote:string}|{kind:'download';local:string;remote:string};
 export interface RunnerResult {code:number;stdout:string;stderr:string;}
 const sh=(s:string)=>"'"+s.replaceAll("'","'\\''")+"'";
 const ps=(s:string)=>"'"+s.replaceAll("'","''")+"'";
@@ -16,10 +16,14 @@ export function runnerInvocation(runner:Runner,knownHosts:string,operation:Runne
   const local=resolve(operation.local);
   return {program:'scp',args:[...options,'-P',String(runner.port),'-r','--',...(operation.kind==='upload'?[local,remote]:[remote,local])]};
  }
- const command=operation.kind==='test' ? (runner.platform==='windows'?"Write-Output 'coffee-runner-ready'":"printf '%s\\n' coffee-runner-ready") : operation.command;
+ const useWsl=operation.environment==='wsl';
+ if(useWsl&&runner.platform!=='windows')throw new Error('WSL execution requires a Windows SSH computer');
+ const command=operation.kind==='test' ? (runner.platform==='windows'&&!useWsl?"Write-Output 'coffee-runner-ready'":"printf '%s\\n' coffee-runner-ready") : operation.command;
  if(!command||command.length>65536||command.includes('\0'))throw new Error('Invalid remote command');
+ // Stream UTF-8 directly to wsl.exe: avoid PowerShell's legacy native quoting and ASCII pipeline.
+ const wslScript=`$p=New-Object System.Diagnostics.Process; $p.StartInfo.FileName='wsl.exe'; $p.StartInfo.Arguments='--exec sh'; $p.StartInfo.UseShellExecute=$false; $p.StartInfo.WorkingDirectory=(Get-Location).ProviderPath; $p.StartInfo.RedirectStandardInput=$true; if (-not $p.Start()) { throw 'Unable to start WSL' }; $bytes=[Convert]::FromBase64String('${Buffer.from(command+'\n','utf8').toString('base64')}'); $p.StandardInput.BaseStream.Write($bytes,0,$bytes.Length); $p.StandardInput.BaseStream.Close(); $p.WaitForExit(); exit $p.ExitCode`;
  const script=runner.platform==='windows'
-  ? "$ErrorActionPreference='Stop'; "+(runner.workdir?`Set-Location -LiteralPath ${ps(runner.workdir)}; `:'')+`& { ${command}\n}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; if (-not $?) { exit 1 }`
+  ? "$ErrorActionPreference='Stop'; "+(runner.workdir?`Set-Location -LiteralPath ${ps(runner.workdir)}; `:'')+(useWsl?wslScript:`& { ${command}\n}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; if (-not $?) { exit 1 }`)
   : (runner.workdir?`cd -- ${sh(runner.workdir)} && `:'')+`sh -lc ${sh(command)}`;
  const remote=runner.platform==='windows'?`powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script,'utf16le').toString('base64')}`:script;
  return {program:'ssh',args:[...options,'-p',String(runner.port),'-l',runner.username,'--',runner.host,remote]};

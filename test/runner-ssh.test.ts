@@ -44,3 +44,13 @@ it('cleans real sshpass descendants even when they ignore the PTY hangup',async(
   expect(['gone','Z']).toContain(state);
  }finally{vi.unstubAllEnvs();await rm(root,{recursive:true,force:true});}
 },5000);
+it('runs Linux commands through the same Windows SSH connection and default WSL with exact UTF-8 stdin',()=>{
+ const command="printf '%s\\n' '你好 $HOME \"quoted\"'; exit 7";
+ const host={...runner,platform:'windows' as const,workdir:'C:/work'};
+ const windows=runnerInvocation(host,'/private/known_hosts',{kind:'exec',command:'Get-Location'},true);
+ const wsl=runnerInvocation(host,'/private/known_hosts',{kind:'exec',environment:'wsl',command},true);
+ expect(wsl.program).toBe('ssh');expect(wsl.args.slice(0,-1)).toEqual(windows.args.slice(0,-1));
+ const script=Buffer.from(wsl.args.at(-1)!.split(' ').at(-1)!,'base64').toString('utf16le');
+ expect(script).toContain("FileName='wsl.exe'");expect(script).toContain("Arguments='--exec sh'");expect(script).toContain('RedirectStandardInput=$true');expect(script).toContain(Buffer.from(command+'\n','utf8').toString('base64'));expect(script).toContain('exit $p.ExitCode');
+ expect(script).not.toContain(command);expect(()=>runnerInvocation(runner,'/private/known_hosts',{kind:'exec',environment:'wsl',command},false)).toThrow('Windows');
+});

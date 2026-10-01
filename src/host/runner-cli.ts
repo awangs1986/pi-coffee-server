@@ -9,7 +9,7 @@ async function main(){
  if(action==='list'){console.log(JSON.stringify(await manager.list(),null,2));return;}
  const id=args.shift();if(!id)throw new Error('Specify a runner id');
  let operation:import('./runner-ssh.js').RunnerOperation;
- if(action==='exec'){if(args.shift()!=='--'||args.length!==1)throw new Error('exec <id> -- <one quoted shell command>');operation={kind:'exec',command:args[0]};}
+ if(action==='exec'){let environment:'windows'|'wsl'|undefined;if(args[0]==='--env'){args.shift();const value=args.shift();if(value!=='windows'&&value!=='wsl')throw new Error('Use --env windows or --env wsl');environment=value;}if(args.shift()!=='--'||args.length!==1)throw new Error('exec <id> [--env windows|wsl] -- <one quoted shell command>');operation={kind:'exec',command:args[0],environment};}
  else if((action==='upload'||action==='download')&&args.length===2)operation={kind:action,local:args[action==='upload'?0:1],remote:args[action==='upload'?1:0]};
  else throw new Error('Use list, exec, upload or download');
  const result=await manager.run(id,operation);process.stdout.write(result.stdout);process.stderr.write(result.stderr);process.exitCode=result.code;

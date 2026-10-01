@@ -1,3 +1,5 @@
+> Windows SSH test computer with same-host WSL: [contract](docs/spec/test-runners.md), [Server #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
+
 > SSH test server configuration: [contract](docs/spec/test-runners.md), [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14).
 
 > Current Pi upgrade plan: [P0–P10](docs/development/pi-099-upgrade-plan-20260930.md), based on the [0.99 impact audit](docs/research/pi-099-upgrade-impact-20260930.md). P0–P9 are merged. The owner authorized Web integration; P10 deployment evidence and remaining environment-specific gates are tracked in GitHub Server #11.

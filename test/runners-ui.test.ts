@@ -21,9 +21,10 @@ it('opens from the Logo menu, saves/tests/edits/deletes without exposing a saved
  const fill=(id:string,value:string)=>{(document.getElementById(id) as HTMLInputElement).value=value;};
  fill('runner-name','Test <server>');fill('runner-host','localhost');fill('runner-username','tester');fill('runner-password','fixture-secret');
  document.getElementById('runner-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
- expect(calls.find(c=>c.action==='save').runner.password).toBe('fixture-secret');expect(document.body.textContent).not.toContain('fixture-secret');expect((document.getElementById('runner-password') as HTMLInputElement).value).toBe('');
+ expect(document.getElementById('runner-platform')).toBeNull();expect(calls.find(c=>c.action==='save').runner.platform).toBe('windows');expect(calls.find(c=>c.action==='save').runner.password).toBe('fixture-secret');expect(document.body.textContent).not.toContain('fixture-secret');expect((document.getElementById('runner-password') as HTMLInputElement).value).toBe('');
  expect(document.querySelector('#runners-list server')).toBeNull();expect(document.querySelector('#runners-list')!.textContent).toContain('Test <server>');
  (document.querySelector('[data-runner-action="test"]') as HTMLButtonElement).click();await tick();expect(document.getElementById('runners-status')!.textContent).toBe('连接成功');
- (document.querySelector('[data-runner-action="edit"]') as HTMLButtonElement).click();expect((document.getElementById('runner-password') as HTMLInputElement).value).toBe('');
+ expect((document.getElementById('runner-password') as HTMLInputElement).value).toBe('');
+ fill('runner-name','Changed');document.getElementById('runner-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();expect(calls.filter(c=>c.action==='save').at(-1).runner.id).toBe('runner-1');expect(rows).toHaveLength(1);
  (document.querySelector('[data-runner-action="delete"]') as HTMLButtonElement).click();await tick();expect(calls.at(-2)).toMatchObject({action:'delete',id:'runner-1'});expect(document.querySelector('#runners-list')!.textContent).toContain('尚未配置');
 });
