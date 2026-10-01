@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 import { expect, it } from "vitest";
+import { HOST_ENVIRONMENT_INSTRUCTION } from "../src/host/session-instructions.js";
 import { HostServer } from "../src/host/server.js";
 import { WebServer } from "../src/web/server.js";
 import { resolveHostPiExtensions } from "../src/host/pi-extensions.js";
@@ -77,6 +78,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     first.socket.send(JSON.stringify({ v: 1, type: "prompt", requestId: "package-probe", text: "Reply with the test marker." }));
     await expect.poll(() => first.frames.filter(frame => frame.type === "event" && frame.event.type === "agent_settled").length === 3, { timeout: 15000 }).toBe(true);
     expect(JSON.stringify(first.frames)).toContain("PACKAGE_CONSUMER_OK");
+    expect(requests.filter(r=>!r.messages.some((m:any)=>String(m.content).startsWith("PI_HANDOFF_SYNTHESIS"))).every(r=>r.messages.filter((m:any)=>["system","developer"].includes(m.role)).map((m:any)=>m.content).join("\n").split(HOST_ENVIRONMENT_INSTRUCTION).length===2)).toBe(true);
     expect(requests.some(r=>r.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe"))).toBe(true);
     expect(requests.flatMap(r=>r.messages).find((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe").content).not.toMatch(/not found|unknown tool|not active/i);
     expect(first.frames.filter(frame => frame.type === "error" || frame.event?.type === "extension_error")).toEqual([]);

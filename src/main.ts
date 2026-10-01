@@ -1,5 +1,6 @@
 import {homedir} from "node:os";
 import {RunnerManager} from "./host/runners.js";
+import {hostSessionInstructions} from "./host/session-instructions.js";
 import {taskRootForScope} from './host/task-storage.js';
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
@@ -119,7 +120,7 @@ async function run(selectedRole: Role): Promise<void> {
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
-    const instructions=()=>runners.instruction();
+    const instructions=async()=>hostSessionInstructions(await runners.instruction());
     const codexOptions={instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,instructions,
