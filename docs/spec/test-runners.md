@@ -37,8 +37,9 @@ Pi Work and Claude use native appended system instructions; Codex uses native de
 instructions while retaining configured native developer guidance. Native
 system prompts and other project instructions remain native. The external JSON
 contains all server metadata, credential references and CLI usage. Pi Chat retains
-its existing Harness boundary: it removes execution system instructions and does
-not gain SSH execution tools. Use a Work task for remote execution/testing.
+its Harness boundary: it removes runner and Work instructions and does not gain
+additional tools. The shared [Host environment sentence](session-environment.md)
+is retained independently of runner configuration. Use a Work task for remote execution/testing.
 
 Changes apply on the next native session start/resume. Saving configuration does
 not interrupt or restart an existing task. Historical context can still contain

@@ -129,6 +129,7 @@ describe("original Pi RPC adapter", () => {
       expect(await session.getExtensions()).toEqual([
         { name: "harness/extension.js", kind: "extension", path: "/opt/pi-coffee/dist/src/harness/extension.js", origin: "cli", scope: "temporary", commands: [{ name: "harness", description: "Switch harness mode" }, { name: "verify", description: "Run verification" }] },
         { name: "llama.cpp", kind: "extension", origin: "inline", scope: "temporary", commands: [{ name: "llama", description: "Manage llama.cpp" }] },
+        { name: "pi-environment-extension", kind: "extension", path: resolve("src/host/pi-environment-extension.ts"), origin: "configured", commands: [] },
         { name: "tdd", kind: "skill", path: "/home/u/.agents/skills/tdd/SKILL.md", origin: "auto", scope: "user", commands: [{ name: "skill:tdd", description: "Test-driven development" }] },
         { name: "review", kind: "prompt", path: "/home/u/.pi/agent/prompts/review.md", origin: "auto", scope: "user", commands: [{ name: "review", description: "Review the diff" }] },
       ]);

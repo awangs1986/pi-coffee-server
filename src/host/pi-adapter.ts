@@ -121,6 +121,8 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     );
     const instructions=await this.options.instructions?.();
     if(instructions)args.push("--append-system-prompt",instructions);
+    // Last hook preserves the Host environment sentence after Pi Chat removes system prompts.
+    appendExtensionArgs(args, [fileURLToPath(new URL(`./pi-environment-extension.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url))]);
     // Resume from the durable store when the conversation already exists there;
     // only a genuinely new conversation gets a fresh file with our id.
     const existing = (await this.listWithPaths()).find((session) => session.id === options.sessionId);
