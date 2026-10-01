@@ -207,6 +207,20 @@ describe("Web Server seam", () => {
     }finally{release();browser.close();}
   });
 
+  it("delivers a 71636-character prompt without closing the browser connection",async()=>{
+    const factory=new FakeFactory();host=new HostServer({host:'127.0.0.1',port:0,factory});await host.start();
+    web=new WebServer({host:'127.0.0.1',port:0,hostUrl:`ws://127.0.0.1:${host.address().port}/host`});await web.start();
+    const browser=await connect(`ws://127.0.0.1:${web.address().port}/ws`),frames=new FrameQueue(browser);
+    try{
+      browser.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();if(opened.type!=='opened')throw Error('expected opened');
+      const text='a'.repeat(71636);browser.send(encodeFrame({v:1,type:'prompt',requestId:'long-text',text}));
+      expect(await frames.next()).toMatchObject({type:'ack',operation:'prompt',requestId:'long-text'});
+      for(let i=0;i<4;i++)await frames.next();
+      expect(factory.sessions.get(opened.sessionId)!.history.filter(e=>e.kind==='user'&&e.text===text)).toHaveLength(1);
+      browser.send(encodeFrame({v:1,type:'ping',nonce:'still-connected'}));expect(await frames.next()).toMatchObject({type:'pong',nonce:'still-connected'});
+    }finally{browser.close();}
+  });
+
   it("serves the shell assets from public/ and nothing else", async () => {
     host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory() });
     await host.start();

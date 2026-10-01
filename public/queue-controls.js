@@ -4,8 +4,9 @@ export function initQueueControls({container,send,requestId,toast,canPromote}){
  const element=(tag,cls,text)=>{const e=document.createElement(tag);e.className=cls;if(text!==undefined)e.textContent=text;return e;};
  function action(item,kind,text){
   const id=requestId('queue');pending.set(id,{itemId:item.id,kind});
-  if(!send({v:1,type:'queue_action',requestId:id,id:item.id,revision:item.revision,action:kind,...(text===undefined?{}:{text})})){pending.delete(id);toast('连接已断开，未自动重试');}
-  render();
+  const sent=send({v:1,type:'queue_action',requestId:id,id:item.id,revision:item.revision,action:kind,...(text===undefined?{}:{text})});
+  if(!sent){pending.delete(id);toast('请求未送达，内容保留，未自动重试');}
+  render();return sent;
  }
  function render(){
   container.replaceChildren();
@@ -37,7 +38,7 @@ export function initQueueControls({container,send,requestId,toast,canPromote}){
   event.preventDefault();if(!editing||!connected)return;
   const text=$('queue-edit-text').value;if(!text.trim()){ $('queue-edit-status').textContent='指令不能为空';return;}
   if([...pending.values()].some(p=>p.itemId===editing.id))return;
-  action(editing,'edit',text);$('queue-edit-status').textContent='正在保存…';
+  const sent=action(editing,'edit',text);$('queue-edit-status').textContent=sent?'正在保存…':'未发送，内容仍保留。请检查连接及 1 MiB 传输上限。';
  };
  return {
   update(rows){items=rows;render();},

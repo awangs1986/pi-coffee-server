@@ -438,3 +438,11 @@ defines user-scoped persistence and the strict separation from task execution id
   remote Git status locks. Native read deadlines, independent read lanes and
   bounded unacknowledged-message recovery cover these delivery paths; production
   activation is recorded separately from source publication.
+
+
+- 2026-10-02: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23)
+  has a private-file reproduction of the reported disconnect: valid long text
+  crossed the obsolete 65,536-character ceiling while staying under the encoded
+  frame budget. Browser and protocol now use the same 1 MiB envelope; rejected
+  oversized input and queued edits preserve drafts. The private fixture is not
+  committed or sent to a model.

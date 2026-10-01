@@ -160,8 +160,9 @@ requests must remain independent. Late matching ACKs remove their recovery cards
 
 After 20 seconds without an ACK, surface the retained request and timeout reason.
 A disconnect card includes its WebSocket close code. These signals diagnose delivery;
-they do not prove whether the native agent executed a request. Reject prompts above
-the existing 64 Ki-character or 1 MiB encoded-frame limits before clearing the draft.
+they do not prove whether the native agent executed a request. Reject encoded
+frames above 1 MiB before clearing the draft; text has no separate 64 Ki-character
+ceiling. UTF-8, JSON escaping, request fields and images all consume that budget.
 The outbox is limited to 20 requests / 8 MiB; stop new submissions rather than evict
 unconfirmed requests at capacity. Clear on logout, 401 or account change. It is not
 persisted to browser storage and does not survive a page reload or tab closure.

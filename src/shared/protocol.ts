@@ -9,7 +9,9 @@
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_FRAME_BYTES = 1024 * 1024;
-export const MAX_PROMPT_CHARS = 64 * 1024;
+// Encoded frames remain capped at 1 MiB, including UTF-8, JSON and images.
+// A separate 64 Ki-character ceiling rejected valid long context/code pastes.
+export const MAX_PROMPT_CHARS = MAX_FRAME_BYTES;
 export const MAX_REQUEST_ID_CHARS = 256;
 
 export type AgentEngine = "pi" | "codex" | "claude";

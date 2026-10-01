@@ -351,3 +351,18 @@ frame. Its optional `requestId` remains correlated to that read. The browser mus
 report the read failure without ending an active turn, clearing prompt delivery
 state or dropping queued instructions. These reads run independently of ordered
 prompt, answer, model-setting and lifecycle commands, with bounded native reads.
+
+
+## Long prompt transport budget (2026-10-02)
+
+Prompt text, edited queued instructions and UI responses use the existing 1 MiB
+encoded-frame budget. The former separate 65,536-character text ceiling is retired:
+a 71,636-character text may fit comfortably in the transport envelope. The server
+checks encoded bytes before parsing; Browser, Web and Host keep the same payload
+budget. Request IDs, frame shape, types and image counts retain their own limits.
+Native model-context limits remain separate from transport size.
+
+The browser checks the encoded frame before clearing drafts or transmitting queued
+edits. Over-budget input stays editable and receives explicit feedback, without
+sending a frame that would close the socket. Queued edit controls accommodate long
+text and do not report a failed local send as a pending save.
