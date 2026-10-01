@@ -237,6 +237,7 @@ export class HostSession {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     await this.pi.rename(name);
     this.state = { ...this.state, sessionName: name };
+    this.scheduleIdleCheck();
   }
 
   hasPendingUi(id: string): boolean {
@@ -514,9 +515,10 @@ export class HostSessionRegistry {
     }
   }
 
-  async open(id?: string, after?: number): Promise<SessionOpenResult> {
-    const existing = id === undefined ? undefined : this.sessions.get(id);
-    const session = existing ?? new HostSession({
+  private sessionFor(id?:string):HostSession {
+    const existing=id===undefined?undefined:this.sessions.get(id);
+    if(existing)return existing;
+    const session=new HostSession({
       ...(id === undefined ? {} : { id }),
       factory: this.factory,
       eventBufferSize: this.eventBufferSize,
@@ -527,6 +529,12 @@ export class HostSessionRegistry {
       onHistory:this.options.onHistory,
     });
     this.sessions.set(session.id, session);
+    return session;
+  }
+
+  async open(id?: string, after?: number): Promise<SessionOpenResult> {
+    const existing=id===undefined?undefined:this.sessions.get(id);
+    const session=this.sessionFor(id);
     try {
       const result = await session.prepare(after);
       if (!existing) this.notifyChange();
@@ -542,9 +550,15 @@ export class HostSessionRegistry {
 
   /** Rename any conversation; a stored-but-idle one is resumed for the call. */
   async rename(id: string, name: string): Promise<void> {
-    const { session } = await this.open(id);
-    await session.rename(name);
-    this.notifyChange();
+    const existing=this.sessions.get(id);
+    const session=this.sessionFor(id);
+    try {
+      // Naming needs the native binding, not the full transcript projection/export.
+      await session.start();await session.rename(name);this.notifyChange();
+    }catch(error){
+      if(!existing){this.sessions.delete(session.id);await session.stop().catch(()=>undefined);}
+      throw error;
+    }
   }
 
   /** Delete a conversation from the store, stopping its Pi process first. */

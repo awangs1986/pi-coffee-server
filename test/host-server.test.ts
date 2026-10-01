@@ -493,6 +493,27 @@ describe("Host WebSocket seam", () => {
     }finally{release();spy.mockRestore();}
   });
 
+  it("renames a live conversation without rereading history", async () => {
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();
+    if(opened.type!=='opened')throw Error('Expected opened');await frames.next();
+    const session=factory.sessions.get(opened.sessionId)!;
+    const spy=vi.spyOn(session,'getHistory').mockRejectedValue(Error('History must not be loaded for rename'));
+    try {
+      socket.send(encodeFrame({v:1,type:'rename_session',sessionId:opened.sessionId,name:'Saved title',requestId:'rename-fast'}));
+      expect(await frames.next()).toMatchObject({type:'ack',operation:'rename_session',requestId:'rename-fast'});
+      expect(session.name).toBe('Saved title');expect(spy).not.toHaveBeenCalled();
+      const cold=await factory.create({sessionId:'cold-title'});
+      const coldHistory=vi.spyOn(cold,'getHistory').mockRejectedValue(Error('Cold rename must not read history'));
+      try {
+        socket.send(encodeFrame({v:1,type:'rename_session',sessionId:'cold-title',name:'Cold saved',requestId:'rename-cold'}));
+        expect(await frames.next()).toMatchObject({type:'ack',operation:'rename_session',requestId:'rename-cold'});
+        expect(cold.name).toBe('Cold saved');expect(coldHistory).not.toHaveBeenCalled();
+      }finally{coldHistory.mockRestore();}
+    }finally{spy.mockRestore();socket.close();}
+  });
+
   it("stops an idle Pi process and resumes the conversation from the store on the next open", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory, idleTimeoutMs: 60 });
