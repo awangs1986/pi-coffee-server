@@ -216,6 +216,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .msg.user .bubble {
   max-width: 85%; background: var(--bg-user); border-radius: var(--radius); padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
+.msg.user .bubble > .text { font-style: italic; }
 .msg.assistant .body { overflow-wrap: anywhere; }
 .msg.assistant .body p { margin: 0 0 10px; white-space: pre-wrap; }
 .msg.assistant .body p:last-child { margin-bottom: 0; }
@@ -346,12 +347,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .msg.assistant .body code { font-family: var(--mono); font-size: 13px; background: var(--bg-subtle); padding: 1px 5px; border-radius: 5px; }
 .msg.assistant .body pre { margin: 0; padding: 12px 14px; background: var(--code-bg); color: var(--code-text); border-radius: 0 0 10px 10px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
 .msg.assistant .body pre code { background: transparent; padding: 0; font-size: inherit; color: inherit; }
-.codeblock { margin: 8px 0 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--code-border); }
+.codeblock { --code-bg: #7C9CC3; --code-text: #ffffff; --code-border: #7C9CC3; --code-muted: #ffffff; margin: 8px 0 12px; border-radius: 10px; overflow: hidden; border: 1px solid var(--code-border); }
 .codeblock-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 5px 10px 5px 14px; background: var(--code-border); color: var(--code-muted); font-size: 12px; font-family: var(--mono); }
 .codeblock-copy, .msg-tool { border: 1px solid transparent; background: transparent; color: var(--code-muted); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
-.codeblock-copy:hover { background: #2e2e30; color: #e8e8e8; }
-.codeblock-copy.done { color: #86efac; }
+.codeblock-copy:hover { background: rgb(255 255 255 / .16); color: #ffffff; }
+.codeblock-copy.done { color: #ffffff; }
 .tok-k { color: #c4b5fd; } .tok-s { color: #86efac; } .tok-n { color: #fca5a5; } .tok-c { color: #64748b; font-style: italic; } .tok-f { color: #93c5fd; } .tok-t { color: #fcd34d; } .tok-v { color: #f9a8d4; } .tok-a { color: #7dd3fc; } .tok-p { color: #94a3b8; }
+.codeblock code span { color: inherit; }
 .diff-add { color: #86efac; } .diff-del { color: #fca5a5; }
 
 /* ---------- message toolbar ---------- */
