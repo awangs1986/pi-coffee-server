@@ -132,6 +132,7 @@ function toast(text, ms = 1800) {
   toast.timer = setTimeout(() => ui.toast.classList.add('hidden'), ms);
 }
 function send(frame) {
+  if(takeoverBusy() && !['list_sessions','get_state','get_queue'].includes(frame.type))return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(frame));
   return true;
@@ -159,7 +160,7 @@ function toggleBrandMenu() {
 
 // ---------- Agent settings menu ----------
 const draftModelEngine = () => !activeId && !pendingOpenId && engineAvailability.some(e=>e.id===$('#task-engine').value && e.available && e.modelCatalog) ? $('#task-engine').value : null;
-const modelControlsLocked = () => compacting || !!modelPending || !connected || (!opened && !draftModelEngine());
+const modelControlsLocked = () => takeoverBusy() || compacting || !!modelPending || !connected || (!opened && !draftModelEngine());
 function loadDraftModels() {
   if (!connected || !draftModelEngine()) return;
   catalogRequest=requestId("catalog");
@@ -327,7 +328,7 @@ function renderAgentTrigger() {
   ui.agentName.textContent = engineName(agent);
   ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}`);
   ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', models?.current ? `模型 ${models.current.provider}/${models.current.id}` : '', models?.thinkingLevel ? `思考 ${models.thinkingLevel}` : ''].filter(Boolean).join(' · ');
-  ui.agentBtn.disabled = !connected || (choiceLocked && modelLocked && !canTakeover());
+  ui.agentBtn.disabled = takeoverBusy() || !connected || (choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');
 }
 function renderAgentSettings() {
@@ -348,7 +349,7 @@ function renderAgentSettings() {
   ui.agentValues.thinking.textContent = models?.thinkingLevel || levels[0] || '—';
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
   ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(agent));
-  ui.agentRows.context.disabled=streaming||compacting||Boolean(contextPending)||!models?.context;
+  ui.agentRows.context.disabled=takeoverBusy()||streaming||compacting||Boolean(contextPending)||!models?.context;
   ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'模型最大':'272k';
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
     : task && !pendingOpenId ? (task.workspaceKind==='project'&&['pi','codex'].includes(task.engine||'pi')?'来源固定；Pi／Codex 可通过交接切换。':'此任务的 Agent 和来源固定。') : '';
@@ -817,7 +818,7 @@ function renderHeader() {
   const session = sessions.find((s) => s.id === activeId);
   const title = activeId ? sessionTitle(session) : '新对话';
   ui.title.textContent = title;
-  ui.title.disabled = !activeId;
+  ui.title.disabled = takeoverBusy() || !activeId;
   ui.sessionMeta.textContent = activeId ? activeId.slice(0, 8) : '';
 
   const pending = attentionCount();
@@ -879,7 +880,7 @@ function renderStats() {
   ui.spBar.setAttribute('aria-valuetext',pct!==null?'已用 '+Math.floor(pct)+'%':'用量暂不可用');
   if(pct!==null)ui.spBar.setAttribute('aria-valuenow',String(Math.min(100,pct)));else ui.spBar.removeAttribute('aria-valuenow');
   ui.spCompact.textContent=engine==='pi' ? '交接压缩' : '压缩上下文';
-  ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
+  ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   ui.spCompact.classList.toggle('hidden',!supports('compact'));
 }
 function showStatsPop() {
@@ -965,6 +966,12 @@ function setStreaming(active) {
   renderSessionList();
 }
 function refreshComposer() {
+  const switching=takeoverBusy();
+  // Inert also covers dynamically rendered queue/file/message action buttons.
+  for(const selector of ['#composer-card','#queue','#thread','#project-controls','#workspace-panel','.topbar-actions','#stats-wrap'])$(selector)?.toggleAttribute('inert',switching);
+  ui.prompt.disabled=ui.attach.disabled=ui.file.disabled=ui.mode.disabled=ui.stop.disabled=switching;
+  if(switching){closeAgentMenu();closeTaskDetails();ui.slash.classList.add('hidden');}
+
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
@@ -977,10 +984,10 @@ function refreshComposer() {
   ui.pluginsBtn.classList.toggle("hidden",!supports("extensions"));ui.statsWrap.classList.toggle("hidden",!supports("stats"));
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
-  if(takeoverBusy())ui.hint.textContent='正在交接 Agent… 可以保留草稿，完成后继续发送。';
+  if(takeoverBusy())ui.hint.textContent='正在交接 Agent… 当前对话操作已锁定，草稿已保留。';
   else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
-  ui.hint.classList.toggle('hidden', !streaming && !compacting);
-  ui.spCompact.disabled=!opened || streaming || compacting || !supports('compact');
+  ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching);
+  ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   if (connected) {
     ui.status.textContent = streaming ? engineName()+' 正在工作…' : '已连接';
     ui.dot.className = 'dot ' + (streaming ? 'busy' : 'ready');
@@ -1203,6 +1210,7 @@ function afterOpened() {
 function handleFrame(frame, ws) {
   switch (frame.type) {
     case 'sessions':
+      if(activeId)void loadWorkspace();
       sessions = Array.isArray(frame.sessions) ? frame.sessions : [];
       renderSessionList();
       renderHeader();
@@ -2141,6 +2149,7 @@ ui.prompt.addEventListener('input', () => {
   renderSlash();
 });
 ui.prompt.addEventListener('keydown', (event) => {
+  if(takeoverBusy()){event.preventDefault();return;}
   const slashOpen = !ui.slash.classList.contains('hidden');
   if (slashOpen && slashItems().length) {
     const items = slashItems();
@@ -2155,6 +2164,7 @@ ui.prompt.addEventListener('keydown', (event) => {
 ui.mode.addEventListener('change', refreshComposer);
 $('#composer').addEventListener('submit', (event) => {
   event.preventDefault();
+  if(takeoverBusy())return;
   const text = ui.prompt.value.trim();
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
@@ -2192,6 +2202,7 @@ $('#composer').addEventListener('submit', (event) => {
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
 function submitPrompt(text, images) {
+  if(takeoverBusy())return;
   if(compacting){toast('请等待压缩完成，或先停止');return;}
   if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return;}
   const mode = streaming ? ui.mode.value : 'prompt';
@@ -2395,7 +2406,7 @@ async function loadWorkspace() {
       const id=activeId,c=data.conversations.find(c=>c.id===id),chat=c.workspaceKind==='chat';
       $('#migrate-workspace').classList.toggle('hidden',chat || Boolean(c.startSha));
       $('#checkpoint-workspace').classList.toggle('hidden',chat || !c.startSha);
-      if(c.creationState==='failed' || c.creationState==='creating')return;
+      if(c.creationState==='failed' || c.creationState==='creating' || c.takeover?.status==='preparing')return;
       const grant=await workspaceApi({action:'files',id}).catch(()=>null);
       if(activeId===id){
         if(grant){

@@ -1103,3 +1103,6 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .queue-images { font-size:11px; white-space:nowrap; }
 .queue-warning { font-size:11px; color:var(--text-2); flex-basis:100%; }
 #queue-edit-text { box-sizing:border-box; width:100%; resize:vertical; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+
+/* Preparation locks task actions while keeping the transcript readable. */
+[inert] button, [inert] select, [inert] textarea { opacity: .55; }

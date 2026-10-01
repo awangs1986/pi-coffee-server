@@ -96,6 +96,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         else candidate=await new CodexSession(this.options.codex,cwd,this.options.instructions).start(undefined,bound);
       }
       this.preparations.set(controller,candidate);if(this.closing)controller.abort();
+      if(operation.to==='codex'){await candidate.setModel('codex','gpt-6.1-sol');await candidate.setThinkingLevel('medium');}
       await reconstruct(candidate,takeoverPrompt(paths,cwd),180_000,controller.signal);
       if(operation.title)await candidate.rename(operation.title).catch(()=>undefined);
       const previous=await priorHistory(root,operation);

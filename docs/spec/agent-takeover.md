@@ -14,16 +14,25 @@ change an existing binding.
   information loss, misunderstanding/context drift and a target-model call.
 - Keep the same Conversation ID, registered checkout, branch, uncommitted files,
   attachments, sidebar placement and Web history. The destination uses a **new**
-  native session, its own tools, prompts, authentication and default model. Models
+  native session, its own tools, prompts and authentication. Codex takeover uses
+  `gpt-6.1-sol` with `medium` reasoning; this target-session override does not change
+  the VM-wide Codex configuration or other tasks. Models
   remain selectable inside the active Agent after completion.
 - Preparation runs automatically after consent. Display its progress without
   requiring a handoff file or a reply from the old model. Preserve the composer
-  draft. A browser disconnect/reload neither cancels nor resubmits preparation.
+  draft without accepting edits during preparation. Lock the current task composer,
+  attachments, queue actions, Agent/model/context settings, transcript actions and
+  workspace controls from confirmation until success/failure. Block Enter/form
+  submission as well as button clicks; preserve sidebar navigation to other tasks.
+  A browser disconnect/reload neither cancels nor resubmits preparation.
 - The destination performs read-only reconstruction and reports recovered state
   and the next action. It does not automatically replay the latest user command
   or execute unfinished implementation during preparation. After success, normal
   user input continues in the same Web conversation. Only material missing or
-  conflicting evidence requires user attention; no routine second confirmation.
+  conflicting evidence that prevents reconstructing the task requires user attention;
+  no routine second confirmation. An unanswered question or pending user choice is
+  a valid recovered stopping point: finish takeover successfully and continue
+  waiting for that answer. Never invent the answer or start implementation.
 
 ## Host boundary and records
 

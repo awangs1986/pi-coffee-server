@@ -14,7 +14,8 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
-  requests.push(body);if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
+  if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_display'){sidebar.showGroups=body.showGroups;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_collapse'){sidebar.collapsed=body.collapsed?[body.projectId]:[];return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
@@ -586,4 +587,22 @@ it('offers Work takeover in the Agent menu, requires drift consent and keeps the
  row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
  document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='takeover')).toMatchObject({id,engine:'codex',expectedEngine:'pi',acceptDrift:true});expect(prompt.value).toBe('unsent draft');
+});
+it.each(['failed','completed'])('locks task actions during takeover and restores drafts after %s',async(status)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.conversations[0],id=task.id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true,compact:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='keep my draft';prompt.dispatchEvent(new Event('input'));
+ const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ task.takeover={id:'switch-1',status:'preparing',from:'pi',to:'codex'};
+ document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();
+ // A form submission/Enter must be blocked, not only a click on the Send button.
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);expect(prompt.value).toBe('keep my draft');
+ for(const id of ['prompt','send','attach','agent-menu-btn','stop'])expect(document.querySelector<HTMLInputElement>('#'+id)!.disabled,id).toBe(true);
+ expect(document.querySelector('#queue')!.hasAttribute('inert')).toBe(true);expect(document.querySelector('#hint')!.classList.contains('hidden')).toBe(false);
+ task.takeover.status=status;if(status==='completed')task.engine='codex';await vi.advanceTimersByTimeAsync(1100);
+ if(status==='completed'){app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'codex',state:{isStreaming:false}});app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[]});}
+ expect(prompt.disabled).toBe(false);expect(prompt.value).toBe('keep my draft');expect(document.querySelector('#queue')!.hasAttribute('inert')).toBe(false);
 });
