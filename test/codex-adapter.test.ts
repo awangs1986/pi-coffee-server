@@ -242,6 +242,38 @@ describe("Codex app-server adapter", () => {
     await expect(factory.list()).rejects.toThrow(/codex app-server/);
   });
 
+  it("stops the native child when a CLI wrapper exits first",async()=>{
+    const b=setup();
+    writeFileSync(b.cliPath,`#!/bin/sh\nexec 3<&0\n"${process.execPath}" "${fixture}" "$@" <&3 &\nwait\n`);
+    const factory=b.factory();await factory.list();
+    const pid=Number(readFileSync(join(b.codexHome,'started-pids'),'utf8').trim());
+    try {
+      await factory.close();
+      await new Promise(resolve=>setTimeout(resolve,80));
+      let running=false;
+      try{running=!readFileSync(`/proc/${pid}/stat`,'utf8').split(') ')[1].startsWith('Z');}catch{}
+      expect(running).toBe(false);
+    }finally{try{process.kill(pid,'SIGKILL');}catch{}}
+  });
+
+  it("coalesces concurrent sidebar discovery into one process and retires a list-only server", async () => {
+    const b=setup();
+    const factory=new CodexSessionFactory({cwd:b.cwd,cliPath:b.cliPath,codexHome:b.codexHome,idleTimeoutMs:60});
+    b.factories.push(factory);
+    try {
+      await Promise.all(Array.from({length:12},()=>factory.list()));
+      const pids=readFileSync(join(b.codexHome,'started-pids'),'utf8').trim().split('\n');
+      expect(pids).toHaveLength(1);
+      await new Promise(resolve=>setTimeout(resolve,180));
+      expect(factory.serverRunning).toBe(false);
+    } finally {
+      await factory.close();
+      for(const pid of readFileSync(join(b.codexHome,'started-pids'),'utf8').trim().split('\n')) {
+        try{process.kill(Number(pid),'SIGTERM');}catch{}
+      }
+    }
+  });
+
   it("stops the app-server once every session has been closed for the idle period", async () => {
     const b = setup();
     const factory = new CodexSessionFactory({ cwd: b.cwd, cliPath: b.cliPath, codexHome: b.codexHome, idleTimeoutMs: 50 });

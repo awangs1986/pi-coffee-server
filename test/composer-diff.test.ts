@@ -84,6 +84,7 @@ it('does not compact a different task after the confirmation dialog was opened',
 it('shows active compaction after reconnect and blocks input until settlement',async()=>{
   const app=await setup();const ws=app.sockets.at(-1);
   ws.receive({type:'opened',sessionId:'task-1',engine:'pi',state:{isCompacting:true}});
+  ws.receive({type:'history',sessionId:'task-1',entries:[]});
   q<HTMLTextAreaElement>('#prompt').value='continue';q('#prompt').dispatchEvent(new Event('input'));
   expect(q<HTMLButtonElement>('#send').disabled).toBe(true);
   expect(q<HTMLButtonElement>('#sp-compact').disabled).toBe(true);

@@ -606,3 +606,29 @@ it.each(['failed','completed'])('locks task actions during takeover and restores
  if(status==='completed'){app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'codex',state:{isStreaming:false}});app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[]});}
  expect(prompt.disabled).toBe(false);expect(prompt.value).toBe('keep my draft');expect(document.querySelector('#queue')!.hasAttribute('inert')).toBe(false);
 });
+
+it('shows a recent conversation before the new socket replies and reconciles authoritative history',async()=>{
+ const app=await setup();
+ app.conversations.push({id:'recent-a',workspaceKind:'chat',engine:'pi'},{id:'recent-b',workspaceKind:'chat',engine:'pi'});
+ const listings=[{id:'recent-a',name:'Recent A'},{id:'recent-b',name:'Recent B'}];
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes(name))!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ choose('Recent A');await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-a',engine:'pi',state:{isStreaming:false}});
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-a',entries:[{kind:'user',text:'cached visible marker'}]});
+ document.querySelector('#scroller')!.scrollTop=123;
+ choose('Recent B');await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-b',engine:'pi',state:{isStreaming:false}});
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-b',entries:[{kind:'user',text:'other conversation'}]});
+ choose('Recent A');
+ expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
+ expect(document.querySelector('#scroller')!.scrollTop).toBe(123);
+ expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(true);
+ await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-a',engine:'pi',state:{isStreaming:false}});
+ expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-a',entries:[{kind:'user',text:'authoritative replacement'}]});
+ expect(document.querySelector('#thread')!.textContent).toContain('authoritative replacement');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('cached visible marker');
+ expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(false);
+});

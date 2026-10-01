@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/copy-runtime.mjs && node scripts/build-vendor.mjs && node scripts/copy-public.mjs",
     "test": "vitest run",
-    "check": "npm run build && npm test",
+    "check": "node scripts/check.mjs",
     "start": "node dist/src/main.js all",
     "start:host": "node dist/src/main.js host",
     "probe:owner-access": "npm run build && node scripts/probe-owner-access.mjs",

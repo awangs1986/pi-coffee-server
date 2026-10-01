@@ -723,6 +723,8 @@ class HostSocket implements SessionSink {
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
     const engine=task?.engine ?? listed?.engine ?? "pi";
     const result = await this.registry.open(frame.sessionId, frame.after);
+    // Switching away while native history loads must not leave a phantom subscriber.
+    if(this.closed){result.session.detach(this);return;}
     this.session = result.session;
     this.opened = true;
     const state = result.session.currentState;

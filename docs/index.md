@@ -55,3 +55,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Readable first-user title fallback: [navigation contract](spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).
 
 - Fixed 500K upper context preset: [current contract](spec/context-usage.md#native-context-controls-2026-09-30), [Pi #5](https://github.com/awangs1986/pi-coffee/issues/5), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
+
+- Fast conversation switching and bounded runtime resources: [contract](spec/conversation-switching.md), [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).

@@ -1,3 +1,4 @@
+import {RecentConversations} from './recent-conversations.js';
 import {initTakeoverControls} from "./takeover-controls.js";
 import {initQueueControls} from './queue-controls.js';
 import {initRunners} from "./runners.js";
@@ -54,7 +55,7 @@ const ui = {
 };
 
 // ---------- state ----------
-let socket, reconnectTimer;
+let socket, reconnectTimer, connectionEpoch=0;
 
 let retryNote;
 let finishedWhileHidden = false;
@@ -71,10 +72,30 @@ let searchOpen = false, searchFilter = 'all';
 let sessions = [], commands = [], models = null, statsCache = null;
 let catalogRequest = null, draftModel = null, historyReady = false;
 let entries = [];
+const recentConversations=new RecentConversations();
+let previewScroll=null;
+function rememberRecentThread(){
+  if(!activeId || !historyReady || takeoverBusy())return;
+  const bytes=ui.thread.innerHTML.length*2;
+  // Detach the existing nodes: returning to a long conversation needs no Markdown pass.
+  const nodes=document.createDocumentFragment();
+  const scroll=ui.scroller.scrollTop;
+  nodes.append(...ui.thread.childNodes);
+  recentConversations.put(JSON.stringify([currentUser,activeId]),{nodes,scroll},bytes);
+}
+function showRecentThread(id){
+  const cached=recentConversations.take(JSON.stringify([currentUser,id]));
+  if(!cached)return;
+  ui.thread.replaceChildren(cached.nodes);
+  previewScroll=cached.scroll;
+  ui.scroller.scrollTop=cached.scroll;
+  ui.thread.setAttribute('inert','');
+}
+
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
 let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false;
-const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{if(id===activeId)connect();},toast:message=>toast(message)});
+const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{recentConversations.clear();if(id===activeId)connect();},toast:message=>toast(message)});
 const takeoverBusy=()=>Boolean(activeId&&takeoverControls.busy(activeId));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
@@ -408,6 +429,7 @@ function askModal({ title, text, input, okLabel = '确定', danger = false }) {
 
 // ---------- thread rendering ----------
 function resetThread() {
+  previewScroll=null;
   queueControls.reset();
   ui.thread.innerHTML = '';
   nativeItems.clear();nativeCursor=0;
@@ -969,13 +991,14 @@ function refreshComposer() {
   const switching=takeoverBusy();
   // Inert also covers dynamically rendered queue/file/message action buttons.
   for(const selector of ['#composer-card','#queue','#thread','#project-controls','#workspace-panel','.topbar-actions','#stats-wrap'])$(selector)?.toggleAttribute('inert',switching);
+  ui.thread.toggleAttribute('inert',switching || previewScroll!==null);
   ui.prompt.disabled=ui.attach.disabled=ui.file.disabled=ui.mode.disabled=ui.stop.disabled=switching;
   if(switching){closeAgentMenu();closeTaskDetails();ui.slash.classList.add('hidden');}
 
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = takeoverBusy() || compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.send.disabled = Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -984,9 +1007,10 @@ function refreshComposer() {
   ui.pluginsBtn.classList.toggle("hidden",!supports("extensions"));ui.statsWrap.classList.toggle("hidden",!supports("stats"));
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
+  if(activeId && !historyReady)ui.hint.textContent='正在同步对话…';
   if(takeoverBusy())ui.hint.textContent='正在交接 Agent… 当前对话操作已锁定，草稿已保留。';
   else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
-  ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching);
+  ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady));
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   if (connected) {
     ui.status.textContent = streaming ? engineName()+' 正在工作…' : '已连接';
@@ -998,17 +1022,22 @@ function refreshComposer() {
 // Who am I? The Web Server answers from the Gitea cookie (ADR-0004). Without a
 // valid login the shell is useless, so go to the login page instead of
 // retrying a WebSocket that will only be refused.
-async function whoAmI() {
+async function whoAmI(epoch) {
   try {
     const response = await fetch('/auth/me', { cache: 'no-store' });
+    if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
+      recentConversations.clear();resetThread();
       const body = await response.json().catch(() => ({}));
       location.href = body?.loginUrl || '/login';
       return false;
     }
     if (!response.ok) return true;
     const info = await response.json();
+    if(epoch!==connectionEpoch)return false;
+    const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
+    if(previousUser!==currentUser){recentConversations.clear();resetThread();}
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
     ui.userBtn.classList.toggle('hidden', !info.auth);
@@ -1025,6 +1054,7 @@ ui.userBtn.addEventListener('click', async () => {
   const identityLogin = String(currentUser).startsWith('gitea-');
   sessionStorage.removeItem(ACTIVE_KEY);
   localStorage.removeItem(ACTIVE_KEY);
+  recentConversations.clear();resetThread();
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   location.href = identityLogin ? '/auth/login' : '/login';
 });
@@ -1123,7 +1153,12 @@ function renderProjectContext() {
 
 function connect() {
   clearTimeout(reconnectTimer);
-  whoAmI().then((ok) => { if (ok) connectSocket(); });
+  const epoch=++connectionEpoch;
+  // Detach immediately so old replies cannot mutate the newly selected view.
+  if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
+  opened=false;historyReady=false;
+  setConnection('连接中…');
+  whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); });
 }
 function connectSocket() {
   clearTimeout(reconnectTimer);
@@ -1137,10 +1172,11 @@ function connectSocket() {
   setConnection('连接中…');
   ws.onopen = () => {
     setConnection('已连接', 'ready');
-    send({ v: 1, type: 'list_sessions' });
-    loadDraftModels();resetSlashCommands();loadSlashCommands();renderSlash();
+    // Host handles frames sequentially: open the selected task before the full sidebar scan.
     if (activeId) openSession(activeId).catch(e=>toast(e.message));
     else if(prepareNew){prepareNew=false;openSession(null).catch(e=>toast(e.message));}
+    send({ v: 1, type: 'list_sessions' });
+    loadDraftModels();resetSlashCommands();loadSlashCommands();renderSlash();
   };
   ws.onmessage = (event) => {
     if(socket!==ws)return;
@@ -1225,7 +1261,7 @@ function handleFrame(frame, ws) {
       queuedRequests.clear();
       rememberTask(activeId);
       statsCache = null;
-      resetThread();
+      if(previewScroll===null)resetThread();
       clearExtensionUi();
       if(!sameTransfer)resetTransfers();
       void loadWorkspace();
@@ -1241,12 +1277,15 @@ function handleFrame(frame, ws) {
       if(draftModel && ['pi','codex'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       afterOpened();
       return;
-    case 'history':
+    case 'history': {
       if (frame.sessionId !== activeId) return;
+      const scroll=previewScroll===null?null:ui.scroller.scrollTop;
       renderHistory(frame);
+      if(scroll!==null)ui.scroller.scrollTop=scroll;
       if(uncertainTask===activeId)pushNote("上一条请求的交付状态尚不确定，不会自动重发。请先核查历史和运行状态，再决定是否重试。",true);
-      historyReady=true;flushFirstPrompt();
+      historyReady=true;refreshComposer();flushFirstPrompt();
       return;
+    }
     case 'model_catalog':
       if(!draftModelEngine() || frame.requestId!==catalogRequest || frame.engine!==draftModelEngine())return;
       catalogRequest=null;models={...frame,thinkingLevels:[],thinkingLevel:''};
@@ -2257,6 +2296,7 @@ function switchSession(id) {
   setSearchOpen(false);
   if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return;}
   if (id === activeId && opened) return;
+  rememberRecentThread();
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
@@ -2269,12 +2309,14 @@ function switchSession(id) {
   selectedChangedPath = null;
   lastChangeCardSignature = '';
   resetThread();
+  showRecentThread(id);
   renderProjectContext();
   renderHeader();
   renderSessionList();
   connect();
 }
 function newSession(focus = true) {
+  rememberRecentThread();
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   closeTaskDetails();

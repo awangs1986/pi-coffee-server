@@ -40,3 +40,19 @@ Only approved models available in the native registry are offered. Missing nativ
 registration/authentication is not replaced with a fabricated model definition.
 This governs Host-managed model selection, not standalone CLI installations or
 arbitrary programs launched in the owner's unrestricted VM.
+
+## Temporary storage and live-task rollout
+
+Host allocates temporary storage on disk under `~/.cache/pi-coffee/runtime-tmp`;
+`PI_COFFEE_TMP_ROOT` can select another private disk-backed directory. Native
+children inherit TMPDIR/TMP/TEMP. Do not point this root at tmpfs, task workspaces,
+or native account stores. Graceful shutdown removes only the current Host's run
+directory after native shutdown. Retain crash remnants until confirmed unused.
+The check runner owns and removes its separate temporary run directory even when
+tests fail. Explicit `/tmp` paths in user commands bypass these environment settings.
+
+Before replacing a Host, query all routed user scopes for active turns and queued
+input. A conversation delivering the deployment itself also counts as active.
+Stage the new Host while it is busy; never kill all `codex app-server` processes
+by name. Browser asset improvements may be rolled out compatibly while Host
+activation is pending; record this as a partial rollout, with both release IDs.
