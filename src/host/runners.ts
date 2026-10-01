@@ -53,6 +53,19 @@ export class RunnerManager {
  async list(){await this.writes;return {runners:(await this.rows()).map(view)};}
  async handle(input:Record<string,unknown>):Promise<unknown>{
   if(input.action==='list')return this.list();
+  if(input.action==='sshme'){
+   if(typeof input.request!=='string'||!input.request.trim()||input.request.length>65536||input.request.includes('\0'))throw new Error('请输入 /sshme 后需要协助的内容');
+   await this.writes;
+   const row=(await this.rows()).find(r=>r.id===input.id);
+   if(!row||row.platform!=='windows')throw new Error('请先配置你的 Windows SSH 连接');
+   const tested=await this.handle({action:'test',id:row.id}) as {ok:boolean;message:string;wslReady?:boolean};
+   if(!tested.ok)throw new Error(tested.message);
+   const pointer=await this.instruction();
+   const latest=(await this.rows()).find(r=>r.id===row.id);
+   if(JSON.stringify(latest)!==JSON.stringify(row))throw new Error('连接配置已改变，请重新确认');
+   const target=JSON.stringify({id:row.id,host:row.host,port:row.port,username:row.username});
+   return {prompt:`Remote assistance request: ${input.request.trim()}\n\n[SSHME remote assistance]\nThe target is the Web user's Windows computer, not your Linux Host. The user confirmed this SSH target: ${target}.\n${pointer}\nRead that configuration and use its CLI with this runner ID; verify the saved endpoint still matches the confirmed target before each operation, and ask the user if it changed. Perform this request on that remote computer, not on the Host. Use PowerShell for Windows or the same computer's WSL for Linux; WSL was ${tested.wslReady?'available':'not ready'} during the connection test. Keep passwords out of messages and command arguments. The user authorized the requested assistance, not unrelated changes.`,message:tested.message};
+  }
   if(input.action==='test'){
    if(this.testing)throw new Error('A connection test is already running');this.testing=true;
    try{
@@ -80,6 +93,7 @@ export class RunnerManager {
    if(r.clearPassword!==undefined&&typeof r.clearPassword!=='boolean')throw new Error('Invalid password option');
    const existing=r.id===undefined?undefined:rows.find(row=>row.id===r.id);
    if(r.id!==undefined&&(!idPattern.test(String(r.id))||!existing))throw new Error('Unknown runner');
+   if(existing?.credentialFile && !r.password && !r.clearPassword && ['host','port','username'].some(key=>existing[key as keyof Runner]!==value[key as keyof typeof value]))throw new Error('SSH 地址或用户已改变，请重新输入密码或明确选择 SSH 密钥');
    if(!existing&&rows.length>=1)throw new Error('只需配置一台 Windows 电脑，请编辑现有配置');
    await mkdir(this.root,{recursive:true,mode:0o700});await chmod(this.root,0o700);
    const id=existing?.id??randomUUID();

@@ -63,3 +63,21 @@ it('reports optional WSL readiness separately from Windows connectivity over the
  run.mockResolvedValue({code:0,stdout:'coffee-runner-ready\n',stderr:''});expect((await call({action:'test',id})).body).toMatchObject({ok:true,wslReady:true});
  run.mockResolvedValue({code:255,stdout:'',stderr:'Connection failed'});expect((await call({action:'test',id})).body.ok).toBe(false);run.mockRestore();
 });
+
+it('prepares /sshme only after Windows is reachable and keeps credentials out of model text',async()=>{
+ const {call,manager}=await setup();const saved=await call({action:'save',runner:input}),id=saved.body.runner.id;
+ const run=vi.spyOn(manager('alice'),'run').mockResolvedValue({code:255,stdout:'',stderr:'private failure'});
+ const failed=await call({action:'sshme',id,request:'Install a text editor.'});expect(failed.status).toBe(409);expect(failed.body.prompt).toBeUndefined();
+ run.mockResolvedValue({code:0,stdout:'coffee-runner-ready\r\n',stderr:''});
+ const ready=await call({action:'sshme',id,request:'Install a text editor.'});expect(ready.status).toBe(200);
+ expect(ready.body.prompt).toContain('Install a text editor.');expect(ready.body.prompt).toContain("the Web user's Windows computer");expect(ready.body.prompt).toContain('Linux Host');expect(ready.body.prompt).toContain(input.host);expect(ready.body.prompt).toContain(id);expect(ready.body.prompt).not.toContain(input.password);expect(ready.body.prompt).not.toContain('.password');
+ expect((await call({action:'sshme',id,request:'Install.'},'bob')).status).toBe(409);
+ expect((await call({action:'sshme',id,request:''})).status).toBe(409);
+ run.mockRestore();
+});
+
+it('does not reuse a saved password after the SSH target changes without an explicit credential choice',async()=>{
+ const {call}=await setup();const saved=await call({action:'save',runner:input}),id=saved.body.runner.id;
+ expect((await call({action:'save',runner:{...input,id,password:'',host:'192.0.2.11'}})).status).toBe(409);
+ expect((await call({action:'save',runner:{...input,id,password:'',host:'192.0.2.11',clearPassword:true}})).body.runner.hasPassword).toBe(false);
+});

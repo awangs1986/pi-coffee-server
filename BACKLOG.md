@@ -1,3 +1,5 @@
+> `/sshme` Web remote assistance: [contract](docs/spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
+
 > Host environment sentence for every Agent, including Pi Chat: [contract](docs/spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
 
 > Windows SSH test computer with same-host WSL: [contract](docs/spec/test-runners.md), [Server #15](https://github.com/awangs1986/pi-coffee-server/issues/15).

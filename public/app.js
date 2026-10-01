@@ -1,4 +1,5 @@
 import {initRunners} from "./runners.js";
+import {initSshme,parseSshme,SSHME_COMMAND} from './sshme.js';
 import { initSkills } from "./skills.js";
 // PI Coffee browser shell — controller. The browser is a view: conversations,
 // history, models and running state live on the Host in the User VM. The only
@@ -1704,7 +1705,7 @@ function slashItems() {
   const value = ui.prompt.value;
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
-  return commands.filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
+  return [SSHME_COMMAND,...commands.filter(c=>c.name.toLowerCase()!=='sshme')].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
@@ -1721,6 +1722,7 @@ function renderSlash() {
     }catch(e){toast(e.message);reload.disabled=false;}});ui.slash.appendChild(reload);
   }
   if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(!['pi','codex'].includes(engine)?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
+  if(commandState==='loading'||commandError){const note=el('div','skills-help');note.textContent=commandError||'正在读取 Agent 命令…';ui.slash.appendChild(note);}
 
   slashIndex = Math.min(slashIndex, items.length - 1);
   items.forEach((c, index) => {
@@ -1729,7 +1731,7 @@ function renderSlash() {
     row.innerHTML = '<span class="slash-name"></span><span class="slash-desc"></span><span class="slash-src"></span>';
     row.querySelector('.slash-name').textContent=c.invocation||'/'+c.name;
     row.querySelector('.slash-desc').textContent = c.description || '';
-    row.querySelector('.slash-src').textContent = c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
+    row.querySelector('.slash-src').textContent = c.source === 'web' ? '网页' : c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
     row.addEventListener('mousedown', (e) => { e.preventDefault(); applySlash(c); });
     ui.slash.appendChild(row);
   });
@@ -2150,6 +2152,12 @@ $('#composer').addEventListener('submit', (event) => {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
   if(modelPending||contextPending){toast('等待模型或上下文设置确认');return;}
+  const sshmeRequest=parseSshme(text);
+  if(sshmeRequest!==null){
+    if(!sshmeRequest){toast('请在 /sshme 后输入需要协助的内容');return;}
+    if(streaming||compacting||pendingOpenId){toast('请等待当前任务就绪后使用 /sshme');return;}
+    void sshmePanel.open({request:sshmeRequest,context:{activeId,user:currentUser,epoch:taskSelectionEpoch,text}});return;
+  }
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   if (activeUploadsBusy || uploads.some(u=>u.state==='failed')) { toast('请等待原始附件上传成功，或移除失败附件'); return; }
   const images = attachments.slice();
@@ -2210,6 +2218,11 @@ function submitPrompt(text, images) {
 ui.stop.addEventListener('click', () => { if (opened) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); } });
 
 initRunners({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
+const sshmePanel=initSshme({
+  onOpen:()=>{closeBrandMenu();closeAgentMenu();closeSidebarOnMobile();ui.slash.classList.add('hidden');},
+  isCurrent:context=>context.activeId===activeId&&context.user===currentUser&&context.epoch===taskSelectionEpoch&&context.text===ui.prompt.value.trim()&&connected&&!streaming&&!compacting&&!pendingOpenId&&!modelPending&&!contextPending,
+  onReady:prompt=>{ui.prompt.value=prompt;ui.composer.requestSubmit();},
+});
 
 const skillPanel=initSkills({
   context:()=>{const task=workspaceState?.conversations.find(c=>c.id===activeId);return {id:activeId,engine:task?.engine??engine,kind:task?.archived?null:task?.workspaceKind};},

@@ -393,6 +393,21 @@
 
     <script type="module" src="/app.js"></script>
 
+    <dialog id="sshme-dialog" class="runners-dialog" aria-labelledby="sshme-title">
+      <div class="runner-heading"><h2 id="sshme-title">连接我的电脑</h2><button id="sshme-close" type="button" class="icon-btn" aria-label="取消 SSH 协助">✕</button></div>
+      <p id="sshme-request" class="runner-help"></p>
+      <form id="sshme-form" autocomplete="off">
+        <div class="runner-fields">
+          <label>Windows SSH 地址<input id="sshme-host" required maxlength="253" placeholder="确认你的电脑 IP" /></label>
+          <label>端口<input id="sshme-port" type="number" min="1" max="65535" value="22" required /></label>
+          <label>用户名<input id="sshme-username" required maxlength="64" autocomplete="off" /></label>
+          <label>密码<input id="sshme-password" type="password" maxlength="4096" autocomplete="new-password" /></label>
+        </div>
+        <p class="runner-help">电脑需已开启 Windows SSH 服务；Linux 操作使用它的 WSL。连接保存到当前账号，可在“配置测试服务器”中修改或清除。</p>
+        <div class="runner-form-foot"><span class="runner-help">密码不会发送给模型。</span><button id="sshme-connect" class="btn small primary" type="submit">保存连接并继续</button></div>
+      </form>
+      <p id="sshme-status" class="runner-help" role="status" aria-live="polite"></p>
+    </dialog>
     <dialog id="runners-dialog" class="runners-dialog" aria-labelledby="runners-title">
       <div class="runner-heading"><h2 id="runners-title">配置测试服务器</h2><button id="runners-close" type="button" class="icon-btn" aria-label="关闭测试服务器配置">✕</button></div>
       <p class="runner-help">只配置一台 Windows 电脑。Agent 通过 SSH 使用 PowerShell，需要 Linux 时运行这台电脑的 WSL。</p>
