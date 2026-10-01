@@ -33,7 +33,7 @@ list reads complete. A live session prevents idle shutdown. Closing a factory
 waits for initialization before stopping it. Each app-server uses its own process
 group; shutdown terminates both the CLI wrapper and its native descendants.
 
-Sidebar discovery uses native Codex's metadata index (`thread/list` with
+Unbound conversation discovery uses native Codex's metadata index (`thread/list` with
 `useStateDbOnly: true`), retaining cwd filters and pagination. A sidebar refresh
 must not trigger rollout scan/repair across the native history store. Native
 index repair, when needed, is separate from normal sidebar reads.
@@ -80,8 +80,21 @@ claim that every reported browser freeze has the same cause.
 Regression coverage exercises paginated discovery with the rollout scan
 unavailable, and six authenticated WebSocket clients sharing a delayed read.
 Both a successful read and a failed read are released so the next request sees
-fresh stored metadata. The complete check passes 426 tests. An isolated Host using
+fresh stored metadata. The pre-merge complete check passed 426 tests. An isolated Host using
 real native metadata listed six registered Codex tasks for six clients in 155 ms
 with one stored read; five had matching native listing metadata and the remaining
 older task retained the existing durable fallback. No prompts were submitted.
 Production activation requires the existing running task to settle first.
+
+## Sidebar request isolation (2026-10-01)
+
+[Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23) additionally
+fixes an observed native metadata stall. A socket's sidebar list request runs
+independently of its ordered task-control messages; a blocked listing cannot
+hold up ping, answers or prompts. Concurrent listings in one authenticated user
+registry share a single discovery operation. Bound Codex tasks read metadata
+by native ID and verify its cwd, instead of scanning the native store once per
+project directory. Discovery RPCs have a ten-second bound. A timed-out directory
+scan cools down for sixty seconds, and its metadata process can be recycled only
+when it has no live sessions or in-progress session creation. No task execution
+process is killed as a discovery recovery action.

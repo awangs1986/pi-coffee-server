@@ -428,7 +428,7 @@ describe("Host WebSocket seam", () => {
       expect(listing).toHaveBeenCalledTimes(1);
       release();
       for (const queue of frames) {
-        if (failFirst) expect(await queue.next()).toMatchObject({ type: "error", code: "operation_failed" });
+        if (failFirst) expect(await queue.next()).toMatchObject({ type: "error", code: "list_unavailable" });
         else expect(await queue.nextSessions()).toMatchObject({ sessions: [{ id: "stored-1", preview: "before" }] });
       }
       listing.mockImplementation(read);
@@ -565,6 +565,19 @@ describe("Host WebSocket seam", () => {
       socket.send(encodeFrame({v:1,type:'ui_response',requestId:'answer-failed',id:'answer-failure',confirmed:true}));
       expect(await frames.next()).toMatchObject({type:'error',requestId:'answer-failed',message:'Native answer failed'});
     }finally{spy.mockRestore();socket.close();}
+  });
+
+  it("keeps an opened socket responsive while sidebar discovery is stalled",async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));await frames.next();await frames.next();
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+    const spy=vi.spyOn(factory,'list').mockImplementation(async()=>{await gate;return [];});
+    try{
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));socket.send(encodeFrame({v:1,type:'ping',nonce:'responsive'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'pong',nonce:'responsive'});
+    }finally{release();spy.mockRestore();socket.close();}
   });
 
   it("stops an idle Pi process and resumes the conversation from the store on the next open", async () => {

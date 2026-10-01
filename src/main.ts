@@ -140,6 +140,7 @@ async function run(selectedRole: Role): Promise<void> {
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
         codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>)=>new CodexSessionFactory({...codexOptions,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
         legacyCodex,
+        codexSummary:(taskCwd:string,id:string)=>legacyCodex!.summaryForCwd(taskCwd,id),
         codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND}} : {}),
