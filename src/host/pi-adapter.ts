@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RpcClient, SessionManager } from "@earendil-works/pi-coding-agent";
+import { RpcClient, SessionManager, parseSkillBlock } from "@earendil-works/pi-coding-agent";
 import type {
   CommandInfo,
   ContextBreakdown,
@@ -189,11 +189,19 @@ export class RpcPiSessionFactory implements PiSessionFactory {
         createdAt: info.created.toISOString(),
         updatedAt: info.modified.toISOString(),
         messageCount: info.messageCount,
-        preview: info.firstMessage.replace(/\s+/g, " ").trim().slice(0, 120),
+        preview: piSessionPreview(info.firstMessage),
         path: info.path,
       }))
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   }
+}
+
+/** Unwrap native Skill expansion before truncation; never edit the native transcript. */
+function piSessionPreview(firstMessage: string): string {
+  const text = firstMessage.trim();
+  const skill = parseSkillBlock(text);
+  const userText = skill ? skill.userMessage || `/skill:${skill.name}` : text;
+  return userText.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 /** Add `--extension path` pairs without duplicating explicitly supplied paths. */

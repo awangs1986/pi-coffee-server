@@ -2,7 +2,7 @@ import { Workspaces } from "../src/host/workspaces.js";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -346,6 +346,40 @@ describe("Host WebSocket seam", () => {
     expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "message_end" } });
     expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "agent_settled" } });
     second.close();
+  });
+
+  it.each([
+    { label: "skill arguments", suffix: "\n\n帮我梳理这个项目。\n先看目录", expected: "帮我梳理这个项目。 先看目录" },
+    { label: "skill only", suffix: "\n", expected: "/skill:story" },
+    { label: "renamed skill task", suffix: "\n", expected: "/skill:story", name: "项目说明" },
+  ])("uses readable first-user text for $label in durable session titles", async ({ suffix, expected, name }) => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-title-"));
+    const id = "11111111-2222-4333-8444-555555555555";
+    const path = join(root, `2026-10-01T00-00-00-000Z_${id}.jsonl`);
+    const text = `<skill name="story" location="/private/skills/story/SKILL.md">\nReferences are relative to /private/skills/story.\n${"Internal instructions. ".repeat(100)}\n</skill>${suffix}`;
+    const original = [
+      { type: "session", version: 3, id, timestamp: "2026-10-01T00:00:00Z", cwd: root },
+      { type: "message", id: "m1", parentId: null, timestamp: "2026-10-01T00:00:01Z", message: { role: "user", content: [{ type: "text", text }] } },
+    ].map(row => JSON.stringify(row)).join("\n") + "\n";
+    await writeFile(path, original + (name ? JSON.stringify({ type: "session_info", id: "n1", parentId: "m1", timestamp: "2026-10-01T00:00:02Z", name }) + "\n" : ""));
+    const before = await readFile(path, "utf8");
+    const factory = new RpcPiSessionFactory({ sessionDir: root });
+    server = new HostServer({ port: 0, host: "127.0.0.1", factory });
+    await server.start();
+    const socket = await connect(server.address().port);
+    const frames = new FrameQueue(socket);
+    try {
+      socket.send(encodeFrame({ v: 1, type: "list_sessions" }));
+      const listed = await frames.nextSessions();
+      expect(listed.sessions).toMatchObject([{ id, preview: expected, running: false }]);
+      expect(JSON.stringify(listed)).not.toContain("/private/");
+      expect(listed.sessions[0].name).toBe(name);
+      expect(await readFile(path, "utf8")).toBe(before);
+    } finally {
+      socket.close();
+      await server.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("lists durable and live sessions before any session is opened", async () => {
