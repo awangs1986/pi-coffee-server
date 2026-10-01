@@ -1,14 +1,15 @@
 # SSH test servers
 
-Delivery: [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14).
+Delivery: [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14); owner correction: [Server #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
 
 ## Owner contract
 
-The top-left Logo menu contains **配置测试服务器**. A compact dialog lists the
-current authenticated user's saved servers and supports add, edit, delete and
-test connection. Fields are name, SSH host, port, username, password, platform
-(Linux, Windows PowerShell or direct SSH to WSL) and optional absolute working
-directory. A blank password on edit preserves the existing secret; an explicit
+The top-left Logo menu contains **配置测试服务器**. Each authenticated user
+configures one Windows computer. A compact dialog opens its saved settings for
+editing and supports save, clear configuration and test connection. Fields are
+name, Windows SSH host, port, username, password and optional absolute Windows
+working directory. There is no platform selector or separate Linux/WSL server.
+The same Windows computer provides PowerShell and its default WSL distribution. A blank password on edit preserves the existing secret; an explicit
 checkbox clears it and selects the VM's existing SSH agent/default keys.
 
 Web authenticates and forwards. Host owns execution and per-user durable files.
@@ -48,14 +49,24 @@ prevents future CLI lookups but does not cancel an already executing remote job.
 
 The configuration contains an absolute command array pointing to the Host's
 versioned `runner-cli.js`, invoked with the same Node runtime. It supports `list`,
-`exec <id> -- <one quoted shell command>`, `upload <id> <local> <absolute remote>`,
+`exec <id> [--env windows|wsl] -- <one quoted shell command>`, `upload <id> <local> <absolute remote>`,
 and `download <id> <absolute remote> <local>`. No MCP, plugin, scheduler, remote
 Agent installation or model call is involved. The command path refreshes on native session start and configuration save.
 Retain a previous release while an existing Agent can still be using its CLI.
 
-Linux/WSL commands use sh; Windows uses encoded PowerShell. Windows requires SSH
-Server and PowerShell, and WSL requires a directly reachable SSH service. File
-transfer uses OpenSSH's default SFTP-backed scp and requires remote SFTP support.
+Both environments use the Windows SSH endpoint and credentials. The default is
+encoded PowerShell. `--env wsl` starts `wsl.exe --exec sh` inside that Windows
+computer using the Windows SSH user's default WSL distribution. The UTF-8 script
+is sent directly to its stdin, preserving quotes and Unicode without PowerShell
+pipeline encoding changes; its exit code is returned. No WSL SSH daemon, Linux
+IP or second login is needed. Windows requires SSH Server, PowerShell and an
+installed/initialized WSL distribution for that Windows account to run Linux.
+
+Upload/download always use Windows SFTP paths, e.g. `C:/coffee/file.txt`. WSL can
+access that example through `/mnt/c/coffee/file.txt`. Use a WSL command to move files
+between mounted Windows drives and Linux-only directories as needed. The optional
+working directory is a Windows path; Linux commands can explicitly change to a
+Linux path. Transfers require the Windows OpenSSH SFTP subsystem.
 Working directories are shell-quoted; local subprocesses receive argument arrays.
 SSH ignores user config forwarding/proxy rules, never forwards the Agent, and uses
 a private known_hosts file with accept-new: first use pins a key, changed keys
@@ -64,10 +75,15 @@ fail. Host-key replacement is an explicit VM administration action.
 Host needs OpenSSH clients and, for passwords, sshpass. Passwords are passed on a
 private fd, never argv or environment. A connection test runs a fixed marker
 command, not a browser-supplied command, and checks the optional working directory.
+After Windows succeeds it separately probes WSL and reports its readiness. Missing
+WSL does not invalidate Windows connectivity or prevent saving the configuration.
 Tests time out after 20 seconds; CLI operations after 10 minutes; captured output
 is bounded to 1 MiB. Timeout/overflow kills the local subprocess tree. Remote
 work may outlive SSH disconnect; the CLI is not a remote job lifecycle manager.
-Only one connection test runs per user at a time; at most 20 runners can be saved.
+Only one connection test runs per user at a time; each probe has its own timeout.
+At most one Windows computer can be saved. Old multi-platform records remain
+readable/removable and are never silently converted or deleted. Existing legacy
+CLI execution remains compatible; new/edited Web configurations require Windows.
 
 ## Acceptance
 
@@ -77,8 +93,12 @@ Only one connection test runs per user at a time; at most 20 runners can be save
   remove obsolete credential files; malformed hosts, ids and paths fail.
 - No runner pointer before configuration; one pointer after save; absent after
   last deletion on next start. Codex keeps it across context preset rebinding.
-- Browser opens from the Logo menu, saves/edits/tests/deletes and clears password
+- Browser opens from the Logo menu with no platform selector, edits the same
+  Windows record on subsequent saves, tests Windows/WSL and clears configuration. It clears password
   inputs on save/close. Closing during requests prevents stale UI updates.
 - Native adapter contract tests and a real Pi + Harness provider-boundary test
   verify Work retains the pointer while Chat stays unchanged. Quoting/exit/output-bound tests, real SSH command
   and transfer smoke, complete check, fresh clone and deployed asset/API/UI probes.
+
+- The WSL invocation must use exactly the same SSH endpoint/options as Windows,
+  preserve script bytes and propagate the WSL exit code. A separate WSL IP is never requested.

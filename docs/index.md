@@ -41,4 +41,4 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - Latest-turn edited-file summaries: [contract](spec/arena-navigation.md#compact-transcript-file-summaries-2026-09-30), [Server #13](https://github.com/awangs1986/pi-coffee-server/issues/13).
 
-- SSH test server configuration: [contract](spec/test-runners.md), [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14).
+- Windows test computer with WSL: [contract](spec/test-runners.md), [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14), [single-Windows correction #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
