@@ -337,3 +337,7 @@ does not mark the ongoing model turn as completed.
 Conversation history is assembled in a detached document fragment and attached
 once; layout measurements must not grow per historical message. This prevents
 repeated synchronous layout while loading long conversations.
+
+`list_sessions` is independent of the socket's task-command queue. Its response
+may arrive after later task frames. A failed listing sends `list_unavailable`,
+which does not mark the active run as stopped. Per-user discovery is coalesced.

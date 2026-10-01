@@ -258,6 +258,16 @@ describe("Codex app-server adapter", () => {
     }finally{try{process.kill(pid,'SIGKILL');}catch{}}
   });
 
+  it("bounds metadata waits and reads a bound title without a directory scan",async()=>{
+    const b=setup();const factory=new CodexSessionFactory({cwd:b.cwd,cliPath:b.cliPath,codexHome:b.codexHome,metadataTimeoutMs:40,env:{FAKE_CODEX_HANG_LIST:'1'}});b.factories.push(factory);
+    const session=await factory.create({sessionId:'direct-metadata'});await session.rename('Direct title');
+    const id=Object.keys(JSON.parse(readFileSync(join(b.codexHome,'fake-threads.json'),'utf8')))[0];
+    expect(await factory.summaryForCwd(b.cwd,id)).toMatchObject({name:'Direct title',id});
+    expect(await factory.summaryForCwd(join(b.root,'other-user'),id)).toBeUndefined();
+    await expect(factory.list()).rejects.toThrow('Codex metadata request timed out: thread/list');
+    expect(await session.getState()).toMatchObject({sessionName:'Direct title'});
+  });
+
   it("coalesces concurrent sidebar discovery into one process and retires a list-only server", async () => {
     const b=setup();
     const factory=new CodexSessionFactory({cwd:b.cwd,cliPath:b.cliPath,codexHome:b.codexHome,idleTimeoutMs:60});
