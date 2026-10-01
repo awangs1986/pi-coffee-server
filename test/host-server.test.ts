@@ -2,7 +2,7 @@ import { Workspaces } from "../src/host/workspaces.js";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -378,6 +378,70 @@ describe("Host WebSocket seam", () => {
     } finally {
       socket.close();
       await server.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["status", "changes"])("coalesces overlapping workspace %s reads and releases failed reads", async (action) => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-read-sharing-"));
+    const { workspaces, conversation } = await workspaceConversation(root, "shared");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const method = action === "status" ? "syncStatus" : "changes";
+    const original = workspaces[method].bind(workspaces);
+    const reading = vi.spyOn(workspaces, method).mockImplementation(async () => { await gate; throw new Error("Temporary remote failure"); });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "shared-read", factory: new FakeFactory(), workspaces });
+    await server.start();
+    const post = () => fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`, {
+      method: "POST", headers: { authorization: "Bearer shared-read", "content-type": "application/json" },
+      body: JSON.stringify({ action, id: conversation.id }),
+    });
+    const requests = Array.from({ length: 6 }, () => post());
+    try {
+      await expect.poll(() => reading.mock.calls.length).toBeGreaterThan(0);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(reading).toHaveBeenCalledTimes(1);
+      release();
+      for (const response of await Promise.all(requests)) { expect(response.status).toBe(409); await response.text(); }
+      reading.mockImplementation((id: string) => original(id));
+      const retry = await post(); expect(retry.status).toBe(200); await retry.text();
+      expect(reading).toHaveBeenCalledTimes(2);
+    } finally {
+      release(); await Promise.all(requests); await server.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("drains an abandoned workspace HTTP operation before shutdown releases its lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-shutdown-"));
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const workspaces = new Workspaces(join(root, "projects"), { forge: {
+      async repository() { entered(); await gate; throw new Error("Fixture lookup failed"); },
+      async createPullRequest() { throw new Error("Unused"); },
+    } });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "drain-test", factory: new FakeFactory(), workspaces });
+    await server.start();
+    const controller = new AbortController();
+    const request = fetch(`http://127.0.0.1:${server.address().port}/api/workspace`, {
+      method: "POST", headers: { authorization: "Bearer drain-test", "content-type": "application/json" },
+      body: JSON.stringify({ action: "gitea_project", repository: "owner/repo" }), signal: controller.signal,
+    }).catch(() => undefined);
+    try {
+      await started;
+      expect(await readdir(join(root, "projects/.coffee/locks"))).toHaveLength(1);
+      controller.abort(); await request;
+      const closing = server.close();
+      const result = await Promise.race([closing.then(() => "closed"), new Promise(resolve => setTimeout(() => resolve("waiting"), 100))]);
+      expect(result).toBe("waiting");
+      release(); await closing; server = undefined;
+      expect(await readdir(join(root, "projects/.coffee/locks"))).toEqual([]);
+      // A restarted owner can mutate the same workspace without operator unlock.
+      await expect(new Workspaces(join(root, "projects")).displaySidebar(false)).resolves.toBeDefined();
+    } finally {
+      release(); controller.abort(); await request;
+      await server?.close(); server = undefined;
       rmSync(root, { recursive: true, force: true });
     }
   });

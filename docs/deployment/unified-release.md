@@ -56,3 +56,12 @@ input. A conversation delivering the deployment itself also counts as active.
 Stage the new Host while it is busy; never kill all `codex app-server` processes
 by name. Browser asset improvements may be rolled out compatibly while Host
 activation is pending; record this as a partial rollout, with both release IDs.
+
+Graceful Host stop now drains accepted HTTP workspace operations even when their
+browser/gateway connection has disappeared. Allow sufficient service stop time
+for the configured remote Git operation timeouts (the current deployment uses
+`TimeoutStopSec=300`). Check both active turns/queues and workspace operation
+markers during rollout. If a prior release exited before cleaning up a marker,
+stop ingress and the owning Host, inspect the task's Git status and live Git
+processes, and preserve an audited copy of the stale marker before clearing it.
+Do not clear a marker that still belongs to a live operation.
