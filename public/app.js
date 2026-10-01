@@ -71,7 +71,7 @@ let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
 let catalogRequest = null, draftModel = null, historyReady = false;
-let entries = [];
+let entries = [], historyBatch=null;
 const recentConversations=new RecentConversations();
 let previewScroll=null;
 function rememberRecentThread(){
@@ -493,6 +493,7 @@ function renderHero() {
 const removeHero = () => { const hero = $('#hero'); if (hero) hero.remove(); };
 
 function appendNode(node) {
+  if(historyBatch){historyBatch.appendChild(node);return;}
   removeHero();
   const stick = nearBottom();
   ui.thread.appendChild(node);
@@ -536,7 +537,7 @@ function pushTool(tool) {
   currentActivity.querySelector('.activity-body').appendChild(entry.node);
   updateActivity(currentActivity, activityCount, !tool.done);
   addToolDownloadLink(entry);
-  if (nearBottom()) scrollToEnd();
+  if (!historyBatch && nearBottom()) scrollToEnd();
   return entry;
 }
 const pendingAssistantRenders = new Set();
@@ -583,6 +584,8 @@ function splitUploadedFilesText(rawText) {
 
 function renderHistory(frame) {
   resetThread();
+  historyBatch=document.createDocumentFragment();
+  try {
   if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
   for (const item of frame.entries || []) {
     if (item.kind === 'user') {
@@ -598,7 +601,10 @@ function renderHistory(frame) {
     else if (item.kind === 'note') pushNote(item.text || '');
   }
   // History groups are finished work: collapse them.
-  for (const group of ui.thread.querySelectorAll('.activity')) { group.open = false; group.classList.remove('running'); }
+  for (const group of historyBatch.querySelectorAll('.activity')) { group.open = false; group.classList.remove('running'); }
+  } finally {
+    ui.thread.appendChild(historyBatch);historyBatch=null;
+  }
   currentActivity = undefined;
   if (uploadLog.length) renderUploadLogCard();
   if (entries.length === 0) renderHero();
@@ -1035,7 +1041,7 @@ async function whoAmI(epoch) {
     const response = await fetch('/auth/me', { cache: 'no-store' });
     if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
-      recentConversations.clear();resetThread();
+      recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();
       const body = await response.json().catch(() => ({}));
       location.href = body?.loginUrl || '/login';
       return false;
@@ -1045,7 +1051,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){recentConversations.clear();resetThread();}
+    if(previousUser!==currentUser){recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();}
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
     ui.userBtn.classList.toggle('hidden', !info.auth);
@@ -1062,7 +1068,7 @@ ui.userBtn.addEventListener('click', async () => {
   const identityLogin = String(currentUser).startsWith('gitea-');
   sessionStorage.removeItem(ACTIVE_KEY);
   localStorage.removeItem(ACTIVE_KEY);
-  recentConversations.clear();resetThread();
+  recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   location.href = identityLogin ? '/auth/login' : '/login';
 });
@@ -1161,7 +1167,7 @@ function renderProjectContext() {
 
 function connect() {
   clearTimeout(reconnectTimer);
-  abandonRenames();
+  abandonRenames();unconfirmedUiAnswers();
   const epoch=++connectionEpoch;
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
@@ -1195,7 +1201,7 @@ function connectSocket() {
   };
   ws.onclose = () => {
     if (socket !== ws) return;
-    abandonRenames();
+    abandonRenames();unconfirmedUiAnswers();
     if(pendingDelivery){uncertainTask=activeId;pendingDelivery=null;}
     queuedRequests.clear();
     modelPending=null;
@@ -1335,6 +1341,7 @@ function handleFrame(frame, ws) {
     case 'queue_state':
       if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
+      if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
       if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
         const renamed=pendingRenames.get(frame.requestId);pendingRenames.delete(frame.requestId);
         const session=sessions.find(s=>s.id===renamed.sessionId);if(session)session.name=renamed.name;
@@ -1358,6 +1365,7 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error':
+      if(rejectUiAnswer(frame))return;
       if(pendingRenames.delete(frame.requestId)){toast('重命名失败：'+frame.message,5000);return;}
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
@@ -1407,7 +1415,7 @@ function handleEvent(event) {
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
     queuedRequests.clear();
-    pendingDelivery=null;uncertainTask=null;setStreaming(false);notifyFinished();clearExtensionUi();
+    pendingDelivery=null;uncertainTask=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
     if(supports('models'))send({v:1,type:'get_models'});
     if(supports('stats'))send({v:1,type:'get_stats'});
     if(event.status!=='completed')pushNote(event.message || (event.status==='interrupted'?'当前轮次已停止':'本轮运行失败，请检查保存的结果'),event.status!=='interrupted');
@@ -1531,6 +1539,22 @@ const extWidgets = new Map();    // widgetKey -> { lines, placement }
 const uiQueue = [];              // pending dialog requests, shown one at a time
 const uiSeen = new Set();        // request ids already shown or answered
 let uiCurrent = null;
+const pendingUiAnswers=new Map(),uiDrafts=new Map();
+const uiDraftKey=req=>JSON.stringify([currentUser,activeId,req.id]);
+function rememberUiDraft(){
+  if(!uiCurrent||uiCurrent.secret)return;
+  const value=uiCurrent.method==='input'?ui.uiInput.value:uiCurrent.method==='editor'?ui.uiEditor.value:undefined;
+  if(value===undefined)return;
+  const key=uiDraftKey(uiCurrent);uiDrafts.delete(key);uiDrafts.set(key,value);
+  while(uiDrafts.size>10)uiDrafts.delete(uiDrafts.keys().next().value);
+}
+function uiSending(value){ui.uiOk.disabled=ui.uiNo.disabled=ui.uiCancel.disabled=value;}
+function unconfirmedUiAnswers(){
+  if(!pendingUiAnswers.size)return;
+  pendingUiAnswers.clear();uiSending(false);
+  if(uiCurrent)ui.uiMeta.textContent='连接已断开，回答尚未确认；重新连接后请核对。';
+}
+ui.uiInput.addEventListener('input',rememberUiDraft);ui.uiEditor.addEventListener('input',rememberUiDraft);
 
 function handleExtensionUi(event) {
   switch (event.method) {
@@ -1589,7 +1613,10 @@ function renderWidgets() {
     ui.widgets.appendChild(box);
   }
 }
-function clearExtensionUi() {
+function clearExtensionUi({preserveReplies=false}={}) {
+  rememberUiDraft();
+  if(!preserveReplies)pendingUiAnswers.clear();
+  uiSending(false);
   extStatuses.clear();
   extWidgets.clear();
   uiQueue.length = 0;
@@ -1602,7 +1629,7 @@ function clearExtensionUi() {
 function showNextUiDialog() {
   if (uiCurrent || uiQueue.length === 0) return;
   uiCurrent = uiQueue.shift();
-  const req = uiCurrent;
+  const req = uiCurrent;uiSending(false);
   ui.uiTitle.textContent = req.title || ({ select: '请选择', confirm: '请确认', input: '请输入', editor: '请编辑' })[req.method];
   ui.uiText.textContent = req.message || '';
   ui.uiText.classList.toggle('hidden', !req.message);
@@ -1624,22 +1651,50 @@ function showNextUiDialog() {
       ui.uiOptions.appendChild(button);
     });
   }
-  if (req.method === 'input') { ui.uiInput.type=req.secret?'password':'text'; ui.uiInput.value = ''; ui.uiInput.placeholder = req.placeholder || ''; setTimeout(() => ui.uiInput.focus(), 0); }
-  if (req.method === 'editor') { ui.uiEditor.value = req.prefill || ''; setTimeout(() => ui.uiEditor.focus(), 0); }
+  if (req.method === 'input') { ui.uiInput.type=req.secret?'password':'text'; ui.uiInput.value = req.secret?'':uiDrafts.get(uiDraftKey(req))||''; ui.uiInput.placeholder = req.placeholder || ''; setTimeout(() => ui.uiInput.focus(), 0); }
+  if (req.method === 'editor') { ui.uiEditor.value = uiDrafts.get(uiDraftKey(req))??req.prefill??''; setTimeout(() => ui.uiEditor.focus(), 0); }
   if (req.method === 'confirm') setTimeout(() => ui.uiOk.focus(), 0);
   ui.uiModal.classList.remove('hidden');
 }
 function answerUi(answer) {
-  if (!uiCurrent) return;
-  const id = uiCurrent.id;
-  send({ v: 1, type: 'ui_response', requestId: requestId('ui'), id, ...answer });
-  const summary = uiCurrent.secret ? '已回答' : answer.cancelled ? '已取消' : answer.confirmed !== undefined ? (answer.confirmed ? '已确认' : '已拒绝') : '已回答：' + String(answer.value).slice(0, 80);
-  pushNote(summary + '（' + (uiCurrent.title || uiCurrent.method) + '）');
-  closeUiDialog();
-  showNextUiDialog();
+  if (!uiCurrent || [...pendingUiAnswers.values()].some(p=>p.question.id===uiCurrent.id)) return;
+  rememberUiDraft();
+  const request=requestId('ui');
+  const pending={question:{...uiCurrent},answer,sessionId:activeId,key:uiDraftKey(uiCurrent)};
+  pendingUiAnswers.set(request,pending);
+  if(!send({v:1,type:'ui_response',requestId:request,id:uiCurrent.id,...answer})){
+    pendingUiAnswers.delete(request);ui.uiMeta.textContent='连接未就绪，回答未发送；输入已保留。';return;
+  }
+  uiSending(true);ui.uiMeta.textContent='正在发送回答，等待确认…';
+}
+function confirmUiAnswer(request){
+  const pending=pendingUiAnswers.get(request);if(!pending)return;
+  pendingUiAnswers.delete(request);uiDrafts.delete(pending.key);
+  if(pending.sessionId!==activeId)return;
+  const {question,answer}=pending;
+  const summary=question.secret?'已回答':answer.cancelled?'已取消':answer.confirmed!==undefined?(answer.confirmed?'已确认':'已拒绝'):'已回答：'+String(answer.value).slice(0,80);
+  pushNote(summary+'（'+(question.title||question.method)+'）');
+  if(uiCurrent?.id===question.id){closeUiDialog();showNextUiDialog();}
+}
+function rejectUiAnswer(frame){
+  const pending=pendingUiAnswers.get(frame.requestId);if(!pending)return false;
+  pendingUiAnswers.delete(frame.requestId);uiSending(false);
+  if(pending.sessionId!==activeId)return true;
+  const message='回答未被接收：'+frame.message;
+  if(frame.code==='unknown_ui_request'){
+    if(!pending.question.secret&&typeof pending.answer.value==='string'){
+      ui.prompt.value=[ui.prompt.value,pending.answer.value].filter(Boolean).join('\n\n');autoGrow();refreshComposer();
+    }
+    if(uiCurrent?.id===pending.question.id){closeUiDialog();showNextUiDialog();}
+    uiDrafts.delete(pending.key);toast(message+'；请通过消息补充答案。',6000);
+  }else if(uiCurrent?.id===pending.question.id)ui.uiMeta.textContent=message+'；输入已保留，可以重试。';
+  else toast(message,5000);
+  return true;
 }
 function closeUiDialog() {
+  if(uiCurrent?.secret)ui.uiInput.value='';
   uiCurrent = null;
+  uiSending(false);
   ui.uiModal.classList.add('hidden');
 }
 ui.uiOk.addEventListener('click', () => {

@@ -59,3 +59,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Fast conversation switching and bounded runtime resources: [contract](spec/conversation-switching.md), [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).
 
 - Confirmed, lightweight conversation rename: [contract](spec/arena-navigation.md#confirmed-conversation-rename-2026-10-01), [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22).
+
+- Confirmed question delivery and batched history rendering: [protocol](protocol.md#confirmed-dialog-answers-2026-10-01), [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23).

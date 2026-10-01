@@ -665,3 +665,57 @@ it('keeps the old title when rename is rejected and does not claim success offli
  expect(app.frames.filter(f=>f.type==='rename_session')).toHaveLength(1);
  expect(document.querySelector('#toast')!.textContent).toBe('连接未就绪，标题未保存');
 });
+
+it('keeps an unanswered dialog and its text when the socket cannot send',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ socket.receive({type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-offline',title:'Choose a destination'}});
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Keep this answer';socket.readyState=3;
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ expect(app.frames.some(f=>f.type==='ui_response')).toBe(false);
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(false);
+ expect(input.value).toBe('Keep this answer');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('已回答：');
+});
+it('waits for answer acknowledgment and keeps rejected answers available',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ socket.receive({type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-failed',title:'Choose a destination'}});
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Keep this answer';
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const response=app.frames.find(f=>f.type==='ui_response');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('已回答：');
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(false);
+ socket.receive({type:'error',requestId:response.requestId,code:'operation_failed',message:'Agent did not accept input'});
+ expect(input.value).toBe('Keep this answer');expect(document.querySelector<HTMLButtonElement>('#ui-ok')!.disabled).toBe(false);
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const retried=app.frames.filter(f=>f.type==='ui_response').at(-1);
+ socket.receive({type:'ack',operation:'ui_response',requestId:retried.requestId});
+ expect(document.querySelector('#thread')!.textContent).toContain('已回答：Keep this answer');
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(true);
+});
+
+it('restores an ordinary answer draft when a waiting dialog is replayed after reconnect',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ const question={type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-replay',title:'Destination'}};
+ socket.receive(question);
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Unsent destination';input.dispatchEvent(new Event('input'));
+ socket.onclose();await vi.advanceTimersByTimeAsync(1300);
+ const next=app.sockets.at(-1);next.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ next.receive({type:'history',sessionId:'question-task',entries:[]});next.receive(question);
+ expect(input.value).toBe('Unsent destination');expect(app.frames.some(f=>f.type==='ui_response')).toBe(false);
+});
+it('builds long history without measuring page layout for every entry',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'long-history',engine:'codex',state:{isStreaming:false}});
+ const scroller=document.querySelector('#scroller')!;let measurements=0;
+ Object.defineProperty(scroller,'scrollHeight',{configurable:true,get(){measurements++;return 2000;}});
+ const entries=Array.from({length:120},(_,i)=>({kind:i%2?'assistant':'user',id:'entry-'+i,text:'Synthetic history '+i}));
+ socket.receive({type:'history',sessionId:'long-history',entries});
+ expect(document.querySelector('#thread')!.textContent).toContain('Synthetic history 119');
+ expect(measurements).toBeLessThan(5);
+});
