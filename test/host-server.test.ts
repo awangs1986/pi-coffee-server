@@ -402,6 +402,46 @@ describe("Host WebSocket seam", () => {
     socket.close();
   });
 
+  it.each([false, true])("shares overlapping sidebar reads and retries after completion (failure=%s)", async (failFirst) => {
+    const factory = new FakeFactory();
+    factory.stored.push({ id: "stored-1", preview: "before" });
+    const read = factory.list.bind(factory);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const listing = vi.spyOn(factory, "list").mockImplementation(async () => {
+      await pending;
+      if (failFirst) throw new Error("Temporary listing failure");
+      return read();
+    });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "sidebar-test", factory });
+    await server.start();
+    const sockets = await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
+      const socket = new WebSocket(`ws://127.0.0.1:${server!.address().port}/host`, { headers: { authorization: "Bearer sidebar-test" } });
+      await once(socket, "open");
+      return socket;
+    }));
+    const frames = sockets.map(socket => new FrameQueue(socket));
+    try {
+      for (const socket of sockets) socket.send(encodeFrame({ v: 1, type: "list_sessions" }));
+      await expect.poll(() => listing.mock.calls.length).toBeGreaterThan(0);
+      await Promise.all(sockets.map(async socket => { const pong = once(socket, "pong"); socket.ping(); await pong; }));
+      expect(listing).toHaveBeenCalledTimes(1);
+      release();
+      for (const queue of frames) {
+        if (failFirst) expect(await queue.next()).toMatchObject({ type: "error", code: "operation_failed" });
+        else expect(await queue.nextSessions()).toMatchObject({ sessions: [{ id: "stored-1", preview: "before" }] });
+      }
+      listing.mockImplementation(read);
+      factory.stored[0].preview = "after";
+      sockets[0].send(encodeFrame({ v: 1, type: "list_sessions" }));
+      expect(await frames[0].nextSessions()).toMatchObject({ sessions: [{ id: "stored-1", preview: "after" }] });
+      expect(listing).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      for (const socket of sockets) socket.close();
+    }
+  });
+
   it("flags conversations that need the user: a pending dialog, or a run that finished with nobody watching (P0)", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory });

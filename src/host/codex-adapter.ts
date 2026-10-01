@@ -211,6 +211,8 @@ export class CodexSessionFactory implements PiSessionFactory {
     for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
       const result = await server.request("thread/list", {
         cwd,
+        // Sidebar metadata must not scan/repair every rollout on each refresh.
+        useStateDbOnly: true,
         limit: LIST_PAGE_SIZE,
         sortKey: "updated_at",
         sourceKinds: ["appServer", "vscode", "cli", "exec"],

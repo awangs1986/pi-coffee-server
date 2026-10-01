@@ -33,6 +33,15 @@ list reads complete. A live session prevents idle shutdown. Closing a factory
 waits for initialization before stopping it. Each app-server uses its own process
 group; shutdown terminates both the CLI wrapper and its native descendants.
 
+Sidebar discovery uses native Codex's metadata index (`thread/list` with
+`useStateDbOnly: true`), retaining cwd filters and pagination. A sidebar refresh
+must not trigger rollout scan/repair across the native history store. Native
+index repair, when needed, is separate from normal sidebar reads.
+Overlapping sidebar reads share one in-flight stored listing per authenticated
+user's Host registry. Success and failure both release the shared promise; the
+next refresh reads again. Running, queue and attention state are decorated from
+live sessions after the read, never cached with the stored metadata.
+
 ## Temporary directories
 
 Host startup allocates a private directory under
@@ -60,3 +69,19 @@ contents and attribution could not be verified. Multiple live Codex app-servers
 were observed under the workbench Host. A deterministic 12-way sidebar discovery
 reproduced 12 process starts before the fix and one after it. This confirms the
 startup race, not a complete retrospective attribution of the earlier OOM.
+
+## Sidebar timeout regression (2026-10-01)
+
+A production `list_sessions` probe exceeded 30 seconds while the services stayed
+alive. A same-cwd native comparison measured 2,238 ms with rollout scan/repair
+versus 28 ms with index-only listing. This confirms a discovery bottleneck, not a
+claim that every reported browser freeze has the same cause.
+
+Regression coverage exercises paginated discovery with the rollout scan
+unavailable, and six authenticated WebSocket clients sharing a delayed read.
+Both a successful read and a failed read are released so the next request sees
+fresh stored metadata. The complete check passes 426 tests. An isolated Host using
+real native metadata listed six registered Codex tasks for six clients in 155 ms
+with one stored read; five had matching native listing metadata and the remaining
+older task retained the existing durable fallback. No prompts were submitted.
+Production activation requires the existing running task to settle first.
