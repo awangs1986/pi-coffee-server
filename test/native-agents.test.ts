@@ -769,3 +769,48 @@ it('never copies a secret answer into history, composer or a replayed draft',asy
  next.receive({type:'history',sessionId:'secret-task',entries:[]});next.receive(question);
  expect(input.value).toBe('');
 });
+
+it.each(['pi','codex'])('preserves an unacknowledged %s message after disconnect and history replacement',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{},capabilities:{models:true,stop:true,steer:true,followUp:true}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='Do not lose this instruction';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);
+ next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
+ expect(document.querySelector('#thread')!.textContent).toContain('Do not lose this instruction');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+ const recover=[...document.querySelectorAll<HTMLButtonElement>('#thread button')].find(b=>b.textContent==='恢复到输入框');expect(recover).toBeDefined();recover!.click();
+ expect(prompt.value).toBe('Do not lose this instruction');expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+it('rejects an oversized prompt before sending and keeps the composer draft',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(65537);
+ prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);expect(prompt.value).toBe(text);
+ expect(document.querySelector('#toast')!.textContent).toContain('超出发送上限');
+});
+it('keeps multiple unconfirmed queued messages and never overwrites a newer draft during recovery',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ for(const text of ['first missing input','second missing input']){prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));}
+ ws.onclose({code:1006});await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
+ const thread=document.querySelector('#thread')!;expect(thread.textContent).toContain('first missing input');expect(thread.textContent).toContain('second missing input');expect(thread.textContent).toContain('1006');
+ prompt.value='new unsent draft';[...thread.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='恢复到输入框')!.click();expect(prompt.value).toBe('new unsent draft');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it('shows a recoverable message on acknowledgment timeout without retrying the request',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='slow acceptance';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ await vi.advanceTimersByTimeAsync(20010);expect(document.querySelector('#thread')!.textContent).toContain('20 秒内未收到发送确认');
+ const frame=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:'prompt',requestId:frame.requestId});expect(document.querySelector('#thread')!.textContent).not.toContain('20 秒内未收到发送确认');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});

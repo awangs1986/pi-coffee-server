@@ -119,3 +119,26 @@ still held. After the fix, close waited for operation settlement, the marker was
 removed, and a restarted workspace owner could mutate normally. Six overlapping
 HTTP status/diff requests likewise reproduced six underlying reads before the
 fix and one after it, including retry after a failed shared read.
+
+### Unacknowledged prompt recovery
+
+A socket write is not delivery confirmation. Until a matching prompt/steer/follow-up
+ACK arrives, retain the text, inline images and uploaded-file paths in a bounded,
+page-memory outbox keyed by authenticated user, conversation and request ID.
+Disconnects, conversation switches and history replacement must not erase those
+requests. Show an explicit uncertain-delivery card with manual restore and dismiss
+actions; never automatically resend or infer acceptance from matching transcript
+text. Restoring must not overwrite a newer composer draft. Multiple outstanding
+requests must remain independent. Late matching ACKs remove their recovery cards.
+
+After 20 seconds without an ACK, surface the retained request and timeout reason.
+A disconnect card includes its WebSocket close code. These signals diagnose delivery;
+they do not prove whether the native agent executed a request. Reject prompts above
+the existing 64 Ki-character or 1 MiB encoded-frame limits before clearing the draft.
+The outbox is limited to 20 requests / 8 MiB; stop new submissions rather than evict
+unconfirmed requests at capacity. Clear on logout, 401 or account change. It is not
+persisted to browser storage and does not survive a page reload or tab closure.
+
+The recovery-card regression covers both Pi and Codex. Production disconnect causes
+must be verified separately; successful metadata/history probes alone are not proof
+that a user prompt was accepted and executed.

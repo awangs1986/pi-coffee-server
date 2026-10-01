@@ -92,7 +92,33 @@ function showRecentThread(id){
   ui.thread.setAttribute('inert','');
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;
+// Unacknowledged requests stay in this tab, scoped to their owner and task.
+// Never infer acceptance from matching history text or resend automatically.
+const promptOutbox=new Map();
+function abandonPromptDelivery(reason="连接已切换"){
+  for(const item of promptOutbox.values())if(item.user===currentUser&&!item.uncertain){item.uncertain=true;item.reason=reason;}
+  pendingDelivery=null;
+}
+function renderUncertainPrompts(){
+  for(const [id,item] of promptOutbox){
+    if(item.user!==currentUser||item.task!==activeId||!item.uncertain)continue;
+    if(item.card?.isConnected)continue;
+    const card=pushNote('请求交付状态尚不确定，不会自动重发。请核查历史后再决定是否重试。',true).node;
+    item.card=card;
+    if(item.reason){const reason=document.createElement('p');reason.textContent=item.reason;card.append(reason);}
+    const content=document.createElement('pre');content.textContent=item.text;content.style.whiteSpace='pre-wrap';card.append(content);
+    if(item.images.length){const count=document.createElement('p');count.textContent=`保留 ${item.images.length} 张图片`;card.append(count);}
+    const recover=document.createElement('button');recover.type='button';recover.textContent='恢复到输入框';
+    recover.onclick=()=>{
+      if(item.user!==currentUser||item.task!==activeId)return;
+      if(ui.prompt.value.trim()||attachments.length||draftFiles.length||uploads.length){toast('请先处理输入框中现有的内容');return;}
+      ui.prompt.value=item.text;attachments=item.images.slice();renderAttachments();autoGrow();refreshComposer();ui.prompt.focus();
+    };
+    const dismiss=document.createElement('button');dismiss.type='button';dismiss.textContent='已核查，移除此提示';
+    dismiss.onclick=()=>{promptOutbox.delete(id);card.remove();};card.append(recover,dismiss);
+  }
+}
 const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
@@ -157,8 +183,7 @@ function toast(text, ms = 1800) {
 function send(frame) {
   if(takeoverBusy() && !['list_sessions','get_state','get_queue'].includes(frame.type))return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-  socket.send(JSON.stringify(frame));
-  return true;
+  try {socket.send(JSON.stringify(frame));return true;}catch{return false;}
 }
 function requestId(prefix) { return prefix + '-' + Date.now() + '-' + (++requestNumber); }
 function isMobileSidebar() { return window.matchMedia('(max-width: 820px)').matches; }
@@ -193,7 +218,7 @@ function flushFirstPrompt() {
   if (!historyReady || modelPending || contextPending || contextToApply || queuedPrompt === null || uploadsBusy() || uploads.some(u=>u.state==='failed')) return;
   const q=queuedPrompt;queuedPrompt=null;
   const files=completedUploads();
-  submitPrompt(q.text || (files.length ? '（附件）' : '（图片）'),q.images);
+  if(submitPrompt(q.text || (files.length ? '（附件）' : '（图片）'),q.images)===false){queuedPrompt=q;restoreQueuedPrompt();}
 }
 function sourceLabel(source) {
   return source === 'relay' ? 'Relay' : 'Native';
@@ -1041,7 +1066,7 @@ async function whoAmI(epoch) {
     const response = await fetch('/auth/me', { cache: 'no-store' });
     if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
-      recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();
+      recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();
       const body = await response.json().catch(() => ({}));
       location.href = body?.loginUrl || '/login';
       return false;
@@ -1051,7 +1076,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();}
+    if(previousUser!==currentUser){recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
     ui.userBtn.classList.toggle('hidden', !info.auth);
@@ -1068,7 +1093,7 @@ ui.userBtn.addEventListener('click', async () => {
   const identityLogin = String(currentUser).startsWith('gitea-');
   sessionStorage.removeItem(ACTIVE_KEY);
   localStorage.removeItem(ACTIVE_KEY);
-  recentConversations.clear();clearExtensionUi();uiDrafts.clear();resetThread();
+  recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   location.href = identityLogin ? '/auth/login' : '/login';
 });
@@ -1167,7 +1192,7 @@ function renderProjectContext() {
 
 function connect() {
   clearTimeout(reconnectTimer);
-  abandonRenames();unconfirmedUiAnswers();
+  abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   const epoch=++connectionEpoch;
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
@@ -1199,10 +1224,10 @@ function connectSocket() {
     try { frame = JSON.parse(event.data); } catch { return; }
     handleFrame(frame, ws);
   };
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (socket !== ws) return;
     abandonRenames();unconfirmedUiAnswers();
-    if(pendingDelivery){uncertainTask=activeId;pendingDelivery=null;}
+    abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);
     queuedRequests.clear();
     modelPending=null;contextPending=null;
     opened = false;
@@ -1298,7 +1323,7 @@ function handleFrame(frame, ws) {
       const scroll=previewScroll===null?null:ui.scroller.scrollTop;
       renderHistory(frame);
       if(scroll!==null)ui.scroller.scrollTop=scroll;
-      if(uncertainTask===activeId)pushNote("上一条请求的交付状态尚不确定，不会自动重发。请先核查历史和运行状态，再决定是否重试。",true);
+      renderUncertainPrompts();
       historyReady=true;refreshComposer();flushFirstPrompt();
       return;
     }
@@ -1342,7 +1367,7 @@ function handleFrame(frame, ws) {
       if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
       // Acceptance is known even if the connection drops before the turn ends.
-      if(['prompt','steer','follow_up'].includes(frame.operation) && frame.requestId===pendingDelivery)pendingDelivery=null;
+      if(['prompt','steer','follow_up'].includes(frame.operation)){promptOutbox.get(frame.requestId)?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
       if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
       if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
         const renamed=pendingRenames.get(frame.requestId);pendingRenames.delete(frame.requestId);
@@ -1375,6 +1400,8 @@ function handleFrame(frame, ws) {
       if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
+      const rejectedPrompt=promptOutbox.get(frame.requestId);
+      if(rejectedPrompt){rejectedPrompt.uncertain=true;rejectedPrompt.reason='请求返回错误：'+frame.code;renderUncertainPrompts();}
       if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
       if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
@@ -1418,7 +1445,7 @@ function handleEvent(event) {
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
     queuedRequests.clear();
-    pendingDelivery=null;uncertainTask=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
+    pendingDelivery=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
     if(supports('models'))send({v:1,type:'get_models'});
     if(supports('stats'))send({v:1,type:'get_stats'});
     if(event.status!=='completed')pushNote(event.message || (event.status==='interrupted'?'当前轮次已停止':'本轮运行失败，请检查保存的结果'),event.status!=='interrupted');
@@ -1481,7 +1508,7 @@ function handleEvent(event) {
 
   if (type === 'agent_settled') {
     queuedRequests.clear();
-    pendingDelivery=null;uncertainTask=null;
+    pendingDelivery=null;
     setStreaming(false);
     notifyFinished();
     for (const entry of openTools.values()) { entry.done = true; fillToolCard(entry.node, entry); }
@@ -2316,9 +2343,9 @@ $('#composer').addEventListener('submit', (event) => {
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
 function submitPrompt(text, images) {
-  if(takeoverBusy())return;
-  if(compacting){toast('请等待压缩完成，或先停止');return;}
-  if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return;}
+  if(takeoverBusy())return false;
+  if(compacting){toast('请等待压缩完成，或先停止');return false;}
+  if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return false;}
   const mode = streaming ? ui.mode.value : 'prompt';
   requestNotifyPermission();   // first prompt is the moment the user has context for the browser's ask
   const files = completedUploads().filter(u=>!u.file?.__inlineAttached).map((u) => ({ name: u.name, size: u.size, path: u.path, href: downloadUrl(u.path) }));
@@ -2329,6 +2356,10 @@ function submitPrompt(text, images) {
   const frame = { v: 1, type: 'prompt', requestId: requestId('web'), text: wireText };
   if (images && images.length && supports("images")) frame.images = images;
   if (mode !== 'prompt') frame.mode = mode;
+  const bytes=new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+  if(bytes>1024*1024 || wireText.length>64*1024){toast('消息或图片超出发送上限，请缩小图片或拆分内容；内容仍保留在输入框',6000);return false;}
+  if(promptOutbox.size>=20 || [...promptOutbox.values()].reduce((sum,item)=>sum+item.bytes,bytes)>8*1024*1024){toast('请先核查并处理未确认消息，内容仍保留在输入框',6000);return false;}
+  promptOutbox.set(frame.requestId,{task:activeId,user:currentUser,text:wireText,images:(frame.images||[]).map(({type,data,mimeType})=>({type,data,mimeType})),bytes,uncertain:false});
   if (mode !== 'prompt') queuedRequests.add(frame.requestId);
   if (mode === 'prompt') {
     pushUser(text, images, undefined, files);
@@ -2337,7 +2368,13 @@ function submitPrompt(text, images) {
     showThinking(true);
   }
   pendingDelivery=frame.requestId;
-  if(!send(frame)){uncertainTask=activeId;pushNote("请求未确认，不会自动重发。",true);}
+  setTimeout(()=>{
+    const item=promptOutbox.get(frame.requestId);
+    if(!item||item.uncertain)return;
+    item.uncertain=true;item.reason='20 秒内未收到发送确认';
+    if(item.user===currentUser&&item.task===activeId)renderUncertainPrompts();
+  },20000);
+  if(!send(frame)){promptOutbox.get(frame.requestId).uncertain=true;pendingDelivery=null;setStreaming(false);renderUncertainPrompts();}
   attachments = [];
   uploads = uploads.filter((u) => u.state === 'uploading' || u.state === 'finishing');
   renderAttachments();
@@ -2347,6 +2384,7 @@ function submitPrompt(text, images) {
   refreshComposer();
   renderHeader();
   ui.prompt.focus();
+  return true;
 }
 ui.stop.addEventListener('click', () => { if (opened) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); } });
 
