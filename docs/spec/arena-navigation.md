@@ -286,3 +286,17 @@ normalization and truncation: use the user's supplied request, or the original
 body, its XML wrapper or its local path as the title. Explicit user renames remain
 unchanged. Existing native transcripts are read through the same projection;
 correcting a title must not rewrite messages or invoke a model.
+
+## Confirmed conversation rename (2026-10-01)
+
+[Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22) makes the
+rename action await the matching Host acknowledgement. Until then the current
+name remains visible with a saving notice. Success updates sidebar, header and
+search immediately and requests a fresh authoritative list. Failure or a closed
+connection never claims success; disconnect leaves the outcome unconfirmed.
+Changing accounts while the dialog is open cancels submission.
+
+Host renames through the authenticated user's native binding without projecting
+or exporting the transcript. This applies to active and stored conversations;
+a metadata-only resume follows ordinary idle retirement. Native rename failures
+retain the old title and do not change the running turn's UI state.

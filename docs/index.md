@@ -57,3 +57,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Fixed 500K upper context preset: [current contract](spec/context-usage.md#native-context-controls-2026-09-30), [Pi #5](https://github.com/awangs1986/pi-coffee/issues/5), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
 
 - Fast conversation switching and bounded runtime resources: [contract](spec/conversation-switching.md), [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).
+
+- Confirmed, lightweight conversation rename: [contract](spec/arena-navigation.md#confirmed-conversation-rename-2026-10-01), [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22).

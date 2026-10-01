@@ -93,6 +93,8 @@ function showRecentThread(id){
 }
 
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let uncertainTask=null;
+const pendingRenames=new Map();
+function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
 let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false;
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{recentConversations.clear();if(id===activeId)connect();},toast:message=>toast(message)});
@@ -823,10 +825,16 @@ $('#strip-kind').addEventListener('click', (event) => {
 
 async function renameSession(session) {
   if(session.id===activeId ? !supports('rename') : (workspaceState?.conversations.find(c=>c.id===session.id)?.engine || 'pi')==='claude'){toast('此 Agent 不支持在 Web 重命名');return;}
+  const user=currentUser;
   const name = await askModal({ title: '重命名对话', input: session.name || session.preview || '', okLabel: '保存' });
   if (name === null || name === '') return;
-  send({ v: 1, type: 'rename_session', requestId: requestId('rename'), sessionId: session.id, name });
-  toast('已重命名');
+  if(user!==currentUser){toast('账号已切换，请重新操作');return;}
+  const id=requestId('rename');
+  pendingRenames.set(id,{sessionId:session.id,name});
+  if(!send({v:1,type:'rename_session',requestId:id,sessionId:session.id,name})){
+    pendingRenames.delete(id);toast('连接未就绪，标题未保存');return;
+  }
+  toast('正在保存标题…');
 }
 async function deleteSession(session) {
   const ok = await askModal({ title: '删除这个对话？', text: '会从 User VM 的会话存储中永久删除「' + sessionTitle(session) + '」，不可恢复。', okLabel: '删除', danger: true });
@@ -1153,6 +1161,7 @@ function renderProjectContext() {
 
 function connect() {
   clearTimeout(reconnectTimer);
+  abandonRenames();
   const epoch=++connectionEpoch;
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
@@ -1186,6 +1195,7 @@ function connectSocket() {
   };
   ws.onclose = () => {
     if (socket !== ws) return;
+    abandonRenames();
     if(pendingDelivery){uncertainTask=activeId;pendingDelivery=null;}
     queuedRequests.clear();
     modelPending=null;
@@ -1325,6 +1335,12 @@ function handleFrame(frame, ws) {
     case 'queue_state':
       if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
+      if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
+        const renamed=pendingRenames.get(frame.requestId);pendingRenames.delete(frame.requestId);
+        const session=sessions.find(s=>s.id===renamed.sessionId);if(session)session.name=renamed.name;
+        renderSessionList();renderHeader();if(searchOpen)renderSearchResults();
+        toast('已重命名');send({v:1,type:'list_sessions'});return;
+      }
       if(frame.operation==='queue_action'&&queueControls.ack(frame.requestId))return;
       // Host treats queued input as a new prompt if the previous run already ended.
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
@@ -1342,6 +1358,7 @@ function handleFrame(frame, ws) {
       handleEvent(frame.event || {});
       return;
     case 'error':
+      if(pendingRenames.delete(frame.requestId)){toast('重命名失败：'+frame.message,5000);return;}
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
       if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}

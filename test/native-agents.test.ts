@@ -632,3 +632,36 @@ it('shows a recent conversation before the new socket replies and reconciles aut
  expect(document.querySelector('#thread')!.textContent).not.toContain('cached visible marker');
  expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(false);
 });
+
+it('confirms rename only after acknowledgment and updates the visible title',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'sessions',sessions:[{id:'rename-target',name:'Old title',messageCount:1}]});
+ document.querySelector<HTMLButtonElement>('#session-list .more')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('.popitem')].find(n=>n.textContent==='重命名')!.click();
+ (document.querySelector('#modal-input') as HTMLInputElement).value='Saved title';
+ document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ const request=app.frames.find(f=>f.type==='rename_session');expect(request.name).toBe('Saved title');
+ expect(document.querySelector('#toast')!.textContent).not.toBe('已重命名');
+ expect(document.querySelector('#session-list')!.textContent).toContain('Old title');
+ socket.receive({type:'ack',operation:'rename_session',requestId:request.requestId});
+ expect(document.querySelector('#session-list')!.textContent).toContain('Saved title');
+ expect(document.querySelector('#toast')!.textContent).toBe('已重命名');
+});
+
+it('keeps the old title when rename is rejected and does not claim success offline',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'sessions',sessions:[{id:'rename-error',name:'Original title',messageCount:1}]});
+ const edit=async()=>{
+  document.querySelector<HTMLButtonElement>('#session-list .more')!.click();
+  [...document.querySelectorAll<HTMLButtonElement>('.popitem')].find(n=>n.textContent==='重命名')!.click();
+  (document.querySelector('#modal-input') as HTMLInputElement).value='Rejected title';
+  document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ };
+ await edit();const request=app.frames.find(f=>f.type==='rename_session');
+ socket.receive({type:'error',requestId:request.requestId,code:'operation_failed',message:'Native rename failed'});
+ expect(document.querySelector('#toast')!.textContent).toBe('重命名失败：Native rename failed');
+ expect(document.querySelector('#session-list')!.textContent).toContain('Original title');
+ socket.readyState=3;await edit();
+ expect(app.frames.filter(f=>f.type==='rename_session')).toHaveLength(1);
+ expect(document.querySelector('#toast')!.textContent).toBe('连接未就绪，标题未保存');
+});
