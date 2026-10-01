@@ -493,6 +493,7 @@ export class HostSessionRegistry {
   private readonly idleTimeoutMs: number;
   private readonly sessions = new Map<string, HostSession>();
   private readonly changeListeners = new Set<(session?:HostSession) => void>();
+  private storedListing?: ReturnType<PiSessionFactory["list"]>;
 
   private readonly externalPollMs?: number;
 
@@ -576,7 +577,11 @@ export class HostSessionRegistry {
 
   /** Durable conversations from the store, decorated with what is live right now. */
   async list(): Promise<SessionSummary[]> {
-    const stored = await this.factory.list();
+    // Share only an in-flight read within this user's registry. Never cache a
+    // completed result or its live running/queue/attention decoration.
+    const stored = await (this.storedListing ??= this.factory.list().finally(() => {
+      this.storedListing = undefined;
+    }));
     const known = new Set(stored.map((item) => item.id));
     // Pi writes the session file at startup; a conversation nobody has spoken
     // in yet is noise in a shared list (the opening browser shows it locally).

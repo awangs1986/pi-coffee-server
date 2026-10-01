@@ -213,6 +213,8 @@ describe("Codex app-server adapter", () => {
   it("follows thread/list cursors so old conversations stay in the sidebar", async () => {
     const b = setup();
     const factory = b.factory();
+    mkdirSync(b.codexHome, { recursive: true });
+    writeFileSync(join(b.codexHome, "rollout-scan-unavailable"), "");
     // Fake pages at the adapter's page size; 3 pages worth of empty threads plus one that spoke.
     const total = 250;
     for (let i = 0; i < total; i += 1) await (await factory.create({ sessionId: `p-${i}` })).stop();

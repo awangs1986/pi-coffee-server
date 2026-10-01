@@ -161,6 +161,8 @@ rl.on("line", (line) => {
       if (!rateLimits) return fail("rate limits unavailable for this auth method");
       return reply({ rateLimits });
     case "thread/list": {
+      // Model a busy rollout scan while the native metadata index remains readable.
+      if (existsSync(join(home, "rollout-scan-unavailable")) && params.useStateDbOnly !== true) return fail("Rollout scan unavailable");
       const all = Object.values(threads).filter((thread) => params.cwd === undefined || thread.cwd === params.cwd).map((thread) => threadView(thread, false));
       const limit = Math.max(1, params.limit ?? 25);
       const offset = params.cursor ? Number(params.cursor) : 0;
