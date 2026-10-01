@@ -505,6 +505,7 @@ class HostSocket implements SessionSink {
   private session?: HostSession;
   private opened = false;
   private closed = false;
+  private listing=false;
   private messageQueue: Promise<void>;
   onClose: () => void = () => undefined;
 
@@ -577,7 +578,10 @@ class HostSocket implements SessionSink {
           break;
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
-          this.send({ v: 1, type: "sessions", sessions: await this.registry.list() });
+          if(!this.listing){
+            this.listing=true;
+            void this.registry.list().then(sessions=>this.send({v:1,type:"sessions",sessions}),()=>this.send({v:1,type:"error",code:"list_unavailable",message:"Conversation list is temporarily unavailable; the current task remains connected",...rid(frame)})).finally(()=>{this.listing=false;});
+          }
           break;
         case "delete_session":
           if(this.workspaces) throw new Error("Use the archive screen and explicit workspace deletion confirmation");

@@ -160,7 +160,8 @@ rl.on("line", (line) => {
     case "account/rateLimits/read":
       if (!rateLimits) return fail("rate limits unavailable for this auth method");
       return reply({ rateLimits });
-    case "thread/list": {
+    case "thread/list":
+      if(process.env.FAKE_CODEX_HANG_LIST)return; {
       const all = Object.values(threads).filter((thread) => params.cwd === undefined || thread.cwd === params.cwd).map((thread) => threadView(thread, false));
       const limit = Math.max(1, params.limit ?? 25);
       const offset = params.cursor ? Number(params.cursor) : 0;
