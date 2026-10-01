@@ -15,7 +15,7 @@ it('preserves the context limit when the browser reapplies the same native model
   expect((await session.getModels()).context).toMatchObject({preset:'272k',limit:272000});
   expect((await session.getStats()).contextBreakdown?.contextWindow).toBe(272000);
   await session.setContextPreset('maximum');await session.setModel('fixture','large');
-  expect((await session.getModels()).context).toMatchObject({preset:'maximum',limit:1000000});
+  expect((await session.getModels()).context).toMatchObject({preset:'maximum',limit:500000});
   await session.setContextPreset('272k');await session.setModel('fixture','large');
   expect((await session.getModels()).context?.limit).toBe(272000);
  }finally{await session.stop();await rm(root,{recursive:true,force:true});}

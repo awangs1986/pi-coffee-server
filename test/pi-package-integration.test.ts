@@ -36,7 +36,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
   await new Promise<void>(r => provider.listen(0, "127.0.0.1", r));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { fixture: {
     baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`, api: "openai-completions", apiKey: "synthetic-fixture",
-    models: [{ id: "fixture", name: "fixture", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 4096 }],
+    models: [{ id: "fixture", name: "fixture", reasoning: false, input: ["text"], contextWindow: 1000000, maxTokens: 4096 }],
   } } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 20, reserveTokens: 1024 }, retry: { enabled: false } }));
   const toolsFile=join(root,'native-tools.json'), inspector=join(root,'inspect.mjs');
@@ -82,6 +82,9 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     expect(requests.some(r=>r.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe"))).toBe(true);
     expect(requests.flatMap(r=>r.messages).find((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe").content).not.toMatch(/not found|unknown tool|not active/i);
     expect(first.frames.filter(frame => frame.type === "error" || frame.event?.type === "extension_error")).toEqual([]);
+    first.socket.send(JSON.stringify({v:1,type:"set_context",preset:"maximum",requestId:"context-500k"}));
+    await expect.poll(()=>first.frames.find(f=>f.type==="ack"&&f.requestId==="context-500k"),{timeout:5000}).toBeTruthy();
+    await expect.poll(()=>first.frames.filter(f=>f.type==="models").at(-1)?.context).toMatchObject({preset:"maximum",limit:500000});
     first.socket.send(JSON.stringify({v:1,type:"get_commands"}));
     await expect.poll(()=>first.frames.find(f=>f.type==="commands")).toBeTruthy();
     const commands=first.frames.find(f=>f.type==="commands").commands;

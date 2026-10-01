@@ -24,7 +24,7 @@
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@earendil-works/pi-tui": "0.99.1",
     "context-handoff": "https://github.com/awangs1986/pi-coffee/releases/download/context-handoff%2Fv0.2.0-experimental.3/context-handoff-0.2.0-experimental.3.tgz",
-    "pi-coffee-harness": "https://github.com/awangs1986/pi-coffee/releases/download/harness%2Fv0.2.0/pi-coffee-harness-0.2.0.tgz",
+    "pi-coffee-harness": "https://github.com/awangs1986/pi-coffee/releases/download/harness%2Fv0.2.1/pi-coffee-harness-0.2.1.tgz",
     "pi-coffee-lsp": "https://github.com/awangs1986/pi-coffee/releases/download/lsp%2Fv0.4.4/pi-coffee-lsp-0.4.4.tgz",
     "pi-subagents": "0.73.1",
     "pi-web-access": "0.34.0",

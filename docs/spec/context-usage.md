@@ -78,18 +78,20 @@ native `modelContextWindow`; cumulative token totals are never substituted.
 Codex does not expose the seven-category attribution contract. Its categories
 remain unavailable and its total bar is explicitly unclassified.
 
-Pi and Codex offer task-local `272k` (default) and `maximum` presets beside model
-and reasoning controls. Maximum requires the extra-cost confirmation before any
+Pi and Codex offer task-local 272K (default) and fixed 500K presets beside model
+and reasoning controls. 500K requires the extra-cost confirmation before any
 change is sent. Host rejects changes while a turn or context operation is active.
 The first message waits for the selected model and context settings to be applied.
 An older Host without context capability disables the setting.
 
-Pi Harness 0.2.0 uses the public native model API, clamps 272k to model registry
-capacity, and restores the original capacity for maximum. Its custom session entry
+Pi Harness 0.2.1 uses the public native model API and clamps both the 272,000
+and 500,000 token limits to model registry capacity. Its custom session entry
 persists the selection when native Pi saves the session. Pi automatic compaction
 and reserve remain native. Codex uses `model_context_window=272000` and
-`model_auto_compact_token_limit=258400`; maximum removes Coffee's overrides and
-uses native configuration. Native effective capacity may include a safety margin
+`model_auto_compact_token_limit=258400` at 272K; 500K uses
+`model_context_window=500000` and `model_auto_compact_token_limit=475000`.
+The wire/persisted value `maximum` is retained for compatibility and now means
+500K, including previously saved selections. Native effective capacity may include a safety margin
 and differ from the selected nominal limit. Neither preset is a hard billing cap.
 Codex persists the preset in scoped Host bookkeeping. Configuration changes
 release and resume only the idle native thread; an unmaterialized empty thread is
