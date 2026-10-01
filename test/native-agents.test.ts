@@ -98,6 +98,40 @@ it('renders replayed native items once, answers a native question and never rese
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='one turn';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);expect(document.querySelector('#thread')?.textContent).toContain('不会自动重发');
+ document.querySelector<HTMLButtonElement>('#task-details-btn')!.click();expect(document.querySelector('#task-details')!.classList.contains('hidden')).toBe(false);
+ prompt.value='a new explicit instruction';prompt.dispatchEvent(new Event('input'));expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it.each(['pi','codex'].flatMap(engine=>['prompt','steer','follow_up'].map(mode=>({engine,mode}))))('does not mark acknowledged $engine $mode uncertain after reconnect and permits continuing',async({engine,mode})=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{isStreaming:false},capabilities:{models:true,stop:true,steer:true,followUp:true}};
+ ws.receive({...opened,state:{isStreaming:mode!=='prompt'}});ws.receive({type:'history',sessionId:id,entries:[]});
+ document.querySelector<HTMLSelectElement>('#mode')!.value=mode==='prompt'?'follow_up':mode;
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='accepted request';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const first=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:mode,requestId:first.requestId});
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);
+ next.receive(opened);next.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'u1',text:'accepted request'}]});
+ expect(document.querySelector('#thread')?.textContent).not.toContain('交付状态尚不确定');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('#task-details-btn')!.click();expect(document.querySelector('#task-details')!.classList.contains('hidden')).toBe(false);
+ prompt.value='continue explicitly';prompt.dispatchEvent(new Event('input'));expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it.each(['pi','codex'])('reconciles a %s context change with lost acknowledgement before allowing continuation',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{},capabilities:{models:true}};
+ const models={type:'models',sessionId:id,models:[{provider:'fixture',id:'large'}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});ws.receive(models);
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!.click();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
+ expect(app.frames.filter(f=>f.type==='set_context')).toHaveLength(1);
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});next.receive({...models,context:{preset:'maximum'}});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='continue after reconnect';prompt.dispatchEvent(new Event('input'));
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ expect(app.frames.filter(f=>f.type==='set_context')).toHaveLength(1);
 });
 it('restores this tab selection even when another tab last selected another Task',async()=>{
  sessionStorage.setItem('pi-coffee.active.v2','this-tab');localStorage.setItem('pi-coffee.active.v2','other-tab');

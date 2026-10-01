@@ -132,3 +132,17 @@ active native turn at its supported input boundary. Steering is not an immediate
 OS/tool interruption. Host-owned pending queue rows support cancel, edit and insert-now under the
 [queue contract](input-queue.md). Already-dispatched native rows remain
 informational and cannot be retracted. Browser disconnect continues to preserve execution.
+
+### Reconnect delivery recovery (2026-10-01)
+
+A matching Host acknowledgement for `prompt`, `steer` or `follow_up` clears the
+browser's unconfirmed-delivery marker. Receipt does not imply successful native
+execution or completion. A disconnect after receipt must not label the accepted
+request uncertain. Without receipt, reconnect still warns and never resubmits the
+request. Once authoritative history and run state load, the warning does not lock
+Task details or prevent an explicit new instruction through the normal composer.
+
+An outstanding context-setting request belongs to its socket. Disconnect clears
+that pending UI lock; reconnect reads the native model/context settings and never
+replays the setting automatically. The send button must not remain disabled
+waiting for an acknowledgement that can only arrive on the obsolete socket.
