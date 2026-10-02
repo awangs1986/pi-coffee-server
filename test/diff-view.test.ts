@@ -4,6 +4,7 @@
 // The renderer is a stand-in with Pierre's constructor/render contract; patches are parsed
 // by the real @pierre/diffs parser so line lookups use its actual data model.
 import {readFileSync} from 'node:fs';
+import {composeCommentMessage,patchSections,rangeLabel} from '../public/diff-view.js';
 import {parsePatchFiles} from '@pierre/diffs';
 import {afterEach,expect,it,vi} from 'vitest';
 
@@ -47,12 +48,12 @@ class FakeObserver{
 
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();delete (globalThis as any).__piCoffeeDiffs;FakeDiff.instances=[];FakeObserver.all=[];});
 
-type Setup={library?:unknown;fileResult?:(body:any)=>any;complete?:boolean};
-async function setup({library={parsePatchFiles,VirtualizedFileDiff:FakeDiff,Virtualizer:FakeVirtualizer},fileResult,complete=false}:Setup={}){
+type Setup={library?:unknown;fileResult?:(body:any)=>any;complete?:boolean;unsupported?:boolean};
+async function setup({library={parsePatchFiles,VirtualizedFileDiff:FakeDiff,Virtualizer:FakeVirtualizer},fileResult,complete=false,unsupported=false}:Setup={}){
   document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
   Object.defineProperty(window,'matchMedia',{value:()=>({matches:false,addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
   (globalThis as any).__piCoffeeDiffs=library;
-  vi.stubGlobal('IntersectionObserver',FakeObserver);
+  vi.stubGlobal('IntersectionObserver',unsupported ? undefined : FakeObserver);
   const conversation:any={id:'task-1',workspaceKind:'project',engine:'pi',creationState:'ready',projectId:'p',cwd:'/home/test/checkouts/task-1',branch:'coffee/vm/task-1',startSha:'abc',archived:false,createdAt:'2026-09-28T00:00:00Z'};
   sessionStorage.setItem('pi-coffee.active.v2',conversation.id);
   const requests:any[]=[],sockets:any[]=[];
@@ -81,6 +82,7 @@ async function setup({library={parsePatchFiles,VirtualizedFileDiff:FakeDiff,Virt
   }));
   vi.useFakeTimers();await import('../public/app.js');await vi.advanceTimersByTimeAsync(20);
   sockets.at(-1).receive({type:'opened',sessionId:conversation.id,engine:'pi',state:{}});
+  sockets.at(-1).receive({type:'history',sessionId:conversation.id,entries:[]});
   await vi.advanceTimersByTimeAsync(20);
   q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
   const settle=async()=>{sockets.at(-1).receive({type:'event',sessionId:conversation.id,event:{type:'agent_settled'}});await vi.advanceTimersByTimeAsync(20);};
@@ -95,6 +97,13 @@ async function intersect(path:string){
   await vi.advanceTimersByTimeAsync(20);
 }
 const fileRequests=(requests:any[])=>requests.filter(request=>request.action==='change_file');
+
+it('explains the basic Diff view when browser capabilities are missing',async()=>{
+  await setup({library:null,unsupported:true,complete:true});
+  expect(q('#toast').textContent).toBe('当前浏览器不支持增强改动视图，已切换为基础视图');
+  expect(q('#diff-content table.review-code')).not.toBeNull();
+  expect(FakeDiff.instances).toHaveLength(0);
+});
 
 it('mounts files as they near the viewport and loads the whole patch of a file the capped Diff lacks',async()=>{
   const {requests}=await setup();
@@ -197,7 +206,7 @@ it('collects line comments in the Diff and summarizes them into one composer mes
   expect(q<HTMLTextAreaElement>('#prompt').value).toBe([
     '先看这个：',
     '',
-    '请根据下面 2 条 Diff 评论修改：',
+    '请根据下面 2 条改动评论修改：',
     '',
     '1. `src/a.ts` L10–L11',
     '   > const answer = compute(right);',
@@ -249,16 +258,19 @@ it('asks before clearing comments',async()=>{
   a.container!.querySelector<HTMLButtonElement>('.diff-comment-box button[type=submit]')!.click();
   const confirm=vi.fn(()=>false);vi.stubGlobal('confirm',confirm);
   q<HTMLButtonElement>('#diff-comments-clear').click();
-  expect(confirm).toHaveBeenCalledWith('清空 1 条 Diff 评论？');expect(q('#diff-comments-count').textContent).toBe('评论 (1)');
+  expect(confirm).toHaveBeenCalledWith('清空 1 条改动评论？');expect(q('#diff-comments-count').textContent).toBe('评论 (1)');
   confirm.mockReturnValue(true);q<HTMLButtonElement>('#diff-comments-clear').click();
   expect(q('#diff-comments').classList.contains('hidden')).toBe(true);expect(a.container!.querySelector('.diff-comment')).toBeNull();
+  expect(rangeLabel({start:4,end:5,side:'deletions',scope:'turn'})).toBe('L4–L5（本轮改动前）');
+  expect(composeCommentMessage([{path:'src/a.ts',start:4,end:4,side:'deletions',scope:'turn',excerpt:['old'],text:'fix'}])).toContain('`src/a.ts` L4（本轮改动前）');
+  expect(patchSections('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b').has('src/a.ts')).toBe(true);
 });
 
 it('falls back to the built-in renderer when the Diff bundle cannot load, still loading capped files',async()=>{
   const offline=Promise.reject(new Error('offline'));offline.catch(()=>undefined);
   const {requests}=await setup({library:offline});
   await vi.advanceTimersByTimeAsync(20);
-  expect(q('#toast').textContent).toBe('Diff 渲染组件加载失败，已切换为基础视图');
+  expect(q('#toast').textContent).toBe('改动渲染组件加载失败，已切换为基础视图');
   expect(FakeDiff.instances).toHaveLength(0);
   expect([...document.querySelectorAll('#diff-content table.review-code')]).toHaveLength(2);
   expect([...document.querySelectorAll('#diff-content mark.review-word')].map(node=>node.textContent)).toEqual(['left','right','1','2']);

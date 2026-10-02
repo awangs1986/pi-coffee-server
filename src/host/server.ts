@@ -1,8 +1,10 @@
+import {takeoverId,type TakeoverState} from "./takeover.js";
 
+import type { RunnerManager } from "./runners.js";
 import { createHash } from "node:crypto";
 import { SkillManager, type SkillManagerOptions } from "./skills.js";
 import { capabilitiesFor } from "../shared/protocol.js";
-import { stopLspDaemon } from "pi-coffee";
+import { stopLspDaemon } from "pi-coffee-lsp";
 import { readJson, json } from "../shared/http.js";
 import type { Workspaces } from "./workspaces.js";
 
@@ -41,6 +43,8 @@ export interface UserScope {
   workdir?: string;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  runners?: RunnerManager;
+  sshme?: RunnerManager;
 }
 
 export interface HostServerOptions {
@@ -68,9 +72,13 @@ export interface HostServerOptions {
   transfer?: TransferServer;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  runners?: RunnerManager;
+  sshme?: RunnerManager;
 
   /** Poll interval for turns driven outside this Host (terminal take-over); default 3 s. */
   externalPollMs?: number;
+  /** Deadline for auxiliary native reads; they never occupy the task command queue. */
+  metadataTimeoutMs?: number;
 }
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
@@ -82,7 +90,10 @@ interface UserSlot {
   broadcastTimer?: ReturnType<typeof setTimeout>;
   workspaces?: Workspaces;
   skills?: SkillManager;
+  runners?: RunnerManager;
+  sshme?: RunnerManager;
   lifecycleLocks: Set<string>;
+  workspaceReads: Map<string, Promise<unknown>>;
 
 }
 
@@ -112,9 +123,14 @@ export class HostServer {
   private readonly sockets = new Set<HostSocket>();
   private readonly wsServer: WebSocketServer;
   private started = false;
+  private closing = false;
+  private closePromise?: Promise<void>;
+  private readonly apiOperations = new Set<Promise<void>>();
   private readonly workspaces?: Workspaces;
   private execution?:ExecutionCapability;
   private readonly skillsOptions?: SkillManagerOptions;
+  private readonly runners?: RunnerManager;
+  private readonly sshme?: RunnerManager;
 
   constructor(options: HostServerOptions) {
     this.factory = options.factory;
@@ -129,6 +145,7 @@ export class HostServer {
     this.sharedSkillOwner = options.sharedSkillOwner;
     this.workspaces = options.workspaces;
     this.skillsOptions = options.skills;
+    this.runners = options.runners; this.sshme = options.sshme;
     this.registryOptions = {
 
       eventBufferSize: options.eventBufferSize,
@@ -136,7 +153,13 @@ export class HostServer {
       ...(options.externalPollMs === undefined ? {} : { externalPollMs: options.externalPollMs }),
     };
     this.http = createServer((request, response) => {
-      if(request.url?.startsWith("/api/")) { void this.handleApi(request,response).catch(()=>{if(!response.headersSent)json(response,500,{error:"Host operation failed"});else response.destroy();}); return; }
+      if(this.closing){json(response,503,{error:"Host is stopping"});return;}
+      if(request.url?.startsWith("/api/")) {
+        const operation=this.handleApi(request,response).catch(()=>{if(!response.headersSent)json(response,500,{error:"Host operation failed"});else response.destroy();});
+        this.apiOperations.add(operation);
+        void operation.then(()=>this.apiOperations.delete(operation),()=>this.apiOperations.delete(operation));
+        return;
+      }
       if (request.url === "/healthz") {
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
         response.end(JSON.stringify({ ok: true, role: "host", protocolVersion: PROTOCOL_VERSION, capabilities:{giteaCheckouts:Boolean(this.workspaces),chatWorkspaces:Boolean(this.workspaces),ownerEnvironment:this.execution?.ownerEnvironment ?? false,passwordlessRoot:this.execution?.passwordlessRoot ?? false} }));
@@ -155,7 +178,7 @@ export class HostServer {
       const slot = this.slotFor(user);
       const hostSocket = new HostSocket(socket, slot, this.transfer, (scope, sessionId) => {
         this.transferTargets.set(scope, { slot, sessionId });
-      });
+      }, options.metadataTimeoutMs ?? 10000);
       this.sockets.add(hostSocket);
       hostSocket.onClose = () => this.sockets.delete(hostSocket);
     });
@@ -169,8 +192,16 @@ export class HostServer {
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES}); }
+      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover)}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
+      return;
+    }
+    if(req.url === "/api/runners" || req.url === "/api/sshme") {
+      const manager=req.url === "/api/sshme" ? slot.sshme : slot.runners;
+      if(!manager){json(res,404,{error:"Runner management is unavailable on this Host"});return;}
+      if(req.method!=="POST"){json(res,405,{error:"Use POST for scoped runner requests"});return;}
+      try {json(res,200,await manager.handle(await readJson(req)));}
+      catch(error){json(res,409,{error:error instanceof Error ? error.message : "Runner operation failed"});}
       return;
     }
     if(req.url === "/api/skills") {
@@ -195,7 +226,7 @@ export class HostServer {
             }
             json(res,200,{ok:true,reloaded:Boolean(live),activation:'Skills will be discovered when the Agent next opens; conversation history is retained.'});
           }finally{slot.lifecycleLocks.delete(id);}
-        } else if(input.scope==='project' && ['install','update','enable','disable'].includes(input.action)) {
+        } else if(input.scope==='project' && ['install','update','enable','disable','disable_native','restore_native'].includes(input.action)) {
           const id=input.conversationId;
           if(typeof id!=='string' || slot.lifecycleLocks.has(id))throw new Error('Project lifecycle operation in progress');
           slot.lifecycleLocks.add(id);
@@ -216,6 +247,30 @@ export class HostServer {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
       const input=await readJson(req);
+      if(input.action==='takeover'){
+        const id=input.id;
+        if(typeof id!=='string'||input.acceptDrift!==true||!['pi','codex'].includes(input.engine)||!['pi','codex'].includes(input.expectedEngine))throw new Error('Confirm context drift and select Pi or Codex');
+        const task=await ws.lookup(id);
+        if(!task||task.workspaceKind!=='project'||task.archived||task.engine!==input.expectedEngine||task.engine===input.engine)throw new Error('Select an active Work task with an unchanged source Agent');
+        if(!slot.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
+        if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
+        slot.lifecycleLocks.add(id);locked=id;
+        const readiness=(await slot.factory.engines?.())?.find(e=>e.id===input.engine);if(!readiness?.available)throw new Error(readiness?.reason??'Target Agent unavailable');
+        const session=(await slot.registry.open(id)).session;
+        if(session.isBusy||session.pendingUiRequests.length)throw new Error('Finish running and queued instructions before switching Agent');
+        const background=await session.backgroundState();if(!background.known||background.active)throw new Error('Source background work is active or unknown');
+        const listing=(await slot.registry.list()).find(s=>s.id===id);
+        const title=listing?.name||listing?.preview;
+        const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
+        await ws.beginTakeover(id,operation);
+        // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
+        void session.takeover(operation).then(async()=>{
+          for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
+        }).catch(async(error)=>{
+          await ws.updateTakeover(id,operation.id,{status:'failed',error:error instanceof Error?error.message:'Takeover failed'});
+        }).finally(()=>{slot.lifecycleLocks.delete(id);void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
+        locked=undefined;json(res,202,operation);return;
+      }
       // Reject mutating lifecycle operations while the parent is streaming. External commands remain trusted VM operations.
       const target=input.id;
       if(input.action==="conversation" || input.action==="continue") {
@@ -228,6 +283,7 @@ export class HostServer {
       }
       if(input.action==="delete" && target) {
         const task=await ws.lookup(target);
+        if(task?.takeoverSegments?.length)throw new Error("Takeover history is retained; archive this Task instead");
         if(task?.engine && task.engine!=="pi")throw new Error("Native cleanup is unavailable; Workspace and native history are retained. Archive this Task instead.");
       }
       if(target && !["files","changes","change_file","status","sidebar_move","sidebar_collapse","sidebar_display"].includes(input.action)) {
@@ -265,13 +321,15 @@ export class HostServer {
           const scope=transferScope(user,input.id);
           const token=this.transfer.issueToken(scope,slot.workdir,input.id,ws);
           this.transferTargets.set(scope,{slot:Promise.resolve(slot),sessionId:input.id});
-          result={url:this.transfer.publicUrl(),scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
+          result={url:this.transfer.publicUrl(),sessionId:input.id,scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
-        case "changes": result=input.scope==="turn" ? await ws.turnChanges(input.id) : await ws.changes(input.id);break;
+        case "changes": result=await this.workspaceRead(slot,JSON.stringify(['changes',input.id,input.scope==='turn']),()=>input.scope==="turn" ? ws.turnChanges(input.id) : ws.changes(input.id));break;
         case "change_file": result=await ws.changeFile(input.id,input);break;
-        case "status": result=await ws.syncStatus(input.id,input.refresh!==false);break;
+        case "status": result=await this.workspaceRead(slot,JSON.stringify(['status',input.id,input.refresh!==false]),()=>ws.syncStatus(input.id,input.refresh!==false));break;
         case "branches": result=await ws.branches(input.projectId);break;
         case "discover": result=await ws.discover();break;
+        case "gitea_repos": result=await ws.giteaRepositories();break;
+        case "gitea_project": result=await ws.registerGiteaProject(input.repository);break;
         case "github_repos": result=await ws.githubRepositories();break;
         case "github_project": result=await ws.registerGitHubProject(input.repository);break;
         case "project": result=await ws.createProject(input.name,input.url);break;
@@ -329,10 +387,11 @@ export class HostServer {
     const created = (async (): Promise<UserSlot> => {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
-        : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions };
+        : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history)} : {}) });
-      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
+        if(this.closing)return;
         this.broadcastSessions(slot);
         if(session?.wasInterrupted) void slot.workspaces?.markRun(session.id,"interrupted").catch(()=>undefined);
         void slot.workspaces?.settleRuns(id=>registry.get(id)?.wasInterrupted ? undefined : registry.get(id)?.isBusy).catch(()=>undefined);
@@ -342,6 +401,14 @@ export class HostServer {
     this.slots.set(key, created);
     created.catch(() => this.slots.delete(key));
     return created;
+  }
+
+  private workspaceRead(slot: UserSlot, key: string, read: () => Promise<unknown>): Promise<unknown> {
+    const existing = slot.workspaceReads.get(key);
+    if (existing) return existing;
+    const pending = read().finally(() => { slot.workspaceReads.delete(key); });
+    slot.workspaceReads.set(key, pending);
+    return pending;
   }
 
   private broadcastSessions(slot: UserSlot): void {
@@ -400,10 +467,21 @@ export class HostServer {
     if (target) void target.slot.then((slot) => slot.registry.get(target.sessionId)?.announce(event)).catch(() => undefined);
   }
 
-  async close(): Promise<void> {
-    if (!this.started) return;
+  close(): Promise<void> {
+    if (!this.started) return Promise.resolve();
+    return this.closePromise ??= this.finishClose().finally(() => { this.closePromise = undefined; });
+  }
+
+  private async finishClose(): Promise<void> {
+    this.closing = true;
+    const httpClosed = new Promise<void>((resolve, reject) => {
+      this.http.close(error => error ? reject(error) : resolve());
+    });
     for (const socket of this.sockets) socket.close();
     this.sockets.clear();
+    // A disconnected HTTP client does not cancel its workspace mutation. Wait
+    // for its finally block to release the durable lock before main exits.
+    await Promise.allSettled([...this.apiOperations]);
     const slots = await Promise.allSettled([...this.slots.values()]);
     this.slots.clear();
     this.transferTargets.clear();
@@ -414,13 +492,13 @@ export class HostServer {
       await slot.value.factory.close?.().catch(() => undefined);
     }
     this.wsServer.close();
-    await new Promise<void>((resolve, reject) => {
-      this.http.close((error) => (error ? reject(error) : resolve()));
-    });
+    await httpClosed;
     this.started = false;
+    this.closing = false;
   }
 
   private handleUpgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
+    if (this.closing) { socket.destroy(); return; }
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
     if (requestUrl.pathname !== "/host") {
       socket.destroy();
@@ -459,11 +537,14 @@ class HostSocket implements SessionSink {
   private session?: HostSession;
   private opened = false;
   private closed = false;
+  private listing=false;
+  private readonly metadataReads=new Map<string,Promise<ServerFrame>>();
+  private metadataEpoch=0;
   private messageQueue: Promise<void>;
   onClose: () => void = () => undefined;
 
 
-  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void) {
+  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void, private readonly metadataTimeoutMs=10000) {
 
     this.socket = socket;
     this.slot = slot;
@@ -506,6 +587,30 @@ class HostSocket implements SessionSink {
     void this.detach();
   }
 
+  /** Auxiliary reads share work, have a deadline, and cannot block prompts or answers. */
+  private readMetadata(frame:ClientFrame,key:string,run:()=>Promise<ServerFrame>):void {
+    const target=this.session,epoch=this.metadataEpoch;
+    const scopedKey=epoch+':'+key;
+    let read=this.metadataReads.get(scopedKey);
+    if(!read){
+      if(this.metadataReads.size>=16){this.send({v:1,type:'error',code:'metadata_unavailable',operation:frame.type,message:'Too many pending metadata reads',...rid(frame)});return;}
+      let timer:ReturnType<typeof setTimeout>;
+      const work=Promise.resolve().then(run);
+      read=Promise.race([work,new Promise<never>((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('Auxiliary Agent read timed out')),this.metadataTimeoutMs);timer.unref();
+      })]);
+      this.metadataReads.set(scopedKey,read);
+      // Keep the shared entry until the actual read settles, even after the deadline.
+      // Repeated polls must not accumulate underlying reads if an adapter hangs.
+      void work.then(()=>{clearTimeout(timer);this.metadataReads.delete(scopedKey);},()=>{clearTimeout(timer);this.metadataReads.delete(scopedKey);});
+    }
+    void read.then(value=>{
+      if(this.session===target&&this.metadataEpoch===epoch)this.send({...value,...rid(frame)});
+    },error=>{
+      if(this.session===target&&this.metadataEpoch===epoch)this.send({v:1,type:'error',code:'metadata_unavailable',operation:frame.type,message:error instanceof Error?error.message:'Auxiliary Agent read failed',...rid(frame)});
+    });
+  }
+
   private async handleMessage(data: RawData): Promise<void> {
     if (this.closed || this.registry === undefined) return;
     let frame: ClientFrame;
@@ -524,13 +629,17 @@ class HostSocket implements SessionSink {
     }
 
     try {
+      if(this.session&&this.lifecycleLocks.has(this.session.id)&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
           await this.open(frame);
           break;
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
-          this.send({ v: 1, type: "sessions", sessions: await this.registry.list() });
+          if(!this.listing){
+            this.listing=true;
+            void this.registry.list().then(sessions=>this.send({v:1,type:"sessions",sessions}),()=>this.send({v:1,type:"error",code:"list_unavailable",message:"Conversation list is temporarily unavailable; the current task remains connected",...rid(frame)})).finally(()=>{this.listing=false;});
+          }
           break;
         case "delete_session":
           if(this.workspaces) throw new Error("Use the archive screen and explicit workspace deletion confirmation");
@@ -555,51 +664,85 @@ class HostSocket implements SessionSink {
           }
           this.send({ v: 1, type: "ack", operation: "rename_session", ...rid(frame) });
           break;
+        case "get_queue":
+          if(!this.session||!this.opened)throw new NotOpenError();
+          this.send(this.session.queueFrame);break;
+        case "queue_action": {
+          if(!this.session||!this.opened)throw new NotOpenError();
+          if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
+          try {await this.session.changeQueue(frame);this.send({v:1,type:'ack',operation:'queue_action',requestId:frame.requestId});}
+          finally {this.send(this.session.queueFrame);}
+          break;
+        }
         case "prompt":
           await this.prompt(frame);
           break;
         case "abort":
           await this.abort(frame);
           break;
+        case "get_command_catalog": {
+          if(!this.factory.commandCatalog)throw new Error("Command discovery unavailable on this Host; update Host to preview Skills before starting a task");
+          this.readMetadata(frame,frame.type+":"+frame.engine,async()=>({v:1,type:"command_catalog",engine:frame.engine,commands:await this.factory.commandCatalog!(frame.engine)}));
+          break;
+        }
         case "get_model_catalog": {
           if(!this.factory.modelCatalog)throw new Error("Model discovery unavailable on this Host");
-          const catalog=await this.factory.modelCatalog(frame.engine);
-          this.send({v:1,type:"model_catalog",engine:frame.engine,...rid(frame),...catalog});
+          this.readMetadata(frame,frame.type+":"+frame.engine,async()=>({v:1,type:"model_catalog",engine:frame.engine,...await this.factory.modelCatalog!(frame.engine)}));
           break;
         }
         case "get_models": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          const models = await this.session.getModels();
-          this.send({ v: 1, type: "models", ...models });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"models",...await target.getModels()}));
           break;
         }
         case "set_model":
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.setModel(frame.provider, frame.id);
+          await this.session.setModel(frame.provider, frame.id);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_model", ...rid(frame) });
+          break;
+        case "set_context":
+          if (!this.session || !this.opened) throw new NotOpenError();
+          await this.session.setContextPreset(frame.preset);
+          this.send({v:1,type:"ack",operation:"set_context",...rid(frame)});
+          this.metadataEpoch++;
+          const target=this.session;
+          this.readMetadata(frame,"get_models",async()=>({v:1,type:"models",...await target.getModels()}));
           break;
         case "set_thinking":
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.setThinkingLevel(frame.level);
+          await this.session.setThinkingLevel(frame.level);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_thinking", ...rid(frame) });
           break;
-        case "get_commands":
+        case "get_commands": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "commands", commands: await this.session.getCommands() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"commands",commands:await target.getCommands()}));
           break;
-        case "get_extensions":
+        }
+        case "get_extensions": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "extensions", sessionId: this.session.id, extensions: await this.session.getExtensions() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"extensions",sessionId:target.id,extensions:await target.getExtensions()}));
           break;
-        case "get_stats":
+        }
+        case "get_stats": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          this.send({ v: 1, type: "stats", sessionId: this.session.id, stats: await this.session.getStats() });
+          const target=this.session;
+          this.readMetadata(frame,frame.type,async()=>({v:1,type:"stats",sessionId:target.id,stats:await target.getStats()}));
           break;
-        case "compact":
+        }
+        case "compact": {
           if (!this.session || !this.opened) throw new NotOpenError();
-          await this.session.compact();
-          this.send({ v: 1, type: "ack", operation: "compact", ...rid(frame) });
+          const target=this.session;
+          // Keep the socket responsive to abort/reconnect while the session owns the operation.
+          void target.compact().then(()=>{
+            if(this.session===target)this.send({v:1,type:"ack",operation:"compact",...rid(frame)});
+          },error=>{
+            if(this.session===target)this.send({v:1,type:"error",code:error instanceof SessionBusyError ? "busy" : "operation_failed",message:error instanceof Error ? error.message : "Compaction failed",...rid(frame)});
+          });
           break;
+        }
         case "ui_response": {
           if (!this.session || !this.opened) throw new NotOpenError();
           const { v: _v, type: _t, requestId: _r, ...response } = frame;
@@ -607,10 +750,9 @@ class HostSocket implements SessionSink {
             this.send({ v: 1, type: "error", code: "unknown_ui_request", message: "That dialog is no longer waiting for an answer", ...rid(frame) });
             break;
           }
-          // Ack first: the answer crossed the seam. Pi's follow-on events
-          // (the run resuming) arrive after it.
+          // Success means the native adapter accepted the answer, not merely that it arrived.
+          if(!await this.session.respondUi(response))throw new Error("Answer is already being processed or the question has ended");
           this.send({ v: 1, type: "ack", operation: "ui_response", ...rid(frame) });
-          await this.session.respondUi(response);
           break;
         }
         case "ping":
@@ -648,6 +790,9 @@ class HostSocket implements SessionSink {
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
     const engine=task?.engine ?? listed?.engine ?? "pi";
     const result = await this.registry.open(frame.sessionId, frame.after);
+    // Switching away while native history loads must not leave a phantom subscriber.
+    if(this.closed){result.session.detach(this);return;}
+    this.metadataEpoch++;
     this.session = result.session;
     this.opened = true;
     const state = result.session.currentState;
@@ -695,6 +840,7 @@ class HostSocket implements SessionSink {
       });
     }
     for (const replay of result.replay) this.send(replay);
+    if(result.session.queueFrame.items.length)this.send(result.session.queueFrame);
     // A dialog Pi is still blocked on must reach this browser even if the
     // request itself predates the replay window (e.g. after a reload).
     const replayed = new Set(result.replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
@@ -709,13 +855,15 @@ class HostSocket implements SessionSink {
     if (!this.session || !this.opened) throw new NotOpenError();
     if(await this.workspaces?.lookup(this.session.id))await this.workspaces!.cwd(this.session.id);
     if (frame.mode === "steer" || frame.mode === "follow_up") {
-      // Joining a busy run: Pi owns the queue and reports it via queue_update.
+      // Follow-ups remain editable in the Host until native delivery; steering is native.
       // If nothing is running, treat it as a plain prompt so the message is
       // never silently parked.
       if (this.session.isStreaming) {
-        // Same contract as prompt: the ack means "accepted at the seam"; Pi's
-        // queue_update event follows and is the authoritative queue state.
+        // The ack accepts the request; queue_state/native events report delivery.
         this.send({ v: 1, type: "ack", operation: frame.mode, requestId: frame.requestId });
+        const engine=(await this.workspaces?.lookup(this.session.id))?.engine??'pi';
+        const capabilities=await this.factory.capabilities?.(this.session.id)??capabilitiesFor(engine);
+        if(frame.mode==='follow_up'&&!capabilities.followUp)throw new Error('Queueing unavailable for this Agent');
         await this.session.enqueue(frame.mode, frame.text, frame.images);
         return;
       }

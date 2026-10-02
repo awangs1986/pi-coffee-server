@@ -37,7 +37,7 @@ export class CodexAppServer {
   private readonly options: CodexAppServerOptions;
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
-  private readonly pending = new Map<number, { resolve: (value: Json) => void; reject: (error: Error) => void }>();
+  private readonly pending = new Map<number, { resolve: (value: Json) => void; reject: (error: Error) => void; timer?:ReturnType<typeof setTimeout> }>();
   private readonly subscribers = new Map<string, Set<ThreadSubscriber>>();
   private readonly globalListeners = new Set<(method: string, params: Obj) => void>();
   private exited = false;
@@ -57,6 +57,7 @@ export class CodexAppServer {
       cwd: this.options.cwd,
       env: this.options.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     this.child = child;
     child.stdin.on("error", (error) => this.onExit(`codex app-server input closed: ${error.message}`));
@@ -75,21 +76,22 @@ export class CodexAppServer {
     });
     exit.catch(() => undefined);
     await Promise.race([
-      this.request("initialize", { clientInfo: { name: clientName, title: "PI Coffee", version: clientVersion } }),
+      this.request("initialize", { clientInfo: { name: clientName, title: "PI Coffee", version: clientVersion } },10000),
       exit,
     ]);
     this.notify("initialized", {});
   }
 
-  request(method: string, params: Json): Promise<Json> {
+  request(method: string, params: Json, timeoutMs=0): Promise<Json> {
     const child = this.child;
     if (!child || this.exited) return Promise.reject(new Error("codex app-server is not running"));
     const id = this.nextId++;
     return new Promise<Json>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer=timeoutMs>0?setTimeout(()=>{this.pending.delete(id);reject(new Error(`Codex metadata request timed out: ${method}`));},timeoutMs):undefined;
+      this.pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (error) {
-          this.pending.delete(id);
+          this.pending.delete(id);clearTimeout(timer);
           reject(new Error(`codex app-server input closed: ${error.message}`));
         }
       });
@@ -125,13 +127,18 @@ export class CodexAppServer {
 
   async stop(): Promise<void> {
     const child = this.child;
-    if (!child || this.exited) return;
+    if (!child?.pid) return;
     const gone = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     child.stdin.end();
-    const timer = setTimeout(() => child.kill("SIGKILL"), 3000);
-    child.kill("SIGTERM");
+    const kill = (signal:NodeJS.Signals) => {
+      try {if(child.pid && process.platform!=="win32")process.kill(-child.pid,signal);else child.kill(signal);}catch{}
+    };
+    if(child.exitCode!==null || child.signalCode!==null){kill("SIGKILL");return;}
+    const timer = setTimeout(() => kill("SIGKILL"), 3000);
+    kill("SIGTERM");
     await gone;
     clearTimeout(timer);
+    kill("SIGKILL"); // The CLI wrapper can exit before its native child.
   }
 
   private onLine(line: string): void {
@@ -156,7 +163,7 @@ export class CodexAppServer {
     if (typeof id === "number") {
       const waiter = this.pending.get(id);
       if (!waiter) return;
-      this.pending.delete(id);
+      this.pending.delete(id);clearTimeout(waiter.timer);
       if (message.error !== undefined && message.error !== null) {
         const error = message.error as Partial<RpcError>;
         waiter.reject(new Error(typeof error.message === "string" ? error.message : "Codex RPC error"));
@@ -201,7 +208,7 @@ export class CodexAppServer {
   private onExit(reason = "codex app-server exited"): void {
     if (this.exited) return;
     this.exited = true;
-    for (const waiter of this.pending.values()) waiter.reject(new Error(reason));
+    for (const waiter of this.pending.values()){clearTimeout(waiter.timer);waiter.reject(new Error(reason));}
     this.pending.clear();
     for (const set of this.subscribers.values()) for (const subscriber of set) {
       try { subscriber.exit(); } catch { /* ignore */ }

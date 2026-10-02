@@ -24,6 +24,7 @@ async function fixture(root: string) {
   await writeFile(join(source, "docs", "old.md"), OLD_DOC);
   await writeFile(join(source, "logo.bin"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
   await writeFile(join(source, "huge-tracked.txt"), "seed\n");
+  await writeFile(join(source,".env"),"TOKEN=baseline\n");
   await git(source, ["add", "."]);
   await git(source, ["commit", "-m", "base"]);
   await git(root, ["clone", "--bare", source, remote]);
@@ -98,7 +99,7 @@ describe("per-file Diff loading (change_file)", () => {
       }
 
       // Private, escaping and malformed requests are refused before Git runs.
-      for (const path of [".env", ".git/config", ".pi-coffee/inbox/a.txt", "../outside.txt", "/etc/passwd", "", 42]) {
+      for (const path of [".env", ".git/config", ".pi-coffee/inbox/a.txt", "../outside.txt", "/etc/passwd", "", 42, "*", ":(glob)**", ".", "src"]) {
         const refused = await post({ action: "change_file", path, base });
         expect(refused.status, String(path)).toBe(409);
         expect(refused.body.error, String(path)).toContain("Invalid or private path");
@@ -112,6 +113,7 @@ describe("per-file Diff loading (change_file)", () => {
       await workspaces.markRun(task.id, "running", "req-1");
       await writeFile(join(cwd, "src", "app.ts"), APP.replace("line 5\n", "line five\n").replace("line 30\n", "line thirty\n").replace("line 38\n", "line 38 (turn)\n"));
       await writeFile(join(cwd, "notes", "turn.md"), "added during the turn\n");
+      for(const path of ['*',':(glob)**','.','src'])expect((await post({action:'change_file',path,scope:'turn'})).status,path).toBe(409);
       const turn = await post({ action: "change_file", path: "src/app.ts", scope: "turn", contents: true });
       expect(turn.status).toBe(200);
       expect(turn.body.scope).toBe("turn");

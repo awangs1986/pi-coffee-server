@@ -1,3 +1,4 @@
+import {HostSessionRegistry} from '../src/host/session.js';
 import { HostServer } from '../src/host/server.js';
 import { WebSocket } from 'ws';
 import { once } from 'node:events';
@@ -5,7 +6,7 @@ import { mkdirSync, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexSessionFactory, projectTurns } from "../src/host/codex-adapter.js";
 import type { PiSession } from "../src/host/pi-adapter.js";
 
@@ -82,6 +83,18 @@ describe("Codex app-server adapter", () => {
     }
   });
 
+  it("bounds a silent native model lookup without killing the live conversation",async()=>{
+    const b=setup();const factory=b.factory();const session=await factory.create({sessionId:'metadata-timeout'});
+    writeFileSync(join(b.codexHome,'fake-hang-model-list'),'');
+    vi.useFakeTimers();let failure='';
+    const models=session.getModels().catch(error=>{failure=error.message;});
+    try{await vi.advanceTimersByTimeAsync(10010);expect(failure).toContain('timed out: model/list');await models;}
+    finally{vi.useRealTimers();}
+    expect(await session.getState()).toMatchObject({isStreaming:false});
+    const events=recorder(session);await session.prompt('still usable');await events.until(settled);
+    expect(text(events.events)).toContain('still usable');
+  });
+
   it("exposes the native model catalog over authenticated WS without creating a thread",async()=>{
     const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
     const host=new HostServer({port:0,token:'catalog-test',factory});await host.start();
@@ -94,6 +107,73 @@ describe("Codex app-server adapter", () => {
       expect(frame.current).toEqual({provider:'codex',id:'gpt-fake-mini'});
       expect(await factory.list()).toEqual([]);
     }finally{ws.close();await host.close();}
+  });
+
+  it("discovers and invokes enabled native Skills through authenticated Host WS",async()=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});mkdirSync(b.codexHome,{recursive:true});
+    const skill={name:'tdd',description:'Tests first',path:join(b.cwd,'.agents/skills/tdd/SKILL.md'),enabled:true};
+    writeFileSync(join(b.codexHome,'fake-skills.json'),JSON.stringify([{cwd:b.cwd,skills:[skill,{...skill,path:join(b.codexHome,'skills/tdd/SKILL.md')},{...skill,name:'disabled',enabled:false}],errors:[]}]));
+    const factory=b.factory(),host=new HostServer({port:0,token:'skills-test',factory});await host.start();
+    const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer skills-test'}});
+    const frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+    const send=(f:object)=>ws.send(JSON.stringify({v:1,...f}));
+    try{
+      await once(ws,'open');send({type:'get_command_catalog',engine:'codex',requestId:'skills'});
+      await expect.poll(()=>frames.find(f=>f.requestId==='skills'||f.type==='error')).toMatchObject({type:'command_catalog',engine:'codex',commands:[{name:'tdd',invocation:'$tdd',description:'Tests first',source:'skill'}]});
+      expect(await factory.list()).toEqual([]);
+      send({type:'open',sessionId:'skill-task'});await expect.poll(()=>frames.find(f=>f.type==='opened')).toBeTruthy();
+      send({type:'get_commands'});await expect.poll(()=>frames.find(f=>f.type==='commands')).toMatchObject({commands:[{name:'tdd',invocation:'$tdd',description:'Tests first',source:'skill'}]});
+      send({type:'prompt',requestId:'invoke',text:'$tdd check this'});
+      await expect.poll(()=>{try{return JSON.parse(readFileSync(join(b.codexHome,'fake-input.json'),'utf8'));}catch{return null;}}).toContainEqual({type:'skill',name:'tdd',path:skill.path});
+      await expect.poll(()=>frames.some(f=>f.type==='event'&&f.event?.type==='agent_settled')).toBe(true);
+      // The same native connection must force rediscovery after a management change.
+      writeFileSync(join(b.codexHome,'fake-skills.json'),JSON.stringify([{cwd:b.cwd,skills:[{...skill,enabled:false}],errors:[]}]));
+      frames.length=0;send({type:'get_commands'});await expect.poll(()=>frames.find(f=>f.type==='commands')).toMatchObject({commands:[]});
+    }finally{ws.close();await host.close();}
+  });
+
+  it("changes context through authenticated Host WS and rejects invalid presets",async()=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
+    const host=new HostServer({port:0,token:'context-test',factory});await host.start();
+    const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer context-test'}});
+    const frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+    const send=(frame:object)=>ws.send(JSON.stringify({v:1,...frame}));
+    try{
+      await once(ws,'open');send({type:'open',sessionId:'context-ws'});
+      await expect.poll(()=>frames.find(f=>f.type==='opened'||f.type==='error'),{timeout:10000}).toMatchObject({type:'opened'});
+      send({type:'set_context',preset:'maximum',requestId:'maximum'});
+      await expect.poll(()=>frames.find(f=>f.type==='ack'&&f.requestId==='maximum')).toMatchObject({operation:'set_context'});
+      await expect.poll(()=>frames.find(f=>f.type==='models')).toMatchObject({context:{preset:'maximum'}});
+      send({type:'set_context',preset:'invalid',requestId:'invalid'});
+      await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
+      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    }finally{ws.close();await host.close();}
+  },20000);
+
+  it("waits for native compaction completion instead of just request acceptance",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-test'});
+    const events=recorder(session);let finished=false;const pending=session.compact().then(()=>{finished=true;});
+    await new Promise(resolve=>setTimeout(resolve,15));expect(finished).toBe(false);
+    await pending;expect(events.events.some(e=>e.type==='compaction_end')).toBe(true);
+  });
+
+  it("rejects pending compaction when its native process exits",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-exit'});
+    const pending=session.compact();const result=expect(pending).rejects.toThrow(/stopped|exited/i);
+    await new Promise(resolve=>setTimeout(resolve,10));await factory.close();await result;
+  });
+
+  it("applies context presets to native thread config and keeps them across resume",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'context-test'});
+    expect((await session.getModels()).context?.preset).toBe('272k');
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
+    await session.setContextPreset!('maximum');expect((await session.getModels()).context?.preset).toBe('maximum');
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    expect((await session.getModels()).context?.limit).toBe(500000);
+    const events=recorder(session);await session.prompt('fixture');await events.until(settled);await session.stop();await factory.close();
+    const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context).toMatchObject({preset:'maximum',limit:500000});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    await resumed.setContextPreset!('272k');expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
   });
 
   it("creates a thread per PI Coffee session id, lists it under that id, and resumes it from a fresh server", async () => {
@@ -145,6 +225,8 @@ describe("Codex app-server adapter", () => {
   it("follows thread/list cursors so old conversations stay in the sidebar", async () => {
     const b = setup();
     const factory = b.factory();
+    mkdirSync(b.codexHome, { recursive: true });
+    writeFileSync(join(b.codexHome, "rollout-scan-unavailable"), "");
     // Fake pages at the adapter's page size; 3 pages worth of empty threads plus one that spoke.
     const total = 250;
     for (let i = 0; i < total; i += 1) await (await factory.create({ sessionId: `p-${i}` })).stop();
@@ -172,6 +254,48 @@ describe("Codex app-server adapter", () => {
     writeFileSync(b.cliPath, "#!/bin/sh\nexit 3\n");
     const factory = b.factory();
     await expect(factory.list()).rejects.toThrow(/codex app-server/);
+  });
+
+  it("stops the native child when a CLI wrapper exits first",async()=>{
+    const b=setup();
+    writeFileSync(b.cliPath,`#!/bin/sh\nexec 3<&0\n"${process.execPath}" "${fixture}" "$@" <&3 &\nwait\n`);
+    const factory=b.factory();await factory.list();
+    const pid=Number(readFileSync(join(b.codexHome,'started-pids'),'utf8').trim());
+    try {
+      await factory.close();
+      await new Promise(resolve=>setTimeout(resolve,80));
+      let running=false;
+      try{running=!readFileSync(`/proc/${pid}/stat`,'utf8').split(') ')[1].startsWith('Z');}catch{}
+      expect(running).toBe(false);
+    }finally{try{process.kill(pid,'SIGKILL');}catch{}}
+  });
+
+  it("bounds metadata waits and reads a bound title without a directory scan",async()=>{
+    const b=setup();const factory=new CodexSessionFactory({cwd:b.cwd,cliPath:b.cliPath,codexHome:b.codexHome,metadataTimeoutMs:40,env:{FAKE_CODEX_HANG_LIST:'1'}});b.factories.push(factory);
+    const session=await factory.create({sessionId:'direct-metadata'});await session.rename('Direct title');
+    const id=Object.keys(JSON.parse(readFileSync(join(b.codexHome,'fake-threads.json'),'utf8')))[0];
+    expect(await factory.summaryForCwd(b.cwd,id)).toMatchObject({name:'Direct title',id});
+    expect(await factory.summaryForCwd(join(b.root,'other-user'),id)).toBeUndefined();
+    await expect(factory.list()).rejects.toThrow('Codex metadata request timed out: thread/list');
+    expect(await session.getState()).toMatchObject({sessionName:'Direct title'});
+  });
+
+  it("coalesces concurrent sidebar discovery into one process and retires a list-only server", async () => {
+    const b=setup();
+    const factory=new CodexSessionFactory({cwd:b.cwd,cliPath:b.cliPath,codexHome:b.codexHome,idleTimeoutMs:60});
+    b.factories.push(factory);
+    try {
+      await Promise.all(Array.from({length:12},()=>factory.list()));
+      const pids=readFileSync(join(b.codexHome,'started-pids'),'utf8').trim().split('\n');
+      expect(pids).toHaveLength(1);
+      await new Promise(resolve=>setTimeout(resolve,180));
+      expect(factory.serverRunning).toBe(false);
+    } finally {
+      await factory.close();
+      for(const pid of readFileSync(join(b.codexHome,'started-pids'),'utf8').trim().split('\n')) {
+        try{process.kill(Number(pid),'SIGTERM');}catch{}
+      }
+    }
   });
 
   it("stops the app-server once every session has been closed for the idle period", async () => {
@@ -299,6 +423,27 @@ describe("Codex app-server adapter", () => {
     await rec2.until((event) => event.type === "queue_update");
     await rec2.until((event) => event.type === "agent_settled" && text(rec2.events).includes("echo: third"));
     expect(text(rec2.events)).toContain("echo: second");
+  });
+
+  it("delivers Host queue edits through native Codex steering without a duplicate follow-up",async()=>{
+    const b=setup(),factory=b.factory(),registry=new HostSessionRegistry({factory,idleTimeoutMs:0});
+    try{
+      const {session}=await registry.open('queue-codex');const frames:any[]=[];session.attach({send:frame=>frames.push(frame)});
+      session.reservePrompt('run');await session.prompt('run','ask structured');
+      await expect.poll(()=>frames.find(f=>f.event?.type==='native_request')).toBeTruthy();
+      await session.enqueue('follow_up','original');const first=session.queueFrame.items[0];
+      await session.changeQueue({...first,action:'edit',text:'edited steering'});
+      await session.enqueue('follow_up','cancelled');await session.changeQueue({...session.queueFrame.items[1],action:'cancel'});
+      await session.changeQueue({...session.queueFrame.items[0],action:'promote'});
+      expect(session.queueFrame.items).toEqual([]);
+      const question=frames.find(f=>f.event?.type==='native_request').event;
+      await session.respondUi({id:question.id,value:'Blue'});
+      await expect.poll(()=>session.isStreaming).toBe(false);
+      const history=(await factory.create({sessionId:'queue-codex'})).getHistory();
+      expect(frames.filter(f=>f.event?.type==='queue_update'&&f.event.steering?.includes('edited steering'))).toHaveLength(1);
+      expect(JSON.stringify(await history)).not.toContain('cancelled');
+      expect(frames.filter(f=>f.event?.type==='agent_start')).toHaveLength(1);
+    }finally{await registry.close();}
   });
 
   it("renames, reports models and stats, and deletes", async () => {

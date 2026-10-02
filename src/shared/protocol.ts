@@ -9,7 +9,9 @@
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_FRAME_BYTES = 1024 * 1024;
-export const MAX_PROMPT_CHARS = 64 * 1024;
+// Encoded frames remain capped at 1 MiB, including UTF-8, JSON and images.
+// A separate 64 Ki-character ceiling rejected valid long context/code pastes.
+export const MAX_PROMPT_CHARS = MAX_FRAME_BYTES;
 export const MAX_REQUEST_ID_CHARS = 256;
 
 export type AgentEngine = "pi" | "codex" | "claude";
@@ -29,6 +31,7 @@ export interface ImageInput {
 }
 
 export interface SessionState {
+  isCompacting?: boolean;
   isStreaming: boolean;
   messageCount: number;
   sessionName?: string;
@@ -47,6 +50,7 @@ export interface SessionSummary {
   messageCount: number;
   preview: string;
   running: boolean;
+  queued?:number;
   /**
    * Why this conversation wants the user's eyes: an agent dialog is waiting
    * for an answer, or a run finished while no browser was attached. Absent
@@ -81,8 +85,13 @@ export interface ModelChoice {
   reasoning?: boolean;
 }
 
+export type ContextPreset = "272k" | "maximum";
+export interface ContextSettings { preset: ContextPreset; limit?: number; maximum?: number; }
+
 export interface CommandInfo {
   name: string;
+  /** Native invocation text; Pi defaults to /name. No filesystem paths. */
+  invocation?: string;
   description?: string;
   source: "extension" | "prompt" | "skill";
 }
@@ -101,8 +110,8 @@ export interface ExtensionInfo {
   commands: Array<{ name: string; description?: string }>;
 }
 
-import type { ContextBreakdown, ContextCategoryId } from "pi-coffee";
-export type { ContextBreakdown, ContextCategoryId } from "pi-coffee";
+import type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
+export type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
 
 export interface SessionStats {
   userMessages: number;
@@ -137,7 +146,11 @@ export interface RateLimits {
  */
 export type PromptMode = "prompt" | "steer" | "follow_up";
 
+export interface QueueItem {id:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
+export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote";text?:string;}
+
 export type AckOperation =
+  | "queue_action"
   | "prompt"
   | "steer"
   | "follow_up"
@@ -145,6 +158,7 @@ export type AckOperation =
   | "rename_session"
   | "delete_session"
   | "set_model"
+  | "set_context"
   | "set_thinking"
   | "compact"
   | "ui_response";
@@ -173,6 +187,8 @@ export interface UiResponse {
 }
 
 export type ClientFrame =
+  | ({v:typeof PROTOCOL_VERSION;type:"queue_action";requestId:string} & QueueAction)
+  | {v:typeof PROTOCOL_VERSION;type:"get_queue"}
   | {
       v: typeof PROTOCOL_VERSION;
       type: "open";
@@ -210,7 +226,9 @@ export type ClientFrame =
   | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: "pi" | "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_models" }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
+  | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
+  | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: "pi" | "codex"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
   | { v: typeof PROTOCOL_VERSION; type: "get_extensions" }
   | { v: typeof PROTOCOL_VERSION; type: "get_stats" }
@@ -232,6 +250,7 @@ export type ClientFrame =
     };
 
 export type ServerFrame =
+  | {v:typeof PROTOCOL_VERSION;type:"queue_state";sessionId:string;items:QueueItem[]}
   | {
       v: typeof PROTOCOL_VERSION;
       type: "opened";
@@ -262,12 +281,15 @@ export type ServerFrame =
       requestId?: string;
       models: ModelChoice[];
       current: { provider: string; id: string; source?: "native" | "relay" } | null;
+      context?: ContextSettings;
       thinkingLevel: string;
       thinkingLevels: string[];
     }
   | {
       v: typeof PROTOCOL_VERSION;
-      type: "commands";
+      type: "commands" | "command_catalog";
+      engine?: "pi" | "codex";
+      requestId?: string;
       commands: CommandInfo[];
     }
   | {
@@ -307,6 +329,7 @@ export type ServerFrame =
       v: typeof PROTOCOL_VERSION;
       type: "error";
       code: string;
+      operation?:ClientFrame["type"];
       message: string;
       requestId?: string;
       fatal?: boolean;
@@ -369,6 +392,12 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
       return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:value.engine,...withRequestId(value)};
     case "get_models":
       return { v: PROTOCOL_VERSION, type: "get_models" };
+    case "get_command_catalog":
+      if(value.engine!=="pi" && value.engine!=="codex")throw new ProtocolError("invalid_frame","Command catalog requires Pi or Codex");
+      return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:value.engine,...withRequestId(value)};
+    case "set_context":
+      if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");
+      return {v:PROTOCOL_VERSION,type:"set_context",preset:value.preset,...withRequestId(value)};
     case "get_commands":
       return { v: PROTOCOL_VERSION, type: "get_commands" };
     case "get_extensions":
@@ -420,6 +449,14 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
         ...(hasConfirmed ? { confirmed: value.confirmed as boolean } : {}),
         ...(hasCancelled ? { cancelled: true } : {}),
       };
+    }
+    case "get_queue": return {v:PROTOCOL_VERSION,type:"get_queue"};
+    case "queue_action": {
+      if(!['cancel','edit','promote'].includes(String(value.action)))throw new ProtocolError('invalid_field','Invalid queue action');
+      if(!Number.isSafeInteger(value.revision)||Number(value.revision)<1)throw new ProtocolError('invalid_field','Invalid queue revision');
+      const text=value.action==='edit'?requiredString(value.text,'text',MAX_PROMPT_CHARS):undefined;
+      if(text!==undefined&&!text.trim())throw new ProtocolError('invalid_field','Empty queue text');
+      return {v:PROTOCOL_VERSION,type:'queue_action',requestId:requiredString(value.requestId,'requestId',256),id:requiredString(value.id,'id',256),revision:Number(value.revision),action:value.action as QueueAction['action'],...(text!==undefined?{text}:{})};
     }
     case "prompt":
       return parsePrompt(value);

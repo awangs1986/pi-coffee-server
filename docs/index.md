@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+Start with [the repository map](../REPOSITORIES.md) before choosing a source directory or upgrading a plugin.
+
 ## Current authority
 
 [ADR-0021](adr/0021-pi-only-source-authority.md) assigns Pi-only implementation to [pi-coffee](https://github.com/awangs1986/pi-coffee). This repository retains the latest Host, Web, Relay and native Agent adapters and consumes a pinned Pi package. Each GitHub main is authoritative for its scope and has an identical Gitea mirror. ADR-0020 remains historical for the earlier unification.
@@ -8,6 +10,7 @@
 
 - Source reconciliation or release: [comparison and acceptance](reviews/repository-unification-20260927.md), [AGENTS.md](../AGENTS.md), [BACKLOG.md](../BACKLOG.md).
 - Product workbench: [Arena navigation](spec/arena-navigation.md), [Context Usage](spec/context-usage.md), [task directories](spec/conversation-workspaces.md), [upgrade-safe task bundles](spec/task-storage.md), [Skills](spec/skill-management.md).
+- Existing Gitea repository picker: [contract](spec/gitea-workspaces.md#existing-gitea-repository-selection-2026-09-30), [Server #5](https://github.com/awangs1986/pi-coffee-server/issues/5).
 - Code forges: [Gitea workspaces](spec/gitea-workspaces.md) and [GitHub repositories as Work Projects](adr/0022-github-work-projects.md).
 - Diff panel: [@pierre/diffs renderer, per-file loading and line comments](adr/0023-pierre-diff-renderer.md); layout and behavior in [Arena navigation](spec/arena-navigation.md#diff).
 - Agent integration: [native engines](spec/native-agent-engines.md), [native browser](spec/native-agent-browser.md), [shared Host](adr/0010-one-shared-user-vm-with-gitea-identity-and-per-user-folders.md), [Codex adapter](adr/0011-agent-seam-admits-codex-app-server.md).
@@ -20,3 +23,43 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Pi 0.87.1 main upgrade](reviews/pi-0.87.1-main-20260927.md): pinned runtime, optional-plugin compatibility and reproducible checks; [Server #18](http://gitea:3000/awangs/pi-coffee-server/issues/18).
 
 - [Pi package consumer integration](development/pi-package-consumer.md): dependency pin, migration evidence and preservation of current Host/Web behavior; [Server #19](http://gitea:3000/awangs/pi-coffee-server/issues/19).
+
+- [Harness ffd23ea deployment](deployment/harness-ffd23ea-20260929.md): standalone plugin rollout on the existing Host; Server #29, with the pre-existing slash-command limitation tracked in #30.
+
+- [Experimental manual Handoff](spec/manual-handoff.md): same-Conversation recovery, independent plugin version, native automatic compaction; GitHub Server #2.
+
+- [Versioned plugin monorepo consumption](development/plugin-monorepo.md): unified Pi source, independent release artifacts and preserved legacy integration pin.
+
+- [Runtime upgrade and plugin composition](development/plugin-monorepo.md#pi-0991-runtime-upgrade-2026-09-29): Pi 0.99.1, independently versioned plugins and Codex CLI 0.159.1; [Server #4](https://github.com/awangs1986/pi-coffee-server/issues/4).
+
+- [Pi 0.99 upgrade plan P0–P10](development/pi-099-upgrade-plan-20260930.md): native-first core/plugin upgrades, RPC completion, child-runtime parity and legacy assembly removal; [impact audit](research/pi-099-upgrade-impact-20260930.md).
+- Native Codex Skill completion: [contract](spec/skill-management.md#codex-completion-2026-09-30), [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10).
+
+- Native context presets, Codex totals/compaction and send-gated attachments: [context contract](spec/context-usage.md#native-context-controls-2026-09-30), [attachment boundary](spec/task-storage.md#attachment-send-boundary-2026-09-30), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
+
+- Compact transcript file summaries: [contract](spec/arena-navigation.md#compact-transcript-file-summaries-2026-09-30), [Server #12](https://github.com/awangs1986/pi-coffee-server/issues/12).
+
+- Latest-turn edited-file summaries: [contract](spec/arena-navigation.md#compact-transcript-file-summaries-2026-09-30), [Server #13](https://github.com/awangs1986/pi-coffee-server/issues/13).
+
+- Windows test computer with WSL: [contract](spec/test-runners.md), [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14), [single-Windows correction #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
+
+- Session environment and consent guidance: [contract](spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
+
+- SSHME assistance on the Web user’s computer: [contract](spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
+
+- Editable pending instructions: [contract](spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
+
+- Work Pi/Codex takeover: [current contract](spec/agent-takeover.md), [Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19).
+- [2026-10-01 specification freshness audit](reviews/spec-freshness-20261001.md): current behavior, corrected stale clauses and historical boundaries.
+
+- Readable first-user title fallback: [navigation contract](spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).
+
+- Fixed 500K upper context preset: [current contract](spec/context-usage.md#native-context-controls-2026-09-30), [Pi #5](https://github.com/awangs1986/pi-coffee/issues/5), [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11).
+
+- Fast conversation switching and bounded runtime resources: [contract](spec/conversation-switching.md), [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).
+
+- Confirmed, lightweight conversation rename: [contract](spec/arena-navigation.md#confirmed-conversation-rename-2026-10-01), [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22).
+
+- Confirmed question delivery and batched history rendering: [protocol](protocol.md#confirmed-dialog-answers-2026-10-01), [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23).
+
+- [Pi 1.0 upgrade and activation](deployment/pi-100-upgrade.md): immutable plugin/source pins, native checks and separate production activation.

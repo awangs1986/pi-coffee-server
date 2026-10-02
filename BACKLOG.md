@@ -1,3 +1,23 @@
+> Skill invocation title fallback: [contract](docs/spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).
+
+> Current Work Agent switching: [automatic Pi/Codex takeover](docs/spec/agent-takeover.md), [GitHub Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19). This supersedes the 2026-09-23 blanket immutable-engine decision. Chat cannot upgrade.
+
+> Pending instruction controls: [contract](docs/spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
+
+> `/sshme` Web remote assistance: [contract](docs/spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
+
+> Host environment sentence for every Agent, including Pi Chat: [contract](docs/spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
+
+> Windows SSH test computer with same-host WSL: [contract](docs/spec/test-runners.md), [Server #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
+
+> SSH test server configuration: [contract](docs/spec/test-runners.md), [Server #14](https://github.com/awangs1986/pi-coffee-server/issues/14).
+
+> Current Pi upgrade plan: [P0–P10](docs/development/pi-099-upgrade-plan-20260930.md), based on the [0.99 impact audit](docs/research/pi-099-upgrade-impact-20260930.md). P0–P9 are merged. The owner authorized Web integration; P10 deployment evidence and remaining environment-specific gates are tracked in GitHub Server #11.
+
+> Current plugin source layout: [repository map](REPOSITORIES.md) and [monorepo consumption](docs/development/plugin-monorepo.md).
+
+> Current manual context policy: [experimental Handoff](docs/spec/manual-handoff.md), [GitHub Server #2](https://github.com/awangs1986/pi-coffee-server/issues/2). Automatic compaction remains native Pi.
+
 > Current task storage: [upgrade-safe task bundles](docs/spec/task-storage.md), tracked in [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).
 
 > Current source placement: [ADR-0021](docs/adr/0021-pi-only-source-authority.md). Pi-only development belongs to GitHub pi-coffee; Host, Web, Relay and native Agent adapters remain here. Older placement statements below are historical.
@@ -69,7 +89,7 @@ Gitea 入口：[Issue #13：PI Coffee 今日讨论全量 Backlog](http://testpc:
 
 - **D-046 / DECIDED**: support the user's own native Codex and Claude Code through Host Adapters; preserve their native design and official user authentication. Pi prompts, Chat/Work behavior, tools, LSP, plugins and context policies remain Pi-only.
 - **Implementation sequence**: [M0–M5](./docs/development/native-agents-m0-m5.md) defines six delivery Issues under Agent #48 and Server #6. M0 validates native interfaces; M1 establishes the shared contract; M2/M3 deliver Adapters; M4 adds Browser support; M5 proves and releases the integrated workflow. M0–M5 are merged and deployed on both User VMs and the separate Web host. See [M5 evidence](./docs/reviews/native-agents-m5-20260923.md) and the bounded [M0–M4 checks](./docs/reviews/native-agents-m0-m4-20260923.md).
-- **Owner-confirmed selection rule**: new Tasks choose Pi, Codex or Claude Code once at creation. The engine is immutable; model selection stays within that engine. Another engine requires a new Task.
+- **Owner-confirmed selection rule**: new Tasks choose Pi, Codex or Claude Code once at creation. Ordinary model selection stays within that engine. Since 2026-10-01, explicit Work Pi/Codex takeover is the sole switching exception; Chat and Claude remain fixed.
 - **M0–M5 implemented and deployed**: [maintained SPEC](./docs/spec/native-agent-engines.md), [ADR-0013](./docs/adr/0013-native-agent-engines.md), Agent delivery [Agent #48](http://gitea:3000/awangs/pi-coffee/issues/48) and Server companion [Server #6](http://gitea:3000/awangs/pi-coffee-server/issues/6). Existing Pi behavior remains supported.
 - Reuse fixed User VM routing, one Conversation/Workspace, independent clones and Gitea Checkpoint/PR management. No platform worktree, new provider account system, subscription relay or wholesale UI redesign.
 - Primary acceptance remains the existing public Host HTTP/WebSocket seam plus a small real-engine workflow. Issues own implementation status; this entry records design and scope only.
@@ -401,3 +421,30 @@ Gitea project groups, drag placement and the equivalent conversation menu.
 defines user-scoped persistence and the strict separation from task execution identity.
 
 [Server #25](http://gitea:3000/awangs/pi-coffee-server/issues/25) adds the monochrome pixel coffee brand mark and a default-on, user-persisted Show groups menu option. Disabling preserves placement metadata and restores the original list.
+
+- Codex Skill composer completion: [Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10), [native Skill contract](docs/spec/skill-management.md#codex-completion-2026-09-30).
+
+- 2026-09-30: [Server #11](https://github.com/awangs1986/pi-coffee-server/issues/11) covers Chinese context/diff controls, browser-local attachment drafts, native Codex usage/completion and Pi/Codex context presets. Pending queue cancel/edit/promotion is tracked in Server #18; direct native steering already exists.
+
+- 2026-10-01: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21) adds bounded page-memory conversation previews, prioritizes selected-task opening, fixes concurrent Codex startup and abandoned-open subscribers, and routes Host/check temporary storage to private disk directories. See [contract](docs/spec/conversation-switching.md); deployment status remains in the Issue.
+
+- 2026-10-01: [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22) removes complete-history work from native title changes and confirms visible rename only after Host acknowledgement, with explicit failure/disconnection feedback.
+
+- 2026-10-01: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23) confirms dialog answers after native acceptance, retains unsent text through reconnect replay, and batches long-history DOM construction to avoid per-message layout measurement. The reported task's native history was readable; production browser-specific send failure still requires visual verification.
+
+
+- 2026-10-01: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23)
+  additionally reproduces prompt starvation behind auxiliary metadata queries and
+  remote Git status locks. Native read deadlines, independent read lanes and
+  bounded unacknowledged-message recovery cover these delivery paths; production
+  activation is recorded separately from source publication.
+
+
+- 2026-10-02: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23)
+  has a private-file reproduction of the reported disconnect: valid long text
+  crossed the obsolete 65,536-character ceiling while staying under the encoded
+  frame budget. Browser and protocol now use the same 1 MiB envelope; rejected
+  oversized input and queued edits preserve drafts. The private fixture is not
+  committed or sent to a model.
+
+- [GitHub Server #25](https://github.com/awangs1986/pi-coffee-server/issues/25): Pi 1.0.0 and the reviewed independent plugin combination; see docs/deployment/pi-100-upgrade.md. Production activation remains separate.

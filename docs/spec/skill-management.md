@@ -30,26 +30,27 @@ is displayed as a read-only bundled Pi Skill, not injected into native engines.
 | Claude Code | configured Claude directory / `skills`, default `~/.claude/skills` | `.claude/skills` |
 
 Project means the selected active Work Conversation's independent checkout, not
-all clones of a registered Project. The Task's fixed Agent must match. Its copied
+all clones of a registered Project. The Task's currently active Agent must match; takeover does not copy Skills across engines. Its copied
 Skill files are ordinary project changes that can be reviewed, checkpointed and
 published through Gitea. Other clones receive them only through normal Git flows.
-Chat uses user-level Skills; Pi Chat's zero-system-prompt rule remains unchanged,
-so explicit `/skill:name` invocation is available without adding a Skill catalog
+Chat uses user-level Skills; Pi Chat excludes Work prompts and the Skill catalog while retaining the
+[Host environment sentence](session-environment.md); explicit `/skill:name` invocation is available without adding a Skill catalog
 to its system prompt.
 
 The inventory covers these selected native roots and explicitly configured Pi
 bundles. It is not an exhaustive catalog of every plugin, administrator root,
-ancestor directory or package configured outside this manager. Existing native and
-bundled Skills are read-only, and their files are never adopted or overwritten.
+ancestor directory or package configured outside this manager. Eligible existing native Skills can be reversibly disabled and restored; their
+files are never adopted or overwritten. Bundled and linked sources remain read-only.
 
 Native discovery references: [Codex Skills](https://developers.openai.com/codex/skills/),
-[Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.84.4 public
+[Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.99.1 public
 `loadSkills` interface. Engine-native precedence and metadata semantics remain intact.
 
 ## Install and lifecycle
 
 - Supply a credential-free HTTP(S) or `ssh://` clone URL, ref (default HEAD), and
-  directory containing SKILL.md. No executable installation hooks, dependency
+  optional scan subdirectory. Read the repository list, then explicitly select
+  the Skills to install. A repository may contain one Skill or a collection. No executable installation hooks, dependency
   installation, submodule initialization or model calls run during installation.
 - Fetch on the VM, resolve a concrete commit, validate YAML name/description and
   retain supporting files. Packages are bounded to 500 regular files / 10 MB;
@@ -91,8 +92,9 @@ Skills. Project writes use the same task lifecycle exclusion and reject live wri
 ## Public interface and acceptance
 
 Authenticated `POST /api/skills` carries `engine`, `scope` (`user` or `project`), and
-`conversationId` for project scope. Actions: `list`, `detail` (opaque `id`), `install`
-(`repoUrl`, optional `ref`/`subdir`), `update`, `enable`, `disable` (opaque `id`),
+`conversationId` for project scope. Actions: `list`, `detail` (opaque `id`), `discover` (source URL/ref/subdir), `install`
+(`repoUrl`, optional `ref`/`subdir`/`expectedRevision`), `update`, `enable`, `disable` (opaque `id`),
+`disable_native`, `restore_native` (opaque scoped `id`), and
 `reload` (explicit `conversationId`). IDs resolve only within the selected scope.
 Host returns 401 without its bearer, 404 when not configured, 405 for other methods,
 and 409 with an actionable error for invalid/conflicting operations. Responses are
@@ -111,3 +113,126 @@ covers install/detail/actions, stale responses, unsupported Hosts, preserved dra
 and compact desktop/mobile layouts. Run both repositories' `npm run check` from
 independent clean clones. Record deployed evidence in the linked Issues; installing
 a Skill is not evidence that a paid model chose to invoke it.
+
+## Skill collection discovery (2026-09-30)
+
+[Server #7](https://github.com/awangs1986/pi-coffee-server/issues/7) corrects the
+collection-root error reported with `awangs1986/catskills`. The repository root
+has no SKILL.md and contains an unrelated AGENTS.md link; its actual Skills live
+under `skills/<category>/<name>`. Installing the root as one package was invalid.
+No source-repository modification is required.
+
+Discovery uses the same authenticated Agent/scope and VM Git credentials as
+installation. It reads a concrete checkout and returns names, descriptions,
+repository-relative directories, revision, existing-name collisions and package
+validation problems. It never installs or executes files. Scanning skips .git and
+does not follow symlinks; unrelated root links do not reject a collection. It is
+bounded to 5,000 visited entries, depth 12 and 200 Skills; users can narrow the
+subdirectory. Invalid metadata is reported as a warning. Actual managed packages
+still reject all links and special files and retain the existing size limits.
+
+The Web list supports search and explicit checkboxes with nothing preselected.
+Existing native/managed names and invalid packages are unavailable for install.
+Source or Agent/scope changes clear the preview. Installs are sequential and
+independently committed; per-package errors remain visible, and completed
+selections are disabled rather than retried. Closing the page stops unsent
+requests but does not cancel a request already executing on Host.
+
+Each selected install passes the preview revision as `expectedRevision`. Host
+rechecks the fetched revision before publication and rejects a changed source;
+the original ref remains recorded for future explicit updates. Empty or
+collection-root direct installs report missing SKILL.md with discovery guidance,
+rather than misleading users about unrelated root symlinks.
+
+
+## Bulk selection and native conflicts (2026-09-30)
+
+[Server #8](https://github.com/awangs1986/pi-coffee-server/issues/8) adds **Select all
+installable** and **Clear selection** to collection discovery. Both operate on the
+currently visible search results and preserve selections outside the filter.
+Existing names and invalid packages remain unavailable. Bulk selection never
+starts installation by itself; the install button shows the total selected count.
+
+Web-managed and manually installed Skills use the same native VM directories.
+Hiding an inventory row does not disable native loading. Eligible manual packages
+therefore offer **Disable (keep backup)**: Host atomically moves the entire native
+package to private manager storage outside the selected native root and records
+its original path. This preserves supporting files, permissions and local edits.
+The operation does not execute the package, automatically adopt it as managed,
+permanently delete it, or stop a running Agent. On a shared Host, user-level changes
+affect every task using that OS user's Agent; the UI states this scope.
+
+Disabled native packages remain listed with **Restore VM version** and readable
+metadata. Backups survive Host restart. Restore refuses an occupied original path
+or another active package with the same metadata name. A managed same-name package
+may be installed after disabling the native version; switching back requires
+first disabling the managed version. Managed enable/update/install and discovery
+also check active inventory names, not merely directory basenames. Disabled
+managed packages still reserve their managed identity for explicit enable/update.
+
+Only real native package directories or supported standalone native Markdown
+files beneath the selected root can be relocated. Symlinked roots, symlinked entry
+paths, ancestor aliases, the native root itself, and configured Pi bundles remain
+read-only. Bundled/plugin changes belong to their package manager. Atomic rename
+across filesystems is refused without deleting the original; the manager's backup
+storage must be on the same filesystem. Inventory remains limited to the roots
+listed above; this is not a global override of arbitrary external plugin loaders.
+
+All actions retain authenticated owner/project authorization, shared mutation
+locking and project task lifecycle exclusion. An interrupted mutation retains a
+recovery record. A failed registry save attempts to restore the original location;
+failed recovery retains the lock and backup for VM inspection. Native management
+and inventory refresh invalidate the source preview, requiring discovery again.
+Already loaded conversation instructions are unchanged; start a new Agent or
+explicitly reload an idle task to apply native discovery changes.
+
+
+## Slash completion after installation (2026-09-30)
+
+[Server #9](https://github.com/awangs1986/pi-coffee-server/issues/9) fixes the empty
+slash menu before a Pi task's first message. Typing `/` in a Pi draft requests a
+native command catalog on the authenticated WebSocket. Host asks the scoped Pi
+Adapter to start an ephemeral `--no-session` process with its configured native
+Skill and extension paths, reads `get_commands`, and stops it. This creates no
+Conversation, clone, transcript or model turn. Concurrent catalog requests within
+one factory share the in-flight discovery; later requests read fresh native files.
+Draft discovery uses the adapter's user cwd, not a not-yet-created project clone;
+project-specific commands become authoritative when the task opens.
+
+The menu shows loading, empty and failure states. Skill names can be searched
+without the `skill:` prefix; selection inserts Pi's actual `/skill:name` command.
+The scrollable menu is not truncated to the first eight extension commands.
+Responses are correlated to the active draft; changing Agent or Conversation
+invalidates the catalog. Command names are rendered as text.
+
+Installing, updating or toggling a Skill through this browser invalidates draft
+completion. A live session continues to use its own `get_commands` result. After
+a relevant Skill change, its slash menu offers an explicit idle-only reload via
+the existing Skills API, preserving the user's draft and task identity. It never
+automatically aborts/restarts a task or pretends a fresh catalog is already loaded
+in an older process. Other browser/CLI changes require refresh/reload as before.
+Codex and Claude retain their native command support; Pi `/skill:` syntax is not
+injected into those engines. Unsupported slash menus display an explanation.
+
+
+### Codex completion (2026-09-30)
+
+[Server #10](https://github.com/awangs1986/pi-coffee-server/issues/10) extends the
+same composer picker to native Codex. `/` or `/name` opens and filters the list;
+click or Tab inserts `$name `. Host uses native `skills/list` with `forceReload`
+and only enabled entries, preserving discovery order and showing the first
+entry for each name. Invocation resolves the same first entry in fresh native
+discovery and adds its native `skill` input item alongside the original text.
+Filesystem paths stay behind the Adapter; browser text cannot select an arbitrary
+Skill file. No Pi `/skill:` syntax or Pi prompt is injected into Codex.
+
+Draft discovery uses the authenticated factory's user cwd and creates no thread,
+clone or model turn. Once opened, discovery uses the owned Conversation's actual
+cwd, including project Skills. Changing or disabling a Skill in Web invalidates
+the picker; Codex refreshes discovery without restarting the task. A disabled
+Skill is no longer added as explicit input; already-read history is retained.
+Native metadata/discovery errors are shown rather than an invented empty list.
+Claude completion remains unsupported in this change.
+
+Reference: [official App Server Skills and explicit Skill input](https://developers.openai.com/codex/app-server/).
+Verified native release: Codex CLI 0.159.1.

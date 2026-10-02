@@ -36,6 +36,7 @@ it('keeps task APIs, file grants and logout inside the authenticated shared Host
   stream.destroy();
   expect((await fetch(`http://127.0.0.1:${host.address().port}/healthz`)).status).toBe(200);
   expect((await download(bf)).status).toBe(401);expect(await (await download(af)).text()).toBe('alice');
-  expect((await call('bob','/api/skills',{action:'list',scope:'user',engine:'codex'})).status).toBe(403);
+  for(const action of ['list','disable_native','restore_native'])expect((await call('bob','/api/skills',{action,scope:'user',engine:'codex',id:'external'})).status).toBe(403);
+  for(const action of ['disable_native','restore_native'])expect((await call('bob','/api/skills',{action,scope:'project',engine:'pi',conversationId:a.id,id:'external'})).status).toBe(409);
  } finally {await host.close();await transfer.close();await rm(root,{recursive:true,force:true});}
 });

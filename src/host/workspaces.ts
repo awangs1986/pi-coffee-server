@@ -1,3 +1,4 @@
+import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
 import {parseGitHubRepository} from './github.js';
@@ -13,7 +14,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation {takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -32,7 +33,8 @@ export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
 export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
-export interface GitHubRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
+export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
+export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
 export interface GitHubForge {
   readonly webHost:string;
@@ -41,6 +43,8 @@ export interface GitHubForge {
   createPullRequest(project:Project,source:string,target:string,title:string):Promise<PullRequest>;
 }
 export interface CodeForge {
+  listRepositories?():Promise<ForgeRepository[]>;
+  repository?(fullName:unknown):Promise<ForgeRepository>;
   createRepository?(name:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
   migrateRepository?(name:string,sourceUrl:string):Promise<{repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}>;
   createPullRequest(project:Project,source:string,target:string,title:string):Promise<PullRequest>;
@@ -117,6 +121,7 @@ export class Workspaces {
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
     let interrupted=false;
+    for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
     for(const c of this.state.conversations) if(c.runState==="running") {c.runState="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
     if(interrupted)await this.save();
@@ -142,14 +147,14 @@ export class Workspaces {
     try {return await next;} finally {if(this.tails.get(name)===next)this.tails.delete(name);}
   }
   private conversationLock(id:string) { return 'conversation:'+id; }
-  private git(cwd:string,args:string[],maxBuffer=2*1024*1024) { return exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0'}}).then(r=>args.includes("-z") ? r.stdout : r.stdout.trim()); }
+  private git(cwd:string,args:string[],maxBuffer=2*1024*1024) { return exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'}}).then(r=>args.includes("-z") ? r.stdout : r.stdout.trim()); }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
     catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
   }
   private async gitResult(cwd:string,args:string[],maxBuffer=2*1024*1024):Promise<{code:number;stdout:string;stderr:string}> {
     try {
-      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0'}});
+      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
       return {code:0,stdout:String(r.stdout),stderr:String(r.stderr)};
     } catch(error) {
       const e=error as NodeJS.ErrnoException & {stdout?:string;stderr?:string};
@@ -205,6 +210,28 @@ export class Workspaces {
   }
   async registerProject(name:unknown,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {return this.mutate(async()=>{
     const safe=slug(name);this.assertProjectAvailable(safe,repoId);return this.registerProjectUnlocked(safe,repoUrl,branch,repoId,webUrl);
+  });}
+  /** Existing Gitea repositories visible to this scope's configured Host credentials. */
+  async giteaRepositories() {
+    await this.load();
+    if(!this.forge?.listRepositories)throw new Error('Gitea repository selection is not configured on this Host');
+    const registered=new Map(this.state.projects.filter(p=>(p.forge ?? 'gitea')==='gitea' && p.repoId).map(p=>[p.repoId,p.id]));
+    return (await this.forge.listRepositories()).map(repo=>({...repo,...(registered.has(repo.id)?{projectId:registered.get(repo.id)}:{})}));
+  }
+  async registerGiteaProject(input:unknown) {return this.mutate(async()=>{
+    if(!this.forge?.repository)throw new Error('Gitea repository selection is not configured on this Host');
+    const repo=await this.forge.repository(input);
+    if(repo.archived)throw new Error(`Gitea repository ${repo.fullName} is archived`);
+    if(!repo.canPush)throw new Error(`The Host Gitea token cannot push to ${repo.fullName}`);
+    if(!repo.cloneUrl)throw new Error('Gitea did not return a clone URL');
+    const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch).catch(()=>{
+      throw new Error(`VM Git cannot read ${repo.fullName} at ${repo.defaultBranch}. Check VM Git credentials and that the repository has an initial commit.`);
+    });
+    const existing=this.state.projects.find(p=>(p.forge ?? 'gitea')==='gitea' && p.repoId===repo.id);
+    if(existing){existing.repoUrl=repoUrl;existing.webUrl=repo.webUrl;existing.branch=repo.defaultBranch;await this.save();return structuredClone(existing);}
+    if(this.state.projects.some(p=>p.name===repo.fullName))throw new Error('Project is already registered');
+    const project:Project={id:`gitea-${repo.id}`,name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'gitea'};
+    this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
   /** Repositories the Host's GitHub token can see, marked with the Project that already registers them. */
   async githubRepositories() {
@@ -350,6 +377,23 @@ export class Workspaces {
     await checkedTaskRoot(c.taskRoot);
     await writeTaskJson(join(c.taskRoot,'history'),'conversation.json',{schemaVersion:1,role:'display-export-only',conversationId:id,engine:c.engine ?? 'pi',exportedAt:new Date().toISOString(),...history});
   }
+  async beginTakeover(id:string,operation:TakeoverState){return this.mutate(async()=>{
+    const c=this.conversation(id);
+    if(c.workspaceKind!=='project'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only active Work tasks can switch Agent');
+    if((c.engine??'pi')!==operation.from || operation.from===operation.to || c.takeover?.status==='preparing')throw new Error('Agent changed or takeover already in progress');
+    c.takeover=operation;c.retainedNativeIds=[...(c.retainedNativeIds??[]),operation.id];await this.save();
+  },()=>this.conversationLock(id));}
+  async updateTakeover(id:string,operationId:string,patch:Partial<TakeoverState>){return this.mutate(async()=>{
+    const c=this.conversation(id);if(c.takeover?.id!==operationId)throw new Error('Stale takeover');
+    Object.assign(c.takeover,patch);if(patch.nativeId&&!c.retainedNativeIds?.includes(patch.nativeId))c.retainedNativeIds=[...(c.retainedNativeIds??[]),patch.nativeId];await this.save();
+  },()=>this.conversationLock(id));}
+  async commitTakeover(id:string,operation:TakeoverState,binding:NativeBinding){return this.mutate(async()=>{
+    const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
+    const old={...c};
+    c.takeoverSegments=[...(c.takeoverSegments??[]),{id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
+    c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';
+    try{await this.save();}catch(error){Object.assign(c,old);throw error;}
+  },()=>this.conversationLock(id));}
   async setNativeBinding(id:string,binding:NativeBinding) {return this.mutate(async()=>{
     const c=this.conversation(id);
     if(c.nativeBinding?.id && c.nativeBinding.id!==binding.id)throw new Error("Native Session binding cannot change");
@@ -451,7 +495,8 @@ export class Workspaces {
   private async workingTree(cwd:string):Promise<{tree:string;head?:string}> {
     const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
-    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_INDEX_FILE:index};
+    // This internal command intentionally uses an exclusion pathspec; no user paths enter it.
+    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'0',GIT_INDEX_FILE:index};
     const run=(args:string[])=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer:2*1024*1024,env}).then(r=>r.stdout.trim());
     try {
       // Reusing the real index's stat cache keeps large, mostly unchanged checkouts fast.
@@ -528,7 +573,9 @@ export class Workspaces {
       c.syncError=error instanceof Error ? error.message.slice(0,500) : 'Remote status failed';await this.save();
       return {state:'unknown' as const,dirty,localSha,remoteSha:c.lastRemoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch,error:c.syncError};
     }
-  },()=>this.conversationLock(id));}
+  // Status only updates remote-tracking refs and sync metadata. It must not hold
+  // the run/lifecycle lock while waiting for a remote repository.
+  },()=>`status:${id}`);}
   async checkpoint(id:string,paths:string[],message:string) {return this.mutate(async()=>{
     const c=this.conversation(id);
     await this.assertCodeBranch(c);
@@ -691,11 +738,13 @@ export class Workspaces {
       const tree=c.turnSnapshot?.tree;
       if(!tree)throw new Error('No turn recorded yet; send a message first');
       if((await this.gitResult(c.cwd,['cat-file','-e',tree+'^{tree}'])).code!==0)throw new Error('Last-turn snapshot is no longer available');
+      await this.assertSingleDiffFile(c.cwd,tree,path);
       base=tree;patch=await this.pathAgainstWorkingTree(c.cwd,tree,path);
     } else {
       const commit=typeof input.base==='string' ? input.base : '';
       if(!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit))throw new Error('Diff base missing; refresh the Diff');
       if((await this.gitResult(c.cwd,['merge-base','--is-ancestor',commit,'HEAD'])).code!==0)throw new Error('Diff base is no longer part of the task branch; refresh the Diff');
+      await this.assertSingleDiffFile(c.cwd,commit,path);
       base=commit;
       patch=await this.gitBounded(c.cwd,['diff','--no-ext-diff','--no-textconv','--no-renames',commit,'--',path],FILE_PATCH_LIMIT);
       if(!patch && (await this.git(c.cwd,['ls-files','--others','--exclude-standard','-z','--',path]).catch(()=> '')).split('\0').includes(path)) {
@@ -714,11 +763,16 @@ export class Workspaces {
     }
     return result;
   }
+  private async assertSingleDiffFile(cwd:string,base:string,path:string) {
+    const info=await lstat(join(cwd,path)).catch(()=>undefined);
+    const kind=await this.gitResult(cwd,['cat-file','-t',`${base}:${path}`]);
+    if(info?.isDirectory() || kind.stdout.trim()==='tree' || (!info?.isFile() && !info?.isSymbolicLink() && kind.stdout.trim()!=='blob'))throw new Error('Invalid or private path: select one literal file');
+  }
   /** `git diff <tree> -- <path>` against the working tree (untracked included) via a throwaway index. */
   private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
     const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
-    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_INDEX_FILE:index};
+    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
     const run=(args:string[],maxBuffer=2*1024*1024)=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
     try {
       await copyFile(await gitPath('index'),index).catch(()=>undefined);
@@ -734,7 +788,7 @@ export class Workspaces {
     const size=await this.gitResult(cwd,['cat-file','-s',spec]);
     if(size.code!==0)return {text:null};
     if(Number(size.stdout.trim())>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
-    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:{...process.env,GIT_TERMINAL_PROMPT:'0'}});
+    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'}});
     return stdout.includes(0) ? {text:null,reason:'binary'} : {text:stdout.toString('utf8')};
   }
   /** The working-tree side as Git sees it (a symlink is its target text); null when deleted. */
@@ -800,9 +854,11 @@ export class Workspaces {
   }
   async artifacts(id:string):Promise<Artifact[]> {
     await this.load();const c=this.conversation(id);if(c.workspaceRemoved)return [];
-    const tracked=new Map((c.artifacts ?? []).map(a=>[a.path,{...a,available:false}]));
+    const inputAttachment=(path:string)=>/^(?:\.\.\/attachments|(?:\.pi-coffee\/)?inbox)(?:\/|$)/.test(path);
+    const tracked=new Map((c.artifacts ?? []).filter(a=>!inputAttachment(a.path)).map(a=>[a.path,{...a,available:false}]));
     const files=await this.scanFiles(c);
     for(const path of files.slice(0,5000)) {
+      if(inputAttachment(path))continue;
       if(!/\.(png|jpe?g|gif|webp|svg|md|pdf)$/i.test(path) || path.replace(/^\.\.\//,'').split(/[\\/]/).some(p=>(p.startsWith('.') && p!=='.pi-coffee') || /secret|credential|token/i.test(p)))continue;
       try {
         const full=await this.file(id,path);const info=await stat(full);

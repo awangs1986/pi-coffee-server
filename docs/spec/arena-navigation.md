@@ -82,7 +82,7 @@ Unified and Split stay in English.
   `#task-kind` selects stay the source of truth, so Codex/Claude remain Work-only). They lock
   once the task exists; model rows follow the model catalog and are disabled without one.
 - Toolbar right: the running-mode select and Stop while a turn runs; the scroll icon opens
-  任务详情 (VM, branch, readiness, Details, complete path, Copy path, 本地压缩上下文); the send
+  任务详情 (VM, branch, readiness, Details, complete path, Copy path, 交接压缩); the send
   button is a bordered rounded square with →, grey while disabled. The key hint appears only
   while a turn runs.
 - Strip, Work task: Gitea or GitHub repository link | branch, then `+A −D ›` (task branch vs base; a
@@ -227,3 +227,85 @@ placement data or interrupts a turn. Active/archived filtering still applies.
 Host persists `sidebar.showGroups` alongside assignments and collapsed groups.
 The preference survives refresh and Host restart, without affecting other users.
 Failed saves keep the previous choice and list with an explicit error.
+
+Manual Pi compaction follows [experimental Handoff](manual-handoff.md); automatic
+compaction remains native Pi. This supersedes historical local-fold UI wording.
+
+## Task source and new-task shortcuts (2026-09-30)
+
+[Server #6](https://github.com/awangs1986/pi-coffee-server/issues/6) clarifies task
+creation without changing the overall workbench layout. The settings menu starts
+with **Source** (Chat / Gitea / GitHub), followed by **Agent type** (Pi / Codex /
+Claude Code). Chat maps to the existing `chat` workspace kind and remains Pi-only;
+Gitea and GitHub both map to `project`. The registered Project determines the
+forge. Native / Relay remains a separate **Model source** setting for Pi, with
+its existing protocol and credentials unchanged. The task source and directory remain fixed. Explicit [Work Pi/Codex takeover](agent-takeover.md) is available from Agent type; Chat cannot upgrade or switch.
+
+The empty new-task hero shows exactly three actions: **New chat (Chat)**,
+**Start task (Gitea)** and **Start task (GitHub)**. These configure the draft,
+opening the existing repository picker for Work. They do not send a prompt or
+create a Conversation; typed text is preserved. Changing forge clears a selected
+repository from the previous forge. Choosing Chat selects Pi. GitHub remains
+visible but disabled with an explanation when Host has no GitHub configuration,
+rather than disappearing. Registered-project selection still reflects the
+selected repository's forge; delayed requests cannot replace a changed draft.
+
+GitHub functionality from ADR-0022 remains authoritative. Host's configured
+GitHub token lists repositories; the VM owner's native Git credentials perform
+Git operations. Web never receives the token. Deployment must validate both
+capability configuration and actual repository selection, not just source code.
+
+## Compact transcript file summaries (2026-09-30)
+
+The conversation does not automatically append a workspace artifact gallery on
+load, polling or turn completion. Explicit Agent file links, previews and downloads
+remain available. This display policy does not delete or relocate task files.
+
+Each edited-files summary is collapsed by default and occupies one row with the
+file count and additions/deletions. Its accessible disclosure opens the entire
+file list and review action; clicking again collapses it. Selecting a listed file
+opens that file in Diff. Workspace polling must not reopen a collapsed summary.
+
+The summary is labelled **本轮已编辑 N 个文件** and uses only
+`changes {scope: "turn"}` against the Host's pre-turn snapshot. The right-hand
+Diff entry still defaults to cumulative branch changes. Summary file links and
+its review action explicitly open the latest-turn Diff. An empty, unavailable,
+failed or unsupported turn snapshot produces no summary; branch changes must
+never substitute for missing turn evidence. A new run removes the previous
+summary, and completion replaces it with the latest completed turn's collapsed
+summary. Unchanged workspace polling preserves disclosure state and does not
+repeat turn reads. Late results from another selection or run are ignored.
+
+
+### First-user title fallback (2026-10-01)
+
+A conversation without an explicit name uses a readable excerpt of its first user
+message. For native Pi Skill expansions, unwrap the Skill before whitespace
+normalization and truncation: use the user's supplied request, or the original
+`/skill:<name>` invocation if no request was supplied. Never use the expanded Skill
+body, its XML wrapper or its local path as the title. Explicit user renames remain
+unchanged. Existing native transcripts are read through the same projection;
+correcting a title must not rewrite messages or invoke a model.
+
+## Confirmed conversation rename (2026-10-01)
+
+[Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22) makes the
+rename action await the matching Host acknowledgement. Until then the current
+name remains visible with a saving notice. Success updates sidebar, header and
+search immediately and requests a fresh authoritative list. Failure or a closed
+connection never claims success; disconnect leaves the outcome unconfirmed.
+Changing accounts while the dialog is open cancels submission.
+
+Host renames through the authenticated user's native binding without projecting
+or exporting the transcript. This applies to active and stored conversations;
+a metadata-only resume follows ordinary idle retirement. Native rename failures
+retain the old title and do not change the running turn's UI state.
+
+## Transcript readability (2026-10-01)
+
+[Server #24](https://github.com/awangs1986/pi-coffee-server/issues/24): copyable
+reply code blocks use white text on `#7C9CC3` in both themes, including their
+language header, copy control and syntax spans. Copying preserves the original
+command text. User message text is italic in the shared live/history rendering;
+assistant prose retains its existing style. This is presentation only and does
+not rewrite native transcripts or modify the Diff panel's syntax palette.

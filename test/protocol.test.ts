@@ -13,6 +13,11 @@ describe("PI Coffee wire protocol", () => {
     expect(decodeClientFrame(encodeFrame(frame))).toEqual(frame);
   });
 
+  it("accepts long text within the encoded frame budget",()=>{
+    const text='a'.repeat(71636);const frame={v:1 as const,type:'prompt' as const,requestId:'long-text',text};
+    expect(decodeClientFrame(encodeFrame(frame))).toEqual(frame);
+  });
+
   it("rejects frames from a different protocol version", () => {
     expect(() => decodeClientFrame(JSON.stringify({ v: 2, type: "ping", nonce: "x" }))).toThrow(
       /protocol version/i,

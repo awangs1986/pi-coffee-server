@@ -1,10 +1,12 @@
 # PI Coffee source and release authority
 
-GitHub `awangs1986/pi-coffee-server` owns Browser, Web gateway, Relay, Host and native Pi/Codex/Claude adapters. Gitea `awangs/pi-coffee-server` mirrors the same commits. Pi-only Harness, prompts, tools, LSP, subagents, context extensions and Skills are maintained in GitHub `awangs1986/pi-coffee` and consumed through an immutable package revision. Picode/V5 remains historical.
+Start with [REPOSITORIES.md](REPOSITORIES.md) to choose the repository and canonical plugin directory.
+
+GitHub `awangs1986/pi-coffee-server` owns Browser, Web gateway, Relay, Host and native Pi/Codex/Claude adapters. Gitea `awangs/pi-coffee-server` mirrors the same commits. Pi-only Harness, prompts, tools, LSP, handoff and bundled Skills are maintained in GitHub `awangs1986/pi-coffee` under independently versioned `packages/` directories and consumed through immutable package artifacts. Official web and subagent packages remain external upstream dependencies. Old standalone plugin repositories are historical. Picode/V5 remains historical.
 
 ## Before changes, merges or deployment
 
-1. Read [docs/index.md](docs/index.md), [BACKLOG.md](BACKLOG.md), and the linked Issue for the affected feature.
+1. Read [REPOSITORIES.md](REPOSITORIES.md), [docs/index.md](docs/index.md), [BACKLOG.md](BACKLOG.md), and the linked Issue for the affected feature.
 2. Fetch GitHub and Gitea. Compare commits and feature coverage before reconciling divergent histories. Preserve work on both sides; use normal merge ancestry and never replace a newer capability with an older tree.
 3. Read [the Pi package split decision](docs/adr/0021-pi-only-source-authority.md) when choosing repository boundaries, resolving contradictory older docs, or deploying. Host remains in this repository by the owner's explicit decision.
 4. Work from current GitHub main in a clean checkout. Preserve other local branches and uncommitted work.
