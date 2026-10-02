@@ -114,9 +114,9 @@ function scheduleRecentThread(){
 }
 function displayPreview(id,snapshot){
   const fingerprint=previewFingerprint(id);
-  // Once the task binding is known, an unversioned snapshot cannot establish
-  // that it belongs to this Agent. Keep waiting for authoritative history.
-  if(!previewAllowed(id) || (fingerprint&&fingerprint!==snapshot.fingerprint)){invalidatePreview(id);return false;}
+  // Once metadata arrives, reject either a missing saved binding or a saved
+  // binding whose task is now absent. Wait for authoritative history instead.
+  if(!previewAllowed(id) || (workspaceState&&(snapshot.fingerprint||fingerprint)&&fingerprint!==snapshot.fingerprint)){invalidatePreview(id);return false;}
   renderConversationPreview(ui.thread,snapshot);
   previewScroll=snapshot.scroll;visiblePreviewFingerprint=snapshot.fingerprint;
   ui.scroller.scrollTop=snapshot.scroll;
@@ -2649,7 +2649,7 @@ async function loadWorkspace() {
     const previous=workspaceState;workspaceState=data;takeoverControls.sync(currentTask());
     for(const task of previous?.conversations||[])if(!data.conversations.some(c=>c.id===task.id))invalidatePreview(task.id);
     for(const task of data.conversations||[]){const saved=recentConversations.get(previewKey(task.id));if(saved&&saved.fingerprint!==previewFingerprint(task.id))invalidatePreview(task.id);}
-    if(previewScroll!==null&&previewFingerprint(activeId)&&visiblePreviewFingerprint!==previewFingerprint(activeId))invalidatePreview(activeId);
+    if(previewScroll!==null&&(visiblePreviewFingerprint||previewFingerprint(activeId))&&visiblePreviewFingerprint!==previewFingerprint(activeId))invalidatePreview(activeId);
     for(const task of data.conversations||[])if(task.archived||task.workspaceRemoved||task.cleanupStarted)invalidatePreview(task.id);
     for(const id of data.legacyArchived||[])invalidatePreview(id);
     $('#project-controls').classList.remove('hidden');$('#files-toggle').classList.remove('hidden');
