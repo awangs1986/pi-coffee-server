@@ -671,6 +671,40 @@ it('shows a recent conversation before the new socket replies and reconciles aut
  expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(false);
 });
 
+it('keeps a labelled readable cached transcript after a transient native open failure',async()=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const app=await setup(false,false,true,false,'owner');
+ app.conversations.push({id:'unavailable-a',workspaceKind:'chat',engine:'pi'},{id:'unavailable-b',workspaceKind:'chat',engine:'pi'});
+ const choose=(id:string)=>document.querySelector<HTMLElement>(`[data-session-id="${id}"]`)!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'unavailable-a',name:'Unavailable A'},{id:'unavailable-b',name:'Unavailable B'}]});await vi.advanceTimersByTimeAsync(20);
+ for(const id of ['unavailable-a','unavailable-b']){
+  choose(id);await vi.advanceTimersByTimeAsync(20);
+  app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false}});
+  app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[{kind:'user',text:`Readable ${id}`}]});
+ }
+ choose('unavailable-a');await vi.advanceTimersByTimeAsync(20);
+ const thread=document.querySelector('#thread')!;
+ expect(thread.textContent).toContain('Readable unavailable-a');
+ app.sockets.at(-1).receive({type:'error',code:'operation_failed',message:'Native history temporarily unavailable'});
+ expect(thread.textContent).toContain('Readable unavailable-a');
+ expect(thread.textContent).toContain('正在显示本地缓存');
+ expect(thread.textContent).toContain('Native history temporarily unavailable');
+ expect(thread.hasAttribute('inert')).toBe(false);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='Do not send before synchronization';prompt.dispatchEvent(new Event('input'));
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+ expect(app.frames.filter(frame=>frame.type==='prompt')).toHaveLength(0);
+ // The same disposable snapshot is still available after the failed open.
+ // @ts-expect-error browser module
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const saved=new ConversationPreviewStore().get('owner','unavailable-a');
+ await vi.advanceTimersByTimeAsync(200);
+ expect((await saved).entries).toContainEqual({kind:'user',text:'Readable unavailable-a'});
+ choose('unavailable-b');choose('unavailable-a');
+ expect(thread.textContent).toContain('Readable unavailable-a');
+});
+
 it('confirms rename only after acknowledgment and updates the visible title',async()=>{
  const app=await setup();const socket=app.sockets.at(-1);
  socket.receive({type:'sessions',sessions:[{id:'rename-target',name:'Old title',messageCount:1}]});
@@ -978,6 +1012,61 @@ it('preserves the private prompt outbox when another tab invalidates only transc
  const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:'outbox-other-tab',entries:[]});
  expect(document.querySelector('#thread')!.textContent).toContain('Keep my unconfirmed instruction');
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+
+it.each(['diff','args'])('keeps oversized authoritative tool %s expandable and out of the disposable cache',async(field)=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const app=await setup(false,false,true,false,'owner'),socket=app.sockets.at(-1);
+ const evidence='evidence-start <img src=x onerror=alert(1)>\n'+'changed line\n'.repeat(1000)+'evidence-end';
+ const tool={kind:'tool',id:'large-edit',name:'edit',result:'Permission denied',isError:true,
+  args:field==='args'?{path:'a.ts',content:evidence}:{path:'a.ts'},diff:field==='diff'?evidence:undefined};
+ socket.receive({type:'opened',sessionId:'large-history',engine:'pi',state:{isStreaming:false}});
+ socket.receive({type:'history',sessionId:'large-history',entries:[tool]});
+ const node=document.querySelector<HTMLElement>('[data-preview-kind="tool"]')!;
+ expect(node.textContent).toContain('evidence-start');
+ expect(node.textContent).not.toContain('evidence-end');
+ expect(node.querySelector('.body')!.textContent!.length).toBeLessThanOrEqual(8192);
+ expect(node.classList.contains('failure')).toBe(true);
+ expect(node.textContent).toContain('错误');
+ node.querySelector<HTMLButtonElement>('button')!.click();
+ expect(node.textContent).toContain('evidence-end');
+ expect(node.textContent).toContain('a.ts');
+ expect(node.textContent).toContain('Permission denied');
+ expect(node.querySelector('button')).toBeNull();
+ expect(node.querySelector('img')).toBeNull();
+ // Inspect the public persistent-store boundary, not controller internals.
+ // @ts-expect-error browser module
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const saved=new ConversationPreviewStore().get('owner','large-history');
+ await vi.advanceTimersByTimeAsync(200);
+ expect((await saved).entries).toEqual([{kind:'tool',text:'edit\nPermission denied'}]);
+});
+
+it('preserves authoritative tool evidence when paging into earlier history without caching it',async()=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const app=await setup(false,false,true,false,'owner'),socket=app.sockets.at(-1);
+ const diff='earlier-patch-start <script>alert(1)</script>\n'+'+change\n'.repeat(1500)+'earlier-patch-end';
+ socket.receive({type:'opened',sessionId:'earlier-tools',engine:'pi',state:{isStreaming:false}});
+ socket.receive({type:'history',sessionId:'earlier-tools',entries:[{kind:'tool',id:'old-edit',name:'edit',result:'Failed edit',isError:true,args:{path:'earlier.ts'},diff},
+  ...Array.from({length:40},(_,index)=>({kind:'user',text:`Later message ${index}`}))]});
+ const older=document.querySelector<HTMLDetailsElement>('details.history-older')!;
+ older.open=true;older.dispatchEvent(new Event('toggle'));
+ const tool=older.querySelector<HTMLElement>('[data-preview-kind="tool"]')!;
+ expect(tool.textContent).toContain('earlier-patch-start');
+ expect(tool.textContent).toContain('earlier.ts');
+ expect(tool.textContent).toContain('Failed edit');
+ expect(tool.textContent).toContain('错误');
+ expect(tool.classList.contains('failure')).toBe(true);
+ expect(tool.textContent).not.toContain('earlier-patch-end');
+ expect(tool.querySelector('.body')!.textContent!.length).toBeLessThanOrEqual(8192);
+ tool.querySelector<HTMLButtonElement>('button')!.click();
+ expect(tool.textContent).toContain('earlier-patch-end');
+ expect(tool.querySelector('script')).toBeNull();
+ // @ts-expect-error browser module
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const saved=new ConversationPreviewStore().get('owner','earlier-tools');
+ await vi.advanceTimersByTimeAsync(200);
+ expect((await saved).entries[0]).toEqual({kind:'tool',text:'edit\nFailed edit'});
 });
 
 it('bounds authoritative history to forty recent messages and pages older messages in order',async()=>{
