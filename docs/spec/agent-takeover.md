@@ -79,7 +79,10 @@ back starts another fresh native session rather than reviving stale context.
 Native preparation failure, timeout (3 minutes), approval request or missing
 readiness leaves the source binding unchanged and reports failure. Failed native
 sessions/records remain retained; there is no automatic retry. Host restart marks
-unfinished preparation failed. A readiness marker is an Agent assertion, not proof
+unfinished preparation failed. Graceful Host shutdown cancels preparation and waits
+for takeover recovery before closing owned sessions and native factories. A failed
+binding write restores the complete prior binding and history segments, including
+fields absent before the first switch. A readiness marker is an Agent assertion, not proof
 that every historical fact was understood; the drift warning remains meaningful.
 
 Archive keeps all segments. Complete native-history cleanup after takeover is

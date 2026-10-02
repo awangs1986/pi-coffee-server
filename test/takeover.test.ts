@@ -1,4 +1,4 @@
-import {mkdtemp, mkdir, writeFile, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, rm, rename} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
@@ -19,10 +19,10 @@ async function setup(){
  await run(['init','-b','main']);await writeFile(join(source,'file.txt'),'base');await run(['add','.']);await run(['commit','-m','base']);await run(['clone','--bare',source,join(root,'repo.git')]);
  const workspaces=new Workspaces(join(root,'projects'));const project=await workspaces.registerProject('test',join(root,'repo.git'));const task=await workspaces.createConversation(project.id);
  const records=new Map<string,HistoryEntry[]>();records.set(task.id,[{id:'u1',kind:'user',text:'Keep the uncommitted fix. Continue testing.'},{id:'a1',kind:'assistant',text:'The fix needs verification.'}]);
- const calls:Array<{id:string;text:string;model?:string;effort?:string}>=[];let sequence=0;let fail=false;let hold:Promise<void>|undefined;
+ const calls:Array<{id:string;text:string;model?:string;effort?:string}>=[];let sequence=0;let fail=false;let hold:Promise<void>|undefined;let sourceStop:undefined|(()=>Promise<void>);const live=new Set<AgentSession>();
  const factoryFor=(onBound?:(id:string)=>Promise<void>):AgentSessionFactory=>({
  async create({sessionId,requireExisting}){const id=onBound&&!requireExisting?'codex-'+(++sequence):sessionId;await onBound?.(id);const entries=records.get(id)??[];records.set(id,entries);const listeners=new Set<(event:unknown)=>void>();let streaming=false;let model:string|undefined,effort:string|undefined;
- const session:AgentSession={async prompt(text){calls.push({id,text,model,effort});if(text==='hold'){streaming=true;for(const l of listeners)l({type:'agent_start'});return;}if(hold)await hold;if(fail)throw new Error('provider unavailable');entries.push({id:'u'+entries.length,kind:'user',text});entries.push({id:'a'+entries.length,kind:'assistant',text:'Verified current files; next: run tests.\n[TAKEOVER_READY]'});for(const l of listeners)l({type:'agent_settled'});},async steer(){},async followUp(){},async abort(){streaming=false;},async getState(){return {isStreaming:streaming,messageCount:entries.length};},async getHistory(){return {entries:[...entries],leafId:entries.at(-1)?.id??null};},async rename(){},async getModels(){return {models:[],current:null,thinkingLevel:'off',thinkingLevels:[]};},async setModel(_provider,id){model=id;},async setThinkingLevel(value){effort=value;},async getCommands(){return [];},async getExtensions(){return [];},async getStats(){return {};},async compact(){},async respondUi(){},onEvent(l){listeners.add(l);return ()=>listeners.delete(l);},async stop(){},async backgroundState(){return {known:true,active:0};}};return session;},async list(){return [];},async delete(){return false;}});
+ const session:AgentSession={async prompt(text){calls.push({id,text,model,effort});if(text==='hold'){streaming=true;for(const l of listeners)l({type:'agent_start'});return;}if(hold)await hold;if(fail)throw new Error('provider unavailable');entries.push({id:'u'+entries.length,kind:'user',text});entries.push({id:'a'+entries.length,kind:'assistant',text:'Verified current files; next: run tests.\n[TAKEOVER_READY]'});for(const l of listeners)l({type:'agent_settled'});},async steer(){},async followUp(){},async abort(){streaming=false;},async getState(){return {isStreaming:streaming,messageCount:entries.length};},async getHistory(){return {entries:[...entries],leafId:entries.at(-1)?.id??null};},async rename(){},async getModels(){return {models:[],current:null,thinkingLevel:'off',thinkingLevels:[]};},async setModel(_provider,id){model=id;},async setThinkingLevel(value){effort=value;},async getCommands(){return [];},async getExtensions(){return [];},async getStats(){return {};},async compact(){},async respondUi(){},onEvent(l){listeners.add(l);return ()=>listeners.delete(l);},async stop(){if(id===task.id)await sourceStop?.();live.delete(session);},async backgroundState(){return {known:true,active:0};}};live.add(session);return session;},async list(){return [];},async delete(){return false;}});
  const factory=new NativeAgentFactory({workspaces,pi:factoryFor(),codex:{command:'fixture'},codexSessionFactory:(_id,_cwd,bound)=>factoryFor(bound)});
  factory.engines=async()=>[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true}];
  const host=new HostServer({port:0,token:'test',factory,workspaces,scopeForUser:async user=>({factory,workspaces:user==='owner'?workspaces:new Workspaces(join(root,user))})});await host.start();cleanup.push(()=>host.close());
@@ -35,7 +35,7 @@ async function setup(){
   nextFactory.engines=factory.engines;
   const next=new HostServer({port:0,token:'test',factory:nextFactory,workspaces:store});await next.start();cleanup.push(()=>next.close());return next;
  };
- return {root,task,host,request,readTask,calls,workspaces,records,restart,setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;}};
+ return {root,task,host,request,readTask,calls,workspaces,records,restart,live,setSourceStop:(value:()=>Promise<void>)=>{sourceStop=value;},setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;}};
 }
 it('takes over the same Work directory and preserves its old history without replaying old prompts',async()=>{
  const app=await setup();await writeFile(join(app.task.cwd,'file.txt'),'uncommitted fix');
@@ -111,4 +111,53 @@ it('reopens a round-trip task after Host restart with both boundaries and no ext
  expect(frames.find(f=>f.type==='opened').engine).toBe('pi');expect(history.filter((e:any)=>e.kind==='user')).toEqual([expect.objectContaining({text:'Keep the uncommitted fix. Continue testing.'})]);expect(history.filter((e:any)=>e.kind==='note'&&e.text.startsWith('Agent 交接：'))).toHaveLength(2);expect(app.calls).toHaveLength(2);
  socket.send(JSON.stringify({v:1,type:'list_sessions'}));await expect.poll(()=>frames.some(f=>f.type==='sessions')).toBe(true);
  const sessions=frames.filter(f=>f.type==='sessions').at(-1).sessions;expect(sessions).toEqual([expect.objectContaining({id:app.task.id,engine:'pi',preview:'Keep the uncommitted fix. Continue testing.'})]);
+});
+
+it('finishes pending takeover recovery before Host shutdown returns and does not reopen a stopped source',async()=>{
+ const app=await setup();let release!:()=>void;let reached!:()=>void;let stops=0;
+ const stopped=new Promise<void>(r=>{reached=r;});const blocked=new Promise<void>(r=>{release=r;});
+ app.setSourceStop(async()=>{if(++stops===1){reached();await blocked;}});
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+ await stopped;
+ let closed=false;const closing=app.host.close().then(()=>{closed=true;});
+ // Give shutdown a complete event-loop turn while source termination is pending.
+ await new Promise(r=>setTimeout(r,50));
+ const returnedBeforeSourceStopped=closed;
+ release();await closing;
+ const host=await app.restart();
+ const response=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{headers:{authorization:'Bearer test'}});
+ const task=(await response.json()).conversations.find((c:any)=>c.id===app.task.id);
+ expect(returnedBeforeSourceStopped).toBe(false);
+ expect(task.engine).toBe('pi');expect(task.takeover.status).toBe('failed');
+ expect(app.live.size).toBe(0);expect(app.calls).toHaveLength(1);
+});
+
+it('retains the original binding and history when publishing the prepared takeover fails',async()=>{
+ const app=await setup();const registry=join(app.root,'projects','.coffee','state.json');const backup=registry+'.saved';
+ let blocked=false;
+ app.setSourceStop(async()=>{if(blocked)return;blocked=true;await rename(registry,backup);await mkdir(registry);});
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+ await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('failed');
+ await rm(registry,{recursive:true});await rename(backup,registry);
+ app.setSourceStop(async()=>{});
+ const task=await app.readTask();
+ expect(task.engine).toBe('pi');expect(task.nativeBinding).toBeUndefined();expect(task.takeoverSegments??[]).toEqual([]);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer test'}});cleanup.push(async()=>socket.close());const frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await new Promise(r=>socket.once('open',r));socket.send(JSON.stringify({v:1,type:'open',sessionId:app.task.id,nativeProtocol:1}));
+ await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);
+ expect(frames.find(f=>f.type==='history').entries).toEqual(app.records.get(app.task.id));expect(app.calls).toHaveLength(1);
+});
+
+it('cancels a pending reconstruction on Host shutdown and reopens the original history without retry',async()=>{
+ const app=await setup();app.setHold(new Promise<void>(()=>{}));
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+ await expect.poll(()=>app.calls.length).toBe(1);
+ const host=await app.restart();expect(app.live.size).toBe(0);
+ const response=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{headers:{authorization:'Bearer test'}});
+ const task=(await response.json()).conversations.find((c:any)=>c.id===app.task.id);
+ expect(task.engine).toBe('pi');expect(task.takeover.status).toBe('failed');
+ const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer test'}});cleanup.push(async()=>socket.close());const frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await new Promise(r=>socket.once('open',r));socket.send(JSON.stringify({v:1,type:'open',sessionId:app.task.id,nativeProtocol:1}));
+ await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);
+ expect(frames.find(f=>f.type==='history').entries).toEqual(app.records.get(app.task.id));expect(app.calls).toHaveLength(1);
 });

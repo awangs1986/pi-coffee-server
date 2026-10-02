@@ -117,6 +117,7 @@ export class HostServer {
   private readonly registryOptions: { eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number };
   /** Key: normalised user name, or "" for identity-less connections. */
   private readonly slots = new Map<string, Promise<UserSlot>>();
+  private readonly takeoverOperations = new Set<Promise<void>>();
   private readonly transferTargets = new Map<string, { slot: Promise<UserSlot>; sessionId: string }>();
   private readonly transfer?: TransferServer;
   private readonly http: HttpServer;
@@ -264,11 +265,13 @@ export class HostServer {
         const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
         await ws.beginTakeover(id,operation);
         // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
-        void session.takeover(operation).then(async()=>{
+        const takeover = session.takeover(operation).then(async()=>{
           for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
         }).catch(async(error)=>{
           await ws.updateTakeover(id,operation.id,{status:'failed',error:error instanceof Error?error.message:'Takeover failed'});
         }).finally(()=>{slot.lifecycleLocks.delete(id);void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
+        this.takeoverOperations.add(takeover);
+        void takeover.finally(()=>this.takeoverOperations.delete(takeover));
         locked=undefined;json(res,202,operation);return;
       }
       // Reject mutating lifecycle operations while the parent is streaming. External commands remain trusted VM operations.
@@ -488,6 +491,13 @@ export class HostServer {
     for (const slot of slots) {
       if (slot.status !== "fulfilled") continue;
       if (slot.value.broadcastTimer !== undefined) clearTimeout(slot.value.broadcastTimer);
+      // Cancel reconstruction before waiting for takeover recovery. The registry
+      // remains owned until that recovery finishes, including a reopened source.
+      await slot.value.factory.cancelTakeovers?.().catch(() => undefined);
+    }
+    await Promise.allSettled([...this.takeoverOperations]);
+    for (const slot of slots) {
+      if (slot.status !== "fulfilled") continue;
       await slot.value.registry.close();
       await slot.value.factory.close?.().catch(() => undefined);
     }
