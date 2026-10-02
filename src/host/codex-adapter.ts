@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ContextPreset } from "../shared/protocol.js";
 import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type {
   CommandInfo,
@@ -183,9 +183,19 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   private contextFile(id:string):string{return join(dirname(this.mappingFile),'codex-context',createHash('sha256').update(id).digest('hex')+'.json');}
-  private async readContextPreset(id:string):Promise<ContextPreset>{
-    try{return JSON.parse(await readFile(this.contextFile(id),'utf8')).preset==='maximum'?'maximum':'272k';}
-    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return '272k';}
+  private async readPreferences(id:string):Promise<CodexPreferences>{
+    try{
+      const saved=JSON.parse(await readFile(this.contextFile(id),'utf8'));
+      return {preset:saved.preset==='maximum'?'maximum':'272k',
+        ...(typeof saved.model==='string' && saved.model?{model:saved.model}:{}),
+        ...(typeof saved.reasoningEffort==='string' && saved.reasoningEffort?{reasoningEffort:saved.reasoningEffort}:{})};
+    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k'};}
+  }
+  private async savePreferences(id:string,preferences:CodexPreferences):Promise<void>{
+    const file=this.contextFile(id),temp=file+'.'+randomUUID()+'.tmp';
+    await mkdir(dirname(file),{recursive:true,mode:0o700});
+    try{await writeFile(temp,JSON.stringify(preferences),{mode:0o600});await rename(temp,file);}
+    finally{await rm(temp,{force:true});}
   }
 
   private async loadMapping(): Promise<Map<string, string>> {
@@ -240,7 +250,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const server = await this.connection();
     const mapping = await this.loadMapping();
     const known = options.requireExisting ? options.sessionId : mapping.get(options.sessionId) ?? options.sessionId;
-    const preset=await this.readContextPreset(known);
+    const preferences=await this.readPreferences(known),{preset}=preferences;
     // Keep the user's native guidance; override on resume as well to retire a removed runner pointer.
     let developerInstructions:string|undefined;
     if(this.options.instructions){
@@ -254,7 +264,6 @@ export class CodexSessionFactory implements PiSessionFactory {
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
-      ...(this.options.model === undefined ? {} : { model: this.options.model }),
     };
     // Check metadata before resuming: a caller-supplied UUID may name another
     // user's thread in the shared native store. Listing by cwd is not authorization.
@@ -266,11 +275,20 @@ export class CodexSessionFactory implements PiSessionFactory {
         return undefined; // A newly generated Host id has no native thread yet.
       });
       if (owned === false) throw new Error("No such conversation");
-      if (owned) response = await server.request("thread/resume", { threadId: known, ...common }) as Obj;
+      // Deployment defaults only seed new threads. A resumed thread keeps its
+      // native selection, unless a confirmed browser choice is pending for it.
+      if (owned) response = await server.request("thread/resume", { threadId: known, ...common,
+        ...(preferences.model?{model:preferences.model}:{}),
+        config:{...common.config,...(preferences.reasoningEffort?{model_reasoning_effort:preferences.reasoningEffort}:{})},
+      }) as Obj;
     }
+    const resumed=Boolean(response);
     if (!response) {
       if (options.requireExisting) throw new Error("Native conversation is unavailable; no replacement was created");
-      response = await server.request("thread/start", { ...common, threadSource: null }) as Obj;
+      response = await server.request("thread/start", { ...common, threadSource: null,
+        ...(this.options.model?{model:this.options.model}:{}),
+        config:{...common.config,...(this.options.reasoningEffort?{model_reasoning_effort:this.options.reasoningEffort}:{})},
+      }) as Obj;
       const thread = response.thread as Obj;
       if (typeof thread.id === "string" && thread.id !== options.sessionId) await this.remember(options.sessionId, thread.id);
     }
@@ -281,10 +299,10 @@ export class CodexSessionFactory implements PiSessionFactory {
       preset,
       developerInstructions,
       sandbox:this.options.sandbox,
-      savePreset:async(id,preset)=>{const file=this.contextFile(id);await mkdir(dirname(file),{recursive:true});await writeFile(file,JSON.stringify({preset}),{mode:0o600});},
+      savePreferences:(id,values)=>this.savePreferences(id,values),
       rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
-      model: typeof response.model === "string" ? response.model : this.options.model,
-      reasoningEffort: typeof response.reasoningEffort === "string" ? response.reasoningEffort : this.options.reasoningEffort,
+      model: typeof response.model === "string" ? response.model : resumed?preferences.model:this.options.model,
+      reasoningEffort: typeof response.reasoningEffort === "string" ? response.reasoningEffort : resumed?preferences.reasoningEffort:this.options.reasoningEffort,
       approvalPolicy: this.options.approvalPolicy ?? "never",
       rateLimits: () => this.readRateLimits(),
     });
@@ -436,11 +454,16 @@ function contextConfig(preset:ContextPreset):Obj {
   const limit=preset==='272k'?272000:500000;
   return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95)};
 }
+interface CodexPreferences {
+  preset:ContextPreset;
+  model?:string;
+  reasoningEffort?:string;
+}
 interface CodexSessionSettings {
   developerInstructions?:string;
   preset:ContextPreset;
   sandbox?:string;
-  savePreset:(id:string,preset:ContextPreset)=>Promise<void>;
+  savePreferences:(id:string,preferences:CodexPreferences)=>Promise<void>;
   rebind:(id:string)=>Promise<void>;
   cwd: string;
   model?: string;
@@ -461,6 +484,7 @@ class CodexSession implements PiSession {
   private preset:ContextPreset;
   private model?: string;
   private effort?: string;
+  private preferenceWrites:Promise<void>=Promise.resolve();
   private sessionName?: string;
   private activeTurnId?: string;
   private streaming = false;
@@ -639,32 +663,43 @@ class CodexSession implements PiSession {
 
   async setModel(_provider: string, id: string): Promise<void> {
     // Applied as an override on the next turn; Codex has no per-thread setter.
-    this.model = id;
+    await this.updatePreferences({model:id});
+  }
+
+  private updatePreferences(change:{model?:string;reasoningEffort?:string}):Promise<void>{
+    const write=this.preferenceWrites.then(async()=>{
+      const next={preset:this.preset,model:this.model,reasoningEffort:this.effort,...change};
+      await this.settings.savePreferences(this.threadId,next);
+      this.model=next.model;this.effort=next.reasoningEffort;
+    });
+    this.preferenceWrites=write.catch(()=>undefined);return write;
   }
 
   async setContextPreset(preset:ContextPreset):Promise<void>{
     if(preset===this.preset)return;
     if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
+    await this.preferenceWrites;
     const history=await this.getHistory(),oldId=this.threadId;
-    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config:contextConfig(preset),...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
+    const config={...contextConfig(preset),...(this.effort?{model_reasoning_effort:this.effort}:{})};
+    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
     // Native resume ignores changed config on a subscribed thread. Release only
     // this idle thread; no model turn is replayed and other threads keep running.
     let response:Obj;
     if(history.entries.length){
       await this.server.request('thread/unsubscribe',{threadId:oldId});
       try{response=await this.server.request('thread/resume',{...common,threadId:oldId}) as Obj;}
-      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:contextConfig(this.preset)}).catch(()=>undefined);throw error;}
+      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:{...config,...contextConfig(this.preset)}}).catch(()=>undefined);throw error;}
     }else{response=await this.server.request('thread/start',common) as Obj;}
     const thread=response.thread as Obj;
     const id=String(thread.id);
     if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
-    await this.settings.savePreset(id,preset);this.preset=preset;this.tokenUsage=undefined;
+    await this.settings.savePreferences(id,{preset,model:this.model,reasoningEffort:this.effort});this.preset=preset;this.tokenUsage=undefined;
     this.absorbThread(thread);
   }
 
   async setThinkingLevel(level: string): Promise<void> {
-    this.effort = level;
+    await this.updatePreferences({reasoningEffort:level});
   }
 
   async getCommands(): Promise<CommandInfo[]> {

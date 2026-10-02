@@ -119,7 +119,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
@@ -173,7 +173,7 @@ rl.on("line", (line) => {
     case "thread/start": {
       if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
-      const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake" };
+      const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake", effort: params.config?.model_reasoning_effort };
       threads[thread.id] = thread;
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
       save();
@@ -185,6 +185,11 @@ rl.on("line", (line) => {
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
+      // Native resume applies configuration overrides; ignoring them masks
+      // accidental model resets when the Host is reconstructed.
+      if (params.model) thread.model = params.model;
+      if (params.config?.model_reasoning_effort) thread.effort = params.config.model_reasoning_effort;
+      save();
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
       return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
     }
