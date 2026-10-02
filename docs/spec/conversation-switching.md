@@ -64,8 +64,11 @@ and Agent takeover. Send must stay disabled until authoritative synchronization.
 A repeatable local synthetic fixture is provided by
 `node scripts/probe-conversation-switching.mjs` after `npm run build`; open its
 printed local URL. It prepares five 1,500-message transcripts (~3 million text
-characters each), measures 25 switches through two animation frames without new
-history responses, then reloads and checks all five IndexedDB restores. Its results
+characters each), measures 25 switches through paint and actual scroll movement without new
+history responses, checks rapid A/B/A and delayed background history, then reloads
+and checks all five IndexedDB restores. A 300 ms synthetic authentication delay is
+reported separately. Results include per-switch times, browser/viewport, long tasks
+and composer gating, and are saved to `/tmp/pi-coffee-browser-probe.json`. Its results
 are synthetic/browser-specific and cannot substitute for the owner's runtime test.
 
 ## Codex process lifetime
