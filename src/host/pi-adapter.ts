@@ -68,7 +68,8 @@ export const HOST_STRIPPED_ENV_KEYS = [
 export function buildHostChildEnv(
   overrides: Record<string, string> = {},
 ): Record<string, string> {
-  const env: Record<string, string | undefined> = { ...overrides };
+  // Provider registration is needed for Gemini, not its optional search/image tools.
+  const env: Record<string, string | undefined> = { ANTIGRAVITY_NO_EXTRA_TOOLS: '1', ...overrides };
   for (const key of HOST_STRIPPED_ENV_KEYS) env[key] = undefined;
   // Upstream child launcher resolves the same installed Pi, never a legacy PATH shim.
   env.PI_SUBAGENT_PI_BINARY = undefined;

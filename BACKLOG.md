@@ -448,3 +448,10 @@ defines user-scoped persistence and the strict separation from task execution id
   committed or sent to a model.
 
 - [GitHub Server #25](https://github.com/awangs1986/pi-coffee-server/issues/25): Pi 1.0.0 and the reviewed independent plugin combination; see docs/deployment/pi-100-upgrade.md. Production activation remains separate.
+
+
+- 2026-10-02: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23)
+  follow-up restores the existing approved Gemini provider after the Pi 1.0
+  upgrade: explicitly load pinned pi-antigravity when selected by model policy,
+  retaining native OAuth and the Muse default. Native catalog regression covers
+  both providers and explicit disable.
