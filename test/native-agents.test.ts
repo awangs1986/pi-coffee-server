@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
 import {IDBFactory,IDBDatabase as FakeIDBDatabase} from 'fake-indexeddb';
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
-async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string){
+async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
  const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
@@ -13,6 +13,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='discover'?{revision:'a'.repeat(40),skills:[{name:'demo',description:'Demo skill',subdir:'skills/demo',installed:false},{name:'other',description:'Other skill',subdir:'skills/other',installed:false}],warnings:[]}:body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/auth/me'&&authUser)return {ok:true,status:200,json:async()=>({auth:true,user:authUser})};
+  if(url==='/api/workspace'&&!init?.body)await workspaceRead;
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
@@ -1063,5 +1064,23 @@ it.each([false,true])('shows a disk preview only when it matches known task meta
  await vi.advanceTimersByTimeAsync(100);
  if(recorded)expect(document.querySelector('#thread')!.textContent).toContain('Persisted task reply');
  else expect(document.querySelector('#thread')!.textContent).not.toContain('Persisted task reply');
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it.each(['before disk','after disk'])('invalidates a deleted task preview when the first workspace metadata arrives %s',async(order)=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const store=new ConversationPreviewStore();
+ await store.put('owner','deleted-task',{entries:[{kind:'assistant',text:'Private reply from deleted task'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi','old-native-binding',null])});
+ sessionStorage.setItem('pi-coffee.active.v2:owner','deleted-task');
+ let release!:()=>void;
+ const metadata=new Promise<void>(resolve=>{release=resolve;});
+ await setup(false,false,true,false,'owner',order==='after disk'?metadata:undefined);
+ await vi.advanceTimersByTimeAsync(100);
+ if(order==='after disk'){
+  expect(document.querySelector('#thread')!.textContent).toContain('Private reply from deleted task');
+  release();await vi.advanceTimersByTimeAsync(20);
+ }
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Private reply from deleted task');
  expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
 });
