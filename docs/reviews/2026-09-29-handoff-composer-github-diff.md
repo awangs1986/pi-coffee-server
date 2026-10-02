@@ -13,7 +13,7 @@
 | 项目 | 内容 |
 |---|---|
 | 仓库 | GitHub `awangs1986/pi-coffee-server`（Gitea 上的 `awangs/pi-coffee-server` 是它的镜像） |
-| 本会话分支 | `arena/01a0e8a8-pi-coffee-server`，从 `main` 的 `9734ce8` 拉出 |
+| 本会话分支 | `arena/01a0e8a8-pi-coffee-server`，从 `main` 的 `9734ce8` 拉出；2026-10-02 已把 main（`8a9bd1e`）合并进来 |
 | 代码现在在哪 | **GitHub main。** 本会话到 `e14550b` 为止的提交，已在 2026-09-29 随 `arena/01a0ed45-pi-coffee-server` 一起合并进 main（合并提交 `cbf9e07`）。之后 main 又多了约 50 个提交 |
 | 时间 | 本会话的提交都在 2026-09-29；本文整理于 2026-10-02 |
 
@@ -23,7 +23,8 @@
 | `a01c2c8` | 需求三（Diff 升级），见 ADR-0023 | ✅ |
 | `17fd1ac` | 复核后的修正：Codex 运行时「最近一轮」节流刷新；同时补记文档 | ✅ |
 | `e14550b` | 交接文档（详细版）。main 上后来给它加了一段说明，标为历史记录 | ✅ |
-| `00a6576`、`8d3b1ad` 和本次提交 | 交接文档的两次改写，以及本版 | ❌ 只在本会话分支 |
+| `00a6576`、`8d3b1ad`、`70a19ef` | 交接文档的两次改写，以及本版 | ❌ 只在本会话分支 |
+| `c79a4dd` 和之后的提交 | 把 main 合并进本分支，并按合并后的情况更新本文 | ❌ 只在本会话分支 |
 
 ## 沟通时间线
 
@@ -142,7 +143,7 @@ owner 要一份交接用的 md：
 - `52a4533`：「Close Web composer, Diff, auth, and LocalSend attachment loops」；
 - `5673e72`：LocalSend 传输回退和附件链接刷新等。
 
-**合并进 main。** 同一天由 Codex 合并进 main（合并提交 `cbf9e07`），合并时还做了评审。评审记录见 [arena ed45 merge review](https://github.com/awangs1986/pi-coffee-server/blob/main/docs/reviews/2026-09-29-arena-ed45-merge.md)。其中和本会话有关的修正有 3 处：
+**合并进 main。** 同一天由 Codex 合并进 main（合并提交 `cbf9e07`），合并时还做了评审。评审记录见 [ed45 合并评审](2026-09-29-arena-ed45-merge.md)。其中和本会话有关的修正有 3 处：
 1. **单文件 Diff（`change_file`）的安全问题。** 原来会接受 Git 通配符、magic pathspec 和目录路径，可能把隐藏的私有文件带出来。现在改成按字面匹配，并校验只能是单个文件。
 2. **GitHub 仓库登记的时序问题。** 登记完成得晚的话，会覆盖用户之后做的新选择。现在会检查草稿版本。
 3. **不支持的浏览器。** 原来会悄悄退回基础 Diff 渲染器，现在会提示一次。
@@ -167,10 +168,14 @@ owner 要一份交接用的 md：
 
 没改过的有：`src/host/github.ts`、ADR-0022、ADR-0023。
 
+### 12. 把 main 合并进本分支
+
+**owner：**「把main合并到当前分支」。2026-10-02 把 main（`8a9bd1e`）合并进本分支，合并提交是 `c79a4dd`。唯一的冲突在这份文档的开头：保留了本会话的沟通历程，同时采纳了 main 加的那句说明，指向 ed45 合并评审。合并后，除了这份文档，本分支的代码和 main 完全一致。
+
 ## 现状（2026-10-02）
 
 - **代码以 GitHub main（`8a9bd1e`）为准。** 本会话的功能都在 main 里。开发者抽查过 main：`turn_diff` 刷新、GitHub 仓库选择器和任务条的代码都在；`public/diff-view.js`、`src/host/github.ts`、ADR-0022、ADR-0023 和相关测试也都在。
-- **本会话分支落后 main 52 个提交，** 只多了交接文档的改写，**不要在这个分支上继续开发。**
+- **本会话分支已经合并了 main。** 除了这份交接文档，代码和 main 完全一致；main 可以直接快进到本分支。新的开发仍然建议从 main 开始。
 - **截图都不在仓库里，** 而且已经随沙箱重置丢失。需要时用文末的命令启动假数据预览，重新截图。
 
 ## 接手清单
@@ -180,7 +185,7 @@ owner 要一份交接用的 md：
 3. **补 ADR-0012。** 它还写着「GitHub 仍可作为后续发布/同步目的地」，缺一句指向 ADR-0022 的说明，main 上也没改。
 4. **对账矩阵第 21、24 行**（`docs/reviews/repository-unification-20260927.md`）：main 上没改，等 owner 决定怎么写。
 5. **Issue 记录。** 合并评审关联了 Gitea Issue #5（前端连续性）。本会话的过程和证据有没有记进去，需要向 owner 确认（开发用的沙箱访问不到 Gitea）。
-6. **这份文档要不要进 main。** main 上的旧版交接文档已经标为历史记录。如果要换成这一版，把本分支最新的文档提交合并或 cherry-pick 过去即可。
+6. **把这份文档合进 main（可选）。** main 上的旧版交接文档已经标为历史记录。本分支已经合并了 main，只多了交接文档的提交；确认后把 main 快进到本分支即可。按 AGENTS.md 的规定，先推 GitHub main，再把 Gitea main 快进到同一个提交。
 
 ## 和 owner 合作的方式
 
@@ -205,7 +210,7 @@ owner 要一份交接用的 md：
 | 输入框、Diff 面板、「最近一轮」接口、验收范围 | [Arena navigation](../spec/arena-navigation.md) |
 | GitHub 仓库的决定 | [ADR-0022](../adr/0022-github-work-projects.md)，以及 [Gitea workspaces](../spec/gitea-workspaces.md) 里的 GitHub 修订 |
 | 新 Diff 的决定和取舍 | [ADR-0023](../adr/0023-pierre-diff-renderer.md) |
-| 合并进 main 时的评审和修正 | [arena ed45 merge review](https://github.com/awangs1986/pi-coffee-server/blob/main/docs/reviews/2026-09-29-arena-ed45-merge.md) |
+| 合并进 main 时的评审和修正 | [ed45 合并评审](2026-09-29-arena-ed45-merge.md) |
 | `turn_diff` 事件 | [protocol](../protocol.md) |
 | GitHub 令牌配置示例 | `deploy/uservm/host.env.example` |
 | 主要测试 | `test/composer-diff.test.ts`、`test/github-forge.test.ts`、`test/github-projects-ui.test.ts`、`test/diff-view.test.ts`、`test/diff-file-http.test.ts`、`test/review-diff.test.ts`、`test/turn-changes.test.ts` |
