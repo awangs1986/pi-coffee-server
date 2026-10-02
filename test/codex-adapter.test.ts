@@ -2,7 +2,7 @@ import {HostSessionRegistry} from '../src/host/session.js';
 import { HostServer } from '../src/host/server.js';
 import { WebSocket } from 'ws';
 import { once } from 'node:events';
-import { mkdirSync, chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ interface Bench {
   codexHome: string;
   cliPath: string;
   factories: CodexSessionFactory[];
-  factory(overrides?: { approvalPolicy?: "never" | "on-request"; cwd?: string; mappingFile?: string }): CodexSessionFactory;
+  factory(overrides?: { approvalPolicy?: "never" | "on-request"; cwd?: string; mappingFile?: string; model?: string; reasoningEffort?: string }): CodexSessionFactory;
 }
 
 function bench(): Bench {
@@ -32,7 +32,7 @@ function bench(): Bench {
   return {
     root, cwd, codexHome, cliPath, factories,
     factory(overrides = {}) {
-      const factory = new CodexSessionFactory({ cwd: overrides.cwd ?? cwd, cliPath, codexHome, approvalPolicy: overrides.approvalPolicy ?? "never", mappingFile: overrides.mappingFile });
+      const factory = new CodexSessionFactory({ cwd: overrides.cwd ?? cwd, cliPath, codexHome, approvalPolicy: overrides.approvalPolicy ?? "never", mappingFile: overrides.mappingFile, model: overrides.model, reasoningEffort: overrides.reasoningEffort });
       factories.push(factory);
       return factory;
     },
@@ -107,6 +107,89 @@ describe("Codex app-server adapter", () => {
       expect(frame.current).toEqual({provider:'codex',id:'gpt-fake-mini'});
       expect(await factory.list()).toEqual([]);
     }finally{ws.close();await host.close();}
+  });
+
+  it.each([false, true])("retains the selected Codex model and effort across Host restart (prior turn: %s)", async priorTurn => {
+    const b = setup();
+    mkdirSync(b.cwd, { recursive: true });
+    const options = { model: 'gpt-fake-mini', reasoningEffort: 'low', mappingFile: join(b.root, 'bindings.json') };
+    const hosts: HostServer[] = [];
+    const sockets: WebSocket[] = [];
+    const open = async () => {
+      const host = new HostServer({ port: 0, token: 'model-restore', factory: b.factory(options) });
+      hosts.push(host); await host.start();
+      const socket = new WebSocket(`ws://127.0.0.1:${host.address().port}/host`, { headers: { authorization: 'Bearer model-restore' } });
+      sockets.push(socket);
+      const frames: any[] = [];
+      socket.on('message', raw => frames.push(JSON.parse(String(raw))));
+      const send = (frame: object) => socket.send(JSON.stringify({ v: 1, ...frame }));
+      const next = async (predicate: (frame: any) => boolean) => {
+        await expect.poll(() => frames.find(predicate), { timeout: 3000, message: 'Frame not received' }).toBeTruthy().catch(() => { throw new Error(JSON.stringify(frames)); });
+        return frames.splice(frames.findIndex(predicate), 1)[0];
+      };
+      await once(socket, 'open'); send({ type: 'open', sessionId: 'restore-settings' });
+      await next(frame => frame.type === 'opened');
+      return { host, socket, frames, send, next };
+    };
+    try {
+      const first = await open();
+      first.send({ type: 'set_model', provider: 'codex', id: 'gpt-fake', requestId: 'chosen-model' });
+      await first.next(frame => frame.type === 'ack' && frame.requestId === 'chosen-model');
+      first.send({ type: 'set_thinking', level: 'high', requestId: 'chosen-effort' });
+      await first.next(frame => frame.type === 'ack' && frame.requestId === 'chosen-effort');
+      first.send({ type: 'get_models' });
+      await first.next(frame => frame.type === 'models' && frame.current?.id === 'gpt-fake' && frame.thinkingLevel === 'high');
+      if (priorTurn) {
+        first.send({ type: 'prompt', text: 'before restart', requestId: 'before' });
+        await first.next(frame => frame.type === 'event' && frame.event.type === 'agent_settled');
+      }
+      first.socket.close(); await first.host.close(); hosts.splice(hosts.indexOf(first.host), 1);
+      const second = await open();
+      second.send({ type: 'get_models' });
+      expect(await second.next(frame => frame.type === 'models')).toMatchObject({
+        current: { provider: 'codex', id: 'gpt-fake' }, thinkingLevel: 'high',
+      });
+      second.send({ type: 'prompt', text: 'report model settings', requestId: 'after' });
+      await second.next(frame => frame.type === 'event' && frame.event.type === 'agent_settled');
+      expect(text(second.frames.filter(frame => frame.type === 'event').map(frame => frame.event))).toBe('model=gpt-fake;effort=high');
+    } finally {
+      sockets.forEach(socket => socket.close());
+      await Promise.all(hosts.map(host => host.close()));
+    }
+  }, 20000);
+
+  it('restores native model settings for existing threads without saved browser choices', async () => {
+    const b=setup(),first=b.factory({model:'gpt-fake',reasoningEffort:'high'});
+    const session=await first.create({sessionId:'native-settings'}),events=recorder(session);
+    await session.prompt('native selection');await events.until(settled);await first.close();
+    const resumed=await b.factory({model:'gpt-fake-mini',reasoningEffort:'low'}).create({sessionId:'native-settings'});
+    expect(await resumed.getModels()).toMatchObject({current:{id:'gpt-fake'},thinkingLevel:'high'});
+  });
+
+  it('keeps independent model choices through a context change and native thread rebind', async () => {
+    const b=setup(),first=b.factory({model:'gpt-fake-mini',reasoningEffort:'low'});
+    const alice=await first.create({sessionId:'settings-a'}),bob=await first.create({sessionId:'settings-b'});
+    await Promise.all([alice.setModel('codex','gpt-fake'),alice.setThinkingLevel('high')]);
+    await alice.setContextPreset!('maximum');
+    await bob.setModel('codex','gpt-custom-terra');await bob.setThinkingLevel('medium');
+    await first.close();
+    const again=b.factory({model:'gpt-fake-mini',reasoningEffort:'low'});
+    const restoredAlice=await again.create({sessionId:'settings-a'}),restoredBob=await again.create({sessionId:'settings-b'});
+    expect(await restoredAlice.getModels()).toMatchObject({current:{id:'gpt-fake'},thinkingLevel:'high',context:{preset:'maximum'}});
+    expect(await restoredBob.getModels()).toMatchObject({current:{id:'gpt-custom-terra'},thinkingLevel:'medium',context:{preset:'272k'}});
+  });
+
+  it('rejects an unsaved model choice and retains the previously confirmed selection', async () => {
+    const b=setup(),directory=join(b.root,'metadata'),factory=b.factory({mappingFile:join(directory,'bindings.json')});
+    const session=await factory.create({sessionId:'settings-write-failure'});
+    const original=await session.getModels();
+    renameSync(directory,directory+'-retained');writeFileSync(directory,'Simulated unavailable metadata directory');
+    await expect(session.setModel('codex','gpt-fake-mini')).rejects.toThrow();
+    expect((await session.getModels()).current).toEqual(original.current);
+    rmSync(directory);renameSync(directory+'-retained',directory);
+    await session.setModel('codex','gpt-fake-mini');await factory.close();
+    const restored=await b.factory({mappingFile:join(directory,'bindings.json')}).create({sessionId:'settings-write-failure'});
+    expect((await restored.getModels()).current?.id).toBe('gpt-fake-mini');
   });
 
   it("discovers and invokes enabled native Skills through authenticated Host WS",async()=>{
