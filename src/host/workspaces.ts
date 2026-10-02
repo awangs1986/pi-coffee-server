@@ -392,7 +392,11 @@ export class Workspaces {
     const old={...c};
     c.takeoverSegments=[...(c.takeoverSegments??[]),{id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
     c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';
-    try{await this.save();}catch(error){Object.assign(c,old);throw error;}
+    try{await this.save();}catch(error){
+      // Restore the whole record: assigning old fields leaves newly introduced
+      // native bindings and history segments behind after a failed first switch.
+      this.state.conversations[this.state.conversations.indexOf(c)]=old;throw error;
+    }
   },()=>this.conversationLock(id));}
   async setNativeBinding(id:string,binding:NativeBinding) {return this.mutate(async()=>{
     const c=this.conversation(id);
