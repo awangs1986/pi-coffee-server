@@ -19,7 +19,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
-  async close(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
+  async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
+  async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
   private codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}));this.codexFactories.set(generation,factory);}return factory;}
   async capabilities(id:string){
     const task=await this.options.workspaces.lookup(id);
