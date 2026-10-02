@@ -77,6 +77,8 @@ export interface AgentSession {
 
 export interface AgentSessionFactory {
   prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
+  /** Begin shutdown by cancelling takeover preparation; source sessions remain recoverable until closed. */
+  cancelTakeovers?(): Promise<void>;
   close?(): Promise<void>;
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
