@@ -56,8 +56,12 @@ MCP/codemode and experimental autonomous Handoff are not enabled by this update.
    agent directory; it does not change PATH, private accounts or running services.
 4. The terminal's additional Antigravity plugin may move to tested 0.9.0. Legacy
    pi-lens 4.3.0 still rejects Pi TUI 1.0 in normal peer resolution. Do not force
-   it or load duplicate LSP providers; retain the old package for rollback and
-   select Coffee LSP for the new runtime.
+   it or load duplicate LSP providers. Remove the legacy package and registration
+   with `pi remove npm:pi-lens` and select Coffee LSP for the new runtime. The
+   owner confirmed retirement on 2026-10-02; native Pi RPC verification after
+   removal confirmed Coffee LSP 0.4.5 still loads once without extension errors.
+   Preserve configuration/CLI backups and session data; rollback must not
+   silently reintroduce Lens.
 5. Before production activation, query every routed scope for active turns,
    queued input and workspace operations. This deployment conversation counts.
    Explain the restart impact and obtain the owner's consent. Never kill all
