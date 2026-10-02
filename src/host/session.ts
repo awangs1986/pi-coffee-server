@@ -25,6 +25,8 @@ export interface HostSessionOptions {
   idleTimeoutMs?: number;
   onIdle?: (session: HostSession) => void;
   onHistory?: (id:string,history:PiHistory)=>Promise<void>;
+  /** Record each Host-started turn before native delivery, including queued turns. */
+  onRun?: (id:string,state:"running"|"interrupted",requestId?:string)=>Promise<void>;
   /** Called when a run starts or settles (the conversation list's running flag / counts change). */
   onLifecycle?: (session: HostSession) => void;
   /**
@@ -55,6 +57,7 @@ export class HostSession {
   private readonly idleTimeoutMs: number;
   private readonly onIdle?: (session: HostSession) => void;
   private readonly onHistory?: (id:string,history:PiHistory)=>Promise<void>;
+  private readonly onRun?: HostSessionOptions["onRun"];
   private historyExport:Promise<void>=Promise.resolve();
   private readonly onLifecycle?: (session: HostSession) => void;
   private readonly sinks = new Set<SessionSink>();
@@ -87,7 +90,7 @@ export class HostSession {
       deliver:async(text,images,promote)=>{
         if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
         if(promote&&this.state.isStreaming){await this.ready().steer(text,images);return;}
-        const requestId=randomUUID();this.reservePrompt(requestId,true);await this.prompt(requestId,text,images);
+        const requestId=randomUUID();await this.preparePrompt(requestId,true);await this.prompt(requestId,text,images);
       },changed:()=>{for(const sink of this.sinks)sink.send(this.queueFrame);this.onLifecycle?.(this);}
     });
     this.factory = options.factory;
@@ -95,6 +98,7 @@ export class HostSession {
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
     this.onIdle = options.onIdle;
     this.onHistory=options.onHistory;
+    this.onRun=options.onRun;
     this.onLifecycle = options.onLifecycle;
     this.externalPollMs = Math.max(0, options.externalPollMs ?? 3000);
   }
@@ -189,7 +193,11 @@ export class HostSession {
   get isTransitioning():boolean {return this.contextChanging||this.compacting;}
   get isBusy():boolean {return this.executionBusy||this.inputs.items.length>0;}
   get wasInterrupted(): boolean { return this.interrupted; }
-  releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
+  async preparePrompt(requestId: string,fromQueue=false): Promise<void> {
+    this.reservePrompt(requestId,fromQueue);
+    try {await this.onRun?.(this.id,"running",requestId);}
+    catch(error){if(this.activeRequestId===requestId)this.activeRequestId=undefined;throw error;}
+  }
 
 
   reservePrompt(requestId: string,fromQueue=false): void {
@@ -208,6 +216,7 @@ export class HostSession {
       await this.pi.prompt(text, images);
     } catch (error) {
       this.activeRequestId = undefined;
+      await this.onRun?.(this.id,"interrupted").catch(()=>undefined);
       throw error;
     }
   }
@@ -497,7 +506,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(private options: { onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -528,6 +537,7 @@ export class HostSessionRegistry {
       onIdle: (idle) => void this.retire(idle),
       onLifecycle: (session) => this.notifyChange(session),
       onHistory:this.options.onHistory,
+      onRun:this.options.onRun,
     });
     this.sessions.set(session.id, session);
     return session;

@@ -1293,6 +1293,75 @@ describe("Host WebSocket seam", () => {
     }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
+  it("starts a queued turn with its own Diff baseline after the browser disconnects",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-queued-turn-http-"));
+    const factory=new FakeFactory();const {workspaces,conversation}=await workspaceConversation(root,"queued-turn");
+    const pi=await factory.create({sessionId:conversation.id}) as FakePiSession;
+    pi.holdAfterDelta=true;
+    pi.onPrompt=async text=>{await writeFile(join(conversation.cwd,text+".txt"),text+" edit\n");};
+    server=new HostServer({port:0,host:"127.0.0.1",token:"queued-turn",factory,workspaces});await server.start();
+    const port=server.address().port;
+    const changes=(scope:string)=>fetch(`http://127.0.0.1:${port}/api/workspace`,{method:"POST",headers:{authorization:"Bearer queued-turn","content-type":"application/json"},body:JSON.stringify({action:"changes",id:conversation.id,scope})});
+    const socket=new WebSocket(`ws://127.0.0.1:${port}/host`,{headers:{authorization:"Bearer queued-turn"}});
+    try{
+      await once(socket,"open");const frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+      expect(await frames.next()).toMatchObject({type:"opened",sessionId:conversation.id});
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"first",text:"first"}));
+      await waitFor(()=>pi.history.some(entry=>entry.kind==="user"&&entry.text==="first"));
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"second",mode:"follow_up",text:"second"}));
+      for(;;){const frame=await frames.next();if(frame.type==="queue_state"&&frame.items.some(item=>item.text==="second"))break;}
+      socket.close();await once(socket,"close");
+      pi.finish("first");
+      await waitFor(()=>pi.history.some(entry=>entry.kind==="user"&&entry.text==="second"));
+      const response=await changes("turn");expect(response.status).toBe(200);
+      const turn=await response.json() as {running:boolean;files:Array<{path:string}>;patch:string};
+      expect(turn.running).toBe(true);
+      expect(turn.files.map(file=>file.path)).toEqual(["second.txt"]);
+      expect(turn.patch).toContain("+second edit");expect(turn.patch).not.toContain("first edit");
+      const branch=await (await changes("branch")).json() as {files:Array<{path:string}>};
+      expect(branch.files.map(file=>file.path)).toEqual(["first.txt","second.txt"]);
+    }finally{socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it("pauses a failed queued turn without leaving its Diff marked running or replaying it",async()=>{
+    const root=mkdtempSync(join(tmpdir(),"coffee-failed-queued-turn-"));
+    const factory=new FakeFactory();const {workspaces,conversation}=await workspaceConversation(root,"failed-queued-turn");
+    const pi=await factory.create({sessionId:conversation.id}) as FakePiSession;
+    pi.holdAfterDelta=true;
+    let rejected=0;
+    pi.onPrompt=async text=>{
+      if(text==="second"){rejected++;throw new Error("Native delivery failed");}
+      await writeFile(join(conversation.cwd,"first.txt"),"first edit\n");
+    };
+    server=new HostServer({port:0,host:"127.0.0.1",token:"failed-turn",factory,workspaces});await server.start();
+    const port=server.address().port;
+    const socket=new WebSocket(`ws://127.0.0.1:${port}/host`,{headers:{authorization:"Bearer failed-turn"}});
+    try{
+      await once(socket,"open");const frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+      expect(await frames.next()).toMatchObject({type:"opened",sessionId:conversation.id});
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"first",text:"first"}));
+      await waitFor(()=>pi.history.some(entry=>entry.kind==="user"&&entry.text==="first"));
+      socket.send(encodeFrame({v:1,type:"prompt",requestId:"second",mode:"follow_up",text:"second"}));
+      for(;;){const frame=await frames.next();if(frame.type==="queue_state"&&frame.items.some(item=>item.text==="second"))break;}
+      pi.finish("first");
+      for(;;){const frame=await frames.next();if(frame.type==="queue_state"&&frame.items[0]?.status==="failed")break;}
+      const response=await fetch(`http://127.0.0.1:${port}/api/workspace`,{method:"POST",headers:{authorization:"Bearer failed-turn","content-type":"application/json"},body:JSON.stringify({action:"changes",id:conversation.id,scope:"turn"})});
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({running:false,files:[],patch:""});
+      // Reopening restores the failed row, without implicitly retrying uncertain delivery.
+      socket.close();await once(socket,"close");
+      const again=new WebSocket(`ws://127.0.0.1:${port}/host`,{headers:{authorization:"Bearer failed-turn"}});
+      try{
+        await once(again,"open");const replay=new FrameQueue(again);
+        again.send(encodeFrame({v:1,type:"open",sessionId:conversation.id}));
+        for(;;){const frame=await replay.next();if(frame.type==="queue_state"){expect(frame.items).toMatchObject([{text:"second",status:"failed"}]);break;}}
+        expect(rejected).toBe(1);
+      }finally{again.close();}
+    }finally{socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
   it('creates a Chat directory idempotently through HTTP and grants its scoped inbox',async()=>{
     const root=mkdtempSync(join(tmpdir(),'coffee-chat-api-')),factory=new FakeFactory(),workspaces=new Workspaces(join(root,'projects'));
     const transfer=new TransferServer({host:'127.0.0.1',port:0,workdir:root,workspaces});await transfer.start();

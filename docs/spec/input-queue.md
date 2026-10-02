@@ -48,3 +48,13 @@ Acceptance covers scoped WebSocket mutations, stale revisions, preserved images,
 FIFO delivery, failure without automatic replay, cancellation/reconnection,
 separate editor drafts and the Pi/Codex adapter delivery paths. The compact
 queue shows roughly three rows before scrolling; it does not expand the page.
+
+## Latest-turn bookkeeping
+
+A pending instruction delivered as a new turn uses the same Host admission path
+as an immediate prompt. Before native delivery, Host records the run and captures
+the Work checkout baseline for the latest-turn Diff. Previous turns' edits remain
+in Branch Diff but are excluded from the new turn's Diff, even when no browser
+is attached. A native delivery failure marks the run interrupted while the queue
+retains the instruction for explicit confirmation. Inserting an instruction into
+an already streaming turn uses native steering and keeps that turn's baseline.
