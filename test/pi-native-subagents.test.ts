@@ -33,7 +33,7 @@ it('uses native subagents to run a matching Pi child and exposes active/settled 
   const launched=await rpc('spawn',{agent:'coffee-probe',task:'Report the exact installed runtime version.',async:true});
   expect(launched.data.success,JSON.stringify(launched.data)).toBe(true);
   await expect.poll(async()=>{const r=await rpc('status');return r.data?.data?.asyncSnapshot?.runs?.some((run:any)=>run.state==='complete');},{timeout:30000,interval:500}).toBe(true);
-  expect(requests.flatMap(r=>r.messages).filter((m:any)=>m.role==='tool').map((m:any)=>m.content).join('\n')).toContain('ACTUAL_CHILD_PI=0.99.1');
+  expect(requests.flatMap(r=>r.messages).filter((m:any)=>m.role==='tool').map((m:any)=>m.content).join('\n')).toContain('ACTUAL_CHILD_PI=1.0.0');
   await c.prompt('/coffee-workspace-jobs 00000000-0000-4000-8000-000000000003');
   const jobs=(await c.getEntries()).entries.filter((e:any)=>e.type==='custom' && e.customType==='coffee-workspace-jobs').at(-1) as any;
   expect(jobs.data).toMatchObject({known:true,active:0});

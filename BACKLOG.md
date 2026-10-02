@@ -446,3 +446,5 @@ defines user-scoped persistence and the strict separation from task execution id
   frame budget. Browser and protocol now use the same 1 MiB envelope; rejected
   oversized input and queued edits preserve drafts. The private fixture is not
   committed or sent to a model.
+
+- [GitHub Server #25](https://github.com/awangs1986/pi-coffee-server/issues/25): Pi 1.0.0 and the reviewed independent plugin combination; see docs/deployment/pi-100-upgrade.md. Production activation remains separate.
