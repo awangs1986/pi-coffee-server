@@ -348,6 +348,72 @@ describe("Host WebSocket seam", () => {
     second.close();
   });
 
+  it("resolves capabilities before taking the reconnect history and replay snapshot", async () => {
+    const factory = new FakeFactory();
+    server = new HostServer({ port: 0, host: "127.0.0.1", factory });
+    await server.start();
+    const first = await connect(server.address().port), initial = new FrameQueue(first);
+    first.send(encodeFrame({ v: 1, type: "open" }));
+    const opened = await initial.next();
+    if (opened.type !== "opened") throw new Error("expected opened");
+    await initial.next();
+    const pi = factory.sessions.get(opened.sessionId)!;
+    pi.holdAfterDelta = true;
+    first.close(); await once(first, "close");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let resolving = false;
+    Object.assign(factory, { capabilities: async () => { resolving = true; await gate; return {}; } });
+    const second = await connect(server.address().port), frames = new FrameQueue(second);
+    second.send(encodeFrame({ v: 1, type: "open", sessionId: opened.sessionId }));
+    await waitFor(() => resolving);
+    await pi.prompt("during capability lookup");
+    release();
+    expect(await frames.next()).toMatchObject({ type: "opened", state: { isStreaming: true } });
+    expect(await frames.next()).toMatchObject({ type: "history", entries: [{ text: "during capability lookup" }] });
+    expect(await frames.next()).toMatchObject({ type: "event", event: { type: "agent_start" } });
+    expect(await frames.next()).toMatchObject({ type: "event", event: { assistantMessageEvent: { delta: "echo: during capability lookup" } } });
+    second.close();
+  });
+
+  it("sends the in-flight replay before slow transfer preparation can admit newer live events", async () => {
+    const factory = new FakeFactory();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let block = false, preparing = false;
+    const transfer = {
+      issueToken: () => "test-token", publicUrl: () => "http://127.0.0.1:53317",
+      inbox: async () => { if (block) { preparing = true; await gate; } return "/test-inbox"; },
+      limits: { maxFileBytes: 1024, maxBatchBytes: 1024 },
+    } as unknown as TransferServer;
+    server = new HostServer({ port: 0, host: "127.0.0.1", factory, transfer });
+    await server.start();
+    const first = await connect(server.address().port), initial = new FrameQueue(first);
+    first.send(encodeFrame({ v: 1, type: "open" }));
+    const opened = await initial.next();
+    if (opened.type !== "opened") throw new Error("expected opened");
+    await initial.next(); await initial.next();
+    const pi = factory.sessions.get(opened.sessionId)!;
+    pi.holdAfterDelta = true;
+    await pi.prompt("in flight");
+    first.close(); await once(first, "close");
+    block = true;
+    const second = await connect(server.address().port), frames = new FrameQueue(second);
+    second.send(encodeFrame({ v: 1, type: "open", sessionId: opened.sessionId }));
+    await waitFor(() => preparing);
+    pi.finish("in flight");
+    release();
+    expect(await frames.next()).toMatchObject({ type: "opened" });
+    expect(await frames.next()).toMatchObject({ type: "history" });
+    const events: ServerFrame[] = [];
+    while (events.length < 4) {
+      const frame = await frames.next();
+      if (frame.type === "event") events.push(frame);
+    }
+    expect(events.map(frame => frame.type === "event" ? frame.cursor : -1)).toEqual([1, 2, 3, 4]);
+    second.close();
+  });
+
   it.each([
     { label: "skill arguments", suffix: "\n\n帮我梳理这个项目。\n先看目录", expected: "帮我梳理这个项目。 先看目录" },
     { label: "skill only", suffix: "\n", expected: "/skill:story" },
