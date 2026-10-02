@@ -657,6 +657,13 @@ function splitUploadedFilesText(rawText) {
   return { text: body, files };
 }
 
+function historyDisplayEntry(item) {
+  if(item.kind!=='tool')return {kind:item.kind,text:item.text||''};
+  // Authoritative evidence is display-only. The disposable cache uses name/result below.
+  return {kind:'tool',failure:Boolean(item.isError),text:[item.isError?'错误':null,item.name,item.result,
+    item.args?JSON.stringify(item.args,null,2):null,item.diff].filter(Boolean).join('\n')};
+}
+
 function renderHistory(frame) {
   resetThread();
   historyBatch=document.createDocumentFragment();
@@ -668,15 +675,16 @@ function renderHistory(frame) {
   if(historyPrefix.length){
     const older=el('details','history-older'),summary=el('summary','',`更早的 ${historyPrefix.length} 条记录`),body=el('div');
     older.append(summary,body);historyBatch.append(older);
-    const snapshot=createConversationPreview(historyPrefix,0);
-    older.addEventListener('toggle',()=>{if(older.open&&!body.childNodes.length)renderConversationPreview(body,snapshot,{cached:false});});
+    older.addEventListener('toggle',()=>{
+      if(older.open&&!body.childNodes.length)renderConversationPreview(body,{entries:source.slice(0,-40).map(historyDisplayEntry)},{cached:false});
+    });
   }
   try {
   if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
   for (const item of source.slice(-40)) {
     // Enormous messages and tool diffs use bounded text expansion rather than a blocking Markdown/LCS pass.
     if((item.kind==='tool' && ((item.result||'').length>8000 || JSON.stringify(item.args||{}).length>8000 || (item.diff||'').length>8000)) || (item.text||'').length>8192){
-      const normalized=createConversationPreview([{k:item.kind,text:item.text,name:item.name,result:item.result}],0).entries[0];
+      const normalized=historyDisplayEntry(item);
       if(normalized){const entry={k:item.kind,text:item.text,name:item.name,result:item.result,done:true};entry.node=conversationPreviewNode(normalized);entries.push(entry);appendNode(entry.node);}
       if(item.kind==='user')lastUserText=item.text||lastUserText;
       continue;
@@ -1496,7 +1504,9 @@ function handleFrame(frame, ws) {
       const rejectedPrompt=promptOutbox.get(frame.requestId);
       if(rejectedPrompt){rejectedPrompt.uncertain=true;rejectedPrompt.reason='请求返回错误：'+frame.code;renderUncertainPrompts();}
       if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
-      if(!opened&&pendingOpenId&&activeId)invalidatePreview(activeId);
+      // A transient native-open failure does not make the cached transcript invalid.
+      // Identity, binding and lifecycle changes still invalidate it at their own boundaries.
+      if(!opened&&pendingOpenId&&activeId&&frame.code!=='operation_failed')invalidatePreview(activeId);
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
       if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
       if (!opened || frame.code === 'not_open' || frame.code === 'already_open') pendingOpenId = null;

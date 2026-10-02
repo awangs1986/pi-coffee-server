@@ -14,12 +14,14 @@ function displayEntry(entry) {
   return {
     kind: entry?.kind === 'user' || entry?.kind === 'assistant' || entry?.kind === 'tool' ? entry.kind : 'note',
     text: typeof entry?.text === 'string' ? entry.text : '',
+    failure: entry?.failure === true,
   };
 }
 
 function previewNode(entry, document, isActive = () => true) {
   const node = document.createElement('div');
   node.className = entry.kind === 'user' || entry.kind === 'assistant' ? `msg ${entry.kind}` : 'note';
+  if (entry.failure) node.classList.add('failure');
   node.dataset.previewKind = entry.kind;
   const body = document.createElement('div');
   body.className = entry.kind === 'user' ? 'body md text' : 'body md';

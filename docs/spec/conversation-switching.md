@@ -29,11 +29,17 @@ stays disabled until current history arrives. No outgoing DOM serialization or
 whole-transcript Markdown/diff rendering is on the switching path. Cached entries
 are not consumed on display, so rapid A/B/A switches before synchronization do not
 lose the preview.
+If native opening temporarily fails, keep the labelled readable snapshot and
+show the error while sending remains disabled. Identity, binding and lifecycle
+invalidation still removes snapshots as described below.
 
 Authoritative history initially renders the latest 40 entries; earlier entries
 are available under “更早的 … 条记录” using the same safe paged text view. Very large
 historical Markdown/tool outputs use bounded plain-text expansion to avoid an
 unbounded formatting/diff pass. New live events retain the normal native renderer.
+Authoritative tool arguments and patches remain readable through that expansion,
+including earlier-history pages and tool error state. These display-only fields
+are excluded from disposable snapshots.
 
 Reload restores a persisted snapshot only after `/auth/me` verifies the identity.
 A cold first-ever conversation still needs Host history. Disk reads, identity,
