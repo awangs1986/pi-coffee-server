@@ -716,6 +716,25 @@ it('keeps an unanswered dialog and its text when the socket cannot send',async()
  expect(input.value).toBe('Keep this answer');
  expect(document.querySelector('#thread')!.textContent).not.toContain('已回答：');
 });
+it('offers native choices without selecting or submitting a default answer',async()=>{
+ const app=await setup(),socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'required-question',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'required-question',entries:[]});
+ socket.receive({type:'event',sessionId:'required-question',cursor:1,event:{type:'native_request',id:'required-q',method:'input',title:'Choose engine',required:true,options:['Codex','Pi','Both']}});
+ const choices=[...document.querySelectorAll<HTMLButtonElement>('#ui-options button')];
+ expect(choices.map(button=>button.textContent)).toEqual(['Codex','Pi','Both']);
+ expect(document.querySelector('#ui-options')!.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector<HTMLInputElement>('#ui-input')!.value).toBe('');
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();await vi.advanceTimersByTimeAsync(60000);
+ expect(app.frames.some(frame=>frame.type==='ui_response')).toBe(false);
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(false);
+ choices[1].click();expect(document.querySelector<HTMLInputElement>('#ui-input')!.value).toBe('Pi');
+ expect(app.frames.some(frame=>frame.type==='ui_response')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ expect(app.frames.filter(frame=>frame.type==='ui_response')).toEqual([expect.objectContaining({id:'required-q',value:'Pi'})]);
+ expect(choices.every(button=>button.disabled)).toBe(true);
+ expect(document.querySelector<HTMLInputElement>('#ui-input')!.disabled).toBe(true);
+});
 it('waits for answer acknowledgment and keeps rejected answers available',async()=>{
  const app=await setup();const socket=app.sockets.at(-1);
  socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});

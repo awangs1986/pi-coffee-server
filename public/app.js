@@ -1672,7 +1672,10 @@ function rememberUiDraft(){
   const key=uiDraftKey(uiCurrent);uiDrafts.delete(key);uiDrafts.set(key,value);
   while(uiDrafts.size>10)uiDrafts.delete(uiDrafts.keys().next().value);
 }
-function uiSending(value){ui.uiOk.disabled=ui.uiNo.disabled=ui.uiCancel.disabled=value;}
+function uiSending(value){
+  ui.uiOk.disabled=ui.uiNo.disabled=ui.uiCancel.disabled=ui.uiInput.disabled=ui.uiEditor.disabled=value;
+  ui.uiOptions.querySelectorAll('button').forEach(button=>{button.disabled=value;});
+}
 function unconfirmedUiAnswers(){
   if(!pendingUiAnswers.size)return;
   pendingUiAnswers.clear();uiSending(false);
@@ -1757,7 +1760,8 @@ function showNextUiDialog() {
   ui.uiTitle.textContent = req.title || ({ select: '请选择', confirm: '请确认', input: '请输入', editor: '请编辑' })[req.method];
   ui.uiText.textContent = req.message || '';
   ui.uiText.classList.toggle('hidden', !req.message);
-  ui.uiOptions.classList.toggle('hidden', req.method !== 'select');
+  const inputChoices=req.method==='input'&&Array.isArray(req.options)&&req.options.length>0;
+  ui.uiOptions.classList.toggle('hidden', req.method !== 'select'&&!inputChoices);
   ui.uiInput.classList.toggle('hidden', req.method !== 'input');
   ui.uiEditor.classList.toggle('hidden', req.method !== 'editor');
   ui.uiNo.classList.toggle('hidden', req.method !== 'confirm');
@@ -1765,13 +1769,16 @@ function showNextUiDialog() {
   ui.uiOk.textContent = req.method === 'confirm' ? '是' : '确定';
   ui.uiMeta.textContent = (req.timeout ? `超时 ${Math.round(req.timeout / 1000)} 秒后按默认处理 · ` : '') + (uiQueue.length ? `还有 ${uiQueue.length} 个请求排队` : '');
   ui.uiOptions.innerHTML = '';
-  if (req.method === 'select') {
+  if (req.method === 'select'||inputChoices) {
     (req.options || []).forEach((option, index) => {
       const button = el('button', 'ui-option', String(option));
       button.type = 'button';
       button.setAttribute('role', 'option');
-      button.addEventListener('click', () => answerUi({ value: String(option) }));
-      if (index === 0) setTimeout(() => button.focus(), 0);
+      button.addEventListener('click', () => {
+        if(inputChoices){ui.uiInput.value=String(option);rememberUiDraft();ui.uiInput.focus();}
+        else answerUi({ value: String(option) });
+      });
+      if (index === 0&&!inputChoices) setTimeout(() => button.focus(), 0);
       ui.uiOptions.appendChild(button);
     });
   }
@@ -1782,6 +1789,7 @@ function showNextUiDialog() {
 }
 function answerUi(answer) {
   if (!uiCurrent || [...pendingUiAnswers.values()].some(p=>p.question.id===uiCurrent.id)) return;
+  if(uiCurrent.required&&!answer.cancelled&&(typeof answer.value!=='string'||!answer.value.trim())){ui.uiMeta.textContent='请选择一个选项或输入回答，再点击确定。';return;}
   rememberUiDraft();
   const request=requestId('ui');
   const pending={question:{...uiCurrent},answer,sessionId:activeId,key:uiDraftKey(uiCurrent)};

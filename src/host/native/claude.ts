@@ -135,7 +135,7 @@ export class ClaudeSession implements AgentSession {
   async getStats():Promise<never>{throw new Error("Native statistics unavailable");}
   async compact(){throw new Error("Native compaction unavailable");}
   async respondUi(response:UiResponse){
-    if(this.questions.answer(response))return;
+    if(await this.questions.answer(response))return;
     const pending=this.requests.get(response.id);if(!pending)throw new Error("Native request is no longer pending");
     const behavior=response.cancelled?"deny":response.value;
     if(behavior!=="allow" && behavior!=="deny")throw new Error("Unsupported native decision");

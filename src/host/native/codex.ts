@@ -97,7 +97,7 @@ export class CodexSession implements AgentSession {
   async getStats():Promise<never>{throw new Error("Native statistics unavailable");}
   async compact(){throw new Error("Native compaction unavailable");}
   async respondUi(response:UiResponse){
-    if(this.questions.answer(response))return;
+    if(await this.questions.answer(response))return;
     const request=this.requests.get(response.id);if(!request)throw new Error("Native request is no longer pending");
     const decision=response.cancelled?"cancel":response.value;
     if(!["accept","decline","cancel"].includes(decision??""))throw new Error("Unsupported native decision");

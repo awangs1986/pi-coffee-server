@@ -334,6 +334,30 @@ An expired question reports failure and returns a non-secret typed answer to the
 composer so the user can explicitly send it as a message. Error/disconnect feedback
 does not mark the ongoing model turn as completed.
 
+Codex Web sessions enable native `request_user_input` in Default mode. Structured
+questions use `native_request {method:"input", required:true, options:[...]}`;
+labels are clickable suggestions beside a free-text input. No option is selected
+or submitted by default. Choosing a suggestion fills the input; explicit submit
+sends it. Both Browser and Host reject a blank required answer. Controls are
+disabled while that answer awaits acknowledgment, and rejection permits retry.
+
+Legacy `request_user_input_async` emits an asynchronous agent-message item, not
+a native question RPC. Its immediate `accepted` result is not a user answer.
+Host requests native interruption, collects question items already in flight,
+and waits for confirmed pause before showing the group. The logical run remains
+waiting across browser reconnects, including while the native thread is idle;
+queued work cannot advance. Once every question has an explicit answer, Host
+resumes the same native thread with the correlated answer message. Explicit
+cancellation ends the wait without selecting a value. Native failure is shown
+as failure, not as a successful pause. Host/process restart does not silently
+replay questions or inferred answers. Normal new questions use the blocking
+native tool; the compatibility pause is verified against the installed CLI.
+
+`node scripts/probe-codex-questions.mjs /absolute/path/to/codex` verifies both
+native tool paths with an isolated Codex home and a loopback model fixture.
+It checks that no next model request or completion occurs before an explicit
+answer, and that blank input cannot bypass the wait. No real account is used.
+
 Conversation history is assembled in a detached document fragment and attached
 once; layout measurements must not grow per historical message. This prevents
 repeated synchronous layout while loading long conversations.
