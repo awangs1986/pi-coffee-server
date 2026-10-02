@@ -388,7 +388,7 @@ export class HostServer {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
         : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history)} : {}) });
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history),onRun:async(id,state,requestId)=>{await scope.workspaces!.markRun(id,state,requestId);}} : {}) });
       const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
@@ -869,9 +869,7 @@ class HostSocket implements SessionSink {
       }
     }
     const session=this.session;
-    session.reservePrompt(frame.requestId);
-    try {await this.workspaces?.markRun(session.id,"running",frame.requestId);}
-    catch(e){session.releasePrompt(frame.requestId);throw e;}
+    await session.preparePrompt(frame.requestId);
     // Acknowledgement means the command crossed the seam and was accepted;
     // lifecycle events continue asynchronously after it.
     this.send({ v: 1, type: "ack", operation: "prompt", requestId: frame.requestId });
@@ -880,7 +878,6 @@ class HostSocket implements SessionSink {
     // first Pi event synchronously.
     setImmediate(() => {
       void session.prompt(frame.requestId, frame.text, frame.images).catch((error) => {
-        void this.workspaces?.markRun(session.id,"interrupted").catch(()=>undefined);
         this.send({
           v: 1,
           type: "error",
