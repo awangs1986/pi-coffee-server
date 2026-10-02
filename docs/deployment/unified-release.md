@@ -36,6 +36,15 @@ PI_COFFEE_PROVIDER=openrouter
 PI_COFFEE_MODEL=meta/muse-spark-1.3-contributor
 ```
 
+When the allowed model list or default provider selects `antigravity`, Host
+explicitly loads the pinned `pi-antigravity` package. `--no-extensions` keeps
+ambient plugin copies disabled; it must not omit this approved model provider.
+`PI_COFFEE_ANTIGRAVITY=off` disables this automatic provider root. An explicit
+`PI_COFFEE_EXTENSIONS` list still replaces all defaults and must name any required
+provider package; `off` disables it too. Host children default
+`ANTIGRAVITY_NO_EXTRA_TOOLS=1`, using this package for model/auth registration.
+Native credentials stay in the Pi agent directory. Muse remains the default.
+
 Only approved models available in the native registry are offered. Missing native
 registration/authentication is not replaced with a fabricated model definition.
 This governs Host-managed model selection, not standalone CLI installations or
