@@ -124,8 +124,8 @@ export function renderReviewFile(file,patch,layout='unified',{open=true}={}) {
   const name=el('code','review-file-name',file.path);name.title=file.path;
   summary.append(chevron,name,fileCounts(file));section.append(summary);
   const rows=patchRows(patch);
-  if(!rows.length){section.append(el('p','review-file-empty','该文件没有可显示的文本 Diff（可能为二进制、重命名或内容超限）。'));return section;}
-  const scroll=el('div','review-file-scroll'),table=el('table','review-code');table.dataset.layout=layout;table.setAttribute('aria-label',file.path+' Diff');
+  if(!rows.length){section.append(el('p','review-file-empty','该文件没有可显示的文本改动（可能为二进制、重命名或内容超限）。'));return section;}
+  const scroll=el('div','review-file-scroll'),table=el('table','review-code');table.dataset.layout=layout;table.setAttribute('aria-label',file.path+' 改动');
   // Fixed-layout Split takes column widths from the first row, which may be a full-width hunk row: pin them.
   if(layout==='split'){const columns=el('colgroup','');for(const kind of ['num','code','num','code'])columns.append(el('col','review-col-'+kind));table.append(columns);}
   const body=el('tbody','');table.append(body);scroll.append(table);section.append(scroll);

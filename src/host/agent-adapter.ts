@@ -40,6 +40,7 @@ export type AgentSessionListing = Omit<SessionSummary, "running">;
  * history stay inside the selected Adapter.
  */
 export interface AgentModels {
+  context?: import("../shared/protocol.js").ContextSettings;
   models: ModelChoice[];
   current: { provider: string; id: string; source?: "native" | "relay" } | null;
   thinkingLevel: string;
@@ -52,6 +53,7 @@ export interface AgentSession {
   /** Interrupt a running turn after its current tool calls. */
   steer(text: string, images?: ImageInput[]): Promise<void>;
   /** Queue a message for after the current run finishes. */
+  validateFollowUp?(text:string):Promise<void>;
   followUp(text: string, images?: ImageInput[]): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<SessionState>;
@@ -61,6 +63,7 @@ export interface AgentSession {
   getModels(): Promise<AgentModels>;
   setModel(provider: string, id: string): Promise<void>;
   setThinkingLevel(level: string): Promise<void>;
+  setContextPreset?(preset: import("../shared/protocol.js").ContextPreset): Promise<void>;
   getCommands(): Promise<CommandInfo[]>;
   /** Extensions exposed by the selected engine (Pi only in this release). */
   getExtensions(): Promise<ExtensionInfo[]>;
@@ -73,13 +76,15 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
+  prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   close?(): Promise<void>;
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
   /** Read native choices without creating a conversation or running a turn. */
+  commandCatalog?(engine: "pi" | "codex"): Promise<CommandInfo[]>;
   modelCatalog?(engine: "pi" | "codex"): Promise<AgentModels>;
   /** Start (or resume, when the store already has it) the session with this id. */
-  create(options: { sessionId: string; requireExisting?: boolean }): Promise<AgentSession>;
+  create(options: { sessionId: string; workspaceSessionId?: string; requireExisting?: boolean }): Promise<AgentSession>;
   /** Conversations in the durable store, newest first. */
   list(): Promise<AgentSessionListing[]>;
   /** Remove a conversation from the durable store. Resolves false when unknown. */

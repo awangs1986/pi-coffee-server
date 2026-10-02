@@ -2,7 +2,7 @@ import { Workspaces } from "../src/host/workspaces.js";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -348,6 +348,104 @@ describe("Host WebSocket seam", () => {
     second.close();
   });
 
+  it.each([
+    { label: "skill arguments", suffix: "\n\n帮我梳理这个项目。\n先看目录", expected: "帮我梳理这个项目。 先看目录" },
+    { label: "skill only", suffix: "\n", expected: "/skill:story" },
+    { label: "renamed skill task", suffix: "\n", expected: "/skill:story", name: "项目说明" },
+  ])("uses readable first-user text for $label in durable session titles", async ({ suffix, expected, name }) => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-title-"));
+    const id = "11111111-2222-4333-8444-555555555555";
+    const path = join(root, `2026-10-01T00-00-00-000Z_${id}.jsonl`);
+    const text = `<skill name="story" location="/private/skills/story/SKILL.md">\nReferences are relative to /private/skills/story.\n${"Internal instructions. ".repeat(100)}\n</skill>${suffix}`;
+    const original = [
+      { type: "session", version: 3, id, timestamp: "2026-10-01T00:00:00Z", cwd: root },
+      { type: "message", id: "m1", parentId: null, timestamp: "2026-10-01T00:00:01Z", message: { role: "user", content: [{ type: "text", text }] } },
+    ].map(row => JSON.stringify(row)).join("\n") + "\n";
+    await writeFile(path, original + (name ? JSON.stringify({ type: "session_info", id: "n1", parentId: "m1", timestamp: "2026-10-01T00:00:02Z", name }) + "\n" : ""));
+    const before = await readFile(path, "utf8");
+    const factory = new RpcPiSessionFactory({ sessionDir: root });
+    server = new HostServer({ port: 0, host: "127.0.0.1", factory });
+    await server.start();
+    const socket = await connect(server.address().port);
+    const frames = new FrameQueue(socket);
+    try {
+      socket.send(encodeFrame({ v: 1, type: "list_sessions" }));
+      const listed = await frames.nextSessions();
+      expect(listed.sessions).toMatchObject([{ id, preview: expected, running: false }]);
+      expect(JSON.stringify(listed)).not.toContain("/private/");
+      expect(listed.sessions[0].name).toBe(name);
+      expect(await readFile(path, "utf8")).toBe(before);
+    } finally {
+      socket.close();
+      await server.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["status", "changes"])("coalesces overlapping workspace %s reads and releases failed reads", async (action) => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-read-sharing-"));
+    const { workspaces, conversation } = await workspaceConversation(root, "shared");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const method = action === "status" ? "syncStatus" : "changes";
+    const original = workspaces[method].bind(workspaces);
+    const reading = vi.spyOn(workspaces, method).mockImplementation(async () => { await gate; throw new Error("Temporary remote failure"); });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "shared-read", factory: new FakeFactory(), workspaces });
+    await server.start();
+    const post = () => fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`, {
+      method: "POST", headers: { authorization: "Bearer shared-read", "content-type": "application/json" },
+      body: JSON.stringify({ action, id: conversation.id }),
+    });
+    const requests = Array.from({ length: 6 }, () => post());
+    try {
+      await expect.poll(() => reading.mock.calls.length).toBeGreaterThan(0);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(reading).toHaveBeenCalledTimes(1);
+      release();
+      for (const response of await Promise.all(requests)) { expect(response.status).toBe(409); await response.text(); }
+      reading.mockImplementation((id: string) => original(id));
+      const retry = await post(); expect(retry.status).toBe(200); await retry.text();
+      expect(reading).toHaveBeenCalledTimes(2);
+    } finally {
+      release(); await Promise.all(requests); await server.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("drains an abandoned workspace HTTP operation before shutdown releases its lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-shutdown-"));
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const workspaces = new Workspaces(join(root, "projects"), { forge: {
+      async repository() { entered(); await gate; throw new Error("Fixture lookup failed"); },
+      async createPullRequest() { throw new Error("Unused"); },
+    } });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "drain-test", factory: new FakeFactory(), workspaces });
+    await server.start();
+    const controller = new AbortController();
+    const request = fetch(`http://127.0.0.1:${server.address().port}/api/workspace`, {
+      method: "POST", headers: { authorization: "Bearer drain-test", "content-type": "application/json" },
+      body: JSON.stringify({ action: "gitea_project", repository: "owner/repo" }), signal: controller.signal,
+    }).catch(() => undefined);
+    try {
+      await started;
+      expect(await readdir(join(root, "projects/.coffee/locks"))).toHaveLength(1);
+      controller.abort(); await request;
+      const closing = server.close();
+      const result = await Promise.race([closing.then(() => "closed"), new Promise(resolve => setTimeout(() => resolve("waiting"), 100))]);
+      expect(result).toBe("waiting");
+      release(); await closing; server = undefined;
+      expect(await readdir(join(root, "projects/.coffee/locks"))).toEqual([]);
+      // A restarted owner can mutate the same workspace without operator unlock.
+      await expect(new Workspaces(join(root, "projects")).displaySidebar(false)).resolves.toBeDefined();
+    } finally {
+      release(); controller.abort(); await request;
+      await server?.close(); server = undefined;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("lists durable and live sessions before any session is opened", async () => {
     const factory = new FakeFactory();
     factory.stored.push({ id: "stored-1", preview: "an older conversation" });
@@ -366,6 +464,46 @@ describe("Host WebSocket seam", () => {
     expect(await frames.next()).toMatchObject({ type: "history", sessionId: "stored-1" });
     expect(factory.sessions.has("stored-1")).toBe(true);
     socket.close();
+  });
+
+  it.each([false, true])("shares overlapping sidebar reads and retries after completion (failure=%s)", async (failFirst) => {
+    const factory = new FakeFactory();
+    factory.stored.push({ id: "stored-1", preview: "before" });
+    const read = factory.list.bind(factory);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const listing = vi.spyOn(factory, "list").mockImplementation(async () => {
+      await pending;
+      if (failFirst) throw new Error("Temporary listing failure");
+      return read();
+    });
+    server = new HostServer({ port: 0, host: "127.0.0.1", token: "sidebar-test", factory });
+    await server.start();
+    const sockets = await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
+      const socket = new WebSocket(`ws://127.0.0.1:${server!.address().port}/host`, { headers: { authorization: "Bearer sidebar-test" } });
+      await once(socket, "open");
+      return socket;
+    }));
+    const frames = sockets.map(socket => new FrameQueue(socket));
+    try {
+      for (const socket of sockets) socket.send(encodeFrame({ v: 1, type: "list_sessions" }));
+      await expect.poll(() => listing.mock.calls.length).toBeGreaterThan(0);
+      await Promise.all(sockets.map(async socket => { const pong = once(socket, "pong"); socket.ping(); await pong; }));
+      expect(listing).toHaveBeenCalledTimes(1);
+      release();
+      for (const queue of frames) {
+        if (failFirst) expect(await queue.next()).toMatchObject({ type: "error", code: "list_unavailable" });
+        else expect(await queue.nextSessions()).toMatchObject({ sessions: [{ id: "stored-1", preview: "before" }] });
+      }
+      listing.mockImplementation(read);
+      factory.stored[0].preview = "after";
+      sockets[0].send(encodeFrame({ v: 1, type: "list_sessions" }));
+      expect(await frames[0].nextSessions()).toMatchObject({ sessions: [{ id: "stored-1", preview: "after" }] });
+      expect(listing).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      for (const socket of sockets) socket.close();
+    }
   });
 
   it("flags conversations that need the user: a pending dialog, or a run that finished with nobody watching (P0)", async () => {
@@ -440,6 +578,128 @@ describe("Host WebSocket seam", () => {
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p2", text: "now mine" }));
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "prompt" });
     socket.close();
+  });
+
+  it("retires a session when the browser leaves before history finishes loading", async () => {
+    const factory=new FakeFactory();
+    let release!:()=>void,started!:()=>void;
+    const entered=new Promise<void>(resolve=>{started=resolve;});
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const original=FakePiSession.prototype.getHistory;
+    const spy=vi.spyOn(FakePiSession.prototype,'getHistory').mockImplementationOnce(async function(this:FakePiSession){started();await gate;return original.call(this);});
+    server=new HostServer({port:0,host:'127.0.0.1',factory,idleTimeoutMs:30});
+    try {
+      await server.start();const socket=await connect(server.address().port);
+      socket.send(encodeFrame({v:1,type:'open'}));await entered;
+      socket.close();await once(socket,'close');release();
+      await new Promise(resolve=>setTimeout(resolve,150));
+      expect([...factory.sessions.values()].every(session=>session.stopped)).toBe(true);
+    }finally{release();spy.mockRestore();}
+  });
+
+  it("renames a live conversation without rereading history", async () => {
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();
+    if(opened.type!=='opened')throw Error('Expected opened');await frames.next();
+    const session=factory.sessions.get(opened.sessionId)!;
+    const spy=vi.spyOn(session,'getHistory').mockRejectedValue(Error('History must not be loaded for rename'));
+    try {
+      socket.send(encodeFrame({v:1,type:'rename_session',sessionId:opened.sessionId,name:'Saved title',requestId:'rename-fast'}));
+      expect(await frames.next()).toMatchObject({type:'ack',operation:'rename_session',requestId:'rename-fast'});
+      expect(session.name).toBe('Saved title');expect(spy).not.toHaveBeenCalled();
+      const cold=await factory.create({sessionId:'cold-title'});
+      const coldHistory=vi.spyOn(cold,'getHistory').mockRejectedValue(Error('Cold rename must not read history'));
+      try {
+        socket.send(encodeFrame({v:1,type:'rename_session',sessionId:'cold-title',name:'Cold saved',requestId:'rename-cold'}));
+        expect(await frames.next()).toMatchObject({type:'ack',operation:'rename_session',requestId:'rename-cold'});
+        expect(cold.name).toBe('Cold saved');expect(coldHistory).not.toHaveBeenCalled();
+      }finally{coldHistory.mockRestore();}
+    }finally{spy.mockRestore();socket.close();}
+  });
+
+  it("does not acknowledge a dialog answer rejected by the native adapter", async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();
+    if(opened.type!=='opened')throw Error('Expected opened');await frames.next();
+    const pi=factory.sessions.get(opened.sessionId)!;pi.askUser('answer-failure');await frames.next();
+    const spy=vi.spyOn(pi,'respondUi').mockRejectedValue(Error('Native answer failed'));
+    try{
+      socket.send(encodeFrame({v:1,type:'ui_response',requestId:'answer-failed',id:'answer-failure',confirmed:true}));
+      expect(await frames.next()).toMatchObject({type:'error',requestId:'answer-failed',message:'Native answer failed'});
+    }finally{spy.mockRestore();socket.close();}
+  });
+
+  it.each([
+    ['get_models','getModels'],['get_commands','getCommands'],
+    ['get_stats','getStats'],['get_extensions','getExtensions'],
+  ] as const)("delivers a prompt while %s is stalled",async(type,method)=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+    const original=pi[method].bind(pi);
+    const spy=vi.spyOn(pi,method).mockImplementation(async()=>{await gate;return original();});
+    try{
+      socket.send(encodeFrame({v:1,type}));
+      socket.send(encodeFrame({v:1,type:'prompt',requestId:'deliver-now',text:'durable instruction'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'ack',operation:'prompt',requestId:'deliver-now'});
+      await waitFor(()=>pi.history.some(e=>e.kind==='user'&&e.text==='durable instruction'));
+    }finally{release();spy.mockRestore();socket.close();}
+  });
+
+  it("delivers a prompt while a read-only sync check waits on remote Git",async()=>{
+    const root=mkdtempSync(join(tmpdir(),'pi-coffee-send-lock-'));
+    const {workspaces,conversation}=await workspaceConversation(root,'send-lock');
+    const marker=join(root,'fetch-started'),release=join(root,'release-fetch'),uploadPack=join(root,'upload-pack');
+    await writeFile(uploadPack,`#!/bin/sh\nprintf started > '${marker}'\nwhile [ ! -f '${release}' ]; do sleep 0.01; done\nexec git-upload-pack "$@"\n`,{mode:0o755});
+    await exec('git',['config','remote.origin.uploadpack',uploadPack],{cwd:conversation.cwd});
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory,workspaces});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open',sessionId:conversation.id}));await frames.next();await frames.next();
+    const status=workspaces.syncStatus(conversation.id);
+    try{
+      await waitFor(()=>existsSync(marker));
+      socket.send(encodeFrame({v:1,type:'prompt',requestId:'git-read-independent',text:'send despite slow remote'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'ack',operation:'prompt',requestId:'git-read-independent'});
+      await waitFor(()=>factory.sessions.get(conversation.id)!.history.some(e=>e.kind==='user'&&e.text==='send despite slow remote'));
+    }finally{await writeFile(release,'');await status;socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
+  it("coalesces slow metadata reads, reports their timeout, and recovers after settlement",async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory,metadataTimeoutMs:30});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});const original=pi.getStats.bind(pi);
+    const spy=vi.spyOn(pi,'getStats').mockImplementation(async()=>{await gate;return original();});
+    try{
+      for(let i=0;i<6;i++)socket.send(encodeFrame({v:1,type:'get_stats'}));
+      for(let i=0;i<6;i++)expect(await frames.next()).toMatchObject({type:'error',code:'metadata_unavailable',operation:'get_stats'});
+      expect(spy).toHaveBeenCalledTimes(1);
+      socket.send(encodeFrame({v:1,type:'get_stats'}));expect(await frames.next()).toMatchObject({type:'error',code:'metadata_unavailable'});expect(spy).toHaveBeenCalledTimes(1);
+      release();await gate;await new Promise(r=>setTimeout(r,10));spy.mockRestore();
+      socket.send(encodeFrame({v:1,type:'get_stats'}));expect(await frames.next()).toMatchObject({type:'stats'});
+    }finally{release();spy.mockRestore();socket.close();}
+  });
+
+  it("keeps an opened socket responsive while sidebar discovery is stalled",async()=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:'open'}));await frames.next();await frames.next();
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+    const spy=vi.spyOn(factory,'list').mockImplementation(async()=>{await gate;return [];});
+    try{
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));socket.send(encodeFrame({v:1,type:'ping',nonce:'responsive'}));
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      expect(result).toMatchObject({type:'pong',nonce:'responsive'});
+    }finally{release();spy.mockRestore();socket.close();}
   });
 
   it("stops an idle Pi process and resumes the conversation from the store on the next open", async () => {
@@ -520,16 +780,40 @@ describe("Host WebSocket seam", () => {
     for (let i = 0; i < 3; i++) await frames.next(); // ack, agent_start, delta
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p3", text: "also do this", mode: "follow_up" }));
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "follow_up", requestId: "p3" });
-    expect(await frames.next()).toMatchObject({ type: "event", event: { type: "queue_update", followUp: ["also do this"] } });
+    expect(await frames.next()).toMatchObject({ type: "queue_state", items:[{text:"also do this"}] });
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p4", text: "actually stop", mode: "steer" }));
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "steer", requestId: "p4" });
-    expect(pi.queued).toEqual([{ mode: "follow_up", text: "also do this" }, { mode: "steer", text: "actually stop" }]);
+    expect(pi.queued).toEqual([{ mode: "steer", text: "actually stop" }]);
     // A plain prompt while busy is still refused.
     socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "p5", text: "plain" }));
     await frames.next(); // queue_update from steer
     expect(await frames.next()).toMatchObject({ type: "error", code: "busy", requestId: "p5" });
     pi.finish("second");
     socket.close();
+  });
+
+  it("owns manual compaction across reconnect and rejects concurrent mutation", async () => {
+    const factory=new FakeFactory();server=new HostServer({port:0,host:"127.0.0.1",factory});await server.start();
+    const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    socket.send(encodeFrame({v:1,type:"open"}));const opened=await frames.next();
+    if(opened.type!=="opened")throw new Error("expected opened");await frames.next();
+    const pi=factory.sessions.get(opened.sessionId)!;
+    let finish!:()=>void;pi.compact=()=>new Promise<void>(r=>{finish=r;});
+    socket.send(encodeFrame({v:1,type:"compact",requestId:"handoff"}));
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:true}});
+    for(const frame of [{type:"compact"},{type:"prompt",text:"new work"},{type:"set_model",provider:"fake",id:"other"},{type:"prompt",mode:"steer",text:"new work"}] as const){
+      socket.send(encodeFrame({v:1,...frame,requestId:"concurrent"}));expect(await frames.next()).toMatchObject({type:"error",code:"busy"});
+    }
+    const second=await connect(server.address().port),other=new FrameQueue(second);
+    second.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+    expect(await other.next()).toMatchObject({type:"opened",state:{isCompacting:true}});
+    socket.close();finish();
+    // A subsequent reconnect observes the settled context operation.
+    await new Promise(r=>setTimeout(r,30));
+    const third=await connect(server.address().port),last=new FrameQueue(third);
+    third.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+    expect(await last.next()).toMatchObject({type:"opened",state:{isCompacting:false}});
+    second.close();third.close();
   });
 
   it("exposes models, thinking, commands, stats and compact through the seam", async () => {
@@ -561,10 +845,14 @@ describe("Host WebSocket seam", () => {
     socket.send(encodeFrame({ v: 1, type: "get_stats" }));
     expect(await frames.next()).toMatchObject({ type: "stats", sessionId: opened.sessionId, stats: { cost: 0.001, contextUsage: { percent: 1.5 } } });
     socket.send(encodeFrame({ v: 1, type: "compact", requestId: "c1" }));
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:true}});
+    expect(await frames.next()).toMatchObject({type:"event",event:{type:"context_operation",active:false,success:true}});
     expect(await frames.next()).toMatchObject({ type: "ack", operation: "compact", requestId: "c1" });
     await waitFor(() => pi.compacted === 1);
     pi.compact = async () => { throw new Error("Local compaction unavailable"); };
     socket.send(encodeFrame({ v: 1, type: "compact", requestId: "c-fail" }));
+    expect(await frames.next()).toMatchObject({type:"event",event:{active:true}});
+    expect(await frames.next()).toMatchObject({type:"event",event:{active:false,success:false}});
     expect(await frames.next()).toMatchObject({ type: "error", requestId: "c-fail" });
     socket.close();
   });
@@ -658,12 +946,13 @@ describe("Host WebSocket seam", () => {
     expect(requests).toHaveLength(1);
 
     second.send(encodeFrame({ v: 1, type: "ui_response", requestId: "a1", id: "ui-1", confirmed: true }));
-    expect(await secondFrames.next()).toMatchObject({ type: "ack", operation: "ui_response", requestId: "a1" });
+    // The fake synchronously resumes the run during respondUi; acknowledgment follows native acceptance.
+    const answered=[];for(let i=0;i<4;i++)answered.push(await secondFrames.next());
+    expect(answered).toContainEqual(expect.objectContaining({type:"ack",operation:"ui_response",requestId:"a1"}));
     expect(pi.uiAnswers).toEqual([{ id: "ui-1", confirmed: true }]);
-    // The fake finishes the turn once answered.
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { assistantMessageEvent: { delta: "echo: asked" } } });
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "message_end" } });
-    expect(await secondFrames.next()).toMatchObject({ type: "event", event: { type: "agent_settled" } });
+    expect(answered.filter(f=>f.type==='event')).toMatchObject([
+      {type:'event',event:{assistantMessageEvent:{delta:'echo: asked'}}},
+      {type:'event',event:{type:'message_end'}},{type:'event',event:{type:'agent_settled'}}]);
     // Once settled, the dialog is gone: a second answer is unknown.
     second.send(encodeFrame({ v: 1, type: "ui_response", id: "ui-1", cancelled: true }));
     expect(await secondFrames.next()).toMatchObject({ type: "error", code: "unknown_ui_request" });
@@ -1077,4 +1366,32 @@ it('exports display history via the Agent seam without replacing native recovery
   await server.close();server=undefined;
   expect(factory.sessions.get('export-task')!.history).toHaveLength(2);
  }finally{await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+});
+
+it('manages individual pending instructions over WS and preserves images, ordering and reconnect state',async()=>{
+ const factory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory});await server.start();
+ const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+ const next=async(type:string)=>{for(let i=0;i<30;i++){const frame=await frames.next();if(frame.type===type)return frame as any;}throw Error('Missing '+type);};
+ socket.send(encodeFrame({v:1,type:'open'}));const opened=await next('opened');await next('history');
+ const pi=factory.sessions.get(opened.sessionId)!;pi.holdAfterDelta=true;const prompt=vi.spyOn(pi,'prompt'),steer=vi.spyOn(pi,'steer');
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'run',text:'working'}));await next('ack');await next('event');
+ const images:ImageInput[]=[{type:'image',mimeType:'image/png',data:'aGVsbG8='}];
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'q1',mode:'follow_up',text:'first',images}));await next('ack');let state=await next('queue_state');const first=state.items[0];
+ socket.send(encodeFrame({v:1,type:'prompt',requestId:'q2',mode:'follow_up',text:'second'}));await next('ack');state=await next('queue_state');const second=state.items[1];
+ expect(prompt.mock.calls).toHaveLength(1);expect(pi.queued).toEqual([]);
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'edit',id:first.id,revision:1,action:'edit',text:'edited first'}));state=await next('queue_state');await next('ack');
+ expect(state.items[0]).toMatchObject({text:'edited first',revision:2,imageCount:1});
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'stale',id:first.id,revision:1,action:'cancel'}));expect(await next('error')).toMatchObject({requestId:'stale'});
+ socket.send(encodeFrame({v:1,type:'queue_action',requestId:'cancel',id:second.id,revision:1,action:'cancel'}));await next('ack');
+ const other=await connect(server.address().port),otherFrames=new FrameQueue(other);other.send(encodeFrame({v:1,type:'open'}));await otherFrames.next();await otherFrames.next();
+ other.send(encodeFrame({v:1,type:'queue_action',requestId:'foreign',id:first.id,revision:2,action:'promote'}));
+ let denied=await otherFrames.next();if(denied.type==='queue_state')denied=await otherFrames.next();expect(denied).toMatchObject({type:'error',requestId:'foreign'});other.close();
+ socket.close();await once(socket,'close');
+ const again=await connect(server.address().port),replay=new FrameQueue(again);again.send(encodeFrame({v:1,type:'open',sessionId:opened.sessionId}));
+ let restored:any;for(let i=0;i<30;i++){const f=await replay.next();if(f.type==='queue_state'){restored=f;break;}}
+ expect(restored.items).toMatchObject([{id:first.id,text:'edited first',revision:2}]);
+ again.send(encodeFrame({v:1,type:'queue_action',requestId:'promote',id:first.id,revision:2,action:'promote'}));
+ await expect.poll(()=>steer.mock.calls.length).toBe(1);expect(steer.mock.calls[0]).toEqual(['edited first',images]);
+ pi.finish('working');await new Promise(r=>setTimeout(r,30));expect(prompt.mock.calls).toHaveLength(1);
+ again.close();
 });

@@ -9,7 +9,7 @@
 5. Existing dedicated Host routes remain valid. Shared routing uses `PI_COFFEE_SHARED_HOST=1` on Web and `PI_COFFEE_REQUIRE_USER=1` on Host. Route-file authentication derives stable `gitea-<id>` ownership keys and forwards them on HTTP and WS. Earlier signed-cookie deployments preserve their existing login-name keys. Do not switch identity-key formats without an explicit data migration.
 6. `PI_COFFEE_SKILL_OWNER` names the authenticated owner key allowed to manage machine-wide Skills. Project Skills remain task scoped. Do not copy native login credentials to Web.
 7. Web and Host support explicit project/chat/session root settings. Existing tasks are retained in place. Native terminal conversations from the configured user cwd remain discoverable; their histories do not become Gitea checkouts automatically.
-8. Probe health, login, the three Work engines, Pi-only Chat, brand menu, search, Context Usage, task path expansion, branch review and native turn review. Test sidebar collapse and refresh. Use `node scripts/probe-workbench-release.mjs <Web URL> <release directory>` to compare served assets with the release.
+8. After starting or restarting Host, wait for its `/healthz` response before WebSocket checks or reopening ingress. `systemctl is-active` confirms process state, not listener readiness. Probe health, login, the three Work engines, Pi-only Chat, brand menu, search, Context Usage, task path expansion, branch review and native turn review. Test sidebar collapse and refresh. Use `node scripts/probe-workbench-release.mjs <Web URL> <release directory>` to compare served assets with the release.
 9. Push GitHub main, then Gitea main. Verify identical SHAs after fetching both. Install a release directory named by that SHA and record service paths plus the asset probe in the Issue. Retain the previous release and data for rollback.
 
 Signed-cookie authentication requires a new login after Web restart, even with a configured signing secret. This keeps logout revocation effective across restarts; task execution and native sessions continue on Host. Route-file authentication retains its existing session-store behavior.
@@ -40,3 +40,28 @@ Only approved models available in the native registry are offered. Missing nativ
 registration/authentication is not replaced with a fabricated model definition.
 This governs Host-managed model selection, not standalone CLI installations or
 arbitrary programs launched in the owner's unrestricted VM.
+
+## Temporary storage and live-task rollout
+
+Host allocates temporary storage on disk under `~/.cache/pi-coffee/runtime-tmp`;
+`PI_COFFEE_TMP_ROOT` can select another private disk-backed directory. Native
+children inherit TMPDIR/TMP/TEMP. Do not point this root at tmpfs, task workspaces,
+or native account stores. Graceful shutdown removes only the current Host's run
+directory after native shutdown. Retain crash remnants until confirmed unused.
+The check runner owns and removes its separate temporary run directory even when
+tests fail. Explicit `/tmp` paths in user commands bypass these environment settings.
+
+Before replacing a Host, query all routed user scopes for active turns and queued
+input. A conversation delivering the deployment itself also counts as active.
+Stage the new Host while it is busy; never kill all `codex app-server` processes
+by name. Browser asset improvements may be rolled out compatibly while Host
+activation is pending; record this as a partial rollout, with both release IDs.
+
+Graceful Host stop now drains accepted HTTP workspace operations even when their
+browser/gateway connection has disappeared. Allow sufficient service stop time
+for the configured remote Git operation timeouts (the current deployment uses
+`TimeoutStopSec=300`). Check both active turns/queues and workspace operation
+markers during rollout. If a prior release exited before cleaning up a marker,
+stop ingress and the owning Host, inspect the task's Git status and live Git
+processes, and preserve an audited copy of the stale marker before clearing it.
+Do not clear a marker that still belongs to a live operation.

@@ -49,7 +49,7 @@ The Server remains a transparent gateway. It does not run engines, parse native 
 
 1. **NB-01 — Canonical provider contract.** Consume the Agent native-engine contract and its capability/version negotiation; do not duplicate runtime types or independently define native authentication, thread identity or lifecycle semantics in the Server. Activation is blocked until the Agent public contract is available. Browser design/tests can proceed against the agreed fixtures before deployment.
 2. **NB-02 — Layout preservation.** Keep existing panes, navigation and theme. In the native-engine creation UI, offer exactly three Agent choices: Pi, Codex and Claude Code. Show unavailable choices disabled with an explanation based on Host readiness; do not pretend that an older Host supports them. Place this selection in the existing new-task controls. Once the Task is created, replace selection with a compact read-only Agent indicator; do not provide an in-place engine switch, including before the first prompt or after archive/restore. Show it only where useful; no separate native-engine dashboard or permanent toolbar. The earlier withdrawn A/B/C layout proposals are not revived.
-3. **NB-03 — Workspace and engine separation.** New conversation defaults to Pi Chat. Only Pi may create a Chat Workspace. Work offers Pi, Codex and Claude Code with a selected Gitea Project and branch; choosing Chat resets the new-task Agent to Pi. Enforce the same rule at the Host API. Pre-correction native local tasks retain their original identity/history and remain accessible. Continue creating workspaces through the Host. Submit the selected engine and existing creation parameters, not browser-selected absolute paths, native IDs or VM endpoints. Existing Tasks cannot change engine in place; failed-start recovery retains the original selection. Using another engine requires a new Task. Pi Chat/Work runtime controls are Pi-only; native modes appear only when the Host supplies authoritative capabilities and values.
+3. **NB-03 — Workspace and engine separation.** New conversation defaults to Pi Chat. Only Pi may create a Chat Workspace. Work offers Pi, Codex and Claude Code with a selected Gitea Project and branch; choosing Chat resets the new-task Agent to Pi. Enforce the same rule at the Host API. Pre-correction native local tasks retain their original identity/history and remain accessible. Continue creating workspaces through the Host. Submit the selected engine and existing creation parameters, not browser-selected absolute paths, native IDs or VM endpoints. Existing Work tasks may switch Pi ↔ Codex through the composer Agent menu and the explicit [takeover contract](agent-takeover.md). Chat cannot upgrade or switch; Claude stays fixed. Ordinary failed-start recovery retains the original selection. Pi Chat/Work runtime controls are Pi-only; native modes appear only when the Host supplies authoritative capabilities and values.
 4. **NB-04 — Discovery and failure states.** Render Host-confirmed engine availability, readiness and capabilities. Pi-only older Hosts remain usable; absence of new capability fields is not proof that another engine exists. Distinguish unsupported features from expired native authentication or a disconnected VM. Never silently switch the Task's engine or create an empty replacement conversation to hide an error.
 5. **NB-05 — Native behavior.** Display native messages, tools and supported requests through the common presentation contract. Do not insert Pi prompts, tools, LSP, Skills, plugin panels or context-recovery actions into native-engine Tasks. Keep Agent and Model controls distinct. The model menu contains only models supported by the Task's bound engine and appears only when that engine supports selection. A model change cannot switch Agent or replace its native Session binding. A supported Claude model used by Pi remains a Pi Task; Claude Code is a separate Agent choice. Leave unsupported token-cost/context estimates unknown rather than filling them with Pi values. Native permission requests remain native requests; the trusted VM model does not authorize the browser to auto-approve them.
 6. **NB-06 — Authentication boundary.** Gitea OAuth remains platform identity. Provider authentication completes through the user's official engine flow in the User VM. The Server provides no provider password form, token import/export, shared provider account, subscription relay or SDK-login substitute. Sanitized readiness/action guidance may be displayed without exposing provider credential contents. Model traffic from these native engines does not acquire the Pi Relay configuration through browser selection.
@@ -62,7 +62,7 @@ The Server remains a transparent gateway. It does not run engines, parse native 
 
 - Use the existing public Host HTTP/WebSocket seam as the primary cross-repository contract. Reuse gateway authentication/streaming and Browser Shell continuity tests; do not test private CLI messages in Server unit tests.
 - Drive the actual browser controller against deterministic Host capability, history, Event and failure fixtures. Assert user-visible behavior, task identity and outgoing public requests rather than DOM implementation details or internal callback counts.
-- Cover exactly three Agent choices with readiness gating, read-only Agent identity immediately after creation, rejected engine changes before the first prompt and after archive/restore, recovery with the same selection, model choices scoped to the bound engine, legacy Pi defaults, missing CLI/auth/version states, capability-gated controls, native request correlation, stale responses, uncertain delivery and targeted cancellation.
+- Cover exactly three Agent choices with readiness gating, Agent identity and explicit Work takeover gating, rejected implicit engine changes before the first prompt and after archive/restore, recovery with the same selection, model choices scoped to the bound engine, legacy Pi defaults, missing CLI/auth/version states, capability-gated controls, native request correlation, stale responses, uncertain delivery and targeted cancellation.
 - Cover cross-task file scope, actual branch/offline status, busy/unknown-writer rejections, archive retention, cleanup partial results and old/new Host compatibility. Reuse existing Gitea/file contract tests rather than creating another workspace manager fixture.
 - Reuse responsive checks for sidebar collapse/expand, review visibility, long context, small windows and native interaction dialogs. New engine controls must not alter the overall layout or hide the composer.
 - For final integration, use the same small real-engine acceptance flows recorded by the Agent Issue through the actual Browser Shell and gateway, rather than launching a second exhaustive paid-run matrix. Verify engine selection, prompt/tool stream, Workspace path, a reconnect, a scoped attachment, code changes and supported stop/Gitea operations. Record which operations were real and which were fixtures.
@@ -123,3 +123,26 @@ The selected model is applied after opening the new task and confirmed before it
 first prompt. Existing request correlation, stale-response rejection, old-Host
 capability gating, and failed-selection draft recovery apply to both Pi and Codex.
 Changing the Agent resets the draft selection. Native Claude behavior is unchanged.
+
+## Running-turn input (2026-09-30 verification)
+
+Pi and Codex keep the composer enabled while running. The default send disposition
+is follow-up (wait for the turn to finish); selecting steering sends into the
+active native turn at its supported input boundary. Steering is not an immediate
+OS/tool interruption. Host-owned pending queue rows support cancel, edit and insert-now under the
+[queue contract](input-queue.md). Already-dispatched native rows remain
+informational and cannot be retracted. Browser disconnect continues to preserve execution.
+
+### Reconnect delivery recovery (2026-10-01)
+
+A matching Host acknowledgement for `prompt`, `steer` or `follow_up` clears the
+browser's unconfirmed-delivery marker. Receipt does not imply successful native
+execution or completion. A disconnect after receipt must not label the accepted
+request uncertain. Without receipt, reconnect still warns and never resubmits the
+request. Once authoritative history and run state load, the warning does not lock
+Task details or prevent an explicit new instruction through the normal composer.
+
+An outstanding context-setting request belongs to its socket. Disconnect clears
+that pending UI lock; reconnect reads the native model/context settings and never
+replays the setting automatically. The send button must not remain disabled
+waiting for an acknowledgement that can only arrive on the obsolete socket.

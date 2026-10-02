@@ -35,6 +35,8 @@ it('creates Chat and Work through the Host API, displays a full cwd, and preserv
    const file=new File(['original'],'note.txt',{type:'text/plain'});
    Object.defineProperty(file,'arrayBuffer',{value:()=>new Promise(resolve=>{finishHash=()=>resolve(new ArrayBuffer(8));})});
    const input=document.querySelector<HTMLInputElement>('#file')!;Object.defineProperty(input,'files',{configurable:true,value:[file]});input.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(1);
+   expect(prepareRequests).toHaveLength(0);
+   document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(1);
    document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
    finishHash();await vi.advanceTimersByTimeAsync(10);expect(prepareRequests).toHaveLength(0);
    kind!.value='project';kind!.dispatchEvent(new Event('change'));

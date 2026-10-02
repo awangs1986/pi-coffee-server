@@ -8,6 +8,7 @@ import { gunzipSync } from "node:zlib";
 import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { HostServer } from "../src/host/server.js";
+import { TransferServer } from "../src/host/transfer.js";
 import type { PiSession, PiSessionFactory } from "../src/host/pi-adapter.js";
 import { WebServer } from "../src/web/server.js";
 import { decodeServerFrame, encodeFrame, type HistoryEntry, type ImageInput, type ServerFrame } from "../src/shared/protocol.js";
@@ -66,7 +67,7 @@ class FakePiSession implements PiSession {
 }
 
 class FakeFactory implements PiSessionFactory {
-  private readonly sessions = new Map<string, FakePiSession>();
+  readonly sessions = new Map<string, FakePiSession>();
 
   async create(options: { sessionId: string }): Promise<PiSession> {
     const existing = this.sessions.get(options.sessionId);
@@ -184,6 +185,40 @@ describe("Web Server seam", () => {
       entries: [{ kind: "user", text: "hello web" }, { kind: "assistant", text: "echo: hello web" }],
     });
     reconnected.close();
+  });
+
+  it("delivers through Web and retains native history while an auxiliary query is hung",async()=>{
+    const factory=new FakeFactory();host=new HostServer({host:'127.0.0.1',port:0,token:'delivery-test',factory});await host.start();
+    web=new WebServer({host:'127.0.0.1',port:0,hostUrl:`ws://127.0.0.1:${host.address().port}/host`,hostToken:'delivery-test'});await web.start();
+    const url=`ws://127.0.0.1:${web.address().port}/ws`,browser=await connect(url),frames=new FrameQueue(browser);
+    browser.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();
+    if(opened.type!=='opened')throw Error('expected opened');
+    let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});const pi=factory.sessions.get(opened.sessionId)!;
+    const original=pi.getStats.bind(pi);pi.getStats=async()=>{await gate;return original();};
+    try{
+      browser.send(encodeFrame({v:1,type:'get_stats'}));
+      browser.send(encodeFrame({v:1,type:'prompt',requestId:'web-delivery',text:'preserved through the complete bridge'}));
+      const ack=await Promise.race([frames.next(),new Promise(r=>setTimeout(()=>r({type:'blocked'}),300))]);expect(ack).toMatchObject({type:'ack',requestId:'web-delivery'});
+      for(let i=0;i<4;i++)await frames.next();
+      browser.close();await once(browser,'close');
+      const reconnect=await connect(url),historyFrames=new FrameQueue(reconnect);
+      try{reconnect.send(encodeFrame({v:1,type:'open',sessionId:opened.sessionId}));await historyFrames.next();expect(await historyFrames.next()).toMatchObject({type:'history',entries:expect.arrayContaining([{kind:'user',id:'u0',text:'preserved through the complete bridge'}])});expect(pi.history.filter(e=>e.kind==='user')).toHaveLength(1);}
+      finally{reconnect.close();}
+    }finally{release();browser.close();}
+  });
+
+  it("delivers a 71636-character prompt without closing the browser connection",async()=>{
+    const factory=new FakeFactory();host=new HostServer({host:'127.0.0.1',port:0,factory});await host.start();
+    web=new WebServer({host:'127.0.0.1',port:0,hostUrl:`ws://127.0.0.1:${host.address().port}/host`});await web.start();
+    const browser=await connect(`ws://127.0.0.1:${web.address().port}/ws`),frames=new FrameQueue(browser);
+    try{
+      browser.send(encodeFrame({v:1,type:'open'}));const opened=await frames.next();await frames.next();if(opened.type!=='opened')throw Error('expected opened');
+      const text='a'.repeat(71636);browser.send(encodeFrame({v:1,type:'prompt',requestId:'long-text',text}));
+      expect(await frames.next()).toMatchObject({type:'ack',operation:'prompt',requestId:'long-text'});
+      for(let i=0;i<4;i++)await frames.next();
+      expect(factory.sessions.get(opened.sessionId)!.history.filter(e=>e.kind==='user'&&e.text===text)).toHaveLength(1);
+      browser.send(encodeFrame({v:1,type:'ping',nonce:'still-connected'}));expect(await frames.next()).toMatchObject({type:'pong',nonce:'still-connected'});
+    }finally{browser.close();}
   });
 
   it("serves the shell assets from public/ and nothing else", async () => {
@@ -316,5 +351,62 @@ describe("Web Server seam", () => {
     browser.send("not-json");
     await expect(frames.next()).resolves.toMatchObject({ type: "error", code: "invalid_json", fatal: true });
     browser.close();
+  });
+
+  it("streams LocalSend v2 uploads and downloads through the same-origin Web gateway (ADR-0010 §4)", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "coffee-web-localsend-"));
+    const transfer = new TransferServer({ host: "127.0.0.1", port: 0, workdir });
+    await transfer.start();
+    try {
+      host = new HostServer({ host: "127.0.0.1", port: 0, factory: new FakeFactory(), transfer });
+      await host.start();
+      let principal='alice';
+      const auth={principalOf:()=>({user:principal}),handle:async()=>false,originAllowed:()=>true} as any;
+      web = new WebServer({auth, host: "127.0.0.1", port: 0, hostUrl: `ws://127.0.0.1:${host.address().port}/host` });
+      await web.start();
+
+      const browser = await connect(`ws://127.0.0.1:${web.address().port}/ws`);
+      const frames = new FrameQueue(browser);
+      browser.send(encodeFrame({ v: 1, type: "open" }));
+      const opened = await frames.next();
+      expect(opened.type).toBe("opened");
+      expect(await frames.next()).toMatchObject({ type: "history" });
+      const grant = await frames.next();
+      expect(grant.type).toBe("transfer");
+      if (grant.type !== "transfer") throw new Error("expected transfer grant");
+
+      const webBase = `http://127.0.0.1:${web.address().port}`;
+      principal='bob';
+      expect((await fetch(`${webBase}/api/localsend/v2/download?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}&fileId=spec.txt`)).status).toBe(403);
+      principal='alice';
+      const prepare = await fetch(`${webBase}/api/localsend/v2/prepare-upload?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          info: { alias: "PI Coffee Web", version: "2.0" },
+          files: { f1: { id: "f1", fileName: "spec.txt", size: 11, fileType: "text/plain" } },
+        }),
+      });
+      expect(prepare.status).toBe(200);
+      const prepared = (await prepare.json()) as { sessionId: string; files: Record<string, string> };
+      principal='bob';
+      expect((await fetch(`${webBase}/api/localsend/v2/upload?sessionId=${encodeURIComponent(prepared.sessionId)}&fileId=f1&token=${encodeURIComponent(prepared.files.f1)}`,{method:'POST',body:'hello world'})).status).toBe(403);
+      principal='alice';
+      const uploaded = await fetch(`${webBase}/api/localsend/v2/upload?sessionId=${encodeURIComponent(prepared.sessionId)}&fileId=f1&token=${encodeURIComponent(prepared.files.f1)}`, {
+        method: "POST",
+        body: "hello world",
+      });
+      expect(uploaded.status).toBe(200);
+      const uploadedJson = (await uploaded.json()) as { path: string };
+      expect(uploadedJson.path).toContain("spec.txt");
+
+      const downloaded = await fetch(`${webBase}/api/localsend/v2/download?scope=${encodeURIComponent(grant.scope)}&token=${encodeURIComponent(grant.token)}&fileId=${encodeURIComponent(uploadedJson.path)}`);
+      expect(downloaded.status).toBe(200);
+      expect(await downloaded.text()).toBe("hello world");
+      browser.close();
+    } finally {
+      await transfer.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 });

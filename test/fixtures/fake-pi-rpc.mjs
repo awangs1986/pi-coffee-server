@@ -1,3 +1,5 @@
+import {writeFileSync} from "node:fs";
+if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(process.argv));
 import readline from "node:readline";
 
 // Stand-in for `pi --mode rpc`. Keeps an append-only entry list shaped like
@@ -6,6 +8,7 @@ import readline from "node:readline";
 // one prior exchange, so tests can tell resume from create.
 let messageCount = 0;
 let streaming = false;
+let compacting=false;let unobservable=false;
 const entries = [];
 let nextEntry = 0;
 let sessionName;
@@ -56,10 +59,11 @@ for await (const line of input) {
   const command = JSON.parse(line);
   switch (command.type) {
     case "get_state":
+      if(unobservable){send({id:command.id,type:"response",command:"get_state",success:false,error:"cannot observe"});break;}
       response("get_state", command.id, {
         model,
         isStreaming: streaming,
-        isCompacting: false,
+        isCompacting: compacting,
         thinkingLevel,
         steeringMode: "all",
         followUpMode: "one-at-a-time",
@@ -94,6 +98,7 @@ for await (const line of input) {
     case "get_commands":
       response("get_commands", command.id, {
         commands: [
+          ...(process.env.FAKE_HANDOFF ? [{name:"handoff",source:"extension"}] : []),
           { name: "harness", description: "Switch harness mode", source: "extension", sourceInfo: { path: "/opt/pi-coffee/dist/src/harness/extension.js", source: "cli", scope: "temporary", origin: "top-level" } },
           { name: "verify", description: "Run verification", source: "extension", sourceInfo: { path: "/opt/pi-coffee/dist/src/harness/extension.js", source: "cli", scope: "temporary", origin: "top-level" } },
           { name: "llama", description: "Manage llama.cpp", source: "extension", sourceInfo: { path: "<inline:llama.cpp>", source: "inline", scope: "temporary", origin: "top-level" } },
@@ -116,10 +121,20 @@ for await (const line of input) {
       });
       break;
     case "compact":
+      if(process.env.FAKE_HANDOFF==="unobservable"){unobservable=true;send({id:command.id,type:"response",command:"compact",success:false,error:"Timeout waiting for response to compact. Stderr: fixture"});break;}
+      if(process.env.FAKE_HANDOFF){
+        const commit=()=>{compacting=false;
+          if(command.customInstructions!=="context-handoff:manual:v1")return response("compact",command.id,{});
+          entries.push({type:"compaction",id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,summary:"handoff",details:process.env.FAKE_HANDOFF==="native" ? {} : {plugin:"pi-handoff",pluginVersion:"0.2.0-experimental.4",trigger:"manual"}});
+          response("compact",command.id,{summary:"handoff"});};
+        if(process.env.FAKE_HANDOFF==="slow"){compacting=true;setTimeout(commit,31000);}else commit();
+        break;
+      }
       response("compact", command.id, { summary: "compacted", firstKeptEntryId: entries.at(-1)?.id ?? null, tokensBefore: 1540 });
       send({ type: "compaction_end" });
       break;
     case "steer":
+      if(command.message.startsWith("handled:")){response("steer",command.id,{disposition:"handled"});break;}
       if (command.message.startsWith("/harness")) {
         send({ id: command.id, type: "response", command: "steer", success: false, error: "Extension commands cannot be queued." });
         break;
@@ -129,6 +144,7 @@ for await (const line of input) {
       send({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });
       break;
     case "follow_up":
+      if(command.message.startsWith("handled:")){response("follow_up",command.id,{disposition:"handled"});break;}
       if (command.message.startsWith("/harness")) {
         send({ id: command.id, type: "response", command: "follow_up", success: false, error: "Extension commands cannot be queued." });
         break;

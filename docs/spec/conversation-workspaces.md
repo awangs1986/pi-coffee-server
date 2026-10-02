@@ -133,7 +133,7 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 Agent #60 / Server #4 supersedes engine-independent Chat creation. New Chat
 Tasks default to Pi and reject Codex/Claude at the Host HTTP creation boundary
 before persisting a workspace. Work supports all three engines with a Gitea
-Project and independent Checkout. Engine bindings remain immutable. Native local
+Project and independent Checkout. Engine bindings remain fixed except for explicit [Work Pi/Codex takeover](agent-takeover.md); it preserves the same workspace. Native local
 tasks created before this correction remain accessible; their identity, files
 and history are not migrated or relabeled by this change.
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 // "never" the command first asks the client for approval.
 const home = process.env.CODEX_HOME ?? ".";
 mkdirSync(home, { recursive: true });
+appendFileSync(join(home, "started-pids"), process.pid + "\n");
 const store = join(home, "fake-threads.json");
 const threads = existsSync(store) ? JSON.parse(readFileSync(store, "utf8")) : {};
 const save = () => writeFileSync(store, JSON.stringify(threads));
@@ -160,6 +161,9 @@ rl.on("line", (line) => {
       if (!rateLimits) return fail("rate limits unavailable for this auth method");
       return reply({ rateLimits });
     case "thread/list": {
+      if (process.env.FAKE_CODEX_HANG_LIST) return;
+      // Model a busy rollout scan while the native metadata index remains readable.
+      if (existsSync(join(home, "rollout-scan-unavailable")) && params.useStateDbOnly !== true) return fail("Rollout scan unavailable");
       const all = Object.values(threads).filter((thread) => params.cwd === undefined || thread.cwd === params.cwd).map((thread) => threadView(thread, false));
       const limit = Math.max(1, params.limit ?? 25);
       const offset = params.cursor ? Number(params.cursor) : 0;
@@ -167,6 +171,8 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < all.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/start": {
+      if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
+      writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake" };
       threads[thread.id] = thread;
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
@@ -175,6 +181,8 @@ rl.on("line", (line) => {
       return notify("thread/started", { thread: threadView(thread, false) });
     }
     case "thread/resume": {
+      if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
+      writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
@@ -217,15 +225,22 @@ rl.on("line", (line) => {
     case "thread/compact/start": {
       reply({});
       const item = { type: "contextCompaction", id: uid("item") };
-      return notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });
+      setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
-    case "config/read": return reply({config:{model:"gpt-fake-mini"}});
+    case "config/read": return reply({config:{model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
+    case "skills/list": {
+      if(params.forceReload!==true)return fail("skills discovery must refresh");
+      const entries=existsSync(join(home,"fake-skills.json"))?JSON.parse(readFileSync(join(home,"fake-skills.json"),"utf8")):[];
+      return reply({data:entries.filter(e=>params.cwds.includes(e.cwd))});
+    }
     case "model/list":
+      if(existsSync(join(home,"fake-hang-model-list")))return;
       return reply({ data: [
         { id: "gpt-fake", model: "gpt-fake", displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },
       ], nextCursor: null });
     case "turn/start": {
+      writeFileSync(join(home,"fake-input.json"),JSON.stringify(params.input));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       if (active.has(thread.id)) return fail("turn already active");

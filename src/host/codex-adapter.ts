@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import type { ContextPreset } from "../shared/protocol.js";
+import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -43,6 +46,7 @@ const RATE_LIMIT_TTL_MS = 60_000;
  * Login is Codex's own (`codex login` once in the VM, credentials in
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
+  instructions?:()=>Promise<string|undefined>;
   /** The user's working directory; also the `thread/list` filter. */
   cwd: string;
   /** `codex` executable; `codex` on PATH by default. */
@@ -64,6 +68,7 @@ const RATE_LIMIT_TTL_MS = 60_000;
   mappingFile?: string;
   /** Stop the user's app-server after this long with no open session; 0 keeps it for the Host's lifetime. */
   idleTimeoutMs?: number;
+  metadataTimeoutMs?: number;
   clientName?: string;
   clientVersion?: string;
 }
@@ -77,6 +82,11 @@ const MAX_LIST_PAGES = 100;
 export class CodexSessionFactory implements PiSessionFactory {
   private readonly options: CodexSessionFactoryOptions;
   private server?: CodexAppServer;
+  private connecting?: Promise<CodexAppServer>;
+  private listingReads = 0;
+  private readonly failedListingsUntil=new Map<string,number>();
+  private recycleMetadata=false;
+  private creating = 0;
   private readonly mappingFile: string;
   /** PI Coffee session id → Codex thread id, for conversations the Host named before Codex did. */
   private mapping?: Map<string, string>;
@@ -101,6 +111,13 @@ export class CodexSessionFactory implements PiSessionFactory {
   private async connection(): Promise<CodexAppServer> {
     this.cancelIdleStop();
     if (this.server && this.server.alive) return this.server;
+    if (this.connecting) return this.connecting;
+    this.connecting = this.startConnection();
+    try { return await this.connecting; }
+    finally { this.connecting = undefined; }
+  }
+
+  private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? [])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment(this.options.env),
@@ -112,7 +129,8 @@ export class CodexSessionFactory implements PiSessionFactory {
       cwd: this.options.cwd,
       env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
     });
-    await server.start(this.options.clientName ?? "pi_coffee", this.options.clientVersion ?? "0.1.0");
+    try { await server.start(this.options.clientName ?? "pi_coffee", this.options.clientVersion ?? "0.1.0"); }
+    catch (error) { await server.stop(); throw error; }
     this.server = server;
     this.rateLimits = undefined;
     this.rateLimitsReadAt = 0;
@@ -140,12 +158,34 @@ export class CodexSessionFactory implements PiSessionFactory {
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
-      const configResult=await server.request("config/read",{includeLayers:false}) as Obj;
+      const configResult=await server.request("config/read",{includeLayers:false},10000) as Obj;
       const config=configResult.config as Obj | undefined;
       const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
       const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
-      return codexModelChoices(await server.request("model/list",{}) as Obj,model,effort);
+      return {...codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),context:{preset:"272k"}};
     }finally{await server.stop();}
+  }
+
+  private commandDiscovery?: Promise<CommandInfo[]>;
+  async commandCatalog(engine:"pi" | "codex"):Promise<CommandInfo[]> {
+    if(engine!=="codex")throw new Error("This adapter only discovers Codex Skills");
+    if(this.commandDiscovery)return this.commandDiscovery;
+    this.commandDiscovery=this.discoverCommands().finally(()=>{this.commandDiscovery=undefined;});
+    return this.commandDiscovery;
+  }
+  private async discoverCommands():Promise<CommandInfo[]> {
+    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+      env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
+    try {
+      await server.start("pi_coffee_skills","0.1.0");
+      return await codexCommands(server,this.options.cwd);
+    }finally{await server.stop();}
+  }
+
+  private contextFile(id:string):string{return join(dirname(this.mappingFile),'codex-context',createHash('sha256').update(id).digest('hex')+'.json');}
+  private async readContextPreset(id:string):Promise<ContextPreset>{
+    try{return JSON.parse(await readFile(this.contextFile(id),'utf8')).preset==='maximum'?'maximum':'272k';}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return '272k';}
   }
 
   private async loadMapping(): Promise<Map<string, string>> {
@@ -174,11 +214,13 @@ export class CodexSessionFactory implements PiSessionFactory {
     for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
       const result = await server.request("thread/list", {
         cwd,
+        // Sidebar metadata must not scan/repair every rollout on each refresh.
+        useStateDbOnly: true,
         limit: LIST_PAGE_SIZE,
         sortKey: "updated_at",
         sourceKinds: ["appServer", "vscode", "cli", "exec"],
         ...(cursor === undefined ? {} : { cursor }),
-      }) as Obj;
+      },this.options.metadataTimeoutMs??10000) as Obj;
       const data = Array.isArray(result.data) ? (result.data as Obj[]) : [];
       threads.push(...data);
       const next = result.nextCursor;
@@ -189,10 +231,26 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   async create(options: { sessionId: string; requireExisting?: boolean }): Promise<PiSession> {
+    this.creating++;
+    try {return await this.createSession(options);}
+    finally {this.creating--;this.scheduleIdleStop();}
+  }
+
+  private async createSession(options: { sessionId: string; requireExisting?: boolean }): Promise<PiSession> {
     const server = await this.connection();
     const mapping = await this.loadMapping();
     const known = options.requireExisting ? options.sessionId : mapping.get(options.sessionId) ?? options.sessionId;
+    const preset=await this.readContextPreset(known);
+    // Keep the user's native guidance; override on resume as well to retire a removed runner pointer.
+    let developerInstructions:string|undefined;
+    if(this.options.instructions){
+      const configResult=await server.request('config/read',{includeLayers:false,cwd:this.options.cwd}) as Obj;
+      const configured=(configResult.config as Obj)?.developer_instructions;
+      developerInstructions=[typeof configured==='string'?configured:undefined,await this.options.instructions()].filter(Boolean).join('\n');
+    }
     const common = {
+      ...(developerInstructions===undefined?{}:{developerInstructions}),
+      config:contextConfig(preset),
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -219,6 +277,12 @@ export class CodexSessionFactory implements PiSessionFactory {
     const thread = response.thread as Obj;
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
+      cwd: this.options.cwd,
+      preset,
+      developerInstructions,
+      sandbox:this.options.sandbox,
+      savePreset:async(id,preset)=>{const file=this.contextFile(id);await mkdir(dirname(file),{recursive:true});await writeFile(file,JSON.stringify({preset}),{mode:0o600});},
+      rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
       model: typeof response.model === "string" ? response.model : this.options.model,
       reasoningEffort: typeof response.reasoningEffort === "string" ? response.reasoningEffort : this.options.reasoningEffort,
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -232,7 +296,11 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   private release(session: CodexSession): void {
     this.live.delete(session);
-    if (this.live.size > 0 || !this.options.idleTimeoutMs) return;
+    this.scheduleIdleStop();
+  }
+
+  private scheduleIdleStop(): void {
+    if (this.live.size > 0 || this.creating > 0 || this.listingReads > 0 || !this.options.idleTimeoutMs) return;
     this.cancelIdleStop();
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
@@ -252,6 +320,38 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Host-owned workspace paths only; never accepts a browser-supplied directory. */
   async listForCwd(cwd:string): Promise<PiSessionListing[]> {
+    if((this.failedListingsUntil.get(cwd)??0)>Date.now())throw new Error('Codex metadata request recently timed out; discovery is cooling down');
+    this.listingReads++;
+    try { return await this.readListings(cwd); }
+    catch(error){
+      if(error instanceof Error && error.message.startsWith('Codex metadata request timed out:')){
+        this.failedListingsUntil.set(cwd,Date.now()+60000);this.recycleMetadata=true;
+      }
+      throw error;
+    }finally{await this.finishMetadataRead();}
+  }
+
+  private async finishMetadataRead():Promise<void>{
+    this.listingReads--;
+    if(this.recycleMetadata && this.listingReads===0 && this.creating===0 && this.live.size===0){this.recycleMetadata=false;await this.close();}
+    else this.scheduleIdleStop();
+  }
+
+  /** Direct bound-thread metadata avoids a whole store scan for each task directory. */
+  async summaryForCwd(cwd:string,id:string):Promise<PiSessionListing|undefined>{
+    this.listingReads++;
+    try{
+      const server=await this.connection();
+      const result=await server.request('thread/read',{threadId:id,includeTurns:false},this.options.metadataTimeoutMs??10000) as Obj;
+      const thread=result.thread as Obj|undefined;
+      if(!thread || typeof thread.cwd!=='string' || resolve(thread.cwd)!==resolve(cwd))return undefined;
+      const preview=typeof thread.preview==='string'?thread.preview.replace(/\s+/g,' ').trim().slice(0,120):'';
+      return {id,createdAt:toIso(thread.createdAt),updatedAt:toIso(thread.updatedAt),preview,messageCount:preview?1:0,
+        ...(typeof thread.name==='string'?{name:thread.name}:{}),...(typeof thread.source==='string'?{source:thread.source}:{})};
+    }finally{await this.finishMetadataRead();}
+  }
+
+  private async readListings(cwd:string): Promise<PiSessionListing[]> {
     const threads = await this.threads(cwd);
     const mapping = await this.loadMapping();
     const reverse = new Map<string, string>();
@@ -309,7 +409,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     if (this.rateLimits && Date.now() - this.rateLimitsReadAt < RATE_LIMIT_TTL_MS) return this.rateLimits;
     try {
       const server = await this.connection();
-      const result = await server.request("account/rateLimits/read", {}) as Obj;
+      const result = await server.request("account/rateLimits/read", {},10000) as Obj;
       const parsed = parseRateLimits(result.rateLimits);
       if (parsed) { this.rateLimits = parsed; this.rateLimitsReadAt = Date.now(); }
       return parsed ?? this.rateLimits;
@@ -322,6 +422,7 @@ export class CodexSessionFactory implements PiSessionFactory {
 
   /** Stop the user's app-server; sessions resume from Codex's rollouts next time. */
   async close(): Promise<void> {
+    if(this.connecting)await this.connecting.catch(() => undefined);
     this.cancelIdleStop();
     this.unsubscribeAccount?.();
     this.unsubscribeAccount = undefined;
@@ -331,7 +432,17 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 }
 
+function contextConfig(preset:ContextPreset):Obj {
+  const limit=preset==='272k'?272000:500000;
+  return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95)};
+}
 interface CodexSessionSettings {
+  developerInstructions?:string;
+  preset:ContextPreset;
+  sandbox?:string;
+  savePreset:(id:string,preset:ContextPreset)=>Promise<void>;
+  rebind:(id:string)=>Promise<void>;
+  cwd: string;
   model?: string;
   reasoningEffort?: string;
   approvalPolicy: string;
@@ -341,11 +452,13 @@ interface CodexSessionSettings {
 
 class CodexSession implements PiSession {
   private readonly server: CodexAppServer;
-  readonly threadId: string;
+  threadId: string;
   /** Set by the factory so it can count open sessions. */
   onStop?: () => void;
   private readonly listeners = new Set<(event: unknown) => void>();
-  private readonly unsubscribe: () => void;
+  private unsubscribe: () => void;
+  private settings:CodexSessionSettings;
+  private preset:ContextPreset;
   private model?: string;
   private effort?: string;
   private sessionName?: string;
@@ -363,9 +476,13 @@ class CodexSession implements PiSession {
   private readonly pendingApprovals = new Map<string, PendingServerRequest>();
   private readonly readRateLimits?: () => Promise<RateLimits | undefined>;
   private stopped = false;
+  private compactionPending?: {resolve:()=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;observed:boolean};
+  private readonly cwd: string;
 
   constructor(server: CodexAppServer, threadId: string, settings: CodexSessionSettings) {
+    this.settings=settings;this.preset=settings.preset;
     this.server = server;
+    this.cwd = settings.cwd;
     this.threadId = threadId;
     this.model = settings.model;
     this.effort = settings.reasoningEffort;
@@ -404,10 +521,20 @@ class CodexSession implements PiSession {
     };
   }
 
+  private async input(text: string, images?: ImageInput[]): Promise<Json[]> {
+    const input=toUserInput(text,images);
+    const mention=/^\$([a-zA-Z0-9_-]+)(?=\s|$)/.exec(text);
+    if(mention){
+      const matches=(await codexSkills(this.server,this.cwd)).filter(skill=>skill.name===mention[1]);
+      if(matches.length===1)input.push({type:'skill',name:matches[0].name,path:matches[0].path});
+    }
+    return input;
+  }
+
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
     const result = await this.server.request("turn/start", {
       threadId: this.threadId,
-      input: toUserInput(text, images),
+      input: await this.input(text, images),
       ...this.turnOverrides(),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
@@ -418,7 +545,7 @@ class CodexSession implements PiSession {
     if (this.activeTurnId === undefined) return this.prompt(text, images);
     await this.server.request("turn/steer", {
       threadId: this.threadId,
-      input: toUserInput(text, images),
+      input: await this.input(text, images),
       expectedTurnId: this.activeTurnId,
     });
     this.emit({ type: "queue_update", steering: [text], followUp: this.followUps.map((item) => item.text) });
@@ -506,8 +633,8 @@ class CodexSession implements PiSession {
   }
 
   async getModels(): Promise<PiModels> {
-    const result = await this.server.request("model/list", {}) as Obj;
-    return codexModelChoices(result,this.model,this.effort);
+    const result = await this.server.request("model/list", {},10000) as Obj;
+    return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
@@ -515,12 +642,33 @@ class CodexSession implements PiSession {
     this.model = id;
   }
 
+  async setContextPreset(preset:ContextPreset):Promise<void>{
+    if(preset===this.preset)return;
+    if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
+    const history=await this.getHistory(),oldId=this.threadId;
+    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config:contextConfig(preset),...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
+    // Native resume ignores changed config on a subscribed thread. Release only
+    // this idle thread; no model turn is replayed and other threads keep running.
+    let response:Obj;
+    if(history.entries.length){
+      await this.server.request('thread/unsubscribe',{threadId:oldId});
+      try{response=await this.server.request('thread/resume',{...common,threadId:oldId}) as Obj;}
+      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:contextConfig(this.preset)}).catch(()=>undefined);throw error;}
+    }else{response=await this.server.request('thread/start',common) as Obj;}
+    const thread=response.thread as Obj;
+    const id=String(thread.id);
+    if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
+      this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
+    await this.settings.savePreset(id,preset);this.preset=preset;this.tokenUsage=undefined;
+    this.absorbThread(thread);
+  }
+
   async setThinkingLevel(level: string): Promise<void> {
     this.effort = level;
   }
 
   async getCommands(): Promise<CommandInfo[]> {
-    return [];
+    return codexCommands(this.server,this.cwd);
   }
 
   async getExtensions(): Promise<ExtensionInfo[]> {
@@ -554,7 +702,20 @@ class CodexSession implements PiSession {
   }
 
   async compact(): Promise<void> {
-    await this.server.request("thread/compact/start", { threadId: this.threadId });
+    if(this.compactionPending)throw new Error('Codex compaction already running');
+    const completion=new Promise<void>((resolve,reject)=>{
+      const timer=setTimeout(()=>this.finishCompaction(new Error('Codex compaction outcome is still unknown; inspect the native task before retrying')),300000);
+      this.compactionPending={resolve,reject,timer,observed:false};
+    });
+    void completion.catch(()=>undefined);
+    try{await this.server.request("thread/compact/start", { threadId: this.threadId });}
+    catch(error){this.finishCompaction(error instanceof Error?error:new Error('Compaction request failed'));}
+    await completion;
+  }
+
+  private finishCompaction(error?:Error):void{
+    const pending=this.compactionPending;if(!pending)return;this.compactionPending=undefined;clearTimeout(pending.timer);
+    if(error)pending.reject(error);else pending.resolve();
   }
 
   async respondUi(response: UiResponse): Promise<void> {
@@ -567,6 +728,7 @@ class CodexSession implements PiSession {
   }
 
   async stop(): Promise<void> {
+    this.finishCompaction(new Error('Codex stopped before compaction completed'));
     this.questions.clear();
     if (this.stopped) return;
     this.stopped = true;
@@ -641,6 +803,7 @@ class CodexSession implements PiSession {
       }
       case "turn/completed": {
         const turn = params.turn as Obj | undefined;
+        if(this.compactionPending)this.finishCompaction(turn?.status==='completed'&&this.compactionPending.observed?undefined:new Error('Codex compaction did not complete successfully'));
         if (turn?.status === "failed") {
           const error = turn.error as Obj | null | undefined;
           const message = typeof error?.message === "string" ? error.message : "Codex turn failed";
@@ -698,6 +861,7 @@ class CodexSession implements PiSession {
         return;
       }
       case "contextCompaction":
+        if(this.compactionPending)this.compactionPending.observed=true;
         this.emit({ type: "compaction_end" });
         return;
       default: {
@@ -751,6 +915,7 @@ class CodexSession implements PiSession {
   }
 
   private onServerExit(): void {
+    this.finishCompaction(new Error("Codex app-server exited during compaction"));
     this.questions.clear();
     if (this.streaming) {
       this.emit({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "Codex app-server exited" } });

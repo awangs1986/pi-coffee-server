@@ -30,10 +30,13 @@ async function setup({task={},changes={},turn,status,failCreate=false}:Options={
   vi.stubGlobal('WebSocket',Socket);vi.stubGlobal('open',vi.fn());
   const json=(value:unknown,ok=true)=>({ok,status:ok ? 200 : 409,json:async()=>value});
   vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+    if(String(url).includes('/artifacts?'))return json({artifacts:[{path:'output/report.html',available:true}]});
     if(url==='/api/engines')return json({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true},{id:'claude',name:'Claude Code',available:true}]});
     if(url==='/api/me')return json(null);
     if(url==='/auth/me')return json({auth:false});
     const body=init?.body ? JSON.parse(init.body) : null;
+    if(url==='/api/client-address')return json({address:'192.168.1.10',suggestedHost:'192.168.1.10'});
+    if(url==='/api/sshme'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
     if(!body)return json({projects,conversations:[conversation],sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true}});
     requests.push(body);
     if(body.action==='files')return json({url:'http://vm.example',scope:conversation.id,token:'t',files:[]});
@@ -52,6 +55,51 @@ async function setup({task={},changes={},turn,status,failCreate=false}:Options={
 const q=<T extends Element=HTMLElement>(selector:string)=>document.querySelector<T>(selector)!;
 const hidden=(selector:string)=>q(selector).classList.contains('hidden');
 const workspaceActions=(requests:any[])=>requests.map(r=>r.action).filter(a=>['checkpoint','sync','pull_request'].includes(a));
+
+it('requires explicit confirmation of experimental handoff compaction and preserves cancellation',async()=>{
+  const app=await setup();
+  const compact=q<HTMLButtonElement>('#sp-compact');
+  expect(compact.textContent).toBe('交接压缩');
+  compact.click();await vi.advanceTimersByTimeAsync(20);
+  expect(q('#modal-title').textContent).toBe('交接压缩（实验性功能）');
+  expect(q('#modal-text').textContent).toContain('不保证避免上下文漂移');
+  expect(q('#modal-text').textContent).toContain('多次系统自动压缩后');
+  expect(q('#modal-text').textContent).toContain('Pi 原生自动压缩');
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+  q<HTMLButtonElement>('#modal-cancel').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+  compact.click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(1);
+});
+
+it('does not compact a different task after the confirmation dialog was opened',async()=>{
+  const app=await setup();
+  q<HTMLButtonElement>('#sp-compact').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+  expect(app.frames.filter(f=>f.type==='compact')).toHaveLength(0);
+});
+
+it('shows active compaction after reconnect and blocks input until settlement',async()=>{
+  const app=await setup();const ws=app.sockets.at(-1);
+  ws.receive({type:'opened',sessionId:'task-1',engine:'pi',state:{isCompacting:true}});
+  ws.receive({type:'history',sessionId:'task-1',entries:[]});
+  q<HTMLTextAreaElement>('#prompt').value='continue';q('#prompt').dispatchEvent(new Event('input'));
+  expect(q<HTMLButtonElement>('#send').disabled).toBe(true);
+  expect(q<HTMLButtonElement>('#sp-compact').disabled).toBe(true);
+  expect(hidden('#stop')).toBe(false);
+  ws.receive({type:'event',sessionId:'task-1',event:{type:'compaction_end',result:{summary:'handoff'},aborted:false}});
+  expect(q('#thread').textContent).not.toContain('上下文已压缩');
+  ws.receive({type:'event',sessionId:'task-1',event:{type:'context_operation',active:false,success:true}});
+  expect(q<HTMLButtonElement>('#send').disabled).toBe(false);
+  expect(q('#thread').textContent).toContain('交接压缩完成');
+});
+
+it('reports failed compaction to a reconnected browser without an originating request',async()=>{
+  const app=await setup();app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'context_operation',active:false,success:false,message:'Handoff did not commit'}});
+  expect(q('#thread').textContent).toContain('Handoff did not commit');
+});
 
 it('puts repository | branch, the branch Diff total and 创建 PR inside the composer card',async()=>{
   await setup();
@@ -93,7 +141,7 @@ it('chooses Agent and Chat/Work in the Agent menu for a new task, and locks them
   const codexInChat=[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent!.includes('Codex'))!;
   expect(codexInChat.disabled).toBe(true);expect(codexInChat.textContent).toContain('仅 Work');
   q<HTMLButtonElement>('#agent-kind-row').click();
-  [...document.querySelectorAll<HTMLButtonElement>('#agent-kind-pane button')].find(b=>b.textContent!.includes('Work'))!.click();
+  [...document.querySelectorAll<HTMLButtonElement>('#agent-kind-pane button')].find(b=>b.textContent!.includes('Gitea'))!.click();q<HTMLButtonElement>('#github-close').click();
   expect(q<HTMLSelectElement>('#task-kind').value).toBe('project');expect(q('#project-select').closest('label')!.classList.contains('hidden')).toBe(false);
   expect(hidden('#strip-kind')).toBe(true);
   trigger.click();q<HTMLButtonElement>('#agent-engine-row').click();
@@ -187,9 +235,9 @@ it('lets the settled turn replace a pending turn_diff refresh',async()=>{
   const opened=turnReads();
   emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
   emit({type:'agent_settled'});await vi.advanceTimersByTimeAsync(20);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
   await vi.advanceTimersByTimeAsync(2000);
-  expect(turnReads()).toBe(opened+1);
+  expect(turnReads()).toBe(opened+2);
 });
 
 it('marks 最近一轮 as unsupported for Claude Code tasks',async()=>{
@@ -233,4 +281,198 @@ it('gives the draft back when the first message cannot create the task',async()=
   q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
   expect(prompt.value).toBe('');await vi.advanceTimersByTimeAsync(20);
   expect(prompt.value).toBe('hello');expect(hidden('#stop')).toBe(true);expect(q('#toast').textContent).toContain('Gitea unavailable');
+});
+
+it('restores the draft when sending a new Work task without a repository, and does not create early on "/"',async()=>{
+  const app=await setup();
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  const kind=q<HTMLSelectElement>('#task-kind');kind.value='project';kind.dispatchEvent(new Event('change'));
+  q<HTMLSelectElement>('#project-select').value='';
+  const prompt=q<HTMLTextAreaElement>('#prompt');
+  prompt.value='/help';prompt.dispatchEvent(new Event('input'));
+  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(20);
+  expect(prompt.value).toBe('/help');expect(hidden('#stop')).toBe(true);
+  expect(q('#toast').textContent).toContain('请先选择');
+});
+
+it('refreshes the open Diff and renders the changed-files card when a native run_completed arrives',async()=>{
+  const turnPatch='diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10 +10 @@\n-const answer = compute(left);\n+const answer = compute(right);';
+  const app=await setup({task:{engine:'codex',turnSnapshot:{tree:'3333333333',startedAt:'2026-09-28T02:00:00Z'}},turn:{scope:'turn',sessionId:'task-1',branch:'coffee/vm/task-1',base:'3333333333',target:'WORKTREE',startedAt:'2026-09-28T02:00:00Z',running:false,files:[{path:'src/a.ts',status:'M',additions:1,deletions:1}],patch:turnPatch,truncated:false}});
+  const turnReads=()=>app.requests.filter(r=>r.action==='changes' && r.scope==='turn').length;
+  const emit=(event:unknown)=>app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event});
+  q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+  q<HTMLButtonElement>('#diff-scope').click();q<HTMLButtonElement>('#diff-scope-turn').click();await vi.advanceTimersByTimeAsync(20);
+  const opened=turnReads();
+  emit({type:'turn_diff',diff:''});await vi.advanceTimersByTimeAsync(300);
+  emit({type:'run_completed',status:'completed'});await vi.advanceTimersByTimeAsync(20);
+  expect(turnReads()).toBe(opened+2);
+  expect(q('#thread .changes-card')).not.toBeNull();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(turnReads()).toBe(opened+2);
+});
+
+it('uses only latest-turn edits and opens their turn Diff without hiding cumulative branch changes',async()=>{
+ const app=await setup({task:{turnSnapshot:{tree:'turn-base'}},turn:{scope:'turn',base:'turn-base',target:'WORKTREE',startedAt:'2026-09-30T10:00:00Z',running:false,files:[{path:'this-turn.ts',status:'M',additions:1,deletions:0}],patch:''}});
+ const card=q<HTMLDetailsElement>('#thread .changes-card');
+ expect(card.textContent).toContain('已编辑 1 个文件');expect(card.textContent).toContain('this-turn.ts');expect(card.textContent).not.toContain('notes.md');
+ card.querySelector('summary')!.click();card.querySelector<HTMLButtonElement>('.workspace-change-row')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(q('#diff-scope-label').textContent).toBe('最近一轮');
+ q<HTMLButtonElement>('#diff-close').click();q<HTMLButtonElement>('#branch-diff').click();await vi.advanceTimersByTimeAsync(20);
+ expect(q('#diff-scope-label').textContent).toBe('分支改动');
+ expect(app.requests.filter(r=>r.action==='changes'&&r.scope==='turn').length).toBeGreaterThan(0);
+});
+it.each([undefined,{scope:'turn',files:[],running:false},{scope:'turn',files:[{path:'in-progress.ts',status:'M'}],running:true}])('does not substitute older branch edits when the turn is unavailable, empty or still running',async turn=>{
+ await setup({turn});expect(q('#thread .changes-card')).toBeNull();
+});
+
+it('discards a late summary when another turn starts',async()=>{
+ const turn={scope:'turn',base:'turn-base',files:[{path:'old-turn.ts',status:'M'}],patch:'',running:false};
+ const app=await setup({turn});expect(q('#thread .changes-card')).not.toBeNull();
+ const baseFetch=globalThis.fetch;let finish:any;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):null;
+  if(body?.action==='changes'&&body.scope==='turn')return new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>turn});});
+  return baseFetch(url,init);
+ }));
+ app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'run_completed',status:'completed'}});
+ await vi.advanceTimersByTimeAsync(20);expect(finish).toBeTypeOf('function');
+ app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'run_started'}});
+ finish();await vi.advanceTimersByTimeAsync(20);expect(q('#thread .changes-card')).toBeNull();
+});
+
+it('keeps edited files collapsed until clicked and does not insert workspace artifact galleries',async()=>{
+  const app=await setup({task:{turnSnapshot:{tree:'turn-base'}},turn:{scope:'turn',base:'turn-base',files:[{path:'src/a.ts',status:'M',additions:1,deletions:0},{path:'notes.md',status:'?',additions:1,deletions:0}],patch:PATCH,running:false}});
+  const card=q<HTMLDetailsElement>('#thread .changes-card');
+  expect(card.tagName).toBe('DETAILS');expect(card.open).toBe(false);
+  const summary=card.querySelector('summary')!;expect(summary.textContent).toContain('已编辑 2 个文件');
+  summary.click();expect(card.open).toBe(true);
+  expect(card.querySelectorAll('.workspace-change-row')).toHaveLength(2);
+  card.querySelector<HTMLButtonElement>('.workspace-change-row')!.click();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLDialogElement>('#diff-dialog').open).toBe(true);
+  summary.click();expect(card.open).toBe(false);
+  for(let turn=0;turn<2;turn++){
+    app.sockets.at(-1).receive({type:'event',sessionId:'task-1',event:{type:'agent_end'}});
+    await vi.advanceTimersByTimeAsync(5100);
+    expect(q('#thread').textContent).not.toContain('工作区产物');
+    expect(q('#thread').textContent).not.toContain('output/report.html');
+  }
+});
+
+it('uploads attachments with hashed authenticated scopes, refreshes expired tokens, and includes new-task files in the first prompt',async()=>{
+  const app=await setup();
+  app.sockets.at(-1).receive({type:'history',sessionId:'task-1',entries:[]});
+  Object.defineProperty(crypto,'subtle',{configurable:true,value:{digest:async()=>new ArrayBuffer(32)}});
+  const xhrRequests:{url:string;body:any}[]=[];
+  class FakeXHR{
+    url='';status=200;responseText='';upload:any={};onload:any;onerror:any;onabort:any;
+    open(_method:string,url:string){this.url=url;}
+    send(body:any){xhrRequests.push({url:this.url,body});this.responseText=JSON.stringify({path:`inbox/${body.name}`,sha256:'00'.repeat(32)});queueMicrotask(()=>this.onload?.());}
+    abort(){this.onabort?.();}
+  }
+  vi.stubGlobal('XMLHttpRequest',FakeXHR);
+  let tokenCount=0;let firstPrepareExpired=true;const prepareUrls:string[]=[];
+  const baseFetch=globalThis.fetch;
+  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+    const urlStr=String(url);
+    if(urlStr.includes('/api/localsend/v2/prepare-upload')){
+      prepareUrls.push(urlStr);
+      if(urlStr.startsWith('http://unreachable.vm:53317'))throw new Error('ECONNREFUSED');
+      if(firstPrepareExpired){firstPrepareExpired=false;return {ok:false,status:401,json:async()=>({message:'Invalid scope token'})};}
+      const parsed=JSON.parse(init.body);
+      const files=Object.fromEntries(Object.keys(parsed.files).map(k=>[k,'file-tok-'+k]));
+      return {ok:true,status:200,json:async()=>({sessionId:'ls-1',files})};
+    }
+    const body=init?.body ? JSON.parse(init.body) : null;
+    if(url==='/api/client-address')return json({address:'192.168.1.10',suggestedHost:'192.168.1.10'});
+    if(url==='/api/sshme'){requests.push(body);if(body.action==='list')return json({runners:[]});if(body.action==='save')return json({runner:{...body.runner,password:undefined,id:'runner-1',hasPassword:true}});if(body.action==='sshme')return json({prompt:'Install editor on the confirmed remote Windows computer.'});}
+    if(body?.action==='files'){
+      tokenCount+=1;
+      return {ok:true,status:200,json:async()=>({url:'http://unreachable.vm:53317',scope:'hashed-user-scope-'+body.id,sessionId:body.id,token:'fresh-tok-'+tokenCount,maxFileBytes:10_000_000,maxBatchBytes:50_000_000,files:[]})};
+    }
+    return baseFetch(url,init);
+  }));
+
+  // 1. Existing task with authenticated hashed scope (`scope !== activeId`), unreachable direct URL -> same-origin fallback, and expired 401 token -> auto-refresh
+  app.sockets.at(-1).receive({type:'transfer',sessionId:'task-1',scope:'hashed-user-scope-task-1',url:'http://unreachable.vm:53317',token:'stale-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  vi.stubGlobal('FileReader',class{result='data:image/png;base64,aGVsbG8=';onload:any;readAsDataURL(){queueMicrotask(()=>this.onload());}});
+  vi.stubGlobal('Image',class{width=10;height=10;onload:any;set src(_v:string){queueMicrotask(()=>this.onload());}});
+  const file1=new File(['spec'],'paste.png',{type:'image/png'});
+  Object.defineProperty(file1,'arrayBuffer',{value:async()=>new ArrayBuffer(4)});
+  const input=q<HTMLInputElement>('#file');
+  Object.defineProperty(input,'files',{configurable:true,value:[file1]});
+  input.dispatchEvent(new Event('change'));
+  await vi.advanceTimersByTimeAsync(30);
+
+  expect(document.querySelectorAll('#attachments img')).toHaveLength(1);
+  expect(document.querySelectorAll('#attachments .upload-chip')).toHaveLength(0);
+  expect(prepareUrls).toHaveLength(0);
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(30);
+  expect(prepareUrls.some(u=>u.startsWith('http://unreachable.vm:53317'))).toBe(true);
+  expect(prepareUrls.some(u=>u.startsWith(location.origin) && u.includes('token=fresh-tok-'))).toBe(true);
+  expect(xhrRequests).toHaveLength(1);
+  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+  expect(app.frames.find(f=>f.type==='prompt').images).toHaveLength(1);
+  expect(app.frames.find(f=>f.type==='prompt').text).not.toContain('[已上传到工作目录的文件]');
+  app.frames.length=0;
+
+  // 2. New Work task: attaching a file before selecting a repository queues the file visibly without prematurely failing openSession, and sends it with the first prompt once submitted
+  q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);
+  const kind=q<HTMLSelectElement>('#task-kind');kind.value='project';kind.dispatchEvent(new Event('change'));
+  q<HTMLSelectElement>('#project-select').value='';
+  const file2=new File(['draft'],'notes.txt',{type:'text/plain'});
+  Object.defineProperty(file2,'arrayBuffer',{value:async()=>new ArrayBuffer(5)});
+  Object.defineProperty(input,'files',{configurable:true,value:[file2]});
+  input.dispatchEvent(new Event('change'));
+  await vi.advanceTimersByTimeAsync(20);
+  expect(q('#attachments .upload-chip')?.textContent).toContain('待发送');
+  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+
+  q<HTMLSelectElement>('#project-select').value='p';q<HTMLSelectElement>('#project-select').dispatchEvent(new Event('change'));
+  const prompt=q<HTMLTextAreaElement>('#prompt');prompt.value='请总结附件';prompt.dispatchEvent(new Event('input'));
+  q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+  await vi.advanceTimersByTimeAsync(20);
+
+  const created=app.requests.find(r=>r.action==='conversation');
+  expect(created).toBeDefined();
+  const ws=app.sockets.at(-1);
+  ws.receive({type:'opened',sessionId:created.id,engine:'pi',state:{}});
+  ws.receive({type:'history',sessionId:created.id,entries:[]});
+  ws.receive({type:'transfer',sessionId:created.id,scope:'hashed-user-scope-'+created.id,url:location.origin,token:'new-task-tok',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  await vi.advanceTimersByTimeAsync(30);
+
+  ws.receive({type:'models',sessionId:created.id,models:[],context:{preset:'272k'}});
+  const sentPrompt=app.frames.find(f=>f.type==='prompt');
+  expect(sentPrompt).toBeDefined();
+  expect(sentPrompt.text).toContain('请总结附件');
+  expect(sentPrompt.text).toContain('[已上传到工作目录的文件]');
+  expect(sentPrompt.text).toContain('inbox/notes.txt');
+
+  // 3. Reloading history parses [已上传到工作目录的文件] back into clickable .file-chip pills and keeps same-origin + refreshed tokens on poll
+  ws.receive({type:'history',sessionId:created.id,entries:[{kind:'user',id:'u1',text:sentPrompt.text}]});
+  ws.receive({type:'transfer',sessionId:created.id,scope:'hashed-user-scope-'+created.id,url:'http://unreachable.vm:53317',token:'rotated-tok-99',maxFileBytes:10_000_000,maxBatchBytes:50_000_000});
+  await vi.advanceTimersByTimeAsync(20);
+  expect(q('#thread .msg.user .text').textContent).toBe('请总结附件');
+  const chip=q<HTMLAnchorElement>('#thread .msg.user a.file-chip');
+  expect(chip).not.toBeNull();
+  expect(chip.querySelector('.file-name')?.textContent).toBe('notes.txt');
+  expect(chip.href).toContain(location.origin);
+  expect(chip.href).toContain('token=rotated-tok-99');
+  expect(q('#upload-log')?.textContent).toContain('notes.txt');
+});
+
+
+
+it.each(['pi','codex','claude'])('intercepts /SSHME for %s and sends only after explicit connection confirmation',async engine=>{
+ HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new Event('close'));};
+ const app=await setup({task:{engine,workspaceKind:engine==='pi'?'chat':'project'}});
+ q<HTMLTextAreaElement>('#prompt').value='/ssh';q('#prompt').dispatchEvent(new Event('input'));expect(q('#slash').textContent).toContain('/sshme');
+ q<HTMLTextAreaElement>('#prompt').value='/SSHME Install editor';q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(q('#sshme-dialog').hasAttribute('open')).toBe(true);expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);
+ q<HTMLButtonElement>('#sshme-close').click();expect(q<HTMLTextAreaElement>('#prompt').value).toBe('/SSHME Install editor');expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);
+ q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ q<HTMLInputElement>('#sshme-username').value='tester';q<HTMLInputElement>('#sshme-password').value='not-for-model';q('#sshme-form').dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const sent=app.frames.filter(f=>f.type==='prompt');expect(sent).toHaveLength(1);expect(sent[0].text).toBe('Install editor on the confirmed remote Windows computer.');expect(JSON.stringify(app.frames)).not.toContain('not-for-model');
 });

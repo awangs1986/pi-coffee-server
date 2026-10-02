@@ -1,3 +1,4 @@
+import {InputQueue} from "./input-queue.js";
 import { randomUUID } from "node:crypto";
 import type {
   CommandInfo,
@@ -10,7 +11,7 @@ import type {
   SessionSummary,
   UiResponse,
 } from "../shared/protocol.js";
-import type { AgentHistory as PiHistory, AgentModels as PiModels, AgentSessionFactory as PiSessionFactory, AgentSession as PiSession } from "./agent-adapter.js";
+import type { AgentSessionListing as PiSessionListing, AgentHistory as PiHistory, AgentModels as PiModels, AgentSessionFactory as PiSessionFactory, AgentSession as PiSession } from "./agent-adapter.js";
 
 export interface SessionSink {
   send(frame: ServerFrame): void;
@@ -48,6 +49,7 @@ export interface SessionOpenResult {
  */
 export class HostSession {
   readonly id: string;
+  private readonly inputs:InputQueue;
   private readonly factory: PiSessionFactory;
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
@@ -64,6 +66,7 @@ export class HostSession {
   private lastMessageEndCursor = 0;
   private state: SessionState = { isStreaming: false, messageCount: 0 };
   private activeRequestId?: string;
+  private compacting = false;
   /** Extension dialogs awaiting an answer, keyed by request id. */
   private readonly pendingUi = new Map<string, ServerFrame>();
   private readonly answeringUi = new Set<string>();
@@ -79,6 +82,14 @@ export class HostSession {
 
   constructor(options: HostSessionOptions) {
     this.id = options.id ?? randomUUID();
+    this.inputs=new InputQueue({busy:()=>this.executionBusy,
+      validate:async text=>{await this.ready().validateFollowUp?.(text);},
+      deliver:async(text,images,promote)=>{
+        if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+        if(promote&&this.state.isStreaming){await this.ready().steer(text,images);return;}
+        const requestId=randomUUID();this.reservePrompt(requestId,true);await this.prompt(requestId,text,images);
+      },changed:()=>{for(const sink of this.sinks)sink.send(this.queueFrame);this.onLifecycle?.(this);}
+    });
     this.factory = options.factory;
     this.eventBufferSize = Math.max(1, options.eventBufferSize ?? 256);
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
@@ -96,7 +107,7 @@ export class HostSession {
       this.unsubscribe = this.pi.onEvent((event) => this.handlePiEvent(event));
       try {
         this.state = await this.pi.getState();
-        this.started = true;
+        this.started = true;this.inputs.resume();
         this.watchExternalTurn();
       } catch (error) {
         this.unsubscribe?.();
@@ -151,7 +162,7 @@ export class HostSession {
   }
 
   get currentState(): SessionState {
-    return { ...this.state };
+    return { ...this.state, isCompacting: this.compacting };
   }
 
   get currentCursor(): number {
@@ -173,15 +184,18 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
-  get isBusy(): boolean { return this.state.isStreaming || this.activeRequestId !== undefined; }
+  private contextChanging=false;
+  private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
+  get isTransitioning():boolean {return this.contextChanging||this.compacting;}
+  get isBusy():boolean {return this.executionBusy||this.inputs.items.length>0;}
   get wasInterrupted(): boolean { return this.interrupted; }
   releasePrompt(requestId: string): void { if(this.activeRequestId===requestId)this.activeRequestId=undefined; }
 
 
-  reservePrompt(requestId: string): void {
+  reservePrompt(requestId: string,fromQueue=false): void {
     if (this.interrupted) throw new Error("Agent was interrupted. Reopen the conversation before retrying; the previous request was not replayed.");
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.activeRequestId !== undefined || this.state.isStreaming) {
+    if (fromQueue?this.executionBusy:this.isBusy) {
       throw new SessionBusyError();
     }
     this.activeRequestId = requestId;
@@ -201,19 +215,29 @@ export class HostSession {
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
   async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[]): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
+    if (this.compacting || this.contextChanging) throw new SessionBusyError();
     if (mode === "steer") await this.pi.steer(text, images);
-    else await this.pi.followUp(text, images);
+    else await this.inputs.add(text, images);
   }
 
+  get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
+  async changeQueue(action:import('../shared/protocol.js').QueueAction){
+    if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+    await this.inputs.change(action);
+  }
   async abort(): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
+    this.inputs.clear();
+    await this.inputs.waitForDelivery();
     await this.pi.abort();
   }
 
   async rename(name: string): Promise<void> {
+    if (this.compacting||this.contextChanging)throw new SessionBusyError();
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     await this.pi.rename(name);
     this.state = { ...this.state, sessionName: name };
+    this.scheduleIdleCheck();
   }
 
   hasPendingUi(id: string): boolean {
@@ -245,13 +269,56 @@ export class HostSession {
 
   backgroundState():Promise<{known:boolean;active:number}> {return this.ready().backgroundState?.() ?? Promise.resolve({known:false,active:0});}
 
+  async takeover(operation:import('./takeover.js').TakeoverState):Promise<void>{
+    if(this.isBusy||this.pendingUi.size)throw new SessionBusyError();
+    if(!this.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
+    this.contextChanging=true;this.clearIdleTimer();this.onLifecycle?.(this);
+    const original=this.ready();let sourceStopped=false,committed=false;let prepared:Awaited<ReturnType<NonNullable<PiSessionFactory['prepareTakeover']>>>|undefined;
+    try{
+      const state=await original.getState(),background=await this.backgroundState();
+      if(state.isStreaming||!background.known||background.active)throw new Error('Source has active or unknown work');
+      prepared=await this.factory.prepareTakeover(this.id,operation,await original.getHistory());
+      const nextState=await prepared.session.getState();
+      const finalState=await original.getState(),finalBackground=await original.backgroundState?.();
+      if(finalState.isStreaming||!finalBackground?.known||finalBackground.active)throw new Error('Source resumed during takeover; it was not stopped');
+      sourceStopped=true;await original.stop();
+      await prepared.commit();committed=true;
+      this.unsubscribe?.();this.pi=prepared.session;this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));
+      this.events.length=0;this.lastMessageEndCursor=this.cursor;this.state=nextState;
+      await this.exportHistory();
+    }catch(error){
+      if(!committed)await prepared?.rollback().catch(()=>undefined);
+      if(sourceStopped&&!committed){this.unsubscribe?.();this.pi=await this.factory.create({sessionId:this.id});this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));this.state=await this.pi.getState();}
+      // The committed binding is changed only after preparation succeeds.
+      throw error;
+    }finally{this.contextChanging=false;this.onLifecycle?.(this);this.scheduleIdleCheck();}
+  }
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
-  setModel(provider: string, id: string): Promise<void> { return this.ready().setModel(provider, id); }
-  setThinkingLevel(level: string): Promise<void> { return this.ready().setThinkingLevel(level); }
+  setModel(provider: string, id: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
+  async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{
+    if(this.isBusy)throw new SessionBusyError();
+    const adapter=this.ready();if(!adapter.setContextPreset)throw new Error('Context settings require an updated Host and Agent');
+    this.contextChanging=true;
+    try{await adapter.setContextPreset(preset);}finally{this.contextChanging=false;}
+  }
+  setThinkingLevel(level: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
   getStats(): Promise<SessionStats> { return this.ready().getStats(); }
-  compact(): Promise<void> { return this.ready().compact(); }
+  async compact(): Promise<void> {
+    const pi=this.ready();
+    if(this.isBusy)throw new SessionBusyError();
+    this.compacting=true;this.clearIdleTimer();
+    this.announce({type:"context_operation",active:true});this.onLifecycle?.(this);
+    let success=false, message:string|undefined;
+    try {await pi.compact();await this.exportHistory(await pi.getHistory());success=true;}
+    catch(error) {message=error instanceof Error ? error.message : "Compaction failed";throw error;}
+    finally {
+      this.compacting=false;
+      this.announce({type:"context_operation",active:false,success,...(message ? {message} : {})});this.onLifecycle?.(this);
+      this.scheduleIdleCheck();
+    }
+  }
 
   private ready(): PiSession {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
@@ -259,6 +326,7 @@ export class HostSession {
   }
 
   async stop(): Promise<void> {
+    this.inputs.stop();
     this.clearIdleTimer();
     if (this.externalTimer !== undefined) clearTimeout(this.externalTimer);
     this.externalTimer = undefined;
@@ -340,7 +408,7 @@ export class HostSession {
     let lifecycle = false;
     if (isRecord(safeEvent) && typeof safeEvent.type === "string") {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
-        this.interrupted = true;
+        this.interrupted = true;this.inputs.pause();
         this.state = {...this.state,isStreaming:false};
         this.activeRequestId = undefined;
         this.pendingUi.clear();
@@ -364,7 +432,6 @@ export class HostSession {
         // Whatever dialogs were open have been answered or timed out by now.
         this.pendingUi.clear();
         if (this.sinks.size === 0) this.unseenSettle = true;
-        void this.refreshState();
       }
     }
     this.cursor += 1;
@@ -388,7 +455,7 @@ export class HostSession {
       lifecycle = true; // the list's "waiting" flag changed
     }
     for (const sink of this.sinks) sink.send(frame);
-    if (settled) {void this.exportHistory();this.scheduleIdleCheck();}
+    if (settled) {void this.refreshState();void this.exportHistory();this.scheduleIdleCheck();this.inputs.wake();}
     if (lifecycle) this.onLifecycle?.(this);
   }
 
@@ -404,7 +471,8 @@ export class HostSession {
   private async refreshState(): Promise<void> {
     if (!this.pi) return;
     try {
-      this.state = await this.pi.getState();
+      const cursor=this.cursor;const state=await this.pi.getState();
+      if(this.cursor===cursor)this.state=state;
     } catch {
       // The authoritative lifecycle event has already been forwarded. A
       // transient state refresh failure must not tear down a live session.
@@ -424,6 +492,7 @@ export class HostSessionRegistry {
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
   private readonly sessions = new Map<string, HostSession>();
+  private listing?:Promise<PiSessionListing[]>;
   private readonly changeListeners = new Set<(session?:HostSession) => void>();
 
   private readonly externalPollMs?: number;
@@ -447,9 +516,10 @@ export class HostSessionRegistry {
     }
   }
 
-  async open(id?: string, after?: number): Promise<SessionOpenResult> {
-    const existing = id === undefined ? undefined : this.sessions.get(id);
-    const session = existing ?? new HostSession({
+  private sessionFor(id?:string):HostSession {
+    const existing=id===undefined?undefined:this.sessions.get(id);
+    if(existing)return existing;
+    const session=new HostSession({
       ...(id === undefined ? {} : { id }),
       factory: this.factory,
       eventBufferSize: this.eventBufferSize,
@@ -460,6 +530,12 @@ export class HostSessionRegistry {
       onHistory:this.options.onHistory,
     });
     this.sessions.set(session.id, session);
+    return session;
+  }
+
+  async open(id?: string, after?: number): Promise<SessionOpenResult> {
+    const existing=id===undefined?undefined:this.sessions.get(id);
+    const session=this.sessionFor(id);
     try {
       const result = await session.prepare(after);
       if (!existing) this.notifyChange();
@@ -475,9 +551,15 @@ export class HostSessionRegistry {
 
   /** Rename any conversation; a stored-but-idle one is resumed for the call. */
   async rename(id: string, name: string): Promise<void> {
-    const { session } = await this.open(id);
-    await session.rename(name);
-    this.notifyChange();
+    const existing=this.sessions.get(id);
+    const session=this.sessionFor(id);
+    try {
+      // Naming needs the native binding, not the full transcript projection/export.
+      await session.start();await session.rename(name);this.notifyChange();
+    }catch(error){
+      if(!existing){this.sessions.delete(session.id);await session.stop().catch(()=>undefined);}
+      throw error;
+    }
   }
 
   /** Delete a conversation from the store, stopping its Pi process first. */
@@ -495,7 +577,11 @@ export class HostSessionRegistry {
 
   /** Durable conversations from the store, decorated with what is live right now. */
   async list(): Promise<SessionSummary[]> {
-    const stored = await this.factory.list();
+    // Share only an in-flight read within this user's registry. Never cache a
+    // completed result or its live running/queue/attention decoration.
+    const stored = await (this.listing ??= this.factory.list().finally(() => {
+      this.listing = undefined;
+    }));
     const known = new Set(stored.map((item) => item.id));
     // Pi writes the session file at startup; a conversation nobody has spoken
     // in yet is noise in a shared list (the opening browser shows it locally).
@@ -505,14 +591,14 @@ export class HostSessionRegistry {
       .map((item) => {
         const live = this.sessions.get(item.id);
         const attention = live?.attention;
-        return { ...item, running: live?.isStreaming ?? false, ...(attention === undefined ? {} : { attention }) };
+        return { ...item, running: Boolean(live?.isStreaming||live?.isTransitioning), ...(live?.queueFrame.items.length?{queued:live.queueFrame.items.length}:{}), ...(attention === undefined ? {} : { attention }) };
       });
 
     // A conversation that was just opened has no file yet (Pi writes it with
     // the first message). Like Codex, it only appears in everyone's list once
     // it has content; the browser that opened it shows it locally meanwhile.
     for (const session of this.sessions.values()) {
-      if (known.has(session.id) || session.currentState.messageCount === 0) continue;
+      if (known.has(session.id) || (session.currentState.messageCount === 0 && !session.queueFrame.items.length)) continue;
       const now = new Date().toISOString();
       summaries.unshift({
         id: session.id,
@@ -520,7 +606,8 @@ export class HostSessionRegistry {
         updatedAt: now,
         messageCount: session.currentState.messageCount,
         preview: "",
-        running: session.isStreaming,
+        running: session.isStreaming||session.isTransitioning,
+        ...(session.queueFrame.items.length?{queued:session.queueFrame.items.length}:{}),
         ...(session.attention === undefined ? {} : { attention: session.attention }),
       });
     }

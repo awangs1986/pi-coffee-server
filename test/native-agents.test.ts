@@ -10,11 +10,12 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
-  if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
+  if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='discover'?{revision:'a'.repeat(40),skills:[{name:'demo',description:'Demo skill',subdir:'skills/demo',installed:false},{name:'other',description:'Other skill',subdir:'skills/other',installed:false}],warnings:[]}:body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
-  requests.push(body);if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
+  if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_display'){sidebar.showGroups=body.showGroups;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_collapse'){sidebar.collapsed=body.collapsed?[body.projectId]:[];return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
@@ -97,6 +98,40 @@ it('renders replayed native items once, answers a native question and never rese
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='one turn';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);expect(document.querySelector('#thread')?.textContent).toContain('不会自动重发');
+ document.querySelector<HTMLButtonElement>('#task-details-btn')!.click();expect(document.querySelector('#task-details')!.classList.contains('hidden')).toBe(false);
+ prompt.value='a new explicit instruction';prompt.dispatchEvent(new Event('input'));expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it.each(['pi','codex'].flatMap(engine=>['prompt','steer','follow_up'].map(mode=>({engine,mode}))))('does not mark acknowledged $engine $mode uncertain after reconnect and permits continuing',async({engine,mode})=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{isStreaming:false},capabilities:{models:true,stop:true,steer:true,followUp:true}};
+ ws.receive({...opened,state:{isStreaming:mode!=='prompt'}});ws.receive({type:'history',sessionId:id,entries:[]});
+ document.querySelector<HTMLSelectElement>('#mode')!.value=mode==='prompt'?'follow_up':mode;
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='accepted request';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const first=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:mode,requestId:first.requestId});
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);
+ next.receive(opened);next.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'u1',text:'accepted request'}]});
+ expect(document.querySelector('#thread')?.textContent).not.toContain('交付状态尚不确定');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('#task-details-btn')!.click();expect(document.querySelector('#task-details')!.classList.contains('hidden')).toBe(false);
+ prompt.value='continue explicitly';prompt.dispatchEvent(new Event('input'));expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it.each(['pi','codex'])('reconciles a %s context change with lost acknowledgement before allowing continuation',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{},capabilities:{models:true}};
+ const models={type:'models',sessionId:id,models:[{provider:'fixture',id:'large'}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});ws.receive(models);
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!.click();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
+ expect(app.frames.filter(f=>f.type==='set_context')).toHaveLength(1);
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});next.receive({...models,context:{preset:'maximum'}});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='continue after reconnect';prompt.dispatchEvent(new Event('input'));
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ expect(app.frames.filter(f=>f.type==='set_context')).toHaveLength(1);
 });
 it('restores this tab selection even when another tab last selected another Task',async()=>{
  sessionStorage.setItem('pi-coffee.active.v2','this-tab');localStorage.setItem('pi-coffee.active.v2','other-tab');
@@ -114,16 +149,16 @@ it('opens seven-category context usage on click without cumulative data and clos
  trigger.dispatchEvent(new Event('mouseenter'));trigger.focus();await vi.advanceTimersByTimeAsync(1);
  expect(trigger.getAttribute('aria-expanded')).toBe('false');
  trigger.click();expect(panel.open).toBe(true);expect(trigger.getAttribute('aria-expanded')).toBe('true');
- expect(document.querySelector('#sp-capacity')?.textContent).toBe('~10.0K / 40K Tokens');
- expect([...document.querySelectorAll('#sp-context-legend .legend-label')].map(e=>e.textContent)).toEqual(['System prompt','Tool definitions','Rules','Skills','MCP & dynamic tools','Subagent definitions','Conversation']);
+ expect(document.querySelector('#sp-capacity')?.textContent).toBe('~10.0K / 40K 词元');
+ expect([...document.querySelectorAll('#sp-context-legend .legend-label')].map(e=>e.textContent)).toEqual(['系统提示词','工具定义','项目规则','技能','MCP 与动态工具','子代理定义','对话']);
  expect(document.querySelector('#sp-context-legend')?.textContent).toContain('6.0K');
  expect(document.querySelector('#sp-context-legend')?.textContent).not.toContain('90.0K');
  expect(panel.textContent).not.toContain('累计输入');
  document.querySelector<HTMLButtonElement>('#stats-close')!.click();expect(panel.open).toBe(false);expect(document.activeElement).toBe(trigger);
  trigger.click();panel.dispatchEvent(new Event('cancel',{cancelable:true}));expect(panel.open).toBe(false);
  ws.receive({type:'stats',sessionId:id,stats:{contextUsage:{percent:null,tokens:null,contextWindow:40000},tokens:{total:100000},cost:0.1}});
- expect(document.querySelector('#sp-pct')?.textContent).toBe('Usage unavailable');
- expect(document.querySelector('#sp-capacity')?.textContent).toBe('— / 40K Tokens');
+ expect(document.querySelector('#sp-pct')?.textContent).toBe('用量暂不可用');
+ expect(document.querySelector('#sp-capacity')?.textContent).toBe('— / 40K 词元');
  expect(document.querySelector('#sp-context-legend')?.textContent).not.toContain('30.0K');
 });
 
@@ -240,6 +275,9 @@ it('installs a Skill with explicit source and scope, and handles legacy Hosts wi
  const app=await setup();document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
  for(const [id,value] of [['skill-url','https://example.com/skills.git'],['skill-ref','v1'],['skill-subdir','skills/demo']])(document.querySelector('#'+id) as HTMLInputElement).value=value;
  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.some(r=>r.action==='install')).toBe(false);
+ const check=document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!;check.checked=true;check.dispatchEvent(new Event('change'));
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='install')).toMatchObject({engine:'pi',scope:'user',repoUrl:'https://example.com/skills.git',ref:'v1',subdir:'skills/demo'});
  const original=fetch;vi.stubGlobal('fetch',vi.fn((url:any,init:any)=>url==='/api/skills'?Promise.resolve({ok:false,status:404,json:async()=>({error:'Unavailable'})}):original(url,init)));
  document.querySelector<HTMLButtonElement>('#skills-refresh')!.click();await vi.advanceTimersByTimeAsync(20);
@@ -355,4 +393,453 @@ it('defaults to groups, restores the original list when unchecked, and keeps sav
  toggle().click();await vi.advanceTimersByTimeAsync(20);
  expect(toggle().getAttribute('aria-checked')).toBe('true');expect(document.querySelector<HTMLUListElement>('.project-group-list')!.hidden).toBe(true);
  expect(app.frames.filter(f=>f.type==='open')).toHaveLength(openCount);
+});
+
+it('previews a Skill collection and reports partial installation without retrying successful selections',async()=>{
+ const app=await setup();const original=fetch;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):{};
+  if(url==='/api/skills'&&body.action==='install'&&body.subdir==='skills/other'){app.requests.push(body);return {ok:false,status:409,json:async()=>({error:'Package was changed; inspect source'})};}
+  return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/collection.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install')).toHaveLength(0);
+ const choices=[...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]')];expect(choices).toHaveLength(2);
+ expect(choices.every(c=>!c.checked)).toBe(true);
+ for(const checkbox of choices){checkbox.checked=true;checkbox.dispatchEvent(new Event('change'));}
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install').map(r=>[r.subdir,r.expectedRevision])).toEqual([['skills/demo','a'.repeat(40)],['skills/other','a'.repeat(40)]]);
+ expect(document.querySelector('#skills-status')!.textContent).toContain('1 成功，1 失败');
+ expect(document.querySelector('#skill-candidates')!.textContent).toContain('Package was changed');
+ expect(document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.disabled).toBe(true);
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='install'&&r.subdir==='skills/demo')).toHaveLength(1);
+ const agent=document.querySelector<HTMLSelectElement>('#skills-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('[data-skill-subdir]')).toHaveLength(0);
+});
+
+it('selects only visible installable Skills and clears that selection without installing anything',async()=>{
+ const app=await setup(),original=fetch;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  if(url==='/api/skills'&&JSON.parse(init.body).action==='discover')return {ok:true,json:async()=>({revision:'a'.repeat(40),skills:[
+   {name:'demo',description:'Demo',subdir:'demo'}, {name:'other',description:'Other',subdir:'other'},
+   {name:'existing',description:'Existing',subdir:'existing',installed:true}, {name:'invalid',description:'Invalid',subdir:'invalid',problem:'symlink'}
+  ]})};return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/collection.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const all=document.querySelector<HTMLButtonElement>('#skills-select-all');expect(all).not.toBeNull();
+ const search=document.querySelector<HTMLInputElement>('#skill-candidates input[type=search]')!;
+ search.value='demo';search.dispatchEvent(new Event('input'));all!.click();
+ expect([...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]:checked')].map(c=>c.dataset.skillSubdir)).toEqual(['demo']);
+ search.value='';search.dispatchEvent(new Event('input'));all!.click();
+ expect([...document.querySelectorAll<HTMLInputElement>('[data-skill-subdir]:checked')].map(c=>c.dataset.skillSubdir)).toEqual(['demo','other']);
+ expect(document.querySelector('#skills-install')!.textContent).toContain('2');
+ document.querySelector<HTMLButtonElement>('#skills-select-none')!.click();
+ expect(document.querySelectorAll('[data-skill-subdir]:checked')).toHaveLength(0);
+ expect(app.requests.filter(r=>r.action==='install')).toHaveLength(0);
+});
+
+it('offers native disable and restore while leaving plugin Skills read-only and invalidating stale previews',async()=>{
+ const app=await setup(),original=fetch;let disabled=false;
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  const body=init?.body?JSON.parse(init.body):{};
+  if(url==='/api/skills'&&body.action==='list')return {ok:true,json:async()=>({directory:'/native',skills:[
+   {id:'native',name:'native',description:'Native',managed:false,enabled:!disabled,canDisable:!disabled,canRestore:disabled,path:'/native/native/SKILL.md'},
+   {id:'bundled',name:'lsp',description:'Bundled',managed:false,enabled:true,path:'/plugin/lsp/SKILL.md'}
+  ]})};
+  if(url==='/api/skills'&&['disable_native','restore_native'].includes(body.action)){app.requests.push(body);disabled=body.action==='disable_native';return {ok:true,json:async()=>({ok:true})};}
+  return original(url,init);
+ }));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('[data-skill-subdir]').length).toBeGreaterThan(0);
+ const disable=document.querySelector<HTMLButtonElement>('[data-skill-action="disable_native"]');expect(disable).not.toBeNull();disable!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.at(-1)).toMatchObject({action:'disable_native',engine:'pi',scope:'user',id:'native'});
+ expect(document.querySelectorAll('[data-skill-subdir]')).toHaveLength(0);
+ expect(document.querySelector('#skills-list')!.textContent).toContain('已停用 · 保留备份');
+ const plugin=[...document.querySelectorAll('.skill-card')].find(e=>e.textContent!.includes('Bundled'))!;expect(plugin.querySelectorAll('button')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('[data-skill-action="restore_native"]')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.at(-1)).toMatchObject({action:'restore_native',id:'native'});
+});
+
+it('offers installed Pi Skills on slash in a new draft without creating a task or invoking a model',async()=>{
+ const app=await setup();const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));await vi.advanceTimersByTimeAsync(20);
+ const request=app.frames.find(f=>f.type==='get_command_catalog');expect(request).toMatchObject({engine:'pi'});
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ app.sockets.at(-1).receive({v:1,type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[{name:'skill:tdd',source:'skill',description:'Write tests first'}]});
+ expect(document.querySelector('#slash')!.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#slash')!.textContent).toContain('/skill:tdd');
+ prompt.value='/tdd';prompt.dispatchEvent(new Event('input'));
+ expect(document.querySelector('#slash')!.textContent).toContain('/skill:tdd');
+ prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ expect(prompt.value).toBe('/skill:tdd ');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+});
+
+it('rejects stale Pi command previews after switching engine and explains command discovery failures',async()=>{
+ const app=await setup(),prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));const request=app.frames.find(f=>f.type==='get_command_catalog');
+ chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[{name:'skill:old',source:'skill'}]});
+ prompt.dispatchEvent(new Event('input'));expect(document.querySelector('#slash')!.textContent).not.toContain('/skill:old');
+ expect(document.querySelector('#slash')!.textContent).toContain('正在读取');
+ agent.value='pi';agent.dispatchEvent(new Event('change'));prompt.dispatchEvent(new Event('input'));
+ const next=app.frames.filter(f=>f.type==='get_command_catalog').at(-1);
+ app.sockets.at(-1).receive({type:'error',code:'operation_failed',requestId:next.requestId,message:'Discovery unavailable'});
+ expect(document.querySelector('#slash')!.textContent).toContain('读取命令失败');
+});
+
+it('invalidates a draft command catalog after Skill installation and requires explicit reload for an open session',async()=>{
+ const app=await setup(),prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='/';prompt.dispatchEvent(new Event('input'));const request=app.frames.find(f=>f.type==='get_command_catalog');
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'pi',requestId:request.requestId,commands:[]});
+ const install=async()=>{
+  document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.click();
+  document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+  document.querySelector<HTMLButtonElement>('#skills-close')!.click();
+ };
+ await install();expect(app.frames.filter(f=>f.type==='get_command_catalog')).toHaveLength(2);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'pi',state:{isStreaming:false},capabilities:{commands:true,models:false,stats:false}});
+ app.sockets.at(-1).receive({type:'commands',commands:[{name:'skill:old',source:'skill'}]});
+ prompt.value='/';await install();
+ expect(app.requests.some(r=>r.action==='reload')).toBe(false);
+ expect(document.querySelector('#slash')!.textContent).toContain('需要重新加载');
+ document.querySelector<HTMLButtonElement>('#slash button')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.find(r=>r.action==='reload')).toMatchObject({conversationId:task.id,engine:'pi',scope:'user'});
+});
+
+
+it('offers Codex Skills before the first message and inserts native dollar invocation',async()=>{
+ const app=await setup();chooseWork();
+ const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='/';prompt.dispatchEvent(new Event('input'));
+ const request=app.frames.find(f=>f.type==='get_command_catalog'&&f.engine==='codex');
+ expect(request).toBeTruthy();
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'codex',requestId:request.requestId,commands:[{name:'tdd',invocation:'$tdd',source:'skill',description:'Test first'}]});
+ expect(document.querySelector('#slash')!.textContent).toContain('$tdd');
+ prompt.value='/td';prompt.dispatchEvent(new Event('input'));prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ expect(prompt.value).toBe('$tdd ');expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+});
+
+
+it('refreshes Codex Skills after installation in an open task without a restart',async()=>{
+ const app=await setup();chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'codex',state:{isStreaming:false},capabilities:{commands:true,models:false,stats:false}});
+ app.sockets.at(-1).receive({type:'commands',commands:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='/';prompt.dispatchEvent(new Event('input'));
+ document.querySelector<HTMLButtonElement>('#skills-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ const skillEngine=document.querySelector<HTMLSelectElement>('#skills-engine')!;skillEngine.value='codex';skillEngine.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#skill-url')!.value='https://example.com/skills.git';
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('[data-skill-subdir="skills/demo"]')!.click();
+ document.querySelector('#skills-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const before=app.frames.filter(f=>f.type==='get_commands').length;
+ document.querySelector<HTMLButtonElement>('#skills-close')!.click();
+ expect(app.frames.filter(f=>f.type==='get_commands')).toHaveLength(before+1);
+ app.sockets.at(-1).receive({type:'commands',commands:[{name:'demo',invocation:'$demo',source:'skill'}]});
+ expect(document.querySelector('#slash')!.textContent).toContain('$demo');expect(document.querySelector('#slash')!.textContent).not.toContain('需要重新加载');
+ expect(app.requests.some(r=>r.action==='reload')).toBe(false);
+});
+
+it('keeps a pasted image local and shows one removable preview until Send',async()=>{
+ const app=await setup();
+ vi.stubGlobal('FileReader',class{result='data:image/png;base64,aGVsbG8=';onload:any;readAsDataURL(){queueMicrotask(()=>this.onload());}});
+ vi.stubGlobal('Image',class{width=10;height=10;onload:any;set src(_v:string){queueMicrotask(()=>this.onload());}});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!,file=new File(['hello'],'paste.png',{type:'image/png'});
+ const event=new Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{items:[{kind:'file',getAsFile:()=>file}]}});prompt.dispatchEvent(event);
+ await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelectorAll('#attachments img')).toHaveLength(1);
+ expect(document.querySelectorAll('#attachments .upload-chip')).toHaveLength(0);
+ expect(app.requests.filter(r=>['conversation','files'].includes(r.action))).toEqual([]);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ expect(document.querySelector('#generated-artifacts')).toBeNull();
+ document.querySelector<HTMLButtonElement>('#attachments .attachment-remove')!.click();
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+});
+
+it('shows Codex native current context usage without inventing category counts',async()=>{
+ const app=await setup();chooseWork();const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);const task=app.requests.find(r=>r.action==='conversation');
+ app.sockets.at(-1).receive({type:'opened',sessionId:task.id,engine:'codex',state:{},capabilities:{stats:true}});
+ app.sockets.at(-1).receive({type:'stats',sessionId:task.id,stats:{tokens:{total:999999},contextUsage:{tokens:68000,contextWindow:272000,percent:25}}});
+ expect(document.querySelector('#sp-pct')!.textContent).toBe('已用 25%');
+ expect(document.querySelector('#sp-capacity')!.textContent).toContain('68.0K');
+ expect(document.querySelector('#sp-status')!.textContent).toContain('不提供分类');
+ expect(document.querySelector('#stats-title')!.textContent).toBe('上下文用量');
+});
+
+
+it('defaults context to 272k and confirms extra cost before choosing fixed 500K',async()=>{
+ const app=await setup(false,false,true,true);
+ const catalog=app.frames.find(f=>f.type==='get_model_catalog');
+ app.sockets.at(-1).receive({type:'model_catalog',engine:'pi',requestId:catalog.requestId,models:[{provider:'fixture',id:'large',contextWindow:1000000}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}});
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
+ expect(document.querySelector('#agent-context-pane')!.classList.contains('hidden')).toBe(false);
+ const dialog=document.querySelector<HTMLDialogElement>('#modal')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!;option.click();
+ expect(document.querySelector('#modal-text')!.textContent).toContain('过大的上下文会产生额外费用');
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
+ document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('500K');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
+});
+
+it('offers cancel, edit and immediate insertion for a pending queue item',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'queue_state',sessionId:id,items:[{id:'q-1',revision:1,text:'queued instruction',status:'pending',imageCount:0}]});
+ const row=document.querySelector('#queue')!;
+ expect(row.textContent).toContain('取消');expect(row.textContent).toContain('编辑');expect(row.textContent).toContain('立即插入');
+});
+it('offers Work takeover in the Agent menu, requires drift consent and keeps the composer draft',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ app.sockets[0].receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true}});
+ app.sockets[0].receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='unsent draft';
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();
+ const row=document.querySelector<HTMLButtonElement>('#agent-engine-row')!;expect(row.disabled).toBe(false);
+ const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ expect(dialog.open).toBe(true);expect(dialog.textContent).toContain('信息漂移');expect(app.requests.some(r=>r.action==='takeover')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#takeover-cancel')!.click();expect(dialog.open).toBe(false);expect(prompt.value).toBe('unsent draft');
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.find(r=>r.action==='takeover')).toMatchObject({id,engine:'codex',expectedEngine:'pi',acceptDrift:true});expect(prompt.value).toBe('unsent draft');
+});
+it.each(['failed','completed'])('locks task actions during takeover and restores drafts after %s',async(status)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.conversations[0],id=task.id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true,compact:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='keep my draft';prompt.dispatchEvent(new Event('input'));
+ const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ task.takeover={id:'switch-1',status:'preparing',from:'pi',to:'codex'};
+ document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();
+ // A form submission/Enter must be blocked, not only a click on the Send button.
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);expect(prompt.value).toBe('keep my draft');
+ for(const id of ['prompt','send','attach','agent-menu-btn','stop'])expect(document.querySelector<HTMLInputElement>('#'+id)!.disabled,id).toBe(true);
+ expect(document.querySelector('#queue')!.hasAttribute('inert')).toBe(true);expect(document.querySelector('#hint')!.classList.contains('hidden')).toBe(false);
+ task.takeover.status=status;if(status==='completed')task.engine='codex';await vi.advanceTimersByTimeAsync(1100);
+ if(status==='completed'){app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'codex',state:{isStreaming:false}});app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[]});}
+ expect(prompt.disabled).toBe(false);expect(prompt.value).toBe('keep my draft');expect(document.querySelector('#queue')!.hasAttribute('inert')).toBe(false);
+});
+
+it('shows a recent conversation before the new socket replies and reconciles authoritative history',async()=>{
+ const app=await setup();
+ app.conversations.push({id:'recent-a',workspaceKind:'chat',engine:'pi'},{id:'recent-b',workspaceKind:'chat',engine:'pi'});
+ const listings=[{id:'recent-a',name:'Recent A'},{id:'recent-b',name:'Recent B'}];
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes(name))!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ choose('Recent A');await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-a',engine:'pi',state:{isStreaming:false}});
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-a',entries:[{kind:'user',text:'cached visible marker'}]});
+ document.querySelector('#scroller')!.scrollTop=123;
+ choose('Recent B');await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-b',engine:'pi',state:{isStreaming:false}});
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-b',entries:[{kind:'user',text:'other conversation'}]});
+ choose('Recent A');
+ expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
+ expect(document.querySelector('#scroller')!.scrollTop).toBe(123);
+ expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(true);
+ await vi.advanceTimersByTimeAsync(20);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'recent-a',engine:'pi',state:{isStreaming:false}});
+ expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
+ app.sockets.at(-1).receive({type:'history',sessionId:'recent-a',entries:[{kind:'user',text:'authoritative replacement'}]});
+ expect(document.querySelector('#thread')!.textContent).toContain('authoritative replacement');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('cached visible marker');
+ expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(false);
+});
+
+it('confirms rename only after acknowledgment and updates the visible title',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'sessions',sessions:[{id:'rename-target',name:'Old title',messageCount:1}]});
+ document.querySelector<HTMLButtonElement>('#session-list .more')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('.popitem')].find(n=>n.textContent==='重命名')!.click();
+ (document.querySelector('#modal-input') as HTMLInputElement).value='Saved title';
+ document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ const request=app.frames.find(f=>f.type==='rename_session');expect(request.name).toBe('Saved title');
+ expect(document.querySelector('#toast')!.textContent).not.toBe('已重命名');
+ expect(document.querySelector('#session-list')!.textContent).toContain('Old title');
+ socket.receive({type:'ack',operation:'rename_session',requestId:request.requestId});
+ expect(document.querySelector('#session-list')!.textContent).toContain('Saved title');
+ expect(document.querySelector('#toast')!.textContent).toBe('已重命名');
+});
+
+it('keeps the old title when rename is rejected and does not claim success offline',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'sessions',sessions:[{id:'rename-error',name:'Original title',messageCount:1}]});
+ const edit=async()=>{
+  document.querySelector<HTMLButtonElement>('#session-list .more')!.click();
+  [...document.querySelectorAll<HTMLButtonElement>('.popitem')].find(n=>n.textContent==='重命名')!.click();
+  (document.querySelector('#modal-input') as HTMLInputElement).value='Rejected title';
+  document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ };
+ await edit();const request=app.frames.find(f=>f.type==='rename_session');
+ socket.receive({type:'error',requestId:request.requestId,code:'operation_failed',message:'Native rename failed'});
+ expect(document.querySelector('#toast')!.textContent).toBe('重命名失败：Native rename failed');
+ expect(document.querySelector('#session-list')!.textContent).toContain('Original title');
+ socket.readyState=3;await edit();
+ expect(app.frames.filter(f=>f.type==='rename_session')).toHaveLength(1);
+ expect(document.querySelector('#toast')!.textContent).toBe('连接未就绪，标题未保存');
+});
+
+it('keeps an unanswered dialog and its text when the socket cannot send',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ socket.receive({type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-offline',title:'Choose a destination'}});
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Keep this answer';socket.readyState=3;
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ expect(app.frames.some(f=>f.type==='ui_response')).toBe(false);
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(false);
+ expect(input.value).toBe('Keep this answer');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('已回答：');
+});
+it('waits for answer acknowledgment and keeps rejected answers available',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ socket.receive({type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-failed',title:'Choose a destination'}});
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Keep this answer';
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const response=app.frames.find(f=>f.type==='ui_response');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('已回答：');
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(false);
+ socket.receive({type:'error',requestId:response.requestId,code:'operation_failed',message:'Agent did not accept input'});
+ expect(input.value).toBe('Keep this answer');expect(document.querySelector<HTMLButtonElement>('#ui-ok')!.disabled).toBe(false);
+ document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const retried=app.frames.filter(f=>f.type==='ui_response').at(-1);
+ socket.receive({type:'ack',operation:'ui_response',requestId:retried.requestId});
+ expect(document.querySelector('#thread')!.textContent).toContain('已回答：Keep this answer');
+ expect(document.querySelector('#ui-modal')!.classList.contains('hidden')).toBe(true);
+});
+
+it('restores an ordinary answer draft when a waiting dialog is replayed after reconnect',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'question-task',entries:[]});
+ const question={type:'event',sessionId:'question-task',cursor:1,event:{type:'native_request',method:'input',id:'q-replay',title:'Destination'}};
+ socket.receive(question);
+ const input=document.querySelector<HTMLInputElement>('#ui-input')!;input.value='Unsent destination';input.dispatchEvent(new Event('input'));
+ socket.onclose();await vi.advanceTimersByTimeAsync(1300);
+ const next=app.sockets.at(-1);next.receive({type:'opened',sessionId:'question-task',engine:'codex',state:{isStreaming:true}});
+ next.receive({type:'history',sessionId:'question-task',entries:[]});next.receive(question);
+ expect(input.value).toBe('Unsent destination');expect(app.frames.some(f=>f.type==='ui_response')).toBe(false);
+});
+it('builds long history without measuring page layout for every entry',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'long-history',engine:'codex',state:{isStreaming:false}});
+ const scroller=document.querySelector('#scroller')!;let measurements=0;
+ Object.defineProperty(scroller,'scrollHeight',{configurable:true,get(){measurements++;return 2000;}});
+ const entries=Array.from({length:120},(_,i)=>({kind:i%2?'assistant':'user',id:'entry-'+i,text:'Synthetic history '+i}));
+ socket.receive({type:'history',sessionId:'long-history',entries});
+ expect(document.querySelector('#thread')!.textContent).toContain('Synthetic history 119');
+ expect(measurements).toBeLessThan(5);
+});
+it('never copies a secret answer into history, composer or a replayed draft',async()=>{
+ const app=await setup();const socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'secret-task',engine:'codex',state:{isStreaming:true}});
+ socket.receive({type:'history',sessionId:'secret-task',entries:[]});
+ const question={type:'event',sessionId:'secret-task',cursor:1,event:{type:'native_request',method:'input',id:'secret-q',title:'Secret',secret:true}};
+ socket.receive(question);const input=document.querySelector<HTMLInputElement>('#ui-input')!;
+ input.value='synthetic-secret-marker';input.dispatchEvent(new Event('input'));document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
+ const reply=app.frames.find(f=>f.type==='ui_response');
+ socket.receive({type:'error',code:'unknown_ui_request',requestId:reply.requestId,message:'Expired question'});
+ expect(document.querySelector<HTMLTextAreaElement>('#prompt')!.value).not.toContain('synthetic-secret-marker');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('synthetic-secret-marker');expect(input.value).toBe('');
+ socket.onclose();await vi.advanceTimersByTimeAsync(1300);
+ const next=app.sockets.at(-1);next.receive({type:'opened',sessionId:'secret-task',engine:'codex',state:{isStreaming:true}});
+ next.receive({type:'history',sessionId:'secret-task',entries:[]});next.receive(question);
+ expect(input.value).toBe('');
+});
+
+it.each(['pi','codex'])('preserves an unacknowledged %s message after disconnect and history replacement',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine,state:{},capabilities:{models:true,stop:true,steer:true,followUp:true}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ prompt.value='Do not lose this instruction';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);
+ next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
+ expect(document.querySelector('#thread')!.textContent).toContain('Do not lose this instruction');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+ const recover=[...document.querySelectorAll<HTMLButtonElement>('#thread button')].find(b=>b.textContent==='恢复到输入框');expect(recover).toBeDefined();recover!.click();
+ expect(prompt.value).toBe('Do not lose this instruction');expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+it('rejects an oversized prompt before sending and keeps the composer draft',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(1024*1024);
+ prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);expect(prompt.value).toBe(text);
+ expect(document.querySelector('#toast')!.textContent).toContain('超出发送上限');
+});
+it('keeps multiple unconfirmed queued messages and never overwrites a newer draft during recovery',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ const opened={type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}};
+ ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
+ for(const text of ['first missing input','second missing input']){prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));}
+ ws.onclose({code:1006});await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
+ const thread=document.querySelector('#thread')!;expect(thread.textContent).toContain('first missing input');expect(thread.textContent).toContain('second missing input');expect(thread.textContent).toContain('1006');
+ prompt.value='new unsent draft';[...thread.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='恢复到输入框')!.click();expect(prompt.value).toBe('new unsent draft');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
+});
+it('shows a recoverable message on acknowledgment timeout without retrying the request',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'pi',state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='slow acceptance';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ await vi.advanceTimersByTimeAsync(20010);expect(document.querySelector('#thread')!.textContent).toContain('20 秒内未收到发送确认');
+ const frame=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:'prompt',requestId:frame.requestId});expect(document.querySelector('#thread')!.textContent).not.toContain('20 秒内未收到发送确认');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+
+it.each(['pi','codex'])('does not interrupt a running %s reply when metadata queries fail',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine,state:{isStreaming:true},capabilities:{stop:true,steer:true,followUp:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'error',code:'metadata_unavailable',operation:'get_stats',message:'Auxiliary Agent read timed out'});
+ expect(document.querySelector('#stop')!.classList.contains('hidden')).toBe(false);expect(document.querySelector('#mode-wrap')!.classList.contains('hidden')).toBe(false);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='still queue this';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.find(f=>f.type==='prompt')).toMatchObject({text:'still queue this',mode:'follow_up'});
+});
+
+it.each(['pi','codex'])('sends long %s text that fits the transport budget',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];ws.receive({type:'opened',sessionId:id,engine,state:{}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;const text='a'.repeat(71636);prompt.value=text;prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const prompts=app.frames.filter(f=>f.type==='prompt');expect(prompts).toHaveLength(1);expect(prompts[0].text).toBe(text);
+});
+it.each([false,true])('keeps queued edits consistent with the frame byte budget (oversize=%s)',async(oversize)=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ ws.receive({type:'queue_state',sessionId:id,items:[{id:'q-long',revision:1,text:'original instruction',status:'pending',imageCount:0}]});
+ const dialog=document.querySelector<HTMLDialogElement>('#queue-edit-dialog')!;dialog.showModal=()=>{dialog.setAttribute('open','');};dialog.close=()=>{dialog.removeAttribute('open');};
+ document.querySelector<HTMLButtonElement>('[data-queue-action="edit"]')!.click();
+ const editor=document.querySelector<HTMLTextAreaElement>('#queue-edit-text')!;const text=oversize?'你'.repeat(350000):'a'.repeat(71636);expect(editor.maxLength).toBeGreaterThanOrEqual(text.length);editor.value=text;
+ document.querySelector('#queue-edit-form')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const sent=app.frames.filter(f=>f.type==='queue_action');expect(sent).toHaveLength(oversize?0:1);
+ if(!oversize){expect(sent[0].text).toBe(text);ws.receive({type:'ack',operation:'queue_action',requestId:sent[0].requestId});expect(dialog.open).toBe(false);}
+ else{expect(editor.value).toBe(text);expect(dialog.open).toBe(true);expect(document.querySelector('#queue-edit-status')!.textContent).toContain('1 MiB');}
 });

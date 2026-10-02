@@ -82,6 +82,7 @@ Host -> Web Server -> Browser: ack | event | error | sessions
 {"v":1,"type":"get_models"}
 {"v":1,"type":"set_model","requestId":"m-1","provider":"cpa","id":"gpt-5.5"}
 {"v":1,"type":"set_thinking","requestId":"t-1","level":"high"}
+{"v":1,"type":"get_command_catalog","engine":"pi","requestId":"commands-1"}
 {"v":1,"type":"get_commands"}
 {"v":1,"type":"get_extensions"}
 {"v":1,"type":"get_stats"}
@@ -236,7 +237,7 @@ provider authorization. The Web gateway forwards this endpoint as read-only to
 the user's fixed Host.
 
 Workspace `conversation` and `continue` accept `engine` (legacy default `pi`).
-Engine identity is fixed at creation and preserved through retry/archive/restore.
+Engine identity is preserved through ordinary retry/archive/restore. The scoped HTTP Work takeover operation is the only Pi/Codex switching exception; see [the takeover contract](spec/agent-takeover.md).
 Native IDs are Host-owned binding metadata, never an `open` or `prompt` input.
 `opened` adds `engine` and boolean `capabilities`: models, images, stop, questions,
 tools, thinking, steer, followUp, stats, commands, extensions, compact, rename,
@@ -297,3 +298,71 @@ registry discovery. `get_model_catalog.engine` and `model_catalog.engine` accept
 `pi` or `codex`; other values remain invalid. The response contains the selected
 engine's choices only, including its configured model policy. No session must be
 opened to query this catalog.
+
+
+### Native draft command catalog
+
+`get_command_catalog` is allowed before opening a session, requires `engine: "pi"` or `"codex"`,
+and returns `command_catalog` with the same optional `requestId`, `engine` and a
+`commands` array using existing CommandInfo fields. It remains scoped to the
+WebSocket's authenticated Host factory. The native adapter performs ephemeral
+read-only discovery without a model turn or durable conversation. Unsupported
+Hosts/engines return an error; the browser displays it rather than inventing
+commands. Open sessions continue using `get_commands` for their loaded state.
+
+Codex catalog entries use `source: "skill"`, the native Skill `name` and optional
+`invocation: "$name"`. Pi entries omit `invocation` and retain `/name` completion.
+Host never accepts Skill filesystem paths from a browser. Codex `get_commands`
+reads fresh `skills/list` for the open task cwd; a leading `$name` in a prompt or
+steering input is resolved again against that native catalog and accompanied by
+a native `skill` input item. Other text and images retain their native format.
+
+## Confirmed dialog answers (2026-10-01)
+
+[Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23): an
+`ui_response` acknowledgement means the native adapter accepted the answer.
+Native continuation events may precede this acknowledgement. An adapter failure
+returns an error without success acknowledgement; the pending question remains
+available for explicit retry. Duplicate or expired answers cannot claim success.
+
+The browser keeps a dialog open until acknowledgement and never reports an
+answer sent when its socket cannot send. Ordinary text drafts survive replay of
+the same question within the page, keyed by user, conversation and question, with
+at most ten retained drafts. Secret answers are not retained in that draft cache
+or copied into the normal composer. No answer is automatically retried or chosen.
+An expired question reports failure and returns a non-secret typed answer to the
+composer so the user can explicitly send it as a message. Error/disconnect feedback
+does not mark the ongoing model turn as completed.
+
+Conversation history is assembled in a detached document fragment and attached
+once; layout measurements must not grow per historical message. This prevents
+repeated synchronous layout while loading long conversations.
+
+`list_sessions` is independent of the socket's task-command queue. Its response
+may arrive after later task frames. A failed listing sends `list_unavailable`,
+which does not mark the active run as stopped. Per-user discovery is coalesced.
+
+
+## Auxiliary metadata failures (2026-10-01)
+
+A model, command, extension, statistics or draft-catalog read can return an error
+with `code: "metadata_unavailable"` and `operation` naming its originating client
+frame. Its optional `requestId` remains correlated to that read. The browser must
+report the read failure without ending an active turn, clearing prompt delivery
+state or dropping queued instructions. These reads run independently of ordered
+prompt, answer, model-setting and lifecycle commands, with bounded native reads.
+
+
+## Long prompt transport budget (2026-10-02)
+
+Prompt text, edited queued instructions and UI responses use the existing 1 MiB
+encoded-frame budget. The former separate 65,536-character text ceiling is retired:
+a 71,636-character text may fit comfortably in the transport envelope. The server
+checks encoded bytes before parsing; Browser, Web and Host keep the same payload
+budget. Request IDs, frame shape, types and image counts retain their own limits.
+Native model-context limits remain separate from transport size.
+
+The browser checks the encoded frame before clearing drafts or transmitting queued
+edits. Over-budget input stays editable and receives explicit feedback, without
+sending a frame that would close the socket. Queued edit controls accommodate long
+text and do not report a failed local send as a pending save.

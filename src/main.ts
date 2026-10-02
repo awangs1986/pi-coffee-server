@@ -1,12 +1,16 @@
+import {homedir} from "node:os";
+import {RunnerManager} from "./host/runners.js";
+import {hostSessionInstructions} from "./host/session-instructions.js";
 import {taskRootForScope} from './host/task-storage.js';
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
 import { GitHubClient } from "./host/github.js";
-import { resolvePiExtensions, resolvePiSkills, withCoffeeLspPath } from "pi-coffee";
+import { resolvePiSkills, withCoffeeLspPath } from "pi-coffee-lsp";
+import { resolveHostPiExtensions } from "./host/pi-extensions.js";
 import { parseUserRoutes } from "./web/identity.js";
 import { readFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { CodexSessionFactory } from "./host/codex-adapter.js";
 import { HostServer, type UserScope } from "./host/server.js";
@@ -58,6 +62,14 @@ async function run(selectedRole: Role): Promise<void> {
 
   const wantHost = selectedRole !== "web" && selectedRole !== "relay";
   const workdir = process.env.PI_COFFEE_WORKDIR ?? process.cwd();
+  let runtimeTemp:string|undefined;
+  if(wantHost){
+    const tempRoot=process.env.PI_COFFEE_TMP_ROOT || join(homedir(),'.cache','pi-coffee','runtime-tmp');
+    await mkdir(tempRoot,{recursive:true,mode:0o700});
+    runtimeTemp=await mkdtemp(join(tempRoot,'host-'));
+    // Native children and their ordinary temporary-file APIs inherit disk storage.
+    process.env.TMPDIR=process.env.TMP=process.env.TEMP=runtimeTemp;
+  }
   // Optional HTTPS route (internal CA). 0.1 runs plain HTTP; when a
   // certificate is given, both browser-facing surfaces must use one, because a
   // browser on an https page refuses plain-http transfers as mixed content.
@@ -91,7 +103,8 @@ async function run(selectedRole: Role): Promise<void> {
     provider: process.env.PI_COFFEE_PROVIDER,
     model: process.env.PI_COFFEE_MODEL,
     allowedModels: process.env.PI_COFFEE_PI_ALLOWED_MODELS === undefined ? undefined : envList("PI_COFFEE_PI_ALLOWED_MODELS", ","),
-    extensions: resolvePiExtensions(),
+    extensions: resolveHostPiExtensions(),
+    args: ["--no-extensions"], // Only the reviewed package roots execute in Host sessions.
   };
   const sessionRoot = process.env.PI_COFFEE_SESSION_DIR?.trim();
   // Which agent runs behind the seam (ADR-0011): the original Pi (default) or
@@ -113,22 +126,26 @@ async function run(selectedRole: Role): Promise<void> {
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,github});
     await workspaces.list();
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
-    const codexOptions={cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
+    const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
+    const sshme=new RunnerManager(join(runners.root,'sshme'),'sshme');
+    const instructions=async()=>hostSessionInstructions(await runners.instruction());
+    const codexOptions={instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
-    const factory=new NativeAgentFactory({workspaces,
-      pi:new RpcPiSessionFactory({...piOptions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),skills:resolvePiSkills(),env:withCoffeeLspPath(),
+    const factory=new NativeAgentFactory({workspaces,instructions,
+      pi:new RpcPiSessionFactory({...piOptions,instructions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:withCoffeeLspPath(),
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
         envForSession:async id=>await workspaces.lookup(id) ? workspaces.runtimeEnvironment(id) : {},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
         codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>)=>new CodexSessionFactory({...codexOptions,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
         legacyCodex,
+        codexSummary:(taskCwd:string,id:string)=>legacyCodex!.summaryForCwd(taskCwd,id),
         codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
+    return {workdir:cwd,workspaces,factory,runners,sshme,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);
@@ -199,6 +216,7 @@ async function run(selectedRole: Role): Promise<void> {
     await host?.close();
     await transfer?.close();
     await relay?.close();
+    if(runtimeTemp)await rm(runtimeTemp,{recursive:true,force:true});
   };
   process.once("SIGINT", () => void shutdown().finally(() => process.exit(0)));
   process.once("SIGTERM", () => void shutdown().finally(() => process.exit(0)));
