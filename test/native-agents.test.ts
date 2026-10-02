@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
+import {IDBFactory} from 'fake-indexeddb';
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
-async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
+async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
  const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
@@ -11,6 +12,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false){
  vi.stubGlobal('WebSocket',Socket);
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(url==='/api/skills') {const body=JSON.parse(init.body);requests.push(body);return {ok:true,status:200,json:async()=>body.action==='discover'?{revision:'a'.repeat(40),skills:[{name:'demo',description:'Demo skill',subdir:'skills/demo',installed:false},{name:'other',description:'Other skill',subdir:'skills/other',installed:false}],warnings:[]}:body.action==='detail'?{content:'---\nname: sample\ndescription: Fixture skill.\n---\n<script>not executable</script>'}:body.action==='list'?{directory:'/home/demo/.pi/agent/skills',skills:[{id:'skill-1',name:'sample',description:'Fixture skill.',managed:true,enabled:true,path:'/home/demo/.pi/agent/skills/sample/SKILL.md',revision:'abcdef123456',repoUrl:'https://example.com/skills.git',ref:'main',subdir:'skills/sample'}],warnings:[]}:({ok:true})};}
+  if(url==='/auth/me'&&authUser)return {ok:true,status:200,json:async()=>({auth:true,user:authUser})};
   if(url==='/api/me')return {ok:true,json:async()=>null};
   if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
@@ -657,7 +659,8 @@ it('shows a recent conversation before the new socket replies and reconciles aut
  choose('Recent A');
  expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
  expect(document.querySelector('#scroller')!.scrollTop).toBe(123);
- expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(true);
+ expect(document.querySelector('#thread')!.hasAttribute('inert')).toBe(false);
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
  await vi.advanceTimersByTimeAsync(20);
  app.sockets.at(-1).receive({type:'opened',sessionId:'recent-a',engine:'pi',state:{isStreaming:false}});
  expect(document.querySelector('#thread')!.textContent).toContain('cached visible marker');
@@ -842,4 +845,136 @@ it.each([false,true])('keeps queued edits consistent with the frame byte budget 
  const sent=app.frames.filter(f=>f.type==='queue_action');expect(sent).toHaveLength(oversize?0:1);
  if(!oversize){expect(sent[0].text).toBe(text);ws.receive({type:'ack',operation:'queue_action',requestId:sent[0].requestId});expect(dialog.open).toBe(false);}
  else{expect(editor.value).toBe(text);expect(dialog.open).toBe(true);expect(document.querySelector('#queue-edit-status')!.textContent).toContain('1 MiB');}
+});
+
+it('retains a recent preview through repeated switches before authoritative synchronization',async()=>{
+ const app=await setup();
+ app.conversations.push({id:'rapid-a',workspaceKind:'chat',engine:'pi'},{id:'rapid-b',workspaceKind:'chat',engine:'pi'});
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes(name))!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'rapid-a',name:'Rapid A'},{id:'rapid-b',name:'Rapid B'}]});await vi.advanceTimersByTimeAsync(20);
+ for(const [name,id,text] of [['Rapid A','rapid-a','A readable'],['Rapid B','rapid-b','B readable']]){
+  choose(name);await vi.advanceTimersByTimeAsync(20);
+  app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false}});
+  app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[{kind:'user',text}]});
+ }
+ choose('Rapid A');expect(document.querySelector('#thread')!.textContent).toContain('A readable');
+ choose('Rapid B');expect(document.querySelector('#thread')!.textContent).toContain('B readable');
+ choose('Rapid A');expect(document.querySelector('#thread')!.textContent).toContain('A readable');
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it('keeps five long conversations readable while their new sockets are delayed',async()=>{
+ const app=await setup();
+ const listings=Array.from({length:5},(_,i)=>({id:`long-${i}`,name:`Long ${i}`}));
+ app.conversations.push(...listings.map(s=>({...s,workspaceKind:'chat',engine:'pi'})));
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ const choose=(i:number)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes(`Long ${i}`))!.click();
+ for(let i=0;i<5;i++){
+  choose(i);await vi.advanceTimersByTimeAsync(20);
+  app.sockets.at(-1).receive({type:'opened',sessionId:`long-${i}`,engine:'pi',state:{isStreaming:false}});
+  app.sockets.at(-1).receive({type:'history',sessionId:`long-${i}`,entries:Array.from({length:1500},(_,j)=>({kind:j%2?'assistant':'user',text:`Conversation ${i} message ${j} `+'x'.repeat(2000)}))});
+ }
+ for(let repeat=0;repeat<3;repeat++)for(let i=0;i<5;i++){
+  choose(i);
+  expect(document.querySelector('#thread')!.textContent).toContain(`Conversation ${i} message 1499`);
+  expect(document.querySelector('#thread')!.textContent).not.toContain(`Conversation ${(i+1)%5} message 1499`);
+  expect(document.querySelectorAll('#thread .msg').length).toBeLessThanOrEqual(40);
+ }
+});
+
+it('restores user-scoped persistent text after page startup before any history response',async()=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ // @ts-expect-error browser module
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const store=new ConversationPreviewStore();
+ await store.put('owner','saved-task',{entries:[{kind:'assistant',text:'Saved across reload <img src=x onerror=alert(1)>'}],scroll:0,truncated:false});
+ sessionStorage.setItem('pi-coffee.active.v2:owner','saved-task');
+ const app=await setup(false,false,true,false,'owner');await vi.advanceTimersByTimeAsync(200);
+ expect(document.querySelector('#thread')!.textContent).toContain('Saved across reload');
+ expect(document.querySelector('#thread img')).toBeNull();
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+ app.sockets.at(-1).receive({type:'opened',sessionId:'saved-task',engine:'pi',state:{isStreaming:false}});
+ app.sockets.at(-1).receive({type:'history',sessionId:'saved-task',entries:[{kind:'assistant',text:'Current authoritative content'}]});
+ expect(document.querySelector('#thread')!.textContent).toContain('Current authoritative content');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Saved across reload');
+});
+
+it('revokes pending cache display and socket callbacks when another tab clears private previews',async()=>{
+ const app=await setup(false,false,true,false,'owner');
+ app.conversations.push({id:'logout-task',workspaceKind:'chat',engine:'pi'});
+ app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'logout-task',name:'Private task'}]});await vi.advanceTimersByTimeAsync(20);
+ [...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes('Private task'))!.click();await vi.advanceTimersByTimeAsync(20);
+ const old=app.sockets.at(-1);old.receive({type:'opened',sessionId:'logout-task',engine:'pi',state:{isStreaming:false}});old.receive({type:'history',sessionId:'logout-task',entries:[{kind:'assistant',text:'Private cached body'}]});
+ const handler=old.onmessage;
+ window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'revoked'}));
+ handler({data:JSON.stringify({type:'history',sessionId:'logout-task',entries:[{kind:'assistant',text:'late secret body'}]})});
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Private cached body');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('late secret body');
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it('revokes the old socket before a stalled logout can repopulate private history',async()=>{
+ const app=await setup(false,false,true,false,'owner');
+ const old=app.sockets.at(-1);old.receive({type:'opened',sessionId:'logout-id',engine:'pi',state:{isStreaming:false}});old.receive({type:'history',sessionId:'logout-id',entries:[{kind:'assistant',text:'Private before logout'}]});
+ const handler=old.onmessage,original=globalThis.fetch;
+ vi.stubGlobal('confirm',()=>true);
+ vi.stubGlobal('fetch',vi.fn((url:any,init:any)=>url==='/auth/logout'?new Promise(()=>{}):original(url,init)));
+ document.querySelector<HTMLButtonElement>('#user-btn')!.click();await vi.advanceTimersByTimeAsync(20);
+ handler({data:JSON.stringify({type:'history',sessionId:'logout-id',entries:[{kind:'assistant',text:'Late private history'}]})});
+ handler({data:JSON.stringify({type:'event',sessionId:'logout-id',event:{type:'message_delta',id:'late',delta:'Late private event'}})});
+ await vi.advanceTimersByTimeAsync(300);
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Private before logout');
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Late private');
+ expect(old.onmessage).toBeNull();expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it('invalidates a displayed cache when delayed workspace metadata reveals an Agent change',async()=>{
+ const app=await setup();
+ const first={id:'changed-a',workspaceKind:'chat',engine:'pi'};app.conversations.push(first,{id:'changed-b',workspaceKind:'chat',engine:'pi'});
+ const listings=[{id:first.id,name:'Changed A'},{id:'changed-b',name:'Changed B'}];
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(n=>n.textContent?.includes(name))!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ for(const [name,id] of [['Changed A','changed-a'],['Changed B','changed-b']]){
+  choose(name);await vi.advanceTimersByTimeAsync(20);app.sockets.at(-1).receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false}});app.sockets.at(-1).receive({type:'history',sessionId:id,entries:[{kind:'assistant',text:'Old engine '+id}]});
+ }
+ choose('Changed A');expect(document.querySelector('#thread')!.textContent).toContain('Old engine changed-a');await vi.advanceTimersByTimeAsync(20);
+ const original=globalThis.fetch;let release:any;
+ vi.stubGlobal('fetch',vi.fn((url:any,init:any)=>url==='/api/workspace'&&!init?.body?new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>({projects:[],conversations:app.conversations,sidebar:{assignments:{},collapsed:[]}})});}):original(url,init)));
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ first.engine='codex';release();await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Old engine changed-a');
+});
+
+it('does not persist an optimistic unacknowledged prompt or send while cached history is synchronizing',async()=>{
+ const app=await setup(false,false,true,false,'owner');
+ const storeModule=await import('../public/conversation-preview-store.js');
+ const put=vi.spyOn(storeModule.ConversationPreviewStore.prototype,'put');
+ const ws=app.sockets.at(-1);ws.receive({type:'opened',sessionId:'private-outbox',engine:'pi',state:{isStreaming:false}});ws.receive({type:'history',sessionId:'private-outbox',entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Unconfirmed private instruction';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();
+ expect(JSON.stringify(put.mock.calls)).not.toContain('Unconfirmed private instruction');put.mockRestore();
+ await vi.advanceTimersByTimeAsync(20);
+ const next=app.sockets.at(-1);next.receive({type:'opened',sessionId:'waiting-history',engine:'pi',state:{isStreaming:false}});
+ const before=app.frames.filter(f=>f.type==='prompt').length;
+ prompt.value='Do not send until history';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(before);expect(prompt.value).toBe('Do not send until history');
+});
+
+it('uses the correct earlier user message when regenerating after bounded history rendering',async()=>{
+ const app=await setup(),socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'long-regenerate',engine:'pi',state:{isStreaming:false}});
+ socket.receive({type:'history',sessionId:'long-regenerate',entries:[{kind:'user',text:'Original question outside the latest page'},...Array.from({length:50},(_,i)=>({kind:'assistant',id:`answer-${i}`,text:`Answer ${i}`}))]});
+ document.querySelector<HTMLButtonElement>('#thread .regen')!.click();
+ expect(app.frames.find(f=>f.type==='prompt')).toMatchObject({text:'Original question outside the latest page'});
+});
+
+it('preserves the private prompt outbox when another tab invalidates only transcript caches',async()=>{
+ const app=await setup(false,false,true,false,'owner'),socket=app.sockets.at(-1);
+ const opened={type:'opened',sessionId:'outbox-other-tab',engine:'pi',state:{isStreaming:false}};
+ socket.receive(opened);socket.receive({type:'history',sessionId:'outbox-other-tab',entries:[]});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Keep my unconfirmed instruction';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'cache:other-tab-archive'}));await vi.advanceTimersByTimeAsync(20);
+ const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:'outbox-other-tab',entries:[]});
+ expect(document.querySelector('#thread')!.textContent).toContain('Keep my unconfirmed instruction');
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
 });
