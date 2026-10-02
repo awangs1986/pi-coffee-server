@@ -31,6 +31,7 @@ export { projectTurns } from "./codex/translate.js";
 
 /** Refresh the account meters at most this often between pushes. */
 const RATE_LIMIT_TTL_MS = 60_000;
+export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with request_user_input and wait for the user response before continuing. It is available in Default mode. Do not use request_user_input_async; user input is never implied by a default choice, a timeout, or an accepted notification.';
 
 /**
  * Codex CLI behind the same seam as the original Pi (ADR-0011).
@@ -253,14 +254,14 @@ export class CodexSessionFactory implements PiSessionFactory {
     const preferences=await this.readPreferences(known),{preset}=preferences;
     // Keep the user's native guidance; override on resume as well to retire a removed runner pointer.
     let developerInstructions:string|undefined;
-    if(this.options.instructions){
+    {
       const configResult=await server.request('config/read',{includeLayers:false,cwd:this.options.cwd}) as Obj;
       const configured=(configResult.config as Obj)?.developer_instructions;
-      developerInstructions=[typeof configured==='string'?configured:undefined,await this.options.instructions()].filter(Boolean).join('\n');
+      developerInstructions=[typeof configured==='string'?configured.replaceAll(CODEX_QUESTION_INSTRUCTION,'').trim():undefined,await this.options.instructions?.(),CODEX_QUESTION_INSTRUCTION].filter(Boolean).join('\n');
     }
     const common = {
       ...(developerInstructions===undefined?{}:{developerInstructions}),
-      config:contextConfig(preset),
+      config:nativeThreadConfig(preset),
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -450,9 +451,9 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 }
 
-function contextConfig(preset:ContextPreset):Obj {
+function nativeThreadConfig(preset:ContextPreset):Obj {
   const limit=preset==='272k'?272000:500000;
-  return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95)};
+  return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95),'features.default_mode_request_user_input':true};
 }
 interface CodexPreferences {
   preset:ContextPreset;
@@ -485,6 +486,8 @@ class CodexSession implements PiSession {
   private model?: string;
   private effort?: string;
   private preferenceWrites:Promise<void>=Promise.resolve();
+  private asyncQuestion?:{questions:Obj[];ready:Promise<void>;resolve:()=>void;reject:(error:Error)=>void;paused:boolean;resuming:boolean};
+  private readonly asyncQuestionItems=new Set<string>();
   private sessionName?: string;
   private activeTurnId?: string;
   private streaming = false;
@@ -556,6 +559,7 @@ class CodexSession implements PiSession {
   }
 
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
     const result = await this.server.request("turn/start", {
       threadId: this.threadId,
       input: await this.input(text, images),
@@ -566,6 +570,7 @@ class CodexSession implements PiSession {
   }
 
   async steer(text: string, images?: ImageInput[]): Promise<void> {
+    if(this.asyncQuestion)throw new Error('Answer or cancel the pending question before inserting another instruction');
     if (this.activeTurnId === undefined) return this.prompt(text, images);
     await this.server.request("turn/steer", {
       threadId: this.threadId,
@@ -583,6 +588,9 @@ class CodexSession implements PiSession {
 
   async abort(): Promise<void> {
     this.followUps.length = 0;
+    const question=this.asyncQuestion;this.asyncQuestion=undefined;
+    if(question){question.reject(new Error('Question cancelled'));this.questions.clear();}
+    if(question&&this.activeTurnId===undefined){this.streaming=false;this.emit({type:'agent_settled'});return;}
     if (this.activeTurnId === undefined) return;
     await this.server.request("turn/interrupt", { threadId: this.threadId, turnId: this.activeTurnId });
   }
@@ -604,7 +612,7 @@ class CodexSession implements PiSession {
   async getState(): Promise<SessionState> {
     // A turn we did not start (the VM admin's terminal on the same thread)
     // sends us no turn/completed; ask the thread itself whether it is still busy.
-    if (this.streaming && this.activeTurnId === undefined) {
+    if (this.streaming && this.activeTurnId === undefined && !this.asyncQuestion) {
       const result = await this.server.request("thread/read", { threadId: this.threadId, includeTurns: false }).catch(() => undefined) as Obj | undefined;
       const status = (result?.thread as Obj | undefined)?.status as Obj | undefined;
       if (status && status.type !== "active") this.streaming = false;
@@ -680,7 +688,7 @@ class CodexSession implements PiSession {
     if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
     await this.preferenceWrites;
     const history=await this.getHistory(),oldId=this.threadId;
-    const config={...contextConfig(preset),...(this.effort?{model_reasoning_effort:this.effort}:{})};
+    const config={...nativeThreadConfig(preset),...(this.effort?{model_reasoning_effort:this.effort}:{})};
     const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
     // Native resume ignores changed config on a subscribed thread. Release only
     // this idle thread; no model turn is replayed and other threads keep running.
@@ -688,7 +696,7 @@ class CodexSession implements PiSession {
     if(history.entries.length){
       await this.server.request('thread/unsubscribe',{threadId:oldId});
       try{response=await this.server.request('thread/resume',{...common,threadId:oldId}) as Obj;}
-      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:{...config,...contextConfig(this.preset)}}).catch(()=>undefined);throw error;}
+      catch(error){await this.server.request('thread/resume',{...common,threadId:oldId,config:{...config,...nativeThreadConfig(this.preset)}}).catch(()=>undefined);throw error;}
     }else{response=await this.server.request('thread/start',common) as Obj;}
     const thread=response.thread as Obj;
     const id=String(thread.id);
@@ -754,7 +762,7 @@ class CodexSession implements PiSession {
   }
 
   async respondUi(response: UiResponse): Promise<void> {
-    if(this.questions.answer(response))return;
+    if(await this.questions.answer(response))return;
     const pending = this.pendingApprovals.get(response.id);
     if (!pending) return;
     this.pendingApprovals.delete(response.id);
@@ -764,6 +772,7 @@ class CodexSession implements PiSession {
 
   async stop(): Promise<void> {
     this.finishCompaction(new Error('Codex stopped before compaction completed'));
+    this.asyncQuestion?.reject(new Error('Codex stopped while awaiting an answer'));this.asyncQuestion=undefined;
     this.questions.clear();
     if (this.stopped) return;
     this.stopped = true;
@@ -838,6 +847,15 @@ class CodexSession implements PiSession {
       }
       case "turn/completed": {
         const turn = params.turn as Obj | undefined;
+        if(this.asyncQuestion&&!this.asyncQuestion.resuming&&turn?.status!=='failed'){
+          this.activeTurnId=undefined;this.asyncQuestion.paused=true;this.asyncQuestion.resolve();
+          this.streamedItems.clear();this.toolNames.clear();this.toolOutput.clear();
+          return; // A native pause is still an unanswered Host run, not completion.
+        }
+        if(this.asyncQuestion&&!this.asyncQuestion.resuming){
+          this.asyncQuestion.reject(new Error('Codex failed before the question could be paused'));
+          this.asyncQuestion=undefined;this.questions.clear();
+        }
         if(this.compactionPending)this.finishCompaction(turn?.status==='completed'&&this.compactionPending.observed?undefined:new Error('Codex compaction did not complete successfully'));
         if (turn?.status === "failed") {
           const error = turn.error as Obj | null | undefined;
@@ -867,6 +885,7 @@ class CodexSession implements PiSession {
 
   private onItemStarted(item: Obj | undefined): void {
     if (!item || typeof item.type !== "string" || typeof item.id !== "string") return;
+    this.pauseForAsyncQuestion(item);
     const tool = toolCallOf(item);
     if (!tool) return;
     this.toolNames.set(item.id, tool.name);
@@ -874,6 +893,7 @@ class CodexSession implements PiSession {
   }
 
   private onItemCompleted(item: Obj | undefined): void {
+    if(item)this.pauseForAsyncQuestion(item);
     if (!item || typeof item.type !== "string" || typeof item.id !== "string") return;
     switch (item.type) {
       case "userMessage":
@@ -950,6 +970,7 @@ class CodexSession implements PiSession {
   }
 
   private onServerExit(): void {
+    this.asyncQuestion?.reject(new Error('Codex exited while awaiting an answer'));this.asyncQuestion=undefined;
     this.finishCompaction(new Error("Codex app-server exited during compaction"));
     this.questions.clear();
     if (this.streaming) {
@@ -958,6 +979,36 @@ class CodexSession implements PiSession {
       this.activeTurnId = undefined;
       this.emit({ type: "agent_settled" });
     }
+  }
+
+  /** Older model histories can still call the native fire-and-forget question
+   * tool. Keep its structured question visible and pause its turn before waiting
+   * for an explicit reply; never interpret the native accepted result as input. */
+  private pauseForAsyncQuestion(item:Obj):void {
+    if(item.type!=='agentMessage'||item.delivery!=='async'||!Array.isArray(item.questions)||!item.questions.length||typeof item.id!=='string'||this.asyncQuestionItems.has(item.id))return;
+    const questions=(item.questions as Obj[]).map((q,index)=>({id:item.id+':'+index,question:String(q.title??''),callId:item.id,index,
+      options:Array.isArray(q.options)?q.options.map(label=>({label:String(label),description:''})):[]}));
+    this.asyncQuestionItems.add(item.id);
+    while(this.asyncQuestionItems.size>64)this.asyncQuestionItems.delete(this.asyncQuestionItems.values().next().value!);
+    if(this.asyncQuestion){this.asyncQuestion.questions.push(...questions);return;}
+    let resolve!:()=>void,reject!:(error:Error)=>void;
+    const ready=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});void ready.catch(()=>undefined);
+    const gate={questions,ready,resolve,reject,paused:false,resuming:false};this.asyncQuestion=gate;this.streaming=true;
+    // Collect all items already in flight before showing a dialog. An early
+    // answer cannot race another question arriving before native settlement.
+    void ready.then(()=>{if(this.asyncQuestion!==gate)return;this.questions.ask(questions,async(answers,cancelled)=>{
+      if(cancelled){await this.abort();return;}
+      await ready;
+      const replies=questions.map(q=>({questionItemId:JSON.stringify(['request_user_input_async',q.callId,q.index]),question:q.question,answer:answers[q.id]}));
+      gate.resuming=true;
+      try{await this.prompt('<send_user_message_question_reply>\n'+JSON.stringify(replies)+'\n</send_user_message_question_reply>');this.asyncQuestion=undefined;}
+      catch(error){gate.resuming=false;throw error;}
+    });},()=>undefined);
+    if(this.activeTurnId===undefined){gate.paused=true;resolve();return;}
+    void this.server.request('turn/interrupt',{threadId:this.threadId,turnId:this.activeTurnId},10000).catch(error=>{
+      if(gate.paused)return;
+      reject(error);this.emit({type:'message_end',message:{role:'assistant',stopReason:'error',errorMessage:'Could not pause Codex for the question; stop the task before answering.'}});
+    });
   }
 }
 

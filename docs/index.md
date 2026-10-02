@@ -62,6 +62,8 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - Confirmed question delivery and batched history rendering: [protocol](protocol.md#confirmed-dialog-answers-2026-10-01), [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23).
 
+- Blocking Codex questions and legacy asynchronous-question compatibility: [confirmed question contract](protocol.md#confirmed-dialog-answers-2026-10-01), `scripts/probe-codex-questions.mjs`.
+
 - [Pi 1.0 upgrade and activation](deployment/pi-100-upgrade.md): immutable plugin/source pins, native checks and separate production activation.
 
 - Codex model/effort restoration after Host restart: [native lifecycle contract](spec/native-agent-engines.md), [probe and evidence](development/codex-model-restore.md), [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30).

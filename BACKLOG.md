@@ -2,6 +2,8 @@
 
 > Codex model/effort recovery: [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30). Confirmed Web choices persist per native thread across Host restart; deployment defaults seed new threads only. See [native reproduction](docs/development/codex-model-restore.md).
 
+> Required Codex questions: [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23). Default-mode blocking questions and legacy async question pauses wait for explicit answers; no preselected value is submitted. See [protocol](docs/protocol.md#confirmed-dialog-answers-2026-10-01) and the native `probe-codex-questions.mjs` fixture.
+
 > Current Work Agent switching: [automatic Pi/Codex takeover](docs/spec/agent-takeover.md), [GitHub Server #19](https://github.com/awangs1986/pi-coffee-server/issues/19). This supersedes the 2026-09-23 blanket immutable-engine decision. Chat cannot upgrade.
 
 > Pending instruction controls: [contract](docs/spec/input-queue.md), [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).

@@ -79,6 +79,17 @@ async function runTurn(thread, input, options) {
   }
 
   let questionAnswer='';
+  if(text==='ask async structured'||text==='ask async failure'||text==='ask async batch'){
+    const item={type:'agentMessage',id:'async-question-'+turnId,text:'Choose a color',delivery:'async',questions:[{title:'Choose a color',options:['Blue','Red']}]};
+    turn.items.push(item);save();
+    notify('item/started',{threadId:thread.id,turnId,item});
+    notify('item/completed',{threadId:thread.id,turnId,item});
+    if(text==='ask async batch'){
+      await new Promise(resolve=>setTimeout(resolve,5));
+      const second={...item,id:item.id+'-second',text:'Pick size',questions:[{title:'Pick size',options:['Small','Large']}]};
+      turn.items.push(second);save();notify('item/completed',{threadId:thread.id,turnId,item:second});
+    }
+  }
   if(text==='ask structured'){
     const id='question-'+uid('request');
     const answer=await new Promise(resolve=>{pendingServerRequests.set(id,resolve);send({id,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId,questions:[{id:'color',question:'Choose a color',options:[{label:'Blue',description:'A blue result'}]}]}});});
@@ -112,6 +123,10 @@ async function runTurn(thread, input, options) {
   }
 
   await new Promise((resolve) => setTimeout(resolve, 20));
+  if(text==='ask async failure'){
+    turn.status='failed';turn.error={message:'fixture failure during question pause'};
+    active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn:{...turn,items:[]}});return;
+  }
   if (state.interrupted) {
     turn.status = "interrupted";
     active.delete(thread.id);

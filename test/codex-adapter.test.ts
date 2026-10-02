@@ -229,7 +229,7 @@ describe("Codex app-server adapter", () => {
       await expect.poll(()=>frames.find(f=>f.type==='models')).toMatchObject({context:{preset:'maximum'}});
       send({type:'set_context',preset:'invalid',requestId:'invalid'});
       await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
-      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+      expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000,'features.default_mode_request_user_input':true});
     }finally{ws.close();await host.close();}
   },20000);
 
@@ -251,11 +251,11 @@ describe("Codex app-server adapter", () => {
     expect((await session.getModels()).context?.preset).toBe('272k');
     expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
     await session.setContextPreset!('maximum');expect((await session.getModels()).context?.preset).toBe('maximum');
-    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000,'features.default_mode_request_user_input':true});
     expect((await session.getModels()).context?.limit).toBe(500000);
     const events=recorder(session);await session.prompt('fixture');await events.until(settled);await session.stop();await factory.close();
     const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context).toMatchObject({preset:'maximum',limit:500000});
-    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000,'features.default_mode_request_user_input':true});
     await resumed.setContextPreset!('272k');expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
   });
 
@@ -303,6 +303,64 @@ describe("Codex app-server adapter", () => {
     await session.respondUi({id:String(question.id),value:"Blue"});
     await rec.until(settled);
     expect((await session.getHistory()).entries).toEqual(expect.arrayContaining([expect.objectContaining({kind:"assistant",text:"echo: ask structured Blue"})]));
+  });
+
+  it.each(['ask structured','ask async structured'])('waits for an explicit answer to %s across browser reconnect',async questionPrompt=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
+    const host=new HostServer({port:0,token:'question-test',factory});await host.start();
+    const sockets:WebSocket[]=[];
+    const connect=async()=>{
+      const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer question-test'}});sockets.push(socket);
+      const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+      const send=(frame:object)=>socket.send(JSON.stringify({v:1,...frame}));
+      const next=async(predicate:(frame:any)=>boolean)=>{await expect.poll(()=>frames.find(predicate),{timeout:2000}).toBeTruthy();return frames.find(predicate);};
+      await once(socket,'open');send({type:'open',sessionId:'blocking-question'});await next(frame=>frame.type==='opened');
+      return {socket,frames,send,next};
+    };
+    try{
+      const first=await connect();first.send({type:'prompt',requestId:'ask',text:questionPrompt});
+      const request=(await first.next(frame=>frame.event?.type==='native_request')).event;
+      expect(request).toMatchObject({required:true,options:expect.arrayContaining(['Blue'])});
+      await new Promise(resolve=>setTimeout(resolve,100));
+      expect(first.frames.some(frame=>frame.event?.type==='agent_settled')).toBe(false);
+      first.socket.close();const second=await connect();
+      expect(await second.next(frame=>frame.event?.id===request.id)).toMatchObject({event:{type:'native_request',id:request.id}});
+      second.send({type:'ui_response',requestId:'blank',id:request.id,value:'  '});
+      expect(await second.next(frame=>frame.requestId==='blank')).toMatchObject({type:'error'});
+      expect(second.frames.some(frame=>frame.event?.type==='agent_settled')).toBe(false);
+      second.send({type:'ui_response',requestId:'chosen',id:request.id,value:'Blue'});
+      expect(await second.next(frame=>frame.requestId==='chosen')).toMatchObject({type:'ack',operation:'ui_response'});
+      await second.next(frame=>frame.event?.type==='agent_settled');
+      const history=await (await factory.create({sessionId:'blocking-question'})).getHistory();
+      expect(history.entries.some(entry=>entry.kind==='assistant'&&entry.text.includes('Blue'))).toBe(true);
+    }finally{sockets.forEach(socket=>socket.close());await host.close();}
+  },15000);
+
+  it('surfaces a native failure while pausing an asynchronous question',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'question-failure'}),events=recorder(session);
+    await session.prompt('ask async failure');await events.until(settled);
+    expect(events.events).toContainEqual(expect.objectContaining({type:'message_end',message:expect.objectContaining({stopReason:'error',errorMessage:'fixture failure during question pause'})}));
+    expect((await session.getState()).isStreaming).toBe(false);
+  });
+
+  it('cancels a paused asynchronous question without sending a default answer',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'question-cancel'}),events=recorder(session);
+    await session.prompt('ask async structured');const question=await events.until(event=>event.type==='native_request');
+    await new Promise(resolve=>setTimeout(resolve,50));await session.respondUi({id:String(question.id),cancelled:true});await events.until(settled);
+    expect((await session.getHistory()).entries.filter(entry=>entry.kind==='user')).toHaveLength(1);
+    expect((await session.getState()).isStreaming).toBe(false);
+  });
+
+  it('collects in-flight async questions before accepting answers and waits for every answer',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'question-batch'}),events=recorder(session);
+    await session.prompt('ask async batch');const first=await events.until(event=>event.type==='native_request');
+    await session.respondUi({id:String(first.id),value:'Blue'});
+    const second=await events.until(event=>event.type==='native_request'&&event.id!==first.id);
+    expect(events.events.some(settled)).toBe(false);
+    await session.respondUi({id:String(second.id),value:'Large'});await events.until(settled);
+    const history=await session.getHistory(),reply=history.entries.filter(entry=>entry.kind==='user').at(-1);
+    expect(reply?.text).toContain('Blue');expect(reply?.text).toContain('Large');
+    expect(history.entries.filter(entry=>entry.kind==='user')).toHaveLength(2);
   });
 
   it("follows thread/list cursors so old conversations stay in the sidebar", async () => {
