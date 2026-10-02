@@ -1,7 +1,7 @@
 import {takeoverId,type TakeoverState} from "./takeover.js";
 
 import type { RunnerManager } from "./runners.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { SkillManager, type SkillManagerOptions } from "./skills.js";
 import { capabilitiesFor } from "../shared/protocol.js";
 import { stopLspDaemon } from "pi-coffee-lsp";
@@ -789,7 +789,12 @@ class HostSocket implements SessionSink {
     if(task?.engine && task.engine!=="pi" && frame.nativeProtocol!==1)throw new Error("This Task requires a native-Agent capable client");
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
     const engine=task?.engine ?? listed?.engine ?? "pi";
-    const result = await this.registry.open(frame.sessionId, frame.after);
+    // Resolve asynchronous metadata before taking the history/replay snapshot.
+    // Nothing may yield between that snapshot, attaching and sending its replay.
+    const sessionId = frame.sessionId ?? randomUUID();
+    const capabilities = await this.factory.capabilities?.(sessionId) ?? capabilitiesFor(engine);
+    if (this.closed) return;
+    const result = await this.registry.open(sessionId, frame.after);
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
     this.metadataEpoch++;
@@ -803,13 +808,31 @@ class HostSocket implements SessionSink {
       v: 1,
       type: "opened",
       engine,
-      capabilities:await this.factory.capabilities?.(result.session.id) ?? capabilitiesFor(engine),
+      capabilities,
       sessionId: result.session.id,
       cursor: result.session.currentCursor,
       state,
     });
     this.send(boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId));
 
+    if (result.resync) {
+      this.send({
+        v: 1,
+        type: "resync_required",
+        sessionId: result.session.id,
+        oldestCursor: result.resync.oldestCursor,
+        newestCursor: result.resync.newestCursor,
+      });
+    }
+    for (const replay of result.replay) this.send(replay);
+    if(result.session.queueFrame.items.length)this.send(result.session.queueFrame);
+    // A dialog Pi is still blocked on must reach this browser even if the
+    // request itself predates the replay window (e.g. after a reload).
+    const replayed = new Set(result.replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
+    for (const pending of result.session.pendingUiRequests) {
+      if (pending.type === "event" && !replayed.has(pending.cursor)) this.send(pending);
+    }
+    // Transfer inbox preparation may yield; finish replaying before live events resume.
     if (this.transfer && (!this.workspaces || task)) {
       const scope = transferScope(this.user,result.session.id);
       const token = this.transfer.issueToken(scope, this.workdir, result.session.id, this.workspaces);
@@ -829,23 +852,6 @@ class HostSocket implements SessionSink {
         maxFileBytes: this.transfer.limits.maxFileBytes,
         maxBatchBytes: this.transfer.limits.maxBatchBytes,
       });
-    }
-    if (result.resync) {
-      this.send({
-        v: 1,
-        type: "resync_required",
-        sessionId: result.session.id,
-        oldestCursor: result.resync.oldestCursor,
-        newestCursor: result.resync.newestCursor,
-      });
-    }
-    for (const replay of result.replay) this.send(replay);
-    if(result.session.queueFrame.items.length)this.send(result.session.queueFrame);
-    // A dialog Pi is still blocked on must reach this browser even if the
-    // request itself predates the replay window (e.g. after a reload).
-    const replayed = new Set(result.replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
-    for (const pending of result.session.pendingUiRequests) {
-      if (pending.type === "event" && !replayed.has(pending.cursor)) this.send(pending);
     }
   }
 
