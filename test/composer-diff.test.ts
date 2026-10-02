@@ -468,6 +468,7 @@ it('uploads attachments with hashed authenticated scopes, refreshes expired toke
 it.each(['pi','codex','claude'])('intercepts /SSHME for %s and sends only after explicit connection confirmation',async engine=>{
  HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new Event('close'));};
  const app=await setup({task:{engine,workspaceKind:engine==='pi'?'chat':'project'}});
+ app.sockets.at(-1).receive({type:'history',sessionId:app.conversation.id,entries:[]});
  q<HTMLTextAreaElement>('#prompt').value='/ssh';q('#prompt').dispatchEvent(new Event('input'));expect(q('#slash').textContent).toContain('/sshme');
  q<HTMLTextAreaElement>('#prompt').value='/SSHME Install editor';q('#composer').dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
  expect(q('#sshme-dialog').hasAttribute('open')).toBe(true);expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);

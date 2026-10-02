@@ -1,12 +1,14 @@
 import {RecentConversations} from './recent-conversations.js';
+import {ConversationPreviewStore,createConversationPreview} from './conversation-preview-store.js';
+import {renderConversationPreview,conversationPreviewNode} from './conversation-preview-view.js';
 import {initTakeoverControls} from "./takeover-controls.js";
 import {initQueueControls} from './queue-controls.js';
 import {initRunners} from "./runners.js";
 import {initSshme,parseSshme,SSHME_COMMAND} from './sshme.js';
 import { initSkills } from "./skills.js";
 // PI Coffee browser shell — controller. The browser is a view: conversations,
-// history, models and running state live on the Host in the User VM. The only
-// local value is which conversation this browser last displayed.
+// history, models and running state live on the Host in the User VM. The
+// local transcript cache is disposable, user-scoped and never authoritative.
 import {
 
   renderMarkdown, timeGroup, activityGroup, assistantNode, el, fillToolCard, formatBytes, installCopyHandlers,
@@ -73,23 +75,66 @@ let sessions = [], commands = [], models = null, statsCache = null;
 let catalogRequest = null, draftModel = null, historyReady = false;
 let entries = [], historyBatch=null;
 const recentConversations=new RecentConversations();
-let previewScroll=null;
+const previewStore=new ConversationPreviewStore();
+let previewScroll=null, visiblePreviewFingerprint, historyPrefix=[], historyTruncated=false, previewTimer;
+const CACHE_CLEAR_KEY='pi-coffee.preview-clear.v1';
+function announceCacheClear(kind='identity'){try{localStorage.setItem(CACHE_CLEAR_KEY,`${kind}:${Date.now()}:${Math.random()}`);}catch{}}
+const previewKey=id=>JSON.stringify([currentUser,id]);
+const previewFingerprint=id=>{
+  const task=workspaceState?.conversations.find(c=>c.id===id);
+  return task?JSON.stringify([task.engine||'pi',task.nativeBinding?.id||task.nativeBinding?.requestedId||null,task.takeover?.id||null]):undefined;
+};
+function previewAllowed(id){
+  const task=workspaceState?.conversations.find(c=>c.id===id);
+  return !task?.archived&&!task?.workspaceRemoved&&!task?.cleanupStarted&&!workspaceState?.legacyArchived?.includes(id);
+}
+function invalidatePreview(id){
+  recentConversations.delete(previewKey(id));
+  void previewStore.delete(currentUser,id);
+  if(id===activeId && previewScroll!==null)resetThread();
+}
+function clearPreviews(){
+  clearTimeout(previewTimer);recentConversations.clear();return previewStore.clear();
+}
 function rememberRecentThread(){
-  if(!activeId || !historyReady || takeoverBusy())return;
-  const bytes=ui.thread.innerHTML.length*2;
-  // Detach the existing nodes: returning to a long conversation needs no Markdown pass.
-  const nodes=document.createDocumentFragment();
-  const scroll=ui.scroller.scrollTop;
-  nodes.append(...ui.thread.childNodes);
-  recentConversations.put(JSON.stringify([currentUser,activeId]),{nodes,scroll},bytes);
+  if(!activeId || !historyReady || takeoverBusy() || !previewAllowed(activeId))return;
+  // Project source strings, never serialize the outgoing DOM or persist file-grant URLs.
+  const snapshot=createConversationPreview(historyPrefix.concat(entries.filter(entry=>!entry.cacheOmit&&!entry.pendingRequestId)),ui.scroller.scrollTop);
+  snapshot.truncated ||= historyTruncated;
+  snapshot.fingerprint=previewFingerprint(activeId);
+  const bytes=snapshot.entries.reduce((sum,item)=>sum+item.text.length*2+128,256);
+  recentConversations.put(previewKey(activeId),snapshot,bytes);
+  const user=currentUser,id=activeId;
+  clearTimeout(previewTimer);
+  void previewStore.put(user,id,snapshot);
+}
+function scheduleRecentThread(){
+  clearTimeout(previewTimer);
+  previewTimer=setTimeout(rememberRecentThread,250);
+}
+function displayPreview(id,snapshot){
+  const fingerprint=previewFingerprint(id);
+  // Once metadata arrives, reject either a missing saved binding or a saved
+  // binding whose task is now absent. Wait for authoritative history instead.
+  if(!previewAllowed(id) || (workspaceState&&(snapshot.fingerprint||fingerprint)&&fingerprint!==snapshot.fingerprint)){invalidatePreview(id);return false;}
+  renderConversationPreview(ui.thread,snapshot);
+  previewScroll=snapshot.scroll;visiblePreviewFingerprint=snapshot.fingerprint;
+  ui.scroller.scrollTop=snapshot.scroll;
+  ui.thread.removeAttribute('inert');
+  return true;
 }
 function showRecentThread(id){
-  const cached=recentConversations.take(JSON.stringify([currentUser,id]));
-  if(!cached)return;
-  ui.thread.replaceChildren(cached.nodes);
-  previewScroll=cached.scroll;
-  ui.scroller.scrollTop=cached.scroll;
-  ui.thread.setAttribute('inert','');
+  if(!id || !previewAllowed(id))return;
+  const cached=recentConversations.get(previewKey(id));
+  if(cached){displayPreview(id,cached);return;}
+  // Identity must have been verified by /auth/me before reading disk on page startup.
+  if(!currentUser)return;
+  const user=currentUser,selection=taskSelectionEpoch;
+  void previewStore.get(user,id).then(snapshot=>{
+    if(!snapshot||user!==currentUser||selection!==taskSelectionEpoch||id!==activeId||historyReady||previewScroll!==null)return;
+    recentConversations.put(previewKey(id),snapshot,snapshot.entries.reduce((n,e)=>n+e.text.length*2+128,256));
+    displayPreview(id,snapshot);
+  });
 }
 
 const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;
@@ -104,7 +149,8 @@ function renderUncertainPrompts(){
   for(const [id,item] of promptOutbox){
     if(item.user!==currentUser||item.task!==activeId||!item.uncertain)continue;
     if(item.card?.isConnected)continue;
-    const card=pushNote('请求交付状态尚不确定，不会自动重发。请核查历史后再决定是否重试。',true).node;
+    const recovery=pushNote('请求交付状态尚不确定，不会自动重发。请核查历史后再决定是否重试。',true);recovery.cacheOmit=true;
+    const card=recovery.node;
     item.card=card;
     if(item.reason){const reason=document.createElement('p');reason.textContent=item.reason;card.append(reason);}
     const content=document.createElement('pre');content.textContent=item.text;content.style.whiteSpace='pre-wrap';card.append(content);
@@ -123,7 +169,7 @@ const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
 let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false;
-const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{recentConversations.clear();if(id===activeId)connect();},toast:message=>toast(message)});
+const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
 const takeoverBusy=()=>Boolean(activeId&&takeoverControls.busy(activeId));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
@@ -460,7 +506,7 @@ function askModal({ title, text, input, okLabel = '确定', danger = false }) {
 
 // ---------- thread rendering ----------
 function resetThread() {
-  previewScroll=null;
+  previewScroll=null;visiblePreviewFingerprint=undefined;historyPrefix=[];historyTruncated=false;
   queueControls.reset();
   ui.thread.innerHTML = '';
   nativeItems.clear();nativeCursor=0;
@@ -614,9 +660,27 @@ function splitUploadedFilesText(rawText) {
 function renderHistory(frame) {
   resetThread();
   historyBatch=document.createDocumentFragment();
+  const source=frame.entries||[];
+  lastUserText='';
+  for(let index=source.length-1;index>=0;index--)if(source[index].kind==='user'){lastUserText=splitUploadedFilesText(source[index].text||'').text;break;}
+  historyPrefix=source.slice(0,-40).map(item=>({k:item.kind,text:item.text,name:item.name,result:item.result}));
+  historyTruncated=Boolean(frame.truncated);
+  if(historyPrefix.length){
+    const older=el('details','history-older'),summary=el('summary','',`更早的 ${historyPrefix.length} 条记录`),body=el('div');
+    older.append(summary,body);historyBatch.append(older);
+    const snapshot=createConversationPreview(historyPrefix,0);
+    older.addEventListener('toggle',()=>{if(older.open&&!body.childNodes.length)renderConversationPreview(body,snapshot,{cached:false});});
+  }
   try {
   if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
-  for (const item of frame.entries || []) {
+  for (const item of source.slice(-40)) {
+    // Enormous messages and tool diffs use bounded text expansion rather than a blocking Markdown/LCS pass.
+    if((item.kind==='tool' && ((item.result||'').length>8000 || JSON.stringify(item.args||{}).length>8000 || (item.diff||'').length>8000)) || (item.text||'').length>8192){
+      const normalized=createConversationPreview([{k:item.kind,text:item.text,name:item.name,result:item.result}],0).entries[0];
+      if(normalized){const entry={k:item.kind,text:item.text,name:item.name,result:item.result,done:true};entry.node=conversationPreviewNode(normalized);entries.push(entry);appendNode(entry.node);}
+      if(item.kind==='user')lastUserText=item.text||lastUserText;
+      continue;
+    }
     if (item.kind === 'user') {
       const parsed = splitUploadedFilesText(item.text || '');
       pushUser(parsed.text, undefined, item.imageCount, parsed.files);
@@ -874,6 +938,7 @@ async function renameSession(session) {
 async function deleteSession(session) {
   const ok = await askModal({ title: '删除这个对话？', text: '会从 User VM 的会话存储中永久删除「' + sessionTitle(session) + '」，不可恢复。', okLabel: '删除', danger: true });
   if (!ok) return;
+  invalidatePreview(session.id);if(session.id===activeId)historyReady=false;
   send({ v: 1, type: 'delete_session', requestId: requestId('delete'), sessionId: session.id });
   if (session.id === activeId) newSession(false);
   toast('已删除');
@@ -1034,7 +1099,8 @@ function refreshComposer() {
   const switching=takeoverBusy();
   // Inert also covers dynamically rendered queue/file/message action buttons.
   for(const selector of ['#composer-card','#queue','#thread','#project-controls','#workspace-panel','.topbar-actions','#stats-wrap'])$(selector)?.toggleAttribute('inert',switching);
-  ui.thread.toggleAttribute('inert',switching || previewScroll!==null);
+  // Cached views contain only safe text, paging and expansion controls.
+  ui.thread.toggleAttribute('inert',switching);
   ui.prompt.disabled=ui.attach.disabled=ui.file.disabled=ui.mode.disabled=ui.stop.disabled=switching;
   if(switching){closeAgentMenu();closeTaskDetails();ui.slash.classList.add('hidden');}
 
@@ -1070,7 +1136,7 @@ async function whoAmI(epoch) {
     const response = await fetch('/auth/me', { cache: 'no-store' });
     if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
-      recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();
+      revokeCachedIdentity();await clearPreviews();
       const body = await response.json().catch(() => ({}));
       location.href = body?.loginUrl || '/login';
       return false;
@@ -1080,27 +1146,43 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){if(previousUser!==null)clearPreviews();else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
     ui.userBtn.disabled = !info.auth;
+    if(activeId && !historyReady && previewScroll===null)showRecentThread(activeId);
     return true;
   } catch {
     return true;   // the Web Server may be restarting; let the socket retry decide
   }
 }
+function revokeCachedIdentity(){
+  connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);
+  if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
+  opened=false;historyReady=false;connected=false;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
+  clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();
+}
+window.addEventListener('storage',event=>{
+  if(event.key!==CACHE_CLEAR_KEY)return;
+  if(event.newValue?.startsWith('cache:')){void clearPreviews();if(previewScroll!==null)resetThread();connect();return;}
+  revokeCachedIdentity();void clearPreviews();connect();
+});
 ui.userBtn.addEventListener('click', async () => {
   if (!currentUser) return;
   if (!confirm('退出 PI Coffee 的登录？User VM 里正在运行的任务不会被打断。')) return;
   const identityLogin = String(currentUser).startsWith('gitea-');
   sessionStorage.removeItem(ACTIVE_KEY);
   localStorage.removeItem(ACTIVE_KEY);
-  recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();
+  revokeCachedIdentity();
+  await clearPreviews();
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
+  // Other tabs revoke their sockets after logout has reached the server.
+  announceCacheClear();
   location.href = identityLogin ? '/auth/login' : '/login';
 });
+
 function renderProjectContext() {
   if (!ui.projectSelect || !ui.startBranch) return;
   refreshHeroChoices();
@@ -1328,7 +1410,7 @@ function handleFrame(frame, ws) {
       renderHistory(frame);
       if(scroll!==null)ui.scroller.scrollTop=scroll;
       renderUncertainPrompts();
-      historyReady=true;refreshComposer();flushFirstPrompt();
+      historyReady=true;rememberRecentThread();refreshComposer();flushFirstPrompt();
       return;
     }
     case 'model_catalog':
@@ -1371,7 +1453,7 @@ function handleFrame(frame, ws) {
       if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
     case 'ack':
       // Acceptance is known even if the connection drops before the turn ends.
-      if(['prompt','steer','follow_up'].includes(frame.operation)){promptOutbox.get(frame.requestId)?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
+      if(['prompt','steer','follow_up'].includes(frame.operation)){const accepted=promptOutbox.get(frame.requestId);if(accepted?.optimistic)delete accepted.optimistic.pendingRequestId;accepted?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
       if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
       if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
         const renamed=pendingRenames.get(frame.requestId);pendingRenames.delete(frame.requestId);
@@ -1394,6 +1476,7 @@ function handleFrame(frame, ws) {
       if(frame.sessionId!==activeId)return;
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       handleEvent(frame.event || {});
+      scheduleRecentThread();
       return;
     case 'error':
       if(frame.code==='metadata_unavailable'){
@@ -1413,6 +1496,7 @@ function handleFrame(frame, ws) {
       const rejectedPrompt=promptOutbox.get(frame.requestId);
       if(rejectedPrompt){rejectedPrompt.uncertain=true;rejectedPrompt.reason='请求返回错误：'+frame.code;renderUncertainPrompts();}
       if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
+      if(!opened&&pendingOpenId&&activeId)invalidatePreview(activeId);
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
       if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
       if (!opened || frame.code === 'not_open' || frame.code === 'already_open') pendingOpenId = null;
@@ -2337,6 +2421,7 @@ $('#composer').addEventListener('submit', (event) => {
     void uploadFiles(pending).then(()=>flushFirstPrompt());
     return;
   }
+  if(activeId&&!historyReady){toast('正在同步对话，请稍后发送');return;}
   if (!opened) {
     // First message of a brand-new conversation: (re)use the in-flight open
     // and send once `history` confirms the Session.
@@ -2353,6 +2438,7 @@ $('#composer').addEventListener('submit', (event) => {
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
 function submitPrompt(text, images) {
+  if(activeId&&!historyReady)return false;
   if(takeoverBusy())return false;
   if(compacting){toast('请等待压缩完成，或先停止');return false;}
   if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return false;}
@@ -2372,7 +2458,7 @@ function submitPrompt(text, images) {
   promptOutbox.set(frame.requestId,{task:activeId,user:currentUser,text:wireText,images:(frame.images||[]).map(({type,data,mimeType})=>({type,data,mimeType})),bytes,uncertain:false});
   if (mode !== 'prompt') queuedRequests.add(frame.requestId);
   if (mode === 'prompt') {
-    pushUser(text, images, undefined, files);
+    const optimistic=pushUser(text, images, undefined, files);optimistic.pendingRequestId=frame.requestId;promptOutbox.get(frame.requestId).optimistic=optimistic;
     lastUserText = text;
     setStreaming(true);
     showThinking(true);
@@ -2545,7 +2631,9 @@ connect();
 // Project metadata stays on the VM. This panel extends the existing shell rather than replacing it.
 async function workspaceApi(value) {
   const r=await fetch('/api/workspace',value ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)} : {});
-  const data=await r.json();if(!r.ok)throw new Error(data.error || '工作区请求失败');return data;
+  const data=await r.json();if(!r.ok)throw new Error(data.error || '工作区请求失败');
+  if(value&&['archive','delete'].includes(value.action)){invalidatePreview(value.id);if(value.id===activeId)historyReady=false;announceCacheClear('cache');}
+  return data;
 }
 function setWorkspaceOpen(open) {
   if(open)closeDiffDialog();
@@ -2557,7 +2645,13 @@ function setWorkspaceOpen(open) {
 async function loadWorkspace() {
   const seq=++workspaceRequestSeq;
   try {
-    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;workspaceState=data;takeoverControls.sync(currentTask());
+    const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;
+    const previous=workspaceState;workspaceState=data;takeoverControls.sync(currentTask());
+    for(const task of previous?.conversations||[])if(!data.conversations.some(c=>c.id===task.id))invalidatePreview(task.id);
+    for(const task of data.conversations||[]){const saved=recentConversations.get(previewKey(task.id));if(saved&&saved.fingerprint!==previewFingerprint(task.id))invalidatePreview(task.id);}
+    if(previewScroll!==null&&(visiblePreviewFingerprint||previewFingerprint(activeId))&&visiblePreviewFingerprint!==previewFingerprint(activeId))invalidatePreview(activeId);
+    for(const task of data.conversations||[])if(task.archived||task.workspaceRemoved||task.cleanupStarted)invalidatePreview(task.id);
+    for(const id of data.legacyArchived||[])invalidatePreview(id);
     $('#project-controls').classList.remove('hidden');$('#files-toggle').classList.remove('hidden');
     const select=ui.projectSelect, old=select.value;select.replaceChildren();
     const all=document.createElement("option");all.value="";all.textContent="选择项目 / 全部任务";select.append(all);
