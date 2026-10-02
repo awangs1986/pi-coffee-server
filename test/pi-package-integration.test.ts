@@ -100,7 +100,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     const native=await SessionManager.listAll(join(root,"sessions"));expect(native).toHaveLength(1);
     const entries=SessionManager.open(native[0].path).getEntries();
     expect(entries.filter((e:any)=>e.type==="compaction" && e.details?.plugin==="pi-handoff")).toHaveLength(1);
-    expect(entries.find((e:any)=>e.type==="compaction")).toMatchObject({details:{pluginVersion:"0.2.0-experimental.3",trigger:"manual"}});
+    expect(entries.find((e:any)=>e.type==="compaction")).toMatchObject({details:{pluginVersion:"0.2.0-experimental.4",trigger:"manual"}});
     invalidHandoff=true;
     first.socket.send(JSON.stringify({v:1,type:"compact",requestId:"bad-handoff"}));
     await expect.poll(()=>first.frames.find(f=>f.type==="error" && f.requestId==="bad-handoff"),{timeout:15000}).toBeTruthy();

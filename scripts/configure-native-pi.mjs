@@ -12,7 +12,7 @@ const roots=['pi-subagents','pi-web-access','pi-coffee-harness','pi-coffee-lsp',
 const env={...process.env,PI_CODING_AGENT_DIR:agentDir,PI_OFFLINE:'1'};
 // Pi owns declarations, identity and discovery. Back up configuration before registering packages.
 for(const file of ['settings.json','web-search.json']){
- try{const data=await readFile(join(agentDir,file));await writeFile(join(agentDir,file+'.before-pi099'),data,{flag:'wx',mode:0o600});}
+ try{const data=await readFile(join(agentDir,file));await writeFile(join(agentDir,file+'.before-pi100'),data,{flag:'wx',mode:0o600});}
  catch(e){if(!['ENOENT','EEXIST'].includes(e.code))throw e;}
 }
 const configured=async file=>{try{return JSON.parse(await readFile(join(agentDir,file),'utf8'));}catch(e){if(e.code==='ENOENT')return {};throw e;}};
@@ -52,4 +52,4 @@ const web=await configured('web-search.json');
 // Preserve credentials/provider choices; explicitly select the reviewed output/activation policy.
 web.toolActivation='dynamic';web.maxInlineContentChars=6000;web.workflow='none';
 await writeFile(join(agentDir,'web-search.json'),JSON.stringify(web,null,2)+'\n',{mode:0o600});
-console.log(JSON.stringify({agentDir,pi:'0.99.1',packages:roots.map(p=>JSON.parse(require('node:fs').readFileSync(join(p,'package.json'),'utf8'))).map(p=>({name:p.name,version:p.version})),policy:{toolActivation:'dynamic',maxInlineContentChars:6000,workflow:'none'}},null,2));
+console.log(JSON.stringify({agentDir,pi:execFileSync(process.execPath,[cli,'--version'],{env,encoding:'utf8'}).trim(),packages:roots.map(p=>JSON.parse(require('node:fs').readFileSync(join(p,'package.json'),'utf8'))).map(p=>({name:p.name,version:p.version})),policy:{toolActivation:'dynamic',maxInlineContentChars:6000,workflow:'none'}},null,2));
