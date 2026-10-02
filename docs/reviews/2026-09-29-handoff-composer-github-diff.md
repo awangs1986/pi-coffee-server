@@ -13,7 +13,7 @@
 | 项目 | 内容 |
 |---|---|
 | 仓库 | GitHub `awangs1986/pi-coffee-server`（Gitea 上的 `awangs/pi-coffee-server` 是它的镜像） |
-| 本会话分支 | `arena/01a0e8a8-pi-coffee-server`，从 `main` 的 `9734ce8` 拉出；2026-10-02 已把 main（`8a9bd1e`）合并进来 |
+| 本会话分支 | `arena/01a0e8a8-pi-coffee-server`，从 `main` 的 `9734ce8` 拉出；2026-10-02 已把 main 合并进来（最近一次合并到 `57b2389`） |
 | 代码现在在哪 | **GitHub main。** 本会话到 `e14550b` 为止的提交，已在 2026-09-29 随 `arena/01a0ed45-pi-coffee-server` 一起合并进 main（合并提交 `cbf9e07`）。之后 main 又多了约 50 个提交 |
 | 时间 | 本会话的提交都在 2026-09-29；本文整理于 2026-10-02 |
 
@@ -170,11 +170,11 @@ owner 要一份交接用的 md：
 
 ### 12. 把 main 合并进本分支
 
-**owner：**「把main合并到当前分支」。2026-10-02 把 main（`8a9bd1e`）合并进本分支，合并提交是 `c79a4dd`。唯一的冲突在这份文档的开头：保留了本会话的沟通历程，同时采纳了 main 加的那句说明，指向 ed45 合并评审。合并后，除了这份文档，本分支的代码和 main 完全一致。
+**owner：**「把main合并到当前分支」。2026-10-02 把 main（`8a9bd1e`）合并进本分支，合并提交是 `c79a4dd`。唯一的冲突在这份文档的开头：保留了本会话的沟通历程，同时采纳了 main 加的那句说明，指向 ed45 合并评审。之后 main 又多了 14 个提交（主要是 PR #26 的会话切换缓存，以及 Antigravity 模型接入），同一天又合并了一次（`9c579fb`），这次没有冲突。合并后，除了这份文档，本分支的代码和 main 完全一致。
 
 ## 现状（2026-10-02）
 
-- **代码以 GitHub main（`8a9bd1e`）为准。** 本会话的功能都在 main 里。开发者抽查过 main：`turn_diff` 刷新、GitHub 仓库选择器和任务条的代码都在；`public/diff-view.js`、`src/host/github.ts`、ADR-0022、ADR-0023 和相关测试也都在。
+- **代码以 GitHub main 为准。** 本会话的功能都在 main 里。开发者在 `8a9bd1e` 上抽查过：`turn_diff` 刷新、GitHub 仓库选择器和任务条的代码都在；`public/diff-view.js`、`src/host/github.ts`、ADR-0022、ADR-0023 和相关测试也都在。
 - **本会话分支已经合并了 main。** 除了这份交接文档，代码和 main 完全一致；main 可以直接快进到本分支。新的开发仍然建议从 main 开始。
 - **截图都不在仓库里，** 而且已经随沙箱重置丢失。需要时用文末的命令启动假数据预览，重新截图。
 
