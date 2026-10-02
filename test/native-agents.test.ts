@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
-import {IDBFactory} from 'fake-indexeddb';
+import {IDBFactory,IDBDatabase as FakeIDBDatabase} from 'fake-indexeddb';
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
@@ -977,4 +977,56 @@ it('preserves the private prompt outbox when another tab invalidates only transc
  const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:'outbox-other-tab',entries:[]});
  expect(document.querySelector('#thread')!.textContent).toContain('Keep my unconfirmed instruction');
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+
+it('bounds authoritative history to forty recent messages and pages older messages in order',async()=>{
+ const app=await setup(),socket=app.sockets.at(-1);
+ socket.receive({type:'opened',sessionId:'paged-history',engine:'pi',state:{isStreaming:false}});
+ socket.receive({type:'history',sessionId:'paged-history',entries:Array.from({length:1500},(_,index)=>({kind:'user',text:`History message ${index}`}))});
+ const thread=document.querySelector('#thread')!;
+ expect(thread.querySelectorAll('.msg')).toHaveLength(40);
+ expect([...thread.querySelectorAll('.msg.user .text')].map(node=>node.textContent)).toEqual(Array.from({length:40},(_,index)=>`History message ${1460+index}`));
+ const older=thread.querySelector<HTMLDetailsElement>('details.history-older')!;
+ expect(older.querySelector('summary')!.textContent).toBe('更早的 1460 条记录');
+ expect(older.querySelectorAll('.msg')).toHaveLength(0);
+ older.open=true;older.dispatchEvent(new Event('toggle'));
+ expect([...older.querySelectorAll('.msg.user .text')].map(node=>node.textContent)).toEqual(Array.from({length:40},(_,index)=>`History message ${1420+index}`));
+ [...older.querySelectorAll<HTMLButtonElement>('button')].find(button=>button.textContent==='加载更早记录')!.click();
+ expect([...older.querySelectorAll('.msg.user .text')].map(node=>node.textContent)).toEqual(Array.from({length:80},(_,index)=>`History message ${1380+index}`));
+});
+
+it.each(['another conversation','current authoritative history'])('does not replace %s when an older disk preview finishes late',async(destination)=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const store=new ConversationPreviewStore();
+ await store.put('owner','delayed-a',{entries:[{kind:'assistant',text:'Old disk-only A reply'}],scroll:0,truncated:false});
+ const app=await setup(false,false,true,false,'owner');
+ app.conversations.push({id:'delayed-a',workspaceKind:'chat',engine:'pi'},{id:'delayed-b',workspaceKind:'chat',engine:'pi'});
+ app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'delayed-a',name:'Delayed A'},{id:'delayed-b',name:'Delayed B'}]});
+ await vi.advanceTimersByTimeAsync(20);
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(node=>node.textContent?.includes(name))!.click();
+ // Delay completion at the IndexedDB boundary; projection, storage reads and
+ // controller callbacks remain real, as do the socket/history and sidebar seams.
+ let release:(()=>void)|undefined,held=false;
+ const original=FakeIDBDatabase.prototype.transaction;
+ const transactions=vi.spyOn(FakeIDBDatabase.prototype,'transaction').mockImplementation(function(this:FakeIDBDatabase,names,mode,options){
+  const transaction=original.call(this,names,mode,options);
+  if(!held){
+   held=true;
+   Object.defineProperty(transaction,'oncomplete',{configurable:true,set(callback){transaction.addEventListener('complete',event=>{release=()=>callback.call(transaction,event);});}});
+  }
+  return transaction;
+ });
+ try{
+  choose('Delayed A');await vi.advanceTimersByTimeAsync(20);
+  expect(release).toBeTypeOf('function');
+  const target=destination==='another conversation'?'delayed-b':'delayed-a';
+  if(target==='delayed-b'){choose('Delayed B');await vi.advanceTimersByTimeAsync(20);}
+  const current=app.sockets.at(-1),text=target==='delayed-b'?'Current B reply':'Current authoritative A reply';
+  current.receive({type:'opened',sessionId:target,engine:'pi',state:{isStreaming:false}});
+  current.receive({type:'history',sessionId:target,entries:[{kind:'assistant',text}]});
+  release!();await vi.advanceTimersByTimeAsync(20);
+  expect(document.querySelector('#thread')!.textContent).toContain(text);
+  expect(document.querySelector('#thread')!.textContent).not.toContain('Old disk-only A reply');
+ }finally{transactions.mockRestore();}
 });
