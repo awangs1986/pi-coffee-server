@@ -999,7 +999,7 @@ it.each(['another conversation','current authoritative history'])('does not repl
  vi.stubGlobal('indexedDB',new IDBFactory());
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','delayed-a',{entries:[{kind:'assistant',text:'Old disk-only A reply'}],scroll:0,truncated:false});
+ await store.put('owner','delayed-a',{entries:[{kind:'assistant',text:'Old disk-only A reply'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi',null,null])});
  const app=await setup(false,false,true,false,'owner');
  app.conversations.push({id:'delayed-a',workspaceKind:'chat',engine:'pi'},{id:'delayed-b',workspaceKind:'chat',engine:'pi'});
  app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'delayed-a',name:'Delayed A'},{id:'delayed-b',name:'Delayed B'}]});
@@ -1029,4 +1029,39 @@ it.each(['another conversation','current authoritative history'])('does not repl
   expect(document.querySelector('#thread')!.textContent).toContain(text);
   expect(document.querySelector('#thread')!.textContent).not.toContain('Old disk-only A reply');
  }finally{transactions.mockRestore();}
+});
+
+it('invalidates a displayed preview without a known binding when task metadata arrives later',async()=>{
+ const app=await setup(false,false,true,false,'owner');
+ const listings=[{id:'unbound-a',name:'Unbound A'},{id:'unbound-b',name:'Unbound B'}];
+ const choose=(name:string)=>[...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(node=>node.textContent?.includes(name))!.click();
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ // History can arrive while the workspace catalog still has no task binding.
+ for(const [name,id] of [['Unbound A','unbound-a'],['Unbound B','unbound-b']]){
+  choose(name);await vi.advanceTimersByTimeAsync(20);
+  const socket=app.sockets.at(-1);
+  socket.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false}});
+  socket.receive({type:'history',sessionId:id,entries:[{kind:'assistant',text:'Unverified old binding '+id}]});
+ }
+ choose('Unbound A');await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#thread')!.textContent).toContain('Unverified old binding unbound-a');
+ app.conversations.push({id:'unbound-a',workspaceKind:'project',engine:'codex',nativeBinding:{id:'new-native-binding'}});
+ app.sockets.at(-1).receive({type:'sessions',sessions:listings});await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#thread')!.textContent).not.toContain('Unverified old binding unbound-a');
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it.each([false,true])('shows a disk preview only when it matches known task metadata (binding recorded: %s)',async(recorded)=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ const store=new ConversationPreviewStore();
+ await store.put('owner','known-task',{entries:[{kind:'assistant',text:'Persisted task reply'}],scroll:0,truncated:false,...(recorded?{fingerprint:JSON.stringify(['pi',null,null])}:{})});
+ const app=await setup(false,false,true,false,'owner');
+ app.conversations.push({id:'known-task',workspaceKind:'chat',engine:'pi'});
+ app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'known-task',name:'Known task'}]});await vi.advanceTimersByTimeAsync(20);
+ [...document.querySelectorAll<HTMLElement>('#session-list [role=button]')].find(node=>node.textContent?.includes('Known task'))!.click();
+ await vi.advanceTimersByTimeAsync(100);
+ if(recorded)expect(document.querySelector('#thread')!.textContent).toContain('Persisted task reply');
+ else expect(document.querySelector('#thread')!.textContent).not.toContain('Persisted task reply');
+ expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
 });
