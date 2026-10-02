@@ -76,3 +76,14 @@ Pi's native shrinkwrap retains the inherited high brace-expansion 5.0.9 advisory
 The dependency audit has no newly introduced advisory; it is not clean. Root
 undici overrides do not rewrite native Pi's shrinkwrapped nested dependencies.
 Live provider autonomy and semantic Handoff fidelity remain separate evaluations.
+
+
+## Approved Gemini provider in Host
+
+The native terminal package list is not the Host's explicit package list. When
+Pi Coffee permits `antigravity/gemini-3.8-flash`, Host consumes pinned
+`pi-antigravity` 0.9.0 and explicitly loads its provider root despite ambient
+extensions being disabled. The existing OAuth credential and two-model policy
+are retained. This fixes a verified Host catalog that previously exposed only
+Muse even though the Antigravity credential and allow-list entry were present.
+The provider's optional search/image tools are disabled in Host children.
