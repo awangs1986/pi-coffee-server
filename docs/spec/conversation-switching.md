@@ -4,25 +4,69 @@ Delivery: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21)
 
 ## Recent conversation previews
 
-The browser retains up to five recently viewed transcripts in page memory, with a
-16 MiB serialized DOM weight budget. Oversized entries are not retained. This is
-a disposable preview, not a persistent transcript store; reload and logout clear
-it. Keys include the authenticated user and Conversation ID. Identity changes
-clear previews. Agent takeover invalidates previews.
+The browser keeps five user-scoped recent display snapshots in page memory and
+IndexedDB. This supersedes the earlier page-only/no-persistence decision in #21.
+Host/native history remains authoritative. Cookies are not used for transcripts.
 
-Revisiting a retained conversation reattaches its existing DOM immediately and
-restores scroll position before network responses. The preview is inert and the
-composer cannot send until authoritative history arrives. The user can scroll
-and type a draft during synchronization. Current Host history replaces the
-preview, including external updates. A failed load remains visibly synchronizing
-or failed rather than claiming the preview is authoritative.
+Snapshots contain normalized plain text (user, assistant, tool output and notes),
+not DOM/HTML, image bytes, tool argument objects, file-grant URLs, or action handlers.
+Unacknowledged optimistic prompts and recovery cards stay in the page-only outbox;
+transcript-cache invalidation in another tab does not discard that outbox.
+The persistent cache is versioned, expires after 24 hours, and has an 8 MiB
+serialized UTF-8 limit per conversation / 40 MiB total / five-conversation LRU.
+Projection also limits each snapshot to the latest 10,000 entries and 4 Mi UTF-16
+code units. Limits preserve the newest text and set an explicit truncation notice;
+complete history remains on the Host. Page memory uses a 48 MiB conservative text and
+per-entry weight budget to retain five maximum-sized projected snapshots.
 
-Selecting a different task immediately detaches the old socket handlers. Only the
-latest authentication attempt may reconnect. On the new connection, the selected
-Conversation opens before the sidebar scan so listing unrelated tasks cannot
-block its history. An open abandoned during history loading never attaches a
-phantom subscriber; it follows the ordinary idle lifecycle. Running tasks survive
-browser switches and disconnects.
+A cached conversation paints its latest 40 entries without waiting for auth/socket
+reconnection or Host history during a same-page switch. Older cached entries are
+readable in 40-entry pages; individual long entries expand in 8 Ki-character
+blocks. Cached text is deliberately plain text: formatting, images and live task
+actions are supplied by authoritative history. The view clearly identifies cached
+content, remains scrollable/selectable, and permits local paging while sending
+stays disabled until current history arrives. No outgoing DOM serialization or
+whole-transcript Markdown/diff rendering is on the switching path. Cached entries
+are not consumed on display, so rapid A/B/A switches before synchronization do not
+lose the preview.
+
+Authoritative history initially renders the latest 40 entries; earlier entries
+are available under “更早的 … 条记录” using the same safe paged text view. Very large
+historical Markdown/tool outputs use bounded plain-text expansion to avoid an
+unbounded formatting/diff pass. New live events retain the normal native renderer.
+
+Reload restores a persisted snapshot only after `/auth/me` verifies the identity.
+A cold first-ever conversation still needs Host history. Disk reads, identity,
+selection epochs and source fingerprints are checked before restoring a preview;
+a late cache result cannot replace newer history or another conversation. Failed
+or unsupported IndexedDB, blocked opens, quota failures and corrupt data degrade
+to cache misses. Logout revokes old socket callbacks before awaiting cache deletion;
+other tabs receive a cache-clear signal. Account changes, archive/deletion and
+Agent takeover invalidate affected snapshots. Delayed workspace metadata can
+invalidate an already displayed preview after a binding or lifecycle change.
+
+A selected task opens before the sidebar scan. Native capabilities are resolved
+before taking the opening snapshot, and opened/history/replay are sent as a
+contiguous sequence before transfer setup can await. Running tasks survive browser
+switches and disconnects.
+
+### Performance acceptance (owner runtime verification)
+
+No production sub-second timing is claimed by this patch. Use five genuinely long
+conversations, revisit A/B/C/D/E for at least five rounds, and measure click to the
+first readable, scrollable conversation body (not title/spinner). Target every warm
+switch under 1,000 ms. Repeat with slow or unavailable Host history, rapid A/B/A
+switches, and browser reload after caching. Reload timing should separately report
+authentication and IndexedDB-to-readable time. Check older-message paging, long
+message expansion, external updates, logout/login as another user, archive/delete,
+and Agent takeover. Send must stay disabled until authoritative synchronization.
+
+A repeatable local synthetic fixture is provided by
+`node scripts/probe-conversation-switching.mjs` after `npm run build`; open its
+printed local URL. It prepares five 1,500-message transcripts (~3 million text
+characters each), measures 25 switches through two animation frames without new
+history responses, then reloads and checks all five IndexedDB restores. Its results
+are synthetic/browser-specific and cannot substitute for the owner's runtime test.
 
 ## Codex process lifetime
 
