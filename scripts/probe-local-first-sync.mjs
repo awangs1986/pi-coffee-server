@@ -15,7 +15,7 @@ const evidenceDir = process.env.EVIDENCE_DIR || join(tmpdir(), `verify-local-fir
 await mkdir(evidenceDir, { recursive: true });
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const synthetic = new Map();
-let holdSyncRequests = false;
+let holdSyncRequests = false, servedProtocol = '2';
 const heldResponses = new Set();
 const states = Array.from({ length: 10 }, (_, i) => ({ id: `probe-${i}`, name: `Live probe ${i}`, engine: ['pi', 'codex', 'claude'][i % 3], workspaceKind: i % 3 ? 'work' : 'chat', createdAt: '2026-10-03T00:00:00Z' }));
 for (const item of states) synthetic.set(item.id, { revision: 1, operations: [], runState: 'running', entries: [{ id: `${item.id}-history`, kind: 'user', text: `HISTORY-${item.id}`, entityRevision: '1' }] });
@@ -55,7 +55,7 @@ const fixture = String.raw`
 const originalFetch = window.fetch.bind(window);
 const params = new URLSearchParams(location.search), protocol = params.get('protocol') || 'legacy';
 const seconds = Math.max(1, Number(params.get('seconds') || 60));
-if(protocol==='legacy'&&!params.has('syncProtocol')){params.set('syncProtocol','1');history.replaceState(null,'',location.pathname+'?'+params);}
+if(protocol==='legacy'&&!params.has('syncProtocol')){params.set('syncProtocol','1');window.history.replaceState(null,'',location.pathname+'?'+params);}
 const NativeWorker=window.Worker;let liveWorkers=0,peakWorkers=0,workerStarts=0;
 if(NativeWorker)window.Worker=class extends NativeWorker{constructor(...args){super(...args);workerStarts++;liveWorkers++;peakWorkers=Math.max(peakWorkers,liveWorkers);}terminate(){if(!this.fixtureTerminated){liveWorkers--;this.fixtureTerminated=true;}return super.terminate();}};
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -105,6 +105,7 @@ const delta=(engine,text)=>engine==='pi'?{type:'message_update',assistantMessage
 const complete=(engine,text)=>engine==='pi'?{type:'message_end',message:{role:'assistant',content:[{type:'text',text}]}}:{type:'message_completed',id:'live',text};
 try {
  await import('/app.js');await ready(()=>sockets.length&&document.querySelectorAll('#session-list [data-session-id]').length===10);await paint();
+ if(!params.has('anchorOnly')){
  for(let i=0;i<10;i++)await open(i);
  for(let i=0;i<3;i++)for(const size of [45000,225000]){
   const ws=await open(i),engine=conversations[i].engine,text=giant(size,'LIVE-'+engine+'-'+size);
@@ -139,6 +140,7 @@ try {
   await wait(Math.max(0,200-(performance.now()-t)));
  }
  check('5Hz switches include live frames and fresh history',frameDuringSwitch>0&&historyFrameCount>previousHistoryFrames,{switches:n,liveFrames:frameDuringSwitch,historyFrames:historyFrameCount-previousHistoryFrames});
+ }
  // Scroll restoration must survive leaving and returning without a new history.
  await open(0,Array.from({length:10000},(_,i)=>({kind:i%2?'assistant':'user',id:'h'+i,text:'HISTORY-'+i+' '+ 'x'.repeat(2000)})),false);
  check('10000-history DOM is bounded',thread().querySelectorAll('.msg').length<=40&&thread().textContent.length<66536,{rows:thread().querySelectorAll('.msg').length,characters:thread().textContent.length});
@@ -159,6 +161,8 @@ try {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
+    if(url.pathname==='/')servedProtocol=url.searchParams.get('protocol')||'legacy';
+    if(servedProtocol==='legacy'&&url.pathname.startsWith('/api/conversations/')){json(res,{error:'not_found'},404);return;}
     const body = async () => { let text = ''; for await (const part of req) { text += part; if (text.length > 1024 * 1024) throw Error('body limit'); } return text ? JSON.parse(text) : {}; };
     if (url.pathname === '/fixture-hang') { holdSyncRequests = true; json(res, { held: true }); return; }
     if (url.pathname === '/fixture-event' && req.method === 'POST') { const b = await body(); json(res, updateFixture(b.id, b.event)); return; }
