@@ -45,10 +45,10 @@ single retry even if a sibling has already changed the shared runtime mode.
 | Concurrent command/model discovery both recover | PASS | Regression first returned fulfilled/rejected; now both fulfill with bounded retries |
 | Auth/network failures do not trigger plugin fallback | PASS | Recovery classification regression |
 | Browser displays and retains emergency warning after refresh | PASS | Headless Chromium against built `main.js all`; runtime response, screenshot and zero page errors |
-| Full build/check | PASS | 90 test files, 736 tests |
+| Build and regression suite | PASS | 90 test files, 736 tests |
 | Targeted security review | PASS | Independent read-only review: route authentication/user scope, credentials, input/output and dependencies; no findings |
 
-The first full check had one local bare-clone fixture blocked by the current
+The first complete check had one local bare-clone fixture blocked by the current
 session's Git wrapper. The complete check passed with the standard system Git
 first on the test-only PATH; production credential settings were unchanged.
 Browser verification initially lacked a fixture Host token and correctly got
