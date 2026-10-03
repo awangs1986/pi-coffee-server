@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {ImageInput, QueueAction, QueueItem} from '../shared/protocol.js';
-type Input=QueueItem&{images?:ImageInput[]};
+type Input=QueueItem&{images?:ImageInput[];requestId?:string};
 
 /** Pending Web inputs stay here until one native delivery owns them. */
 export class InputQueue {
@@ -10,15 +10,15 @@ export class InputQueue {
  private stopped=false;
  private generation=0;
  private inFlight?:Promise<void>;
- constructor(private readonly options:{busy:()=>boolean;validate:(text:string)=>Promise<void>;deliver:(text:string,images:ImageInput[]|undefined,promote:boolean)=>Promise<void>;changed:()=>void}){}
+ constructor(private readonly options:{busy:()=>boolean;validate:(text:string)=>Promise<void>;deliver:(text:string,images:ImageInput[]|undefined,promote:boolean,requestId?:string)=>Promise<void>;changed:()=>void}){}
  get items():QueueItem[]{return this.rows.map(({images,...item})=>({...item}));}
  get active(){return this.sending;}
- async add(text:string,images?:ImageInput[]){
+ async add(text:string,images?:ImageInput[],requestId?:string){
   const generation=this.generation;await this.options.validate(text);
   if(this.stopped||generation!==this.generation)throw Error('Session has stopped');
   if(this.rows.length>=100)throw Error('队列最多保留 100 条指令');
   this.checkSize(text,images);
-  this.rows.push({id:randomUUID(),revision:1,text,status:'pending',imageCount:images?.length??0,...(images?{images:structuredClone(images)}:{})});
+  this.rows.push({id:randomUUID(),requestId,revision:1,text,status:'pending',imageCount:images?.length??0,...(images?{images:structuredClone(images)}:{})});
   this.options.changed();this.wake();
  }
  private checkSize(text:string,images?:ImageInput[],except?:Input){
@@ -52,19 +52,20 @@ export class InputQueue {
   });
  }
  private async deliver(row:Input,promote:boolean){
+  const generation=this.generation;
   this.sending=true;row.status='sending';row.revision++;this.options.changed();
   try{
-   this.inFlight=this.options.deliver(row.text,row.images,promote);
+   this.inFlight=row.requestId===undefined?this.options.deliver(row.text,row.images,promote):this.options.deliver(row.text,row.images,promote,row.requestId);
    await this.inFlight;
    this.rows=this.rows.filter(item=>item!==row);
   }catch(error){
    // A transport error can mean "accepted but response lost". Never auto-retry.
-   row.status='failed';row.revision++;row.error='发送未确认，请先检查对话记录，再决定是否重试。';
+   if(generation===this.generation){row.status='failed';row.revision++;row.error='发送未确认，请先检查对话记录，再决定是否重试。';}
    throw error;
   }finally{this.inFlight=undefined;this.sending=false;this.options.changed();this.wake();}
  }
  async waitForDelivery(){await this.inFlight?.catch(()=>undefined);}
- clear(){this.generation++;const old=this.rows.length;this.rows=this.rows.filter(row=>row.status==='sending');if(this.rows.length!==old)this.options.changed();}
+ clear(){this.generation++;const old=this.rows.length;this.rows=[];if(old)this.options.changed();}
  pause(){this.generation++;this.stopped=true;for(const row of this.rows){if(row.status!=='sending'){row.status='failed';row.revision++;row.error='Agent 已中断；请检查历史后手动重试。';}}if(this.rows.length)this.options.changed();}
  resume(){this.stopped=false;}
  stop(){this.generation++;this.stopped=true;}

@@ -205,6 +205,20 @@ export class WebServer {
         json(response,result.status,{...await result.json(),oauthConfigured:Boolean(this.githubOAuth)});
       }catch{json(response,502,{error:'GitHub account management unavailable'});}return;
     }
+    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands)$/.test(path)) {
+      response.setHeader('cache-control','no-store');
+      if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
+      try {
+        const session=await this.identity?.authorize(request);
+        if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
+        const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
+        const upstreamUrl=new URL(route.hostUrl);upstreamUrl.protocol=upstreamUrl.protocol==='wss:'?'https:':'http:';upstreamUrl.pathname=path;upstreamUrl.search=new URL(request.url??'/', 'http://web').search;
+        const upstream=await fetch(upstreamUrl,{headers:{authorization:`Bearer ${route.hostToken}`,...(route.user?{[USER_HEADER]:route.user}:{})},signal:AbortSignal.timeout(path.endsWith('/meta')?3000:10000),redirect:'error'});
+        const userScope=session?`gitea-${session.id}`:this.auth?.principalOf(request)?.user??this.defaultUser??null;
+        json(response,upstream.status,{...await upstream.json(),userScope});
+      }catch{json(response,502,{error:'sync_unavailable'});}
+      return;
+    }
     if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
@@ -488,17 +502,19 @@ const ASSET_TYPES: Record<string, string> = {
   js: "text/javascript; charset=utf-8",
   svg: "image/svg+xml",
   png: "image/png",
+  webp: "image/webp",
   ico: "image/x-icon",
   woff2: "font/woff2",
 };
 
 /**
  * The shell is a flat set of files directly under `public/`, plus the generated
- * Diff bundle under `public/vendor/` (JavaScript only). Only a single safe path
+ * Diff bundle under `public/vendor/` and the explicitly named sync worker. Only a single safe path
  * segment with a known extension is served, so `..`, deeper paths, and anything
  * else never reach the filesystem.
  */
 function resolveAsset(path: string): { file: string; contentType: string } | undefined {
+  if(path === "/workers/conversation-sync.js")return {file:"workers/conversation-sync.js",contentType:ASSET_TYPES.js};
   if (path === "/" || path === "/index.html") return { file: "index.html", contentType: ASSET_TYPES.html };
   const vendor = /^\/vendor\/([A-Za-z0-9_-]+)\.js$/.exec(path);
   if (vendor !== null) return { file: `vendor/${vendor[1]}.js`, contentType: ASSET_TYPES.js };

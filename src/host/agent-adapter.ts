@@ -32,6 +32,15 @@ export interface AgentHistory {
   leafId: string | null;
 }
 
+/** A read-only native-source audit. Unknown history must never replace a good index. */
+export interface AgentHistoryRead {
+  history: AgentHistory;
+  binding: string;
+  sourceGeneration: string;
+  sourceFreshness: "current" | "unknown";
+  checkedAt: string;
+}
+
 /** A conversation known to the durable session store; `running` is added by the Host. */
 export type AgentSessionListing = Omit<SessionSummary, "running">;
 
@@ -81,6 +90,8 @@ export interface AgentSessionFactory {
   forkNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<AgentSession>;
   /** Called after verified-idle sessions are released, before re-opening with changed credentials. */
   resetTaskRuntime?(id:string):Promise<void>;
+  /** Read durable native history without starting/resuming a runtime or changing native state. */
+  readHistory?(sessionId: string): Promise<AgentHistoryRead>;
   prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   /** Begin shutdown by cancelling takeover preparation; source sessions remain recoverable until closed. */
   cancelTakeovers?(): Promise<void>;

@@ -149,7 +149,7 @@ export interface RateLimits {
  */
 export type PromptMode = "prompt" | "steer" | "follow_up";
 
-export interface QueueItem {id:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
+export interface QueueItem {id:string;requestId?:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
 export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote";text?:string;}
 
 export type AckOperation =
@@ -189,7 +189,7 @@ export interface UiResponse {
   cancelled?: boolean;
 }
 
-export type ClientFrame =
+export type ClientFrame = (
   | ({v:typeof PROTOCOL_VERSION;type:"queue_action";requestId:string} & QueueAction)
   | {v:typeof PROTOCOL_VERSION;type:"get_queue"}
   | {
@@ -198,6 +198,7 @@ export type ClientFrame =
       sessionId?: string;
       after?: number;
       nativeProtocol?: 1;
+      syncProtocol?: 2;
     }
   | {
       v: typeof PROTOCOL_VERSION;
@@ -250,13 +251,17 @@ export type ClientFrame =
   | {
       v: typeof PROTOCOL_VERSION;
       type: "close";
-    };
+    }) & {conversationId?:string;bindingEpoch?:string};
 
-export type ServerFrame =
+export type ServerFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"sync_changed";sessionId:string;conversationId:string;bindingEpoch:string;headRevision:string;sourceFreshness:"unknown"|"reconciling"|"current"}
   | {v:typeof PROTOCOL_VERSION;type:"queue_state";sessionId:string;items:QueueItem[]}
   | {
       v: typeof PROTOCOL_VERSION;
       type: "opened";
+      syncProtocol?: 2;
+      bindingEpoch?: string;
+      baseRevision?: string;
       engine?: AgentEngine;
       capabilities?: AgentCapabilities;
       sessionId: string;
@@ -356,11 +361,19 @@ export type ServerFrame =
        */
       v: typeof PROTOCOL_VERSION;
       type: "history";
+      syncProtocol?: 2;
+      bindingEpoch?: string;
+      baseRevision?: string;
+      headRevision?: string;
+      lastSourceCheckAt?: string|null;
+      snapshotId?: string;
+      olderCursor?: string | null;
+      sourceFreshness?: string;
       sessionId: string;
       entries: HistoryEntry[];
       leafId: string | null;
       truncated: boolean;
-    };
+    }) & {conversationId?:string;bindingEpoch?:string;userScope?:string|null};
 
 export function encodeFrame(frame: ServerFrame | ClientFrame): string {
   const encoded = JSON.stringify(frame);
@@ -385,6 +398,11 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
     throw new ProtocolError("unsupported_version", `Unsupported protocol version: ${String(value.v)}`);
   }
 
+  const frame=parseClientFrame(value);
+  const conversationId=optionalString(value.conversationId,'conversationId',256),bindingEpoch=optionalString(value.bindingEpoch,'bindingEpoch',128);
+  return {...frame,...(conversationId?{conversationId}:{}),...(bindingEpoch?{bindingEpoch}:{})};
+}
+function parseClientFrame(value:Record<string,unknown>):ClientFrame {
   switch (value.type) {
     case "open":
       return parseOpen(value);
@@ -505,9 +523,11 @@ function parseOpen(value: Record<string, unknown>): ClientFrame {
   const sessionId = optionalString(value.sessionId, "sessionId", 256);
   const after = optionalNonNegativeInteger(value.after, "after");
   if(value.nativeProtocol!==undefined && value.nativeProtocol!==1)throw new ProtocolError("unsupported_version","Unsupported native Agent presentation protocol");
+  if(value.syncProtocol!==undefined && value.syncProtocol!==2)throw new ProtocolError("unsupported_version","Unsupported conversation sync protocol");
   return {
     v: PROTOCOL_VERSION,
     type: "open",
+    ...(value.syncProtocol === 2 ? {syncProtocol:2 as const} : {}),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(after === undefined ? {} : { after }),
     ...(value.nativeProtocol === 1 ? {nativeProtocol:1 as const} : {}),
