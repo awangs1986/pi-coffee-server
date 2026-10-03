@@ -24,7 +24,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.PI_COFFEE_BROWSER_EXECUTABLE?{executablePath:process.env.PI_COFFEE_BROWSER_EXECUTABLE}:{})});
  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.on('pageerror',e=>errors.push(e.message));
  await page.goto(url);await page.locator('.login-coffee').waitFor();
- const welcome=await page.locator('.login-coffee').boundingBox();assert(welcome.width<210&&welcome.height<190,'Welcome too large');
+ const welcome=await page.locator('.login-coffee').boundingBox();assert(welcome.width<210&&welcome.height<230,'Welcome too large');
  await page.screenshot({path:evidence+'/welcome.png'});
  await page.locator('.login-coffee-skip').click();
  await page.locator('[data-session-id="question-task"]').click();await page.locator('#prompt').fill('choose: Which option?');await page.locator('#send:not([disabled])').click();

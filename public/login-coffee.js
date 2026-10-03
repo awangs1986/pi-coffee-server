@@ -1,5 +1,5 @@
-// A compact local cup illustration; the workbench remains interactive throughout.
-export const LOGIN_COFFEE_ART='/welcome-cup.svg';
+// A compact chibi version of the original cat maid; the workbench stays interactive.
+export const LOGIN_COFFEE_ART='/login-coffee-maid-chibi.webp';
 
 export function createLoginCoffee({document:doc=globalThis.document,matchMedia=query=>globalThis.matchMedia?.(query)}={}) {
   let shownUser=null,overlay=null,timer=null,disposed=false;

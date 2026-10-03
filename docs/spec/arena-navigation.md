@@ -341,7 +341,7 @@ answer. Destructive confirmations and application settings retain their modal
 behavior. Conversation menus remain usable during loading/errors, while native
 operation eligibility is still checked by Host. Menu placement stays in view.
 
-A compact monochrome cup greets a successful login briefly, once per login identity.
+A compact chibi version of the original black-haired cat maid greets a successful login briefly, once per login identity. It retains the cat ears, black-and-white maid outfit and coffee-offering pose, with simplified detail.
 It does not cover the workbench, take focus, or consume Enter. A close control and
 Escape dismiss it; reduced-motion mode avoids animation. The previous oversized
 character artwork is no longer displayed. The workbench layout is unchanged.
@@ -350,3 +350,5 @@ A running conversation uses a small black pixel cat in the sidebar instead of a
 pulsing blue dot. Waiting/finished indicators retain their meanings; an idle row
 has no running cat. Reduced-motion mode shows the cat without animation, and the
 dark theme adds a subtle outline to retain contrast.
+
+The owner clarified that compact welcome means simplifying the original cat-maid character, not replacing her with a coffee-cup icon. The character asset remains transparent and the greeting stays small and nonblocking.
