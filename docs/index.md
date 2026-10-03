@@ -71,3 +71,4 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Bounded local watchdog](deployment/watchdog.md): independent Web/Host liveness recovery, durable circuit breaker and maintenance pause; [Server #34](https://github.com/awangs1986/pi-coffee-server/issues/34).
 
 - Per-user GitHub OAuth accounts and task-scoped Git/gh: [contract](spec/github-accounts.md), [Server #36](https://github.com/awangs1986/pi-coffee-server/issues/36).
+- GitHub OAuth App provisioning and production acceptance: [activation guide](deployment/github-accounts.md).
