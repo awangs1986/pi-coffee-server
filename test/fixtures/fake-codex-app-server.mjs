@@ -70,6 +70,13 @@ async function runTurn(thread, input, options) {
   notify("item/started", { item: user, threadId: thread.id, turnId, startedAtMs: Date.now() });
   notify("item/completed", { item: user, threadId: thread.id, turnId, completedAtMs: Date.now() });
 
+  const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
+  if(preparing&&process.env.FORK_POLICY_ASSERT){
+    const policy=settings.get(thread.id);
+    if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
+      turn.status='failed';turn.error={message:'Handoff attempted without native preparation restrictions'};active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn});return;
+    }
+  }
   if (text.startsWith("fail")) {
     turn.status = "failed";
     turn.error = { message: "fake upstream failure", codexErrorInfo: null, additionalDetails: null, misalignment: null };
@@ -135,7 +142,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
@@ -191,7 +198,7 @@ rl.on("line", (line) => {
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake", effort: params.config?.model_reasoning_effort };
       threads[thread.id] = thread;
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
       save();
       reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null });
       return notify("thread/started", { thread: threadView(thread, false) });
@@ -206,8 +213,12 @@ rl.on("line", (line) => {
       if (params.model) thread.model = params.model;
       if (params.config?.model_reasoning_effort) thread.effort = params.config.model_reasoning_effort;
       save();
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
       return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
+    }
+    case "thread/fork": {
+      const source=threads[params.threadId];if(!source)return fail('no such thread');
+      const thread={...structuredClone(source),id:randomUUID(),cwd:params.cwd,createdAt:now(),updatedAt:now()};threads[thread.id]=thread;save();return reply({thread:threadView(thread,true)});
     }
     case "thread/read": {
       const thread = threads[params.threadId];
@@ -248,7 +259,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
-    case "config/read": return reply({config:{model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
+    case "config/read": return reply({config:{mcp_servers:{fixture_external:{command:"/bin/false",enabled:true}},model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
     case "skills/list": {
       if(params.forceReload!==true)return fail("skills discovery must refresh");
       const entries=existsSync(join(home,"fake-skills.json"))?JSON.parse(readFileSync(join(home,"fake-skills.json"),"utf8")):[];

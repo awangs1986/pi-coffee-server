@@ -1,0 +1,17 @@
+import {it,expect,afterEach} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';import {join,resolve} from 'node:path';import {tmpdir} from 'node:os';import {randomUUID} from 'node:crypto';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+import {Workspaces} from '../src/host/workspaces.js';import {HostServer} from '../src/host/server.js';import {NativeAgentFactory} from '../src/host/native/factory.js';
+const cleanup:Array<()=>Promise<unknown>>=[];afterEach(async()=>{for(const f of cleanup.reverse())await f();cleanup.length=0;});
+it('creates a Claude Handoff without tools during preparation and restores normal tools on reopen',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-claude-fork-'));cleanup.push(()=>rm(root,{recursive:true,force:true}));const source=join(root,'source');await mkdir(source);const exec=promisify(execFile);
+ const git=(args:string[])=>exec('git',['-c','user.name=Test','-c','user.email=test@example.invalid',...args],{cwd:source});await git(['init','-b','main']);await writeFile(join(source,'code.txt'),'base');await git(['add','.']);await git(['commit','-m','base']);await git(['clone','--bare',source,join(root,'remote.git')]);
+ const ws=new Workspaces(join(root,'projects'),{taskRoot:join(root,'tasks')});const project=await ws.registerProject('p',join(root,'remote.git'));const task=await ws.createConversation(project.id,'main',randomUUID(),'claude');
+ const factory=new NativeAgentFactory({workspaces:ws,pi:{list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Pi unused');}},claude:{command:process.execPath,args:[resolve('test/fixtures/fake-claude.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'claude'),FORK_POLICY_ASSERT:'1',RUNNER_ARGS_LOG:join(root,'args.json')}}});cleanup.push(()=>factory.close());
+ const original=await factory.create({sessionId:task.id});await original.prompt('Original requirement with pending user choice');await expect.poll(async()=>(await original.getHistory()).entries.some(e=>e.kind==='assistant')).toBe(true);await expect.poll(async()=>(await original.getState()).isStreaming).toBe(false);const before=await original.getHistory();await original.stop();
+ const host=new HostServer({port:0,token:'fixture',factory,workspaces:ws});await host.start();cleanup.push(()=>host.close());
+ const target=randomUUID();const response=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'fork',id:task.id,targetId:target,mode:'handoff',acceptDrift:true})});expect(response.status,await response.clone().text()).toBe(202);
+ await expect.poll(async()=>(await ws.lookup(target))?.fork?.status,{timeout:10000}).toBe('completed');
+ const prepArgs=JSON.parse(await readFile(join(root,'args.json'),'utf8'));expect(prepArgs[prepArgs.indexOf('--tools')+1]).toBe('');expect(prepArgs).toContain('--strict-mcp-config');
+ const child=await factory.create({sessionId:target});cleanup.push(()=>child.stop());expect((await child.getHistory()).entries.some(e=>e.kind==='assistant'&&e.text.includes('[FORK_READY]'))).toBe(true);
+ expect(JSON.parse(await readFile(join(root,'args.json'),'utf8'))).not.toContain('--tools');
+ const reopened=await factory.create({sessionId:task.id});cleanup.push(()=>reopened.stop());expect(await reopened.getHistory()).toEqual(before);expect(await readFile(join(await ws.dataRoot(target),'fork','handoff.md'),'utf8')).toContain('Pending: run tests');
+});
