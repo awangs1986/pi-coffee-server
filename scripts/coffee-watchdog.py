@@ -18,6 +18,7 @@ import urllib.request
 VERSION = '1.0.0'
 DEFAULTS = {'failureThreshold': 3, 'restartLimit': 3, 'restartWindowSeconds': 1800,
             'cooldownSeconds': 300, 'healthyResetSeconds': 600, 'probeTimeoutSeconds': 3}
+MAX_OBSERVATION_GAP_SECONDS = 90  # Three ordinary timer periods; missed samples are not health evidence.
 
 
 def emit(event, **fields):
@@ -66,7 +67,7 @@ def read_state(path):
         item.setdefault('incidentAttempts', len(item['attempts']))
         if type(item['incidentAttempts']) is not int or item['incidentAttempts'] < 0:
             raise ValueError('Invalid incident budget')
-        for field in ('lastAttemptAt', 'healthySince', 'lastReminderAt'):
+        for field in ('lastAttemptAt', 'healthySince', 'lastReminderAt', 'checkedAt'):
             if field in item and (type(item[field]) not in (int, float) or not math.isfinite(item[field]) or item[field] < 0):
                 raise ValueError('Invalid recovery timestamp')
     return value
@@ -133,9 +134,14 @@ def check(config, state, path, executable, now):
         state['pausedUntil'] = 0
         for item in state['targets'].values():
             item['failures'] = 0
+            item.pop('healthySince', None)
     policy = config['policy']
     for target in config['targets']:
         item = state['targets'].setdefault(target['id'], {'attempts': [], 'incidentAttempts': 0, 'failures': 0, 'circuitOpen': False})
+        previous_check = item.get('checkedAt', now)
+        if now < previous_check or now-previous_check > MAX_OBSERVATION_GAP_SECONDS:
+            item.pop('healthySince', None)
+            item['failures'] = 0
         item['checkedAt'] = now
         item['attempts'] = [stamp for stamp in item['attempts'] if stamp > now-policy['restartWindowSeconds']]
         previous = item.get('status')
@@ -219,28 +225,42 @@ def main(argv=None):
         directory = Path(args.state_dir)
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory/'state.json'
+        if args.command == 'status':
+            # Atomic replacement makes snapshots readable while a check holds the action lock.
+            emit('status', watchdogVersion=VERSION, **read_state(path))
+            return 0
         with (directory/'watchdog.lock').open('a') as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                emit('already-running')
-                return 0
+            deadline = time.monotonic()+15
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if args.command == 'check':
+                        emit('already-running')
+                        return 0
+                    if time.monotonic() >= deadline:
+                        emit('management-busy', command=args.command, applied=False)
+                        return 3
+                    time.sleep(0.05)
             state = read_state(path)
             now = time.time()
             if args.command == 'check':
                 check(config, state, path, args.systemctl, now)
-            elif args.command == 'status':
-                emit('status', watchdogVersion=VERSION, **state)
             elif args.command == 'pause':
                 if not 1 <= args.seconds <= 86400:
                     raise ValueError('Pause must be between 1 second and 24 hours')
                 state['pausedUntil'] = now+args.seconds
+                for item in state['targets'].values():
+                    item['failures'] = 0
+                    item.pop('healthySince', None)
                 save_state(path, state)
                 emit('maintenance', until=state['pausedUntil'])
             elif args.command == 'resume':
                 state['pausedUntil'] = 0
                 for item in state['targets'].values():
                     item['failures'] = 0
+                    item.pop('healthySince', None)
                 save_state(path, state)
                 emit('resumed')
             elif args.command == 'rearm':
