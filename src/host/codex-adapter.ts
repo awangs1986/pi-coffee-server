@@ -1107,9 +1107,11 @@ function codexModelChoices(result:Obj,configuredModel?:string,configuredEffort?:
     const currentId = typeof current?.model === "string" ? current.model : configuredModel;
     const levels = efforts(current);
     const level = configuredEffort ?? (typeof current?.defaultReasoningEffort === "string" ? current.defaultReasoningEffort : levels[0] ?? "medium");
-    const choices = data.filter((model) => model.hidden !== true).map((model) => ({
+    const choices: PiModels["models"] = data.filter((model) => model.hidden !== true).map((model) => ({
       provider: "codex",
       id: String(model.model ?? model.id),
+      thinkingLevels: efforts(model),
+      ...(typeof model.defaultReasoningEffort === "string" ? {defaultThinkingLevel:model.defaultReasoningEffort} : {}),
       ...(efforts(model).length > 0 ? { reasoning: true } : {}),
     }));
     // A custom model_provider (config.toml) can name models the built-in

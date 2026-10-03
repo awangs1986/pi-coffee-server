@@ -59,7 +59,7 @@ correction above; native configuration verification is recorded in Issue #39.
 Provider responses in automated and browser tests are deterministic native CLI
 fixtures. This proves transport, lifecycle and copying behavior, not real-model
 handoff fidelity or all provider/version combinations. Handoff remains experimental.
-Claude full-context Fork is unavailable. Claude exported history over 1 MiB,
+Claude native-context Fork is unavailable. Claude exported history over 1 MiB,
 external links, nested Git repositories/submodules and unresolved merge conflicts
 fail explicitly, retaining source and diagnostic copy.
 
