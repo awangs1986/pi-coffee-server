@@ -70,6 +70,13 @@ async function runTurn(thread, input, options) {
   notify("item/started", { item: user, threadId: thread.id, turnId, startedAtMs: Date.now() });
   notify("item/completed", { item: user, threadId: thread.id, turnId, completedAtMs: Date.now() });
 
+  const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
+  if(preparing&&process.env.FORK_POLICY_ASSERT){
+    const policy=settings.get(thread.id);
+    if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false){
+      turn.status='failed';turn.error={message:'Handoff attempted without native preparation restrictions'};active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn});return;
+    }
+  }
   if (text.startsWith("fail")) {
     turn.status = "failed";
     turn.error = { message: "fake upstream failure", codexErrorInfo: null, additionalDetails: null, misalignment: null };
@@ -191,7 +198,7 @@ rl.on("line", (line) => {
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake", effort: params.config?.model_reasoning_effort };
       threads[thread.id] = thread;
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
       save();
       reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null });
       return notify("thread/started", { thread: threadView(thread, false) });
@@ -206,7 +213,7 @@ rl.on("line", (line) => {
       if (params.model) thread.model = params.model;
       if (params.config?.model_reasoning_effort) thread.effort = params.config.model_reasoning_effort;
       save();
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
       return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
     }
     case "thread/fork": {

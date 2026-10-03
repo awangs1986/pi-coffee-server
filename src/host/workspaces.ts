@@ -158,9 +158,9 @@ export class Workspaces {
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string) {
+  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false) {
     const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
-    return args.includes('-z')?r.stdout:r.stdout.trim();
+    return raw||args.includes('-z')?r.stdout:r.stdout.trim();
   }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
@@ -459,7 +459,7 @@ export class Workspaces {
     if(!chat){
       if(await this.git(source.cwd,['ls-files','--unmerged']))throw new Error('Resolve merge conflicts before Fork');
       const head=await this.git(source.cwd,['rev-parse','HEAD']);target.startSha=head;target.startBranch=source.branch;
-      staged=await this.git(source.cwd,['diff','--cached','--binary','--no-ext-diff','--no-textconv'],32*1024*1024);
+      staged=await this.git(source.cwd,['diff','--cached','--binary','--no-ext-diff','--no-textconv'],32*1024*1024,undefined,true);
       await mkdir(dirname(target.cwd),{recursive:true});
       await this.git(this.root,['clone','--no-hardlinks','--no-checkout','--',source.cwd,target.cwd],2*1024*1024,target.githubAccountId);
       await this.git(target.cwd,['symbolic-ref','HEAD','refs/heads/'+target.branch]);

@@ -139,7 +139,7 @@ async function run(selectedRole: Role): Promise<void> {
         envForSession:async id=>{const env=await workspaces.lookup(id)?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,PATH:env.PATH+':'+withCoffeeLspPath().PATH,COFFEE_MANAGED_PATH:env.PATH+':'+withCoffeeLspPath().PATH};},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
-        codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>new CodexSessionFactory({...codexOptions,instructions:async()=>[await instructions(),await workspaces.forkInstructionForCwd(taskCwd)].filter(Boolean).join('\n'),envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
+        codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>new CodexSessionFactory({...codexOptions,preparation,instructions:async()=>[await instructions(),await workspaces.forkInstructionForCwd(taskCwd)].filter(Boolean).join('\n'),envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
         legacyCodex,
         codexSummary:(taskCwd:string,id:string)=>legacyCodex!.summaryForCwd(taskCwd,id),
         codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),
