@@ -1,0 +1,17 @@
+import {it,expect,afterEach} from 'vitest';import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+import {GitHubAccounts} from '../src/host/github-accounts.js';import {Workspaces} from '../src/host/workspaces.js';import {NativeAgentFactory} from '../src/host/native/factory.js';import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';import {CodexSessionFactory} from '../src/host/codex-adapter.js';import {HostServer} from '../src/host/server.js';import {WebSocket} from 'ws';import {once} from 'node:events';
+const exec=promisify(execFile);let root='',host:HostServer,socket:WebSocket;
+afterEach(async()=>{socket?.close();await host?.close();if(root)await rm(root,{recursive:true,force:true});});
+it.each(['pi','codex','claude'] as const)('passes managed Git authorization to the actual %s child through Host open',async engine=>{
+ root=await mkdtemp(join(tmpdir(),'coffee-native-github-'));const source=join(root,'source'),remote=join(root,'repo.git'),log=join(root,'env.json');await mkdir(source);
+ const git=(args:string[])=>exec('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:source});await git(['init','-b','main']);await writeFile(join(source,'readme'),'base');await git(['add','.']);await git(['commit','-m','base']);await git(['clone','--bare',source,remote]);
+ const accounts=new GitHubAccounts(join(root,'accounts'));const workspaces=new Workspaces(join(root,'projects'),{githubAccounts:accounts});
+ const project=await workspaces.registerProject('fixture',remote);const task=await workspaces.createConversation(project.id,'main','native-account',engine);
+ const pi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),cwd:task.cwd,sessionDir:join(root,'pi'),env:{FIXTURE_GITHUB_ENV_LOG:log},envForSession:id=>workspaces.runtimeEnvironment(id)});
+ const command={command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='claude'?'claude':'codex')+'.mjs')],env:{FIXTURE_GITHUB_ENV_LOG:log,CLAUDE_CONFIG_DIR:join(root,'claude')}};
+ const factory=new NativeAgentFactory({pi,workspaces,codex:command,claude:command,...(engine==='codex'?{codexSessionFactory:(id:string,cwd:string,onBound:(id:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>new CodexSessionFactory({cwd,cliPath:process.execPath,commandArgs:[resolve('test/fixtures/fake-codex-app-server.mjs')],env:{FIXTURE_GITHUB_ENV_LOG:log},envForSession:environment,onBound:async(_host,native)=>onBound(native)})}:{})});
+ host=new HostServer({port:0,token:'fixture',factory,workspaces});await host.start();socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer fixture'}});const frames:any[]=[];socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:task.id,nativeProtocol:1}));
+ for(let i=0;i<150&&!frames.some(f=>f.type==='opened'||f.type==='error');i++)await new Promise(r=>setTimeout(r,20));
+ expect(frames.some(f=>f.type==='opened'),JSON.stringify(frames)).toBe(true);
+ const observed=JSON.parse(await readFile(log,'utf8'));expect(observed).toMatchObject({token:'coffee-no-shared-auth',gitGlobal:'/dev/null'});expect(observed.githubConfig).toBe(join(accounts.root,'tools','unbound','config'));
+});

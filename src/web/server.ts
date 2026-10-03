@@ -1,3 +1,4 @@
+import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
@@ -21,6 +22,7 @@ export interface TlsMaterial {
 }
 
 export interface WebServerOptions {
+  githubOAuth?:GitHubOAuthOptions;
   host?: string;
   port?: number;
   hostUrl: string;
@@ -55,6 +57,7 @@ export class WebServer {
   private started = false;
   private readonly identity?: Identity;
   private readonly auth?: GiteaAuth;
+  private readonly githubOAuth?:GitHubOAuth;
   private readonly defaultUser?:string;
   private readonly allowUnauthenticated: boolean;
   private readonly assets = new Map<string, CachedAsset>();
@@ -63,6 +66,7 @@ export class WebServer {
   private readonly transferDefaults = new Map<string,string>();
 
   constructor(options: WebServerOptions) {
+    this.githubOAuth=options.githubOAuth?new GitHubOAuth(options.githubOAuth):undefined;
     this.auth=options.auth;this.defaultUser=options.defaultUser;
     this.allowUnauthenticated = options.allowUnauthenticated ?? false;
     this.identity = options.identity ? new Identity(options.identity) : undefined;
@@ -178,6 +182,28 @@ export class WebServer {
       if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
       response.setHeader('cache-control','no-store');
       json(response,200,clientAddress(request.socket.remoteAddress));return;
+    }
+    if(path === '/api/github-accounts' || path === '/auth/github/callback') {
+      try {
+        const session=await this.identity?.authorize(request);
+        const user=session?.login??this.auth?.principalOf(request)?.user;
+        if(!user){json(response,401,{error:'Login with Gitea to manage GitHub accounts'});return;}
+        const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user};
+        if(path==='/auth/github/callback'){
+          if(request.method!=='GET'||!this.githubOAuth){json(response,400,{error:'GitHub OAuth is not configured'});return;}
+          await this.githubOAuth.callback(request,response,user,async token=>{const r=await this.hostApi(route,'/api/github-accounts','POST',{action:'bind',token});if(!r.ok)throw Error('Host rejected authorization');});return;
+        }
+        if(request.method!=='POST'){json(response,405,{error:'Use POST'});return;}
+        if(!(this.identity?this.identity.originAllowed(request):this.auth!.originAllowed(request))){json(response,403,{error:'Invalid origin'});return;}
+        const input=await readJson(request);
+        if(input.action==='connect'){
+          if(!this.githubOAuth){json(response,409,{error:'管理员尚未配置 GitHub OAuth App'});return;}
+          json(response,200,this.githubOAuth.start(request,user));return;
+        }
+        if(!['list','delete','check'].includes(input.action)){json(response,400,{error:'Invalid account operation'});return;}
+        const result=await this.hostApi(route,'/api/github-accounts','POST',{action:input.action,id:input.id});
+        json(response,result.status,{...await result.json(),oauthConfigured:Boolean(this.githubOAuth)});
+      }catch{json(response,502,{error:'GitHub account management unavailable'});}return;
     }
     if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {

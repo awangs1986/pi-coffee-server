@@ -46,6 +46,11 @@ export class GitHubClient implements GitHubForge {
     if(!options.token || /\s/.test(options.token))throw new Error("GitHub token is required");
     this.webHost=githubWebHost(this.api.href);
   }
+  async identity():Promise<{githubId:string;login:string}> {
+    const row=await this.request('/user','GET') as {id?:unknown;login?:unknown};
+    if(typeof row.id!=='number'||!Number.isSafeInteger(row.id)||row.id<1||typeof row.login!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}$/.test(row.login))throw new Error('GitHub account identity unavailable');
+    return {githubId:String(row.id),login:row.login};
+  }
   async listRepositories():Promise<GitHubRepository[]> {
     const all:GitHubRepository[]=[];
     for(let page=1;page<=REPOSITORY_PAGES;page++) {

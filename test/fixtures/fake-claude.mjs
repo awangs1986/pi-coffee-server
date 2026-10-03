@@ -1,3 +1,4 @@
+import './github-env-probe.mjs';
 import {writeFileSync} from "node:fs";
 if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(process.argv));
 // Claude 2.1.280 native stream-json and session-file boundary fixture.

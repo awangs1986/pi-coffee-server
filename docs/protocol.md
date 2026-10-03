@@ -390,3 +390,17 @@ The browser checks the encoded frame before clearing drafts or transmitting queu
 edits. Over-budget input stays editable and receives explicit feedback, without
 sending a frame that would close the socket. Queued edit controls accommodate long
 text and do not report a failed local send as a pending save.
+
+
+## User-scoped GitHub authorization (2026-10-03)
+
+`POST /api/github-accounts` on Web accepts `list`, `connect`, `check {id}` and
+`delete {id}` for the authenticated Gitea user. Only Web's internal authenticated
+Host call may perform `bind {token}` after an OAuth exchange; browser input cannot
+invoke it. `GET /auth/github/callback` consumes a one-use session-bound transaction.
+
+Workspace `github_repos` and `github_project` require `accountId` in managed mode.
+Projects and Conversations persist `githubAccountId`; repository list/PR/Git
+execution resolve it only inside the authenticated user scope. `github_bind` with
+`projectId` and `accountId` explicitly migrates an unbound legacy project and its
+idle tasks. See [the current contract](spec/github-accounts.md).
