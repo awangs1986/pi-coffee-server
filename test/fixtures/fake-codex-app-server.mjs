@@ -73,7 +73,7 @@ async function runTurn(thread, input, options) {
   const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
   if(preparing&&process.env.FORK_POLICY_ASSERT){
     const policy=settings.get(thread.id);
-    if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false){
+    if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
       turn.status='failed';turn.error={message:'Handoff attempted without native preparation restrictions'};active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn});return;
     }
   }
@@ -259,7 +259,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
-    case "config/read": return reply({config:{model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
+    case "config/read": return reply({config:{mcp_servers:{fixture_external:{command:"/bin/false",enabled:true}},model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
     case "skills/list": {
       if(params.forceReload!==true)return fail("skills discovery must refresh");
       const entries=existsSync(join(home,"fake-skills.json"))?JSON.parse(readFileSync(join(home,"fake-skills.json"),"utf8")):[];
