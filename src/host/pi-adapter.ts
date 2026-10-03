@@ -4,6 +4,9 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSourceLines, readStableSource, sourceHash, unknownHistory } from "./native/history-source.js";
+import { nativeHistoryJob, nativeHistoryNeedsWorker } from "./native/history-pool.js";
+import type { AgentHistoryRead } from "./agent-adapter.js";
 import { RpcClient, SessionManager, parseSkillBlock } from "@earendil-works/pi-coding-agent";
 import type {
   CommandInfo,
@@ -156,6 +159,37 @@ export class RpcPiSessionFactory implements PiSessionFactory {
 
   async list(): Promise<PiSessionListing[]> {
     return (await this.listWithPaths()).map(({ path: _path, ...listing }) => listing);
+  }
+
+  async readHistory(sessionId: string): Promise<AgentHistoryRead> {
+    const binding = `pi:${sessionId}`;
+    if (nativeHistoryNeedsWorker) return nativeHistoryJob("pi", { sessionId, options: { cwd: this.options.cwd, sessionDir: this.options.sessionDir } }).catch(() => unknownHistory(binding));
+    try {
+      const found = (await this.listWithPaths()).filter(session => session.id === sessionId);
+      if (found.length !== 1) return unknownHistory(binding);
+      const source = await readStableSource(found[0].path);
+      const rows = await parseSourceLines(source.text);
+      const header = rows[0];
+      if (header?.type !== "session" || header.id !== sessionId || ![2, 3].includes(header.version)) return unknownHistory(binding);
+      const entries = rows.slice(1);
+      // Native v2/v3 tree records have durable IDs. Never invent positional IDs.
+      if (entries.some(entry => typeof entry.id !== "string" || !entry.id)) return unknownHistory(binding);
+      const leafId = entries.at(-1)?.id ?? null;
+      const byId = new Map(entries.map(entry => [entry.id, entry]));
+      if (byId.size !== entries.length) return unknownHistory(binding);
+      const children = new Map<string | null, number>();
+      for (const entry of entries) children.set(entry.parentId ?? null, (children.get(entry.parentId ?? null) ?? 0) + 1);
+      const branches: string[] = [], seen = new Set<string>();
+      let entry = leafId === null ? undefined : byId.get(leafId);
+      while (entry) {
+        if (seen.has(entry.id)) return unknownHistory(binding);
+        seen.add(entry.id);
+        if ((children.get(entry.parentId ?? null) ?? 0) > 1) branches.push(entry.id);
+        if (entry.parentId != null && !byId.has(entry.parentId)) return unknownHistory(binding);
+        entry = entry.parentId == null ? undefined : byId.get(entry.parentId);
+      }
+      return { history: projectHistory(entries, leafId, { preserveToolContent: true }), binding: `${binding}:${source.identity}:${sourceHash(JSON.stringify(branches.reverse()))}`, sourceGeneration: source.generation, sourceFreshness: "current", checkedAt: new Date().toISOString() };
+    } catch { return unknownHistory(binding); }
   }
 
   async delete(sessionId: string): Promise<boolean> {
@@ -585,7 +619,7 @@ const MAX_TOOL_RESULT_CHARS = 4000;
  * branches are not shown; compactions stay visible as notes because the user
  * asked to see the whole past conversation, not the model's current context.
  */
-export function projectHistory(rawEntries: unknown[], leafId: string | null): PiHistory {
+export function projectHistory(rawEntries: unknown[], leafId: string | null, options: { preserveToolContent?: boolean } = {}): PiHistory {
   const entries = rawEntries.filter(isRecord);
   const byId = new Map<string, Record<string, unknown>>();
   for (const entry of entries) if (typeof entry.id === "string") byId.set(entry.id, entry);
@@ -635,7 +669,8 @@ export function projectHistory(rawEntries: unknown[], leafId: string | null): Pi
       } else if (message.role === "toolResult" || message.role === "tool_result") {
         const callId = stringOr(message.toolCallId, "");
         const tool = toolsByCallId.get(callId);
-        const result = textOf(content).slice(0, MAX_TOOL_RESULT_CHARS);
+        const fullResult = textOf(content);
+        const result = options.preserveToolContent ? fullResult : fullResult.slice(0, MAX_TOOL_RESULT_CHARS);
         // Pi's edit tool records the diff it applied; keep it so a reloaded
         // browser shows the same change view as the live one did.
         const details = isRecord(message.details) ? message.details : undefined;
@@ -643,7 +678,7 @@ export function projectHistory(rawEntries: unknown[], leafId: string | null): Pi
         if (tool) {
           tool.result = result;
           tool.isError = message.isError === true;
-          if (diff.length > 0) tool.diff = diff.slice(0, MAX_TOOL_RESULT_CHARS * 4);
+          if (diff.length > 0) tool.diff = options.preserveToolContent ? diff : diff.slice(0, MAX_TOOL_RESULT_CHARS * 4);
         } else {
           out.push({ kind: "tool", id, ...stamp, name: stringOr(message.toolName, "tool"), args: null, result, isError: message.isError === true });
         }

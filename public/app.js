@@ -1,4 +1,9 @@
 import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
+import {createLoginCoffee} from './login-coffee.js';
+import {ConversationRepository} from './conversation-repository.js';
+import {ConversationSyncView} from './conversation-sync-view.js';
+import {createRenderScheduler} from './render-scheduler.js';
+import {createSyncStatus} from './sync-status.js';
 import {RecentConversations} from './recent-conversations.js';
 import {ConversationPreviewStore,createConversationPreview} from './conversation-preview-store.js';
 import {renderConversationPreview,conversationPreviewNode} from './conversation-preview-view.js';
@@ -12,7 +17,7 @@ import { initSkills } from "./skills.js";
 // local transcript cache is disposable, user-scoped and never authoritative.
 import {
 
-  renderMarkdown, timeGroup, activityGroup, assistantNode, el, fillToolCard, formatBytes, installCopyHandlers,
+  boundedTranscriptWindow, renderBoundedText, renderMarkdown, timeGroup, activityGroup, assistantNode, el, fillToolCard, formatBytes, installCopyHandlers,
   noteNode, relativeTime, toolCard, toolResultDetails, toolResultText, updateActivity, updateAssistant, userBubble,
 
 } from './render.js';
@@ -66,6 +71,55 @@ const pendingToolFills = new Set();
 let connected = false, opened = false, streaming = false, compacting = false, modelPending = null;
 let activeId = null;
 let currentUser = null;
+const loginCoffee=createLoginCoffee();
+let durableSync=false, localSyncShown=false, activeBindingEpoch=null, syncHintTimer=null;
+const conversationDrafts=new Map();
+let recentlySynced=[];
+const preferDurableSync=new URLSearchParams(location.search).get('syncProtocol')!=='1';
+function draftKey(){return JSON.stringify([currentUser,activeId]);}
+function saveConversationDraft(){
+  const key=draftKey();conversationDrafts.delete(key);
+  if(ui.prompt.value)conversationDrafts.set(key,ui.prompt.value);
+  let size=0;for(const text of conversationDrafts.values())size+=text.length;
+  while(conversationDrafts.size>30||size>4*1024*1024){const key=conversationDrafts.keys().next().value;size-=conversationDrafts.get(key).length;conversationDrafts.delete(key);}
+}
+function restoreConversationDraft(){ui.prompt.value=conversationDrafts.get(draftKey())||'';autoGrow();refreshComposer();}
+const viewScheduler=createRenderScheduler({budgetMs:4});
+function currentRenderView(){return {userScope:currentUser,conversationId:activeId,epoch:connectionEpoch,viewGeneration:taskSelectionEpoch};}
+const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened)connect();}},timeoutMs:10000});
+const conversationRepository=new ConversationRepository({onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();},onUpdate:(id,state,details)=>{
+  if(id!==activeId||!currentUser||historyReady&&!durableSync)return;
+  const failed=!['cached','current','syncing'].includes(state.status);
+  if(failed)syncStatus.update({conversationId:id,state:state.status==='timeout'?'timeout':'error',message:'同步暂时失败，仍可阅读本地内容'});
+  else if(state.status==='syncing')syncStatus.update({conversationId:id,state:'syncing'});
+  else if(['error','offline','timeout'].includes(state.status))syncStatus.update({conversationId:id,state:state.status,message:'同步暂时失败，仍可阅读本地内容'});
+  else if(state.sourceFreshness==='unknown'||state.sourceFreshness==='reconciling')syncStatus.update({conversationId:id,state:'synced',message:state.sourceFreshness==='reconciling'?'对话副本已同步，原生历史核对中':'对话副本已同步，原生历史尚未核对'});
+  else syncStatus.update({conversationId:id,state:'idle'});
+  if((durableSync||!historyReady)&&details?.reason!=='status'&&state.bindingEpoch&&(state.entries?.length||state.sourceFreshness==='current')){localSyncShown=true;syncedView.show(state,{details});}
+}});
+const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
+  onRendered:(visible,state)=>{entries=visible;renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=visible[i].text||'';break;}scheduleRecentThread();},
+  onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
+function requestConversationSync(){
+  if(!activeId||!currentUser)return;
+  if(syncHintTimer!==null)return;
+  const id=activeId,user=currentUser;
+  syncHintTimer=setTimeout(()=>{syncHintTimer=null;if(user===currentUser)void conversationRepository.sync(id,{priority:0}).catch(()=>{});},75);
+}
+function selectConversationView(id){
+  clearTimeout(syncHintTimer);syncHintTimer=null;
+  durableSync=false;localSyncShown=false;viewScheduler.setView(currentRenderView());syncedView.select(id);syncStatus.select(id);
+  if(!id||!currentUser)return;
+  syncStatus.update({conversationId:id,state:'syncing'});
+  const cached=conversationRepository.peek(id);
+  if(cached?.bindingEpoch){localSyncShown=true;syncedView.show(cached);}
+  const selection=taskSelectionEpoch,user=currentUser;
+  void conversationRepository.getLocal(id).then(state=>{if(state?.bindingEpoch&&selection===taskSelectionEpoch&&user===currentUser&&!historyReady){localSyncShown=true;syncedView.show(state);}}).catch(()=>{});
+  recentlySynced=[id,...recentlySynced.filter(key=>key!==id)].slice(0,5);
+  conversationRepository.watch(recentlySynced);
+  void conversationRepository.sync(id,{priority:0}).catch(()=>{});
+}
+
 function rememberTask(id){if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
 let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
 let draftFiles = [];
@@ -77,7 +131,7 @@ let catalogRequest = null, draftModel = null, historyReady = false;
 let entries = [], historyBatch=null;
 const recentConversations=new RecentConversations();
 const previewStore=new ConversationPreviewStore();
-let previewScroll=null, visiblePreviewFingerprint, historyPrefix=[], historyTruncated=false, previewTimer;
+let previewScroll=null, visiblePreviewFingerprint, historyPrefix=[], historyTruncated=false, previewTimer=null;
 const CACHE_CLEAR_KEY='pi-coffee.preview-clear.v1';
 function announceCacheClear(kind='identity'){try{localStorage.setItem(CACHE_CLEAR_KEY,`${kind}:${Date.now()}:${Math.random()}`);}catch{}}
 const previewKey=id=>JSON.stringify([currentUser,id]);
@@ -90,28 +144,37 @@ function previewAllowed(id){
   return !task?.archived&&!task?.workspaceRemoved&&!task?.cleanupStarted&&!workspaceState?.legacyArchived?.includes(id);
 }
 function invalidatePreview(id){
+  void conversationRepository.invalidate(id);
+  if(id===activeId){syncedView.select(id);localSyncShown=false;resetThread();}
   recentConversations.delete(previewKey(id));
   void previewStore.delete(currentUser,id);
   if(id===activeId && previewScroll!==null)resetThread();
 }
 function clearPreviews(){
-  clearTimeout(previewTimer);recentConversations.clear();return previewStore.clear();
+  clearTimeout(previewTimer);previewTimer=null;recentConversations.clear();return Promise.all([previewStore.clear(),conversationRepository.clear()]);
 }
 function rememberRecentThread(){
   if(!activeId || !historyReady || takeoverBusy() || !previewAllowed(activeId))return;
   // Project source strings, never serialize the outgoing DOM or persist file-grant URLs.
-  const snapshot=createConversationPreview(historyPrefix.concat(entries.filter(entry=>!entry.cacheOmit&&!entry.pendingRequestId)),ui.scroller.scrollTop);
-  snapshot.truncated ||= historyTruncated;
+  const safe=entries.slice(-40).filter(entry=>!entry.cacheOmit&&!entry.pendingRequestId).map(entry=>({kind:entry.k,name:entry.name,text:entry.k==='tool'?String(entry.result||''):String(entry.text||'')}));
+  const bounded=boundedTranscriptWindow(safe);
+  const snapshot=createConversationPreview((Array.isArray(bounded)?bounded:bounded.entries).map(entry=>({k:entry.kind,name:entry.name,text:entry.text})),ui.scroller.scrollTop);
+  snapshot.truncated ||= historyTruncated || historyPrefix.length>0 || entries.length>40;
   snapshot.fingerprint=previewFingerprint(activeId);
   const bytes=snapshot.entries.reduce((sum,item)=>sum+item.text.length*2+128,256);
   recentConversations.put(previewKey(activeId),snapshot,bytes);
   const user=currentUser,id=activeId;
-  clearTimeout(previewTimer);
+  clearTimeout(previewTimer);previewTimer=null;
   void previewStore.put(user,id,snapshot);
 }
+function saveVisiblePosition(){
+  syncedView.save();
+  const cached=activeId&&recentConversations.get(previewKey(activeId));
+  if(cached)cached.scroll=ui.scroller.scrollTop;
+}
 function scheduleRecentThread(){
-  clearTimeout(previewTimer);
-  previewTimer=setTimeout(rememberRecentThread,250);
+  if(previewTimer!==null)return;
+  previewTimer=setTimeout(()=>{previewTimer=null;rememberRecentThread();},250);
 }
 function displayPreview(id,snapshot){
   const fingerprint=previewFingerprint(id);
@@ -125,14 +188,14 @@ function displayPreview(id,snapshot){
   return true;
 }
 function showRecentThread(id){
-  if(!id || !previewAllowed(id))return;
+  if(!id || !previewAllowed(id)||localSyncShown)return;
   const cached=recentConversations.get(previewKey(id));
   if(cached){displayPreview(id,cached);return;}
   // Identity must have been verified by /auth/me before reading disk on page startup.
   if(!currentUser)return;
   const user=currentUser,selection=taskSelectionEpoch;
   void previewStore.get(user,id).then(snapshot=>{
-    if(!snapshot||user!==currentUser||selection!==taskSelectionEpoch||id!==activeId||historyReady||previewScroll!==null)return;
+    if(!snapshot||user!==currentUser||selection!==taskSelectionEpoch||id!==activeId||historyReady||localSyncShown||previewScroll!==null)return;
     recentConversations.put(previewKey(id),snapshot,snapshot.entries.reduce((n,e)=>n+e.text.length*2+128,256));
     displayPreview(id,snapshot);
   });
@@ -154,7 +217,7 @@ function renderUncertainPrompts(){
     const card=recovery.node;
     item.card=card;
     if(item.reason){const reason=document.createElement('p');reason.textContent=item.reason;card.append(reason);}
-    const content=document.createElement('pre');content.textContent=item.text;content.style.whiteSpace='pre-wrap';card.append(content);
+    const content=document.createElement('div');renderBoundedText(content,item.text);content.style.whiteSpace='pre-wrap';card.append(content);
     if(item.images.length){const count=document.createElement('p');count.textContent=`保留 ${item.images.length} 张图片`;card.append(count);}
     const recover=document.createElement('button');recover.type='button';recover.textContent='恢复到输入框';
     recover.onclick=()=>{
@@ -229,6 +292,7 @@ function toast(text, ms = 1800) {
   toast.timer = setTimeout(() => ui.toast.classList.add('hidden'), ms);
 }
 function send(frame) {
+  if(opened&&activeBindingEpoch&&activeId&&frame.type!=='open')frame={...frame,conversationId:activeId,bindingEpoch:activeBindingEpoch};
   if(takeoverBusy() && !['list_sessions','get_state','get_queue'].includes(frame.type))return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
   try {
@@ -508,6 +572,8 @@ function askModal({ title, text, input, okLabel = '确定', danger = false }) {
 
 // ---------- thread rendering ----------
 function resetThread() {
+  viewScheduler.setView(currentRenderView());
+  pendingAssistantRenders.clear();pendingToolFills.clear();
   previewScroll=null;visiblePreviewFingerprint=undefined;historyPrefix=[];historyTruncated=false;
   queueControls.reset();
   ui.thread.innerHTML = '';
@@ -587,7 +653,7 @@ function pushUser(text, images, imageCount, files) {
 }
 function pushAssistant(text) {
   const entry = { k: 'assistant', text: text || '' };
-  entry.node = assistantNode(entry);
+  entry.node = assistantNode(entry,{done:Boolean(historyBatch)});
   entries.push(entry);
   appendNode(entry.node);
   // Once text arrives, the tool group for this run is closed visually.
@@ -618,17 +684,20 @@ function pushTool(tool) {
   return entry;
 }
 const pendingAssistantRenders = new Set();
-function scheduleAssistantRender() {
-  if(currentAssistant)pendingAssistantRenders.add(currentAssistant);
-  if (renderTimer) return;
-  renderTimer = requestAnimationFrame(() => {
-    renderTimer = null;
-    const stick = nearBottom();
-    for(const entry of pendingAssistantRenders)if(entry.node.isConnected)updateAssistant(entry.node,entry.text);
-    pendingAssistantRenders.clear();
-    if (stick) scrollToEnd();
-  });
+let renderEntitySequence=0;
+function scheduleEntryRender(entry,tool=false,done=false){
+  if(!entry)return;
+  entry.renderId ||= `view-${++renderEntitySequence}`;
+  entry.renderRevision=(entry.renderRevision||0)+1;
+  const view=currentRenderView();
+  viewScheduler.schedule({...view,entityId:entry.renderId,entityRevision:entry.renderRevision,run:()=>{
+    if(!entry.node.isConnected)return;
+    const stick=nearBottom();
+    if(tool)fillToolCard(entry.node,entry);else updateAssistant(entry.node,entry.text,{done});
+    if(stick)scrollToEnd();
+  }});
 }
+function scheduleAssistantRender(){scheduleEntryRender(currentAssistant);}
 function showThinking(show) {
   if (show && !thinkingNode) {
     thinkingNode = el('div', 'thinking');
@@ -683,14 +752,15 @@ function renderHistory(frame) {
   }
   try {
   if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
-  for (const item of source.slice(-40)) {
-    // Enormous messages and tool diffs use bounded text expansion rather than a blocking Markdown/LCS pass.
-    if((item.kind==='tool' && ((item.result||'').length>8000 || JSON.stringify(item.args||{}).length>8000 || (item.diff||'').length>8000)) || (item.text||'').length>8192){
-      const normalized=historyDisplayEntry(item);
-      if(normalized){const entry={k:item.kind,text:item.text,name:item.name,result:item.result,done:true};entry.node=conversationPreviewNode(normalized);entries.push(entry);appendNode(entry.node);}
-      if(item.kind==='user')lastUserText=item.text||lastUserText;
-      continue;
-    }
+  const latest=boundedTranscriptWindow(source);
+  const visibleSource=source.slice(latest.startIndex);
+  const viewCost=item=>new TextEncoder().encode(String(item.kind==='tool'?item.result||'':item.text||'').slice(0,8192)).byteLength;
+  let visibleBytes=visibleSource.reduce((sum,item)=>sum+Math.min(8192,viewCost(item)),0);
+  while(visibleSource.length>1&&visibleBytes>65536)visibleBytes-=Math.min(8192,viewCost(visibleSource.shift()));
+  let visibleBudget=65536;
+  for (const item of visibleSource) {
+    const length=Math.min(8192,String(item.kind==='tool'?item.result||'':item.text||'').length);
+    if(length>visibleBudget)break;visibleBudget-=length;
     if (item.kind === 'user') {
       const parsed = splitUploadedFilesText(item.text || '');
       pushUser(parsed.text, undefined, item.imageCount, parsed.files);
@@ -1156,22 +1226,25 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){if(previousUser!==null)clearPreviews();else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){recentlySynced=[];conversationDrafts.clear();if(previousUser!==null){ui.prompt.value='';clearPreviews();} else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    conversationRepository.setScope(currentUser);
+    if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
     ui.userBtn.disabled = !info.auth;
-    if(activeId && !historyReady && previewScroll===null)showRecentThread(activeId);
+    if(activeId && !historyReady && previewScroll===null){selectConversationView(activeId);showRecentThread(activeId);}
     return true;
   } catch {
     return true;   // the Web Server may be restarting; let the socket retry decide
   }
 }
 function revokeCachedIdentity(){
-  connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);
+  connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  opened=false;historyReady=false;connected=false;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
+  loginCoffee.reset();conversationRepository.setScope(null);recentlySynced=[];syncedView.clear();syncStatus.select(null);conversationDrafts.clear();ui.prompt.value='';
+  opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();
 }
 window.addEventListener('storage',event=>{
@@ -1289,10 +1362,10 @@ function renderProjectContext() {
 function connect() {
   clearTimeout(reconnectTimer);
   abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
-  const epoch=++connectionEpoch;
+  const epoch=++connectionEpoch;viewScheduler.setView(currentRenderView());
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  opened=false;historyReady=false;
+  opened=false;historyReady=false;activeBindingEpoch=null;
   setConnection('连接中…');
   whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); });
 }
@@ -1328,6 +1401,7 @@ function connectSocket() {
     modelPending=null;contextPending=null;
     opened = false;
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
+    syncStatus.update({conversationId:activeId,state:'offline',message:'连接中断，仍可阅读本地内容'});
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
     reconnectTimer = setTimeout(connect, 1200);
   };
@@ -1368,7 +1442,7 @@ async function openSession(id) {
     finally{refreshComposer();$('#create-task').disabled=false;$('#create-task').textContent='创建任务 / 重试';}
   }
   pendingOpenId = id || 'new';
-  const frame = { v: 1, type: 'open', nativeProtocol:1 };
+  const frame = { v: 1, type: 'open', nativeProtocol:1, ...(preferDurableSync?{syncProtocol:2}:{}) };
   if (id) frame.sessionId = id;
   if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); }
 }
@@ -1381,6 +1455,8 @@ function afterOpened() {
 }
 
 function handleFrame(frame, ws) {
+  if(frame.conversationId&&frame.conversationId!==activeId&&frame.type!=='opened')return;
+  if(activeBindingEpoch&&frame.bindingEpoch&&frame.bindingEpoch!==activeBindingEpoch&&!['opened','history','sync_changed'].includes(frame.type))return;
   switch (frame.type) {
     case 'sessions':
       if(activeId)void loadWorkspace();
@@ -1395,10 +1471,12 @@ function handleFrame(frame, ws) {
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
+      if(syncedView.active!==activeId){resetThread();selectConversationView(activeId);}
+      activeBindingEpoch=frame.syncProtocol===2?frame.bindingEpoch:null;durableSync=frame.syncProtocol===2;
       queuedRequests.clear();
       rememberTask(activeId);
       statsCache = null;
-      if(previewScroll===null)resetThread();
+      if(previewScroll===null&&!localSyncShown)resetThread();
       clearExtensionUi();
       if(!sameTransfer)resetTransfers();
       void loadWorkspace();
@@ -1414,8 +1492,16 @@ function handleFrame(frame, ws) {
       if(draftModel && ['pi','codex'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       afterOpened();
       return;
+    case 'sync_changed':
+      if(frame.sessionId===activeId)requestConversationSync();return;
     case 'history': {
       if (frame.sessionId !== activeId) return;
+      if(frame.syncProtocol===2){
+        durableSync=true;
+        void conversationRepository.ingestSnapshot(activeId,{...frame,conversationId:activeId,appliedRevision:frame.baseRevision}).then(()=>requestConversationSync()).catch(()=>requestConversationSync());
+        historyReady=true;renderUncertainPrompts();refreshComposer();flushFirstPrompt();return;
+      }
+      durableSync=false;localSyncShown=false;syncStatus.update({conversationId:activeId,state:'idle'});
       const scroll=previewScroll===null?null:ui.scroller.scrollTop;
       renderHistory(frame);
       if(scroll!==null)ui.scroller.scrollTop=scroll;
@@ -1485,6 +1571,11 @@ function handleFrame(frame, ws) {
     case 'event':
       if(frame.sessionId!==activeId)return;
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
+      if(durableSync){
+        requestConversationSync();
+        const type=frame.event?.type;
+        if(['message_delta','message_completed','tool_update','message_update','message_start','message_end','tool_execution_start','tool_execution_update','tool_execution_end'].includes(type))return;
+      }
       handleEvent(frame.event || {});
       scheduleRecentThread();
       return;
@@ -1511,7 +1602,7 @@ function handleFrame(frame, ws) {
       if(!opened&&pendingOpenId&&activeId&&frame.code!=='operation_failed')invalidatePreview(activeId);
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
       if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
-      if (!opened || frame.code === 'not_open' || frame.code === 'already_open') pendingOpenId = null;
+      if (!opened || frame.code === 'not_open' || frame.code === 'already_open') {pendingOpenId = null;syncStatus.update({conversationId:activeId,state:'error',message:'同步失败，可重试'});}
       if (queuedPrompt !== null && frame.code !== 'busy') { ui.prompt.value = queuedPrompt.text; attachments = queuedPrompt.images || []; renderAttachments(); queuedPrompt = null; autoGrow(); refreshComposer(); }
       if (frame.fatal) ws.close();
       return;
@@ -1530,8 +1621,7 @@ function handleEvent(event) {
     const entry = event.toolCallId && openTools.get(event.toolCallId);
     if (!entry || entry.done) return;
     entry.result = toolResultText(event.partialResult);
-    if (!pendingToolFills.size) requestAnimationFrame(flushToolFills);
-    pendingToolFills.add(entry);
+    scheduleEntryRender(entry,true);
     return;
   }
   if (type === 'turn_diff') { scheduleTurnDiffRefresh(); return; }   // Codex edited a file: refresh an open 最近一轮
@@ -1539,13 +1629,13 @@ function handleEvent(event) {
   if(type==='message_delta' || type==='message_completed'){
     showThinking(false);let entry=nativeItems.get(event.id);
     if(!entry){entry=pushAssistant('');nativeItems.set(event.id,entry);}
-    entry.text=type==='message_completed'?event.text:entry.text+(event.delta||'');updateAssistant(entry.node,entry.text);return;
+    entry.text=type==='message_completed'?(event.text||''):entry.text+(event.delta||'');scheduleEntryRender(entry,false,type==='message_completed');return;
   }
   if(type==='tool_update'){
     showThinking(false);let entry=nativeItems.get(event.id);
     if(!entry){entry=pushTool({name:event.name||'Tool',args:event.args||{},result:'',done:false});nativeItems.set(event.id,entry);}
     if(event.name)entry.name=event.name;if(event.args)entry.args=event.args;if(event.result!==undefined)entry.result=event.result;
-    entry.done=event.status!=='inProgress';entry.error=Boolean(event.isError);fillToolCard(entry.node,entry);return;
+    entry.done=event.status!=='inProgress';entry.error=Boolean(event.isError);scheduleEntryRender(entry,true);return;
   }
   if(type==='native_request'){handleExtensionUi(event);return;}
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
@@ -1586,7 +1676,7 @@ function handleEvent(event) {
       entry.error = Boolean(event.isError);
       entry.result = toolResultText(event.result);
       entry.details = toolResultDetails(event.result);
-      fillToolCard(entry.node, entry);
+      scheduleEntryRender(entry,true);
       if (event.toolCallId) openTools.delete(event.toolCallId);
     }
     if (currentActivity) updateActivity(currentActivity, activityCount, openTools.size > 0);
@@ -1596,6 +1686,11 @@ function handleEvent(event) {
   if (type === 'queue_update') { renderQueue(event); return; }
   if (type === 'extension_ui_request') { handleExtensionUi(event); return; }
   if (type === 'transfer_progress' || type === 'transfer_complete' || type === 'transfer_failed') { handleTransferEvent(event); return; }
+  if(type==='message_end'&&event.message?.role==='assistant'&&event.message.stopReason!=='error'){
+    const text=customMessageText(event.message.content);
+    if(text){if(!currentAssistant)currentAssistant=pushAssistant('');currentAssistant.text=text;scheduleEntryRender(currentAssistant,false,true);}
+    return;
+  }
   if (type === 'message_end' && event.message && event.message.stopReason === 'error') { pushNote('模型调用失败：' + (event.message.errorMessage || '未知错误'), true); offerContextRecovery(event.message.errorMessage); return; }
   if (type === 'message_end' && event.message && event.message.role === 'custom' && event.message.display === true) {
     const text = customMessageText(event.message.content);
@@ -1617,7 +1712,7 @@ function handleEvent(event) {
     pendingDelivery=null;
     setStreaming(false);
     notifyFinished();
-    for (const entry of openTools.values()) { entry.done = true; fillToolCard(entry.node, entry); }
+    for (const entry of openTools.values()) { entry.done = true; scheduleEntryRender(entry,true); }
     openTools.clear();
     renderQueue({ steering: [], followUp: [] });
     // Any dialog still open was resolved by Pi (timeout/default); drop it.
@@ -2478,7 +2573,7 @@ function submitPrompt(text, images) {
   promptOutbox.set(frame.requestId,{task:activeId,user:currentUser,text:wireText,images:(frame.images||[]).map(({type,data,mimeType})=>({type,data,mimeType})),bytes,uncertain:false});
   if (mode !== 'prompt') queuedRequests.add(frame.requestId);
   if (mode === 'prompt') {
-    const optimistic=pushUser(text, images, undefined, files);optimistic.pendingRequestId=frame.requestId;promptOutbox.get(frame.requestId).optimistic=optimistic;
+    if(!durableSync){const optimistic=pushUser(text, images, undefined, files);optimistic.pendingRequestId=frame.requestId;promptOutbox.get(frame.requestId).optimistic=optimistic;}
     lastUserText = text;
     setStreaming(true);
     showThinking(true);
@@ -2494,7 +2589,7 @@ function submitPrompt(text, images) {
   attachments = [];
   uploads = uploads.filter((u) => u.state === 'uploading' || u.state === 'finishing');
   renderAttachments();
-  ui.prompt.value = '';
+  ui.prompt.value = '';conversationDrafts.delete(draftKey());
   ui.slash.classList.add('hidden');
   autoGrow();
   refreshComposer();
@@ -2526,7 +2621,7 @@ function switchSession(id) {
   setSearchOpen(false);
   if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return;}
   if (id === activeId && opened) return;
-  rememberRecentThread();
+  saveVisiblePosition();saveConversationDraft();
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
@@ -2539,14 +2634,16 @@ function switchSession(id) {
   selectedChangedPath = null;
   lastChangeCardSignature = '';
   resetThread();
+  selectConversationView(id);
   showRecentThread(id);
+  restoreConversationDraft();
   renderProjectContext();
   renderHeader();
   renderSessionList();
   connect();
 }
 function newSession(focus = true) {
-  rememberRecentThread();
+  saveVisiblePosition();saveConversationDraft();
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   closeTaskDetails();
@@ -2563,6 +2660,7 @@ function newSession(focus = true) {
   selectedChangedPath = null;
   lastChangeCardSignature = '';
   resetThread();
+  selectConversationView(null);restoreConversationDraft();
   renderHero();
   renderProjectContext();
   renderHeader();

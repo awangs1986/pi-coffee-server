@@ -1261,7 +1261,7 @@ describe("Host WebSocket seam", () => {
       expect((await post("status")).status).toBe(200);
       pi.background={known:false,active:0};expect((await post("delete",{confirmation:conversation.id})).status).toBe(409);expect(pi.stopped).toBe(false);
       pi.background={known:true,active:0};expect((await ws.lookup(conversation.id))?.archived).toBe(true);
-      expect((await post("delete",{confirmation:conversation.id})).status).toBe(200);
+      const deletion=await post("delete",{confirmation:conversation.id});expect(deletion.status,await deletion.clone().text()).toBe(200);
       expect(await ws.lookup(conversation.id)).toBeUndefined();
     }finally{await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });

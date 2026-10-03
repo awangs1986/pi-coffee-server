@@ -1,8 +1,12 @@
 import {prepareTakeoverRecords,takeoverPrompt,reconstruct,priorHistory,withPriorHistory,type TakeoverState} from "../takeover.js";
-import type {AgentHistory,AgentSession} from "../agent-adapter.js";
+import type {AgentHistory,AgentHistoryRead,AgentSession} from "../agent-adapter.js";
 import { capabilitiesFor } from "../../shared/protocol.js";
 import { randomUUID } from "node:crypto";
-import { ClaudeSession } from "./claude.js";
+import { ClaudeSession, readClaudeHistory } from "./claude.js";
+import { readCodexHistory } from "../codex/history.js";
+import { unknownHistory } from "./history-source.js";
+import { nativeHistoryJob } from "./history-pool.js";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentSessionFactory, EngineAvailability } from "../agent-adapter.js";
@@ -25,6 +29,40 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
   async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
   private async codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}),()=>this.options.workspaces.runtimeEnvironment(id));this.codexFactories.set(generation,factory);}return factory;}
+  async readHistory(sessionId: string): Promise<AgentHistoryRead> {
+    const task = await this.options.workspaces.lookup(sessionId);
+    if (!task) {
+      // Legacy discovery must not call list(): Codex list may start app-server.
+      const pi = await this.options.pi.readHistory?.(sessionId);
+      if (pi?.sourceFreshness === "current") return pi;
+      const codex = await this.options.legacyCodex?.readHistory?.(sessionId);
+      return codex?.sourceFreshness === "current" ? codex : pi ?? codex ?? unknownHistory(`unbound:${sessionId}`);
+    }
+    const identity = (value: typeof task | undefined) => value ? JSON.stringify({ engine: value.engine ?? "pi", cwd: value.cwd, nativeId: value.nativeBinding?.id, segments: value.takeoverSegments ?? [], removed: value.workspaceRemoved, cleanup: value.cleanupStarted }) : "missing";
+    const before = identity(task), segment = task.takeoverSegments?.at(-1), engine = task.engine ?? "pi";
+    const nativeId = engine === "pi" && !segment ? sessionId : task.nativeBinding?.id;
+    const binding = `${engine}:${nativeId ?? "unbound"}:${segment?.id ?? "original"}`;
+    if (!nativeId || task.cleanupStarted || task.workspaceRemoved) return unknownHistory(binding);
+    try {
+      let read: AgentHistoryRead;
+      if (engine === "pi") read = await this.options.pi.readHistory?.(nativeId) ?? unknownHistory(binding);
+      else if (engine === "claude") read = this.options.claude ? await readClaudeHistory(this.options.claude, task.cwd, nativeId) : unknownHistory(binding);
+      else {
+        this.generation.set(sessionId, segment?.id ?? "original");
+        const factory = await this.codexFactory(sessionId, task.cwd);
+        read = factory?.readHistory ? await factory.readHistory(nativeId) : this.options.codex ? await readCodexHistory({ cwd: task.cwd, env: this.options.codex.env }, nativeId) : unknownHistory(binding);
+      }
+      if (read.sourceFreshness !== "current" || identity(await this.options.workspaces.lookup(sessionId)) !== before) return unknownHistory(binding);
+      if (segment) {
+        // The takeover display prefix is already durable. Do not call dataRoot(),
+        // which creates directories and updates Git exclusions on a read route.
+        const root = task.taskRoot ?? (task.workspaceKind === "chat" ? task.cwd : join(task.cwd, ".pi-coffee"));
+        read = await nativeHistoryJob("takeover", { read, root, segment });
+      }
+      if (identity(await this.options.workspaces.lookup(sessionId)) !== before) return unknownHistory(binding);
+      return { ...read, binding: `${read.binding}:${segment?.id ?? "original"}`, checkedAt: new Date().toISOString() };
+    } catch { return unknownHistory(binding); }
+  }
   async capabilities(id:string){
     const task=await this.options.workspaces.lookup(id);
     const engine=task?.engine ?? ((await this.options.legacyCodex?.list().catch(()=>[]) ?? []).some(s=>s.id===id)?"codex":"pi");

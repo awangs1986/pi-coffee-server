@@ -26,6 +26,8 @@ export interface HostSessionOptions {
   onIdle?: (session: HostSession) => void;
   onHistory?: (id:string,history:PiHistory)=>Promise<void>;
   /** Record each Host-started turn before native delivery, including queued turns. */
+  onEvent?: (id:string,event:JsonValue)=>void;
+  onCommand?:(id:string,requestId:string,state:"accepted"|"delivering"|"running"|"settled"|"uncertain"|"cancelled",mode?:string)=>Promise<unknown>;
   onRun?: (id:string,state:"running"|"interrupted",requestId?:string)=>Promise<void>;
   /** Called when a run starts or settles (the conversation list's running flag / counts change). */
   onLifecycle?: (session: HostSession) => void;
@@ -58,6 +60,13 @@ export class HostSession {
   private readonly onIdle?: (session: HostSession) => void;
   private readonly onHistory?: (id:string,history:PiHistory)=>Promise<void>;
   private readonly onRun?: HostSessionOptions["onRun"];
+  private readonly onEvent?: HostSessionOptions["onEvent"];
+  private readonly onCommand?:HostSessionOptions["onCommand"];
+  private readonly runCommands=new Set<string>();
+  private deliveryGeneration=0;
+  get commandGeneration():number {return this.deliveryGeneration;}
+  assertCommandGeneration(generation:number):void {this.assertDelivery(generation);}
+  private assertDelivery(generation:number):void {if(generation!==this.deliveryGeneration)throw new DeliveryCancelledError();}
   private historyExport:Promise<void>=Promise.resolve();
   private readonly onLifecycle?: (session: HostSession) => void;
   private readonly sinks = new Set<SessionSink>();
@@ -87,18 +96,27 @@ export class HostSession {
     this.id = options.id ?? randomUUID();
     this.inputs=new InputQueue({busy:()=>this.executionBusy,
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
-      deliver:async(text,images,promote)=>{
+      deliver:async(text,images,promote,queuedRequestId)=>{
+        const generation=this.deliveryGeneration;
         if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
-        if(promote&&this.state.isStreaming){await this.ready().steer(text,images);return;}
-        const requestId=randomUUID();await this.preparePrompt(requestId,true);await this.prompt(requestId,text,images);
-      },changed:()=>{for(const sink of this.sinks)sink.send(this.queueFrame);this.onLifecycle?.(this);}
+        if(promote&&this.state.isStreaming){
+          try {
+            if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
+            this.assertDelivery(generation);
+            if(queuedRequestId)this.runCommands.add(queuedRequestId);
+            await this.ready().steer(text,images);
+          }catch(error){if(queuedRequestId)void this.onCommand?.(this.id,queuedRequestId,error instanceof DeliveryCancelledError?"cancelled":"uncertain").catch(()=>undefined);throw error;}
+          return;
+        }
+        const requestId=queuedRequestId??randomUUID();await this.preparePrompt(requestId,true);this.assertDelivery(generation);await this.prompt(requestId,text,images);
+      },changed:()=>{this.onEvent?.(this.id,{type:"sync_metadata",metadata:{queue:this.inputs.items.map(item=>({id:item.id,revision:item.revision,status:item.status,imageCount:item.imageCount}))}});for(const sink of this.sinks)sink.send(this.queueFrame);this.onLifecycle?.(this);}
     });
     this.factory = options.factory;
     this.eventBufferSize = Math.max(1, options.eventBufferSize ?? 256);
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
     this.onIdle = options.onIdle;
     this.onHistory=options.onHistory;
-    this.onRun=options.onRun;
+    this.onRun=options.onRun;this.onEvent=options.onEvent;this.onCommand=options.onCommand;
     this.onLifecycle = options.onLifecycle;
     this.externalPollMs = Math.max(0, options.externalPollMs ?? 3000);
   }
@@ -135,12 +153,21 @@ export class HostSession {
     }
     await this.start();
     if (!this.pi) throw new Error("Session is not ready");
-    const history = await this.pi.getHistory();
+    if(after!==undefined && after>this.cursor)throw new Error("Future session cursor");
+    // Capture a proven completion boundary BEFORE asynchronous export. A completion
+    // racing the history RPC requires another read, never an invented watermark.
+    let history:PiHistory;let historyCursor:number;let attempts=0;
+    do {
+      historyCursor=this.lastMessageEndCursor;
+      history=await this.pi.getHistory();
+      if(historyCursor===this.lastMessageEndCursor)break;
+      if(++attempts>=3)throw new Error("History changed while loading; retry the read");
+    } while(true);
     await this.exportHistory(history);
     // The durable history already contains every completed message, so the
     // browser only needs the events of the message that is still in flight.
     // A returning browser's `after` cursor can only move that boundary later.
-    const replayFrom = Math.max(after ?? 0, this.lastMessageEndCursor);
+    const replayFrom = Math.max(after ?? 0, historyCursor);
     const oldestCursor = this.events[0]?.type === "event" ? this.events[0].cursor : this.cursor + 1;
     const resync = replayFrom < oldestCursor - 1
       ? { oldestCursor, newestCursor: this.cursor }
@@ -194,9 +221,18 @@ export class HostSession {
   get isBusy():boolean {return this.executionBusy||this.inputs.items.length>0;}
   get wasInterrupted(): boolean { return this.interrupted; }
   async preparePrompt(requestId: string,fromQueue=false): Promise<void> {
+    const generation=this.deliveryGeneration;
     this.reservePrompt(requestId,fromQueue);
-    try {await this.onRun?.(this.id,"running",requestId);}
-    catch(error){if(this.activeRequestId===requestId)this.activeRequestId=undefined;throw error;}
+    try {
+      if(!fromQueue)await this.onCommand?.(this.id,requestId,"accepted","prompt");
+      this.assertDelivery(generation);
+      await this.onRun?.(this.id,"running",requestId);
+      this.assertDelivery(generation);
+    }catch(error){
+      if(this.activeRequestId===requestId)this.activeRequestId=undefined;
+      if(error instanceof DeliveryCancelledError){void this.onCommand?.(this.id,requestId,"cancelled").catch(()=>undefined);if(!this.activeRequestId)void this.onRun?.(this.id,"interrupted").catch(()=>undefined);}
+      throw error;
+    }
   }
 
 
@@ -212,33 +248,58 @@ export class HostSession {
   async prompt(requestId: string, text: string, images?: ImageInput[]): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     if (this.activeRequestId !== requestId) throw new Error("Prompt was not reserved");
+    const generation=this.deliveryGeneration;
     try {
+      await this.onCommand?.(this.id,requestId,"delivering");this.assertDelivery(generation);this.runCommands.add(requestId);
       await this.pi.prompt(text, images);
     } catch (error) {
-      this.activeRequestId = undefined;
-      await this.onRun?.(this.id,"interrupted").catch(()=>undefined);
+      if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
+      const cancelled=error instanceof DeliveryCancelledError;
+      const receipt=this.onCommand?.(this.id,requestId,cancelled?"cancelled":"uncertain").catch(()=>undefined);
+      if(!cancelled)await receipt;
+      else void receipt;
+      if(!this.activeRequestId)void this.onRun?.(this.id,"interrupted").catch(()=>undefined);
       throw error;
     }
   }
 
+  async acceptCommand(requestId:string,mode:string){const generation=this.deliveryGeneration;await this.onCommand?.(this.id,requestId,"accepted",mode);if(generation!==this.deliveryGeneration)void this.onCommand?.(this.id,requestId,"cancelled").catch(()=>undefined);this.assertDelivery(generation);}
+
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
-  async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[]): Promise<void> {
+  async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[],requestId?:string,accepted=false): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     if (this.compacting || this.contextChanging) throw new SessionBusyError();
-    if (mode === "steer") await this.pi.steer(text, images);
-    else await this.inputs.add(text, images);
+    const generation=this.deliveryGeneration;
+    if(requestId&&!accepted)await this.onCommand?.(this.id,requestId,"accepted",mode);
+    try {
+      this.assertDelivery(generation);
+      if (mode === "steer") {
+        if(requestId)await this.onCommand?.(this.id,requestId,"delivering");
+        this.assertDelivery(generation);
+        if(requestId)this.runCommands.add(requestId);
+        await this.pi.steer(text, images);
+      }else await this.inputs.add(text, images,requestId);
+    }catch(error){if(requestId)void this.onCommand?.(this.id,requestId,error instanceof DeliveryCancelledError?"cancelled":"uncertain").catch(()=>undefined);throw error;}
   }
 
   get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
     if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
-    await this.inputs.change(action);
+    const command=action.action==='cancel'?this.inputs.items.find(item=>item.id===action.id)?.requestId:undefined;
+    await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
   async abort(): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
+    // Fence every suspended pre-native send before calling the adapter. Neither
+    // a queued ledger write nor a slow native delivery response may delay Stop.
+    this.deliveryGeneration++;
+    const cancelled=this.inputs.items.map(item=>item.requestId).filter((id):id is string=>Boolean(id)&&!this.runCommands.has(id!));
+    if(this.activeRequestId&&!this.runCommands.has(this.activeRequestId)){cancelled.push(this.activeRequestId);this.activeRequestId=undefined;}
     this.inputs.clear();
-    await this.inputs.waitForDelivery();
-    await this.pi.abort();
+    const nativeAbort=this.pi.abort();
+    void this.inputs.waitForDelivery();
+    for(const id of new Set(cancelled))void this.onCommand?.(this.id,id,"cancelled").catch(()=>undefined);
+    await nativeAbort;
   }
 
   async rename(name: string): Promise<void> {
@@ -266,7 +327,7 @@ export class HostSession {
   async respondUi(response: UiResponse): Promise<boolean> {
     if (!this.pendingUi.has(response.id) || this.answeringUi.has(response.id)) return false;
     this.answeringUi.add(response.id);
-    try {await this.ready().respondUi(response);this.pendingUi.delete(response.id);this.onLifecycle?.(this);return true;}
+    try {await this.ready().respondUi(response);this.pendingUi.delete(response.id);this.onEvent?.(this.id,{type:"sync_pending",requests:this.pendingUiRequests.map(frame=>({id:frame.type==="event"&&isRecord(frame.event)?String(frame.event.id):""}))});this.onLifecycle?.(this);return true;}
     finally {this.answeringUi.delete(response.id);}
 
   }
@@ -335,6 +396,7 @@ export class HostSession {
   }
 
   async stop(): Promise<void> {
+    this.deliveryGeneration++;
     this.inputs.stop();
     this.clearIdleTimer();
     if (this.externalTimer !== undefined) clearTimeout(this.externalTimer);
@@ -413,6 +475,12 @@ export class HostSession {
 
   private handlePiEvent(event: unknown): void {
     const safeEvent = toJsonValue(event);
+    try{this.onEvent?.(this.id,safeEvent);}catch{/* Display ingestion must never interrupt native execution. */}
+    if(isRecord(safeEvent)&&['agent_start','run_started','agent_settled','run_completed','agent_interrupted','run_interrupted'].includes(String(safeEvent.type))){
+      const status=['agent_start','run_started'].includes(String(safeEvent.type))?'running':['agent_settled','run_completed'].includes(String(safeEvent.type))?'settled':'uncertain';
+      for(const requestId of this.runCommands)void this.onCommand?.(this.id,requestId,status).catch(()=>undefined);
+      if(status!=='running')this.runCommands.clear();
+    }
     let settled = false;
     let lifecycle = false;
     if (isRecord(safeEvent) && typeof safeEvent.type === "string") {
@@ -489,6 +557,10 @@ export class HostSession {
   }
 }
 
+class DeliveryCancelledError extends Error {
+  constructor(){super('Instruction cancelled by Stop before native delivery');this.name='DeliveryCancelledError';}
+}
+
 export class SessionBusyError extends Error {
   constructor() {
     super("A prompt is already running for this session");
@@ -506,7 +578,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(private options: { onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -538,10 +610,14 @@ export class HostSessionRegistry {
       onLifecycle: (session) => this.notifyChange(session),
       onHistory:this.options.onHistory,
       onRun:this.options.onRun,
+      onEvent:this.options.onEvent,onCommand:this.options.onCommand,
     });
     this.sessions.set(session.id, session);
     return session;
   }
+
+  /** v2 control attachment does not load, project or export full native history. */
+  async connect(id:string):Promise<HostSession> {const session=this.sessionFor(id);await session.start();return session;}
 
   async open(id?: string, after?: number): Promise<SessionOpenResult> {
     const existing=id===undefined?undefined:this.sessions.get(id);

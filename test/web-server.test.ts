@@ -246,6 +246,12 @@ describe("Web Server seam", () => {
     expect(jsText).toContain("'/ws'");
     expect(jsText).toContain("extension_ui_request");
 
+    const worker=await fetch(`${base}/workers/conversation-sync.js`);expect(worker.status).toBe(200);expect(worker.headers.get('content-type')).toContain('text/javascript');expect(await worker.text()).toContain("from '../sync-worker.js'");
+    const support=await fetch(`${base}/sync-worker.js`);expect(support.status).toBe(200);expect(await support.text()).toContain('readBoundedJSON');
+    const artwork=await fetch(`${base}/login-coffee-art.webp`);expect(artwork.status).toBe(200);expect(artwork.headers.get('content-type')).toBe('image/webp');
+    const artBytes=Buffer.from(await artwork.arrayBuffer());expect(artBytes.subarray(8,12).toString()).toBe('WEBP');expect(artBytes.byteLength).toBeLessThan(500*1024);
+    for(const blocked of ['/workers/other.js','/workers/nested/conversation-sync.js','/workers/..%2Fapp.js'])expect((await fetch(`${base}${blocked}`)).status).toBe(404);
+
     for (const path of ["/app.txt", "/nested/app.js", "/..%2Fpackage.json", "/../package.json", "/package.json", "/app.js.map"]) {
       const blocked = await fetch(`${base}${path}`);
       expect(blocked.status, path).toBe(404);
