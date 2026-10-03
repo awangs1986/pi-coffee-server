@@ -8,7 +8,7 @@ const json=(value:unknown,ok=true)=>({ok,status:ok?200:409,json:async()=>value})
 function deferred<T=any>(){let resolve!:(value:T)=>void,reject!:(error:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 const chat={id:'chat-a',name:'Chat A',engine:'pi',workspaceKind:'chat',creationState:'ready',cwd:'/work/chat-a',createdAt:'2026-10-03T00:00:00Z'};
 const work={...chat,id:'work-b',name:'Work B',workspaceKind:'project',projectId:'p',cwd:'/work/work-b',branch:'coffee/work-b',startSha:'abc'};
-let frames:any[],requests:any[],sockets:Socket[],intercept:(url:string,body:any)=>any;
+let frames:any[],requests:any[],sockets:Socket[],intercept:(url:string,body:any,init?:any)=>any;
 let listeners:Array<[EventTarget,string,EventListenerOrEventListenerObject,any]>;
 class Socket {
   static OPEN=1;readyState=1;onopen:any;onclose:any;onmessage:any;onerror:any;
@@ -34,7 +34,7 @@ beforeEach(()=>{
   vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
     const body=init?.body?JSON.parse(init.body):null;
     if(body)requests.push(body);
-    const result=intercept(String(url),body);if(result!==undefined)return result;
+    const result=intercept(String(url),body,init);if(result!==undefined)return result;
     if(url==='/auth/me')return json({auth:false});
     if(url==='/api/me')return json(null);
     if(url==='/api/engines')return json({engines:[{id:'pi',name:'Pi',available:true}]});
@@ -100,12 +100,15 @@ it('traps modal focus, restores the trigger and suppresses background shortcuts'
   q('modal-input').dispatchEvent(key('Escape',{isComposing:true}));expect(q('modal').classList.contains('hidden')).toBe(false);
   q('modal-cancel').click();await tick();expect(document.activeElement).toBe(q('title'));
 });
-it('does not replace the latest sync poll with an older result',async()=>{
+it('keeps slow status reads progressing across overlapping polls',async()=>{
   await boot(work.id);const calls:ReturnType<typeof deferred>[]=[];
   intercept=(_url,b)=>{if(b?.action==='status'){const gate=deferred();calls.push(gate);return gate.promise;}};
-  await vi.advanceTimersByTimeAsync(10000);expect(calls.length).toBeGreaterThanOrEqual(2);
-  calls.at(-1)!.resolve(json({state:'ahead'}));await tick();calls[0].resolve(json({state:'synced'}));await tick();
+  await vi.advanceTimersByTimeAsync(10000);
+  calls[0].resolve(json({state:'ahead'}));await tick();
   expect(q('sync-state').dataset.state).toBe('ahead');
+  expect(calls).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(5000);calls[1].resolve(json({state:'synced'}));await tick();
+  expect(q('sync-state').dataset.state).toBe('synced');
 });
 it('keeps sync unknown if an HTTP result arrives after socket disconnect',async()=>{
   await boot(work.id);const gate=deferred();intercept=(_url,b)=>b?.action==='status'?gate.promise:undefined;
@@ -183,6 +186,28 @@ it('requires explicit retry after an upload times out',async()=>{
   prepared.resolve(json({sessionId:'upload-fixture',files:Object.fromEntries(Object.keys(info.files).map(id=>[id,'upload-token']))}));await tick();
   expect(upload.timeout).toBeGreaterThan(0);upload.ontimeout();await tick();
   expect(q<HTMLTextAreaElement>('prompt').value).toBe('Read attachment');
+  expect(frames.filter(f=>f.type==='prompt')).toHaveLength(0);
+  expect(q('attachments').querySelector('.upload-retry')).not.toBeNull();
+});
+it.each(['files-checks','branch-diff'])('settles a slow %s view even when metadata polling overlaps it',async(control)=>{
+  await boot(work.id);const gates:ReturnType<typeof deferred>[]=[];
+  intercept=(_url,b)=>{if(b?.action==='changes'){const gate=deferred();gates.push(gate);return gate.promise;}};
+  q(control).click();await tick();await vi.advanceTimersByTimeAsync(5000);
+  const result=()=>json({scope:'branch',sessionId:work.id,files:[],checks:[{command:'git diff --check',ok:true,output:'fixture check complete'}],branch:work.branch,patch:'',base:'abc',target:'def',checkpointPaths:[]});
+  for(const gate of gates.slice(1))gate.resolve(result());await tick();gates[0].resolve(result());await tick();
+  if(control==='files-checks')expect(q('workspace-detail').textContent).toContain('fixture check complete');
+  else expect(q('diff-content').textContent).not.toContain('正在');
+});
+it('returns the draft when an expired upload grant cannot be refreshed before its deadline',async()=>{
+  await boot();Object.defineProperty(crypto,'subtle',{configurable:true,value:{digest:async()=>new ArrayBuffer(32)}});
+  let waiting=false,aborted=0;
+  intercept=(url,body,init)=>{
+    if(url.includes('prepare-upload')){waiting=true;return {...json({message:'expired'},false),status:401};}
+    if(waiting&&body?.action==='files')return new Promise((_resolve,reject)=>init?.signal?.addEventListener('abort',()=>{aborted++;reject(new Error('grant timed out'));},{once:true}));
+  };
+  const file=slowFile();pick(file.file);await tick();type('Keep this request');submit();file.finish();await tick();
+  await vi.advanceTimersByTimeAsync(30010);
+  expect(aborted).toBeGreaterThan(0);expect(q<HTMLTextAreaElement>('prompt').value).toBe('Keep this request');
   expect(frames.filter(f=>f.type==='prompt')).toHaveLength(0);
   expect(q('attachments').querySelector('.upload-retry')).not.toBeNull();
 });
