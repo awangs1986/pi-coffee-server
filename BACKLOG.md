@@ -459,3 +459,5 @@ defines user-scoped persistence and the strict separation from task execution id
   upgrade: explicitly load pinned pi-antigravity when selected by model policy,
   retaining native OAuth and the Muse default. Native catalog regression covers
   both providers and explicit disable.
+
+- [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31): selectively recover reproducible frontend continuity fixes from old Gitea PR #5 on current main. [Review](docs/reviews/legacy-pr-salvage-20261003.md) records all five old PR dispositions; source PRs remain separate from merge/deployment.
