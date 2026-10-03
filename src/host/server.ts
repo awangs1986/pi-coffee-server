@@ -265,10 +265,9 @@ export class HostServer {
         if(ids.some(id=>slot.lifecycleLocks.has(id)))throw new Error('Project lifecycle operation in progress');
         for(const id of ids)slot.lifecycleLocks.add(id);
         try {
-          for(const id of ids){const live=slot.registry.get(id);if(live){if(live.isBusy)throw new Error('Finish running tasks before binding');const state=await live.backgroundState();if(!state.known||state.active)throw new Error('Background work is active or unknown');}}
-          const result=await ws.bindGitHubProject(input.projectId,input.accountId);
-          for(const id of ids){await slot.registry.stopIdle(id);for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();}
-          json(res,200,result);
+          for(const id of ids){const live=slot.registry.get(id)??(await slot.registry.open(id)).session;if(live.isBusy)throw new Error('Finish running tasks before binding');const state=await live.backgroundState();if(!state.known||state.active)throw new Error('Background work is active or unknown');if(live.isBusy)throw new Error('Task resumed during authorization change');}
+          for(const id of ids){await slot.registry.stopIdle(id);await slot.factory.resetTaskRuntime?.(id);for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();}
+          json(res,200,await ws.bindGitHubProject(input.projectId,input.accountId));
         }finally{for(const id of ids)slot.lifecycleLocks.delete(id);}return;
       }
       if(input.action==='takeover'){

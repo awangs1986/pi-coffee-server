@@ -76,6 +76,8 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
+  /** Called after verified-idle sessions are released, before re-opening with changed credentials. */
+  resetTaskRuntime?(id:string):Promise<void>;
   prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   /** Begin shutdown by cancelling takeover preparation; source sessions remain recoverable until closed. */
   cancelTakeovers?(): Promise<void>;

@@ -42,7 +42,7 @@ try {
   if(mode==='credential'||mode==='gitea'){
     process.stdout.write('username=x-access-token\npassword='+account.token+'\n\n');
   }else if(mode==='gh'){
-    if(args[0]==='auth'&&(args[1]!=='status'||args.includes('--show-token'))){process.stderr.write('Manage GitHub authorization in PI Coffee, not gh auth.\n');process.exit(1);}
+    if(args.includes('auth')&&!(args.length===2&&args[0]==='auth'&&args[1]==='status')){process.stderr.write('Manage GitHub authorization in PI Coffee, not gh auth.\n');process.exit(1);}
     const env={...process.env,GH_TOKEN:account.token,GITHUB_TOKEN:account.token,GH_HOST:'github.com'};
     const result=spawnSync(program,args,{env,stdio:'inherit'});process.exit(result.status??1);
   }else throw Error();
