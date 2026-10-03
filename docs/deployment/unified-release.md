@@ -16,6 +16,43 @@ Signed-cookie authentication requires a new login after Web restart, even with a
 
 A successful native model response alone is insufficient release evidence.
 
+## Emergency startup
+
+Web and Relay do not load Pi plugins. Host resolves its configured Pi packages
+only in the Host role. Missing/unloadable package resources put Pi into a
+process-local emergency mode instead of preventing the Web/Host from starting.
+An explicit `PI_COFFEE_EMERGENCY=1` selects the same mode for operator recovery.
+
+Emergency mode disables optional Pi extensions (Harness, LSP, handoff, web and
+subagents). Native Pi tools, native history, Skills, Host environment guidance,
+model allowlists, native authentication and scoped Git credentials remain.
+The approved Antigravity provider is retained when installed and enabled. If
+that provider is missing or broken, the affected model stays unavailable;
+the Host never silently substitutes a model. Codex/Claude retain their native
+configuration and sessions; no conversation changes engine automatically.
+
+Pi startup waits for a successful native `get_state` response. A specific native
+extension-load failure permits one retry with the minimal extension set, before
+any user prompt is submitted. The degraded state is shared by subsequent Pi
+starts in this Host process. Existing running Pi sessions are not restarted.
+Model/auth/network failures and failures after startup do not trigger this retry.
+Missing core runtime libraries, invalid authentication configuration or port
+conflicts still fail normally; emergency mode is not an unrestricted retry loop.
+
+The Web displays a persistent Chinese emergency banner. Host `/healthz` reports
+the mode and a bounded reason code; authenticated `/api/runtime` and
+`/api/engines` expose the same status through the existing user-scoped Web route.
+No paths, raw plugin exceptions or credentials are included in that status.
+Health `ok` means the service is reachable, not that all plugins are available.
+Repair/reinstall the pinned artifacts, remove any explicit emergency override,
+then restart Host to restore normal mode. Native account files and task history
+are never rewritten by this recovery path. LSP-dependent destructive cleanup
+fails closed until its daemon shutdown helper can load.
+
+Acceptance: `test/startup-emergency.test.ts` faults the built production entrypoint;
+`test/pi-emergency.test.ts` faults a real Pi extension and completes exactly one
+model request through Web/Host, preserving native tools and history.
+
 ## Pi model selection policy
 
 `PI_COFFEE_PI_ALLOWED_MODELS` optionally limits Host-managed Pi sessions to a
