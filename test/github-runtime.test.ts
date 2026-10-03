@@ -9,6 +9,7 @@ it('uses independent Git and gh identities concurrently, denies unbound calls an
  const first=await manager.environment('one',nativeGh),second=await manager.environment('two',nativeGh),denied=await manager.environment(undefined,nativeGh);
  const gh=async(env:Record<string,string>)=>exec('gh',['api','user'],{env:{...process.env,...env}}).then(r=>r.stdout);
  expect(await Promise.all([gh(first),gh(second)])).toEqual(['private-one','private-two']);
+ for(const args of [['auth','status','-t'],['auth','status','--show-token=true'],['-R','org/repo','auth','status','-t']])await expect(exec('gh',args,{env:{...process.env,...first}})).rejects.toThrow();
  await expect(gh(denied)).rejects.toThrow();
  // Real Git credential interface must suppress a hostile ambient fallback helper.
  const gitConfig=join(root,'ambient-config');await writeFile(gitConfig,'[credential]\n helper = "!f() { echo username=wrong; echo password=ambient-secret; }; f"\n');
