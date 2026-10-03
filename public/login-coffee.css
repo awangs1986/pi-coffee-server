@@ -1,14 +1,11 @@
-/* Transparent character only. Transform and opacity are the only animations. */
-.login-coffee { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; background: transparent; pointer-events: auto; animation: coffee-welcome-fade 2.2s ease both; contain: strict; }
-.login-coffee-scene { width: min(92vw, 960px); height: min(84vh, 780px); display: grid; place-items: center; background: transparent; overflow: visible; }
-.login-coffee-picture { min-width: 0; min-height: 0; width: 100%; height: 100%; background: transparent; }
-.login-coffee-picture img { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-/* Keep the greeting available to assistive technology without adding a scene or dialog box. */
-.login-coffee-dialogue { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.login-coffee-skip { position: absolute; top: max(18px, env(safe-area-inset-top)); right: 22px; pointer-events: auto; border: 1px solid var(--border, #bda98d); background: var(--bg, #fffaf2); color: var(--text, #332f31); border-radius: 4px; padding: 8px 14px; font: 14px ui-monospace, monospace; cursor: pointer; }
-.login-coffee-skip:focus-visible { outline: 3px solid #be996c; outline-offset: 3px; }
-.coffee-offer { transform-origin: 50% 76%; animation: coffee-offer 1.7s steps(9, end) both; }
-@keyframes coffee-offer { 0%, 15% { transform: translateY(8px) scale(.975); } 75%, 100% { transform: translateY(0) scale(1); } }
-@keyframes coffee-welcome-fade { 0%, 78% { opacity: 1; } 100% { opacity: 0; } }
-.login-coffee.reduced-motion, .login-coffee.reduced-motion .coffee-offer { animation: none; }
-@media (prefers-reduced-motion: reduce) { .login-coffee, .coffee-offer { animation: none; } }
+/* A small greeting, never a blocking screen or a new workbench layout. */
+.login-coffee { position: fixed; top: 76px; left: 50%; transform: translateX(-50%); z-index: 1100; width: 168px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--border, #e5e5e5); border-radius: 18px; background: var(--bg, #fff); box-shadow: 0 5px 20px #0000000a; pointer-events: none; animation: coffee-welcome-fade 1.4s ease both; }
+.login-coffee-scene { width: 120px; display: grid; place-items: center; gap: 4px; }
+.login-coffee-picture { width: 96px; height: 96px; }
+.login-coffee-picture img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.login-coffee-dialogue { margin: 0; color: var(--text-2, #555); font: 12px/1.5 var(--font, sans-serif); white-space: nowrap; }
+.login-coffee-skip { position: absolute; top: 3px; right: 4px; width: 24px; height: 24px; pointer-events: auto; border: 0; background: transparent; color: var(--text-3, #777); border-radius: 8px; cursor: pointer; }
+.login-coffee-skip:focus-visible { outline: 2px solid var(--focus, #2383e2); }
+@keyframes coffee-welcome-fade { 0% { opacity: 0; } 15%, 80% { opacity: 1; } 100% { opacity: 0; } }
+.login-coffee.reduced-motion { animation: none; }
+@media (prefers-reduced-motion: reduce) { .login-coffee { animation: none; } }

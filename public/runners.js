@@ -22,7 +22,7 @@ export function initRunners({onOpen}) {
     button.addEventListener('click',()=>{if(busy)return;void perform(async()=>{
      status(action==='test'?'正在连接…':'正在删除…');const data=await request({action,id:row.id});
      if(action==='test')return ()=>status(data.message,!data.ok);
-     const list=await request({action:'list'});return ()=>{rows=list.runners;if(editing===row.id)reset();render();status('已删除。下次启动 Agent 时应用。');};
+     const list=await request({action:'list'});return ()=>{rows=list.runners;if(editing===row.id)reset();render();status('已清除。各对话会在下一轮消息中得知测试服务器已移除。');};
     });});actions.append(button);
    }item.append(actions);list.append(item);
   }
@@ -36,7 +36,7 @@ export function initRunners({onOpen}) {
  async function open(){
   if(busy)return;onOpen();epoch++;reset();rows=[];render();available=false;
   if(!dialog.open)dialog.showModal();
-  await perform(async()=>{const data=await request({action:'list'});return ()=>{rows=data.runners;available=true;render();status('配置在下次启动 Agent 时生效，正在运行的任务不受影响。');};});
+  await perform(async()=>{const data=await request({action:'list'});return ()=>{rows=data.runners;available=true;render();status('这是当前账号所有对话共用的测试目标；更新将在各对话下一轮消息时生效，不打断正在运行的任务。');};});
  }
  $('runners-btn').addEventListener('click',()=>void open());
  $('runners-close').addEventListener('click',()=>dialog.close());
@@ -45,7 +45,7 @@ export function initRunners({onOpen}) {
   event.preventDefault();if(busy||!available)return;
   const runner={...(editing?{id:editing}:{}),name:$('runner-name').value.trim(),host:$('runner-host').value.trim(),port:Number($('runner-port').value),username:$('runner-username').value.trim(),platform:'windows',workdir:$('runner-workdir').value.trim(),password:$('runner-password').value,clearPassword:$('runner-clear-password').checked};
   $('runner-password').value='';
-  void perform(async()=>{status('正在保存…');await request({action:'save',runner});const list=await request({action:'list'});return ()=>{rows=list.runners;reset();render();status('已保存。新启动的 Agent 会按需读取配置。');};});
+  void perform(async()=>{status('正在保存…');await request({action:'save',runner});const list=await request({action:'list'});return ()=>{rows=list.runners;reset();render();status('已保存。新旧对话将在下一轮消息中获得配置指引，按需用于测试。');};});
  });
  return {close:()=>{if(dialog.open)dialog.close();}};
 }

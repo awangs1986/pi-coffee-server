@@ -157,13 +157,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .session-item:hover .remove { display: grid; }
 .session-item .remove:hover { color: var(--danger); background: var(--bg); }
-.session-item .running { width: 6px; height: 6px; border-radius: 50%; background: var(--busy); animation: pulse 1s infinite alternate; }
+.running-cat.sidebar-running-cat { width: 28px; height: 20px; flex: none; }
 .empty-list { padding: 8px 16px; font-size: 13px; color: var(--text-3); }
 .sidebar-foot { border-top: 1px solid var(--border); padding: 10px 12px; font-size: 12.5px; color: var(--text-2); display: flex; align-items: center; gap: 8px; min-height: 54px; }
 .sidebar-foot .foot-btn:last-child { margin-left: auto; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
 .dot.ready { background: var(--ok); }
-.dot.busy { background: var(--busy); animation: pulse 1s infinite alternate; }
+.dot.busy { width: 28px; height: 20px; border-radius: 0; background: transparent; }
 .dot.error { background: var(--danger); }
 @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
 
@@ -544,6 +544,8 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 
 /* ---------- modal + toast ---------- */
 .modal-backdrop { position: fixed; inset: 0; background: rgb(17 24 39 / .35); display: grid; place-items: center; z-index: 100; }
+#ui-modal.non-blocking { background: transparent; pointer-events: none; }
+#ui-modal.non-blocking > .modal { pointer-events: auto; border: 1px solid var(--border); }
 .modal { width: min(420px, calc(100vw - 32px)); background: var(--bg); border-radius: 14px; padding: 20px; box-shadow: 0 20px 60px rgb(0 0 0 / .2); }
 .modal h2 { margin: 0 0 8px; font-size: 16px; }
 .modal p { margin: 0 0 12px; color: var(--text-2); font-size: 14px; }
@@ -1136,16 +1138,16 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .running-cat { display: block; flex: none; width: 42px; height: 30px; fill: #101112; overflow: visible; image-rendering: pixelated; }
 .running-cat .cat-eye { fill: #f7f7f2; }
 .running-cat .cat-legs:not(.cat-legs-a) { opacity: 0; }
-.conversation-sync-status[data-running="true"] .cat-body { animation: sync-cat-bob .32s steps(2, end) infinite; }
-.conversation-sync-status[data-running="true"] .cat-legs { animation: sync-cat-legs .4s steps(1, end) infinite; }
-.conversation-sync-status[data-running="true"] .cat-legs-b { animation-delay: -.3s; }
-.conversation-sync-status[data-running="true"] .cat-legs-c { animation-delay: -.2s; }
-.conversation-sync-status[data-running="true"] .cat-legs-d { animation-delay: -.1s; }
+.conversation-sync-status[data-running="true"] .cat-body, .sidebar-running-cat .cat-body { animation: sync-cat-bob .32s steps(2, end) infinite; }
+.conversation-sync-status[data-running="true"] .cat-legs, .sidebar-running-cat .cat-legs { animation: sync-cat-legs .4s steps(1, end) infinite; }
+.conversation-sync-status[data-running="true"] .cat-legs-b, .sidebar-running-cat .cat-legs-b { animation-delay: -.3s; }
+.conversation-sync-status[data-running="true"] .cat-legs-c, .sidebar-running-cat .cat-legs-c { animation-delay: -.2s; }
+.conversation-sync-status[data-running="true"] .cat-legs-d, .sidebar-running-cat .cat-legs-d { animation-delay: -.1s; }
 :root[data-theme="dark"] .running-cat { filter: drop-shadow(1px 0 0 #b8bec4) drop-shadow(-1px 0 0 #b8bec4) drop-shadow(0 -1px 0 #b8bec4); }
 @keyframes sync-cat-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
 @keyframes sync-cat-legs { 0%, 24.99% { opacity: 1; } 25%, 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .conversation-sync-status .running-cat, .conversation-sync-status .running-cat * { animation: none !important; transform: none !important; }
+  .running-cat, .running-cat * { animation: none !important; transform: none !important; }
   .conversation-sync-status .running-cat .cat-legs { opacity: 0; }
   .conversation-sync-status .running-cat .cat-legs-a { opacity: 1; }
 }
@@ -1154,3 +1156,5 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .synced-transcript { display: flex; flex-direction: column; gap: 18px; }
 .remote-content-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .remote-content-body { overflow-wrap: anywhere; white-space: pre-wrap; }
+
+@media (max-width: 820px) { body:has(#app.side-open) #ui-modal.non-blocking { visibility: hidden; } }

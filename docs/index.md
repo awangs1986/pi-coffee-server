@@ -80,3 +80,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Draft thinking selection](spec/native-agent-browser.md#thinking-selection-before-task-creation--2026-10-03): Pi/Codex model-specific choices, medium default and first-prompt acknowledgement; [Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33).
 
 - Local-first conversation synchronization, bounded live rendering and pixel status/welcome animations: [contract](spec/local-first-conversation-sync.md), [durable display-index decision](adr/0024-durable-display-index.md).
+
+- [T1–T4 workbench refinements, Server #42](https://github.com/awangs1986/pi-coffee-server/issues/42): responsive conversation actions, compact welcome, sidebar running cat, account-wide testing guidance and explicitly invoked conversation-scoped SSHME.

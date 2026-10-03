@@ -248,7 +248,7 @@ export class HostServer {
       const manager=req.url === "/api/sshme" ? slot.sshme : slot.runners;
       if(!manager){json(res,404,{error:"Runner management is unavailable on this Host"});return;}
       if(req.method!=="POST"){json(res,405,{error:"Use POST for scoped runner requests"});return;}
-      try {json(res,200,await manager.handle(await readJson(req)));}
+      try {const input=await readJson(req);const selected=req.url==='/api/sshme'?manager.forConversation(input.conversationId):manager;json(res,200,await selected.handle(input));}
       catch(error){json(res,409,{error:error instanceof Error ? error.message : "Runner operation failed"});}
       return;
     }
@@ -481,7 +481,7 @@ export class HostServer {
         : { factory: this.factory, githubAccounts:this.githubAccounts, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, onEvent:(id,event)=>index?.event(id,event),onCommand:index?(id,requestId,state,mode)=>index.command(id,requestId,state,mode):undefined, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners?()=>scope.runners!.guidance():undefined, onEvent:(id,event)=>index?.event(id,event),onCommand:index?(id,requestId,state,mode)=>index.command(id,requestId,state,mode):undefined, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       const slot: UserSlot = { user, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;

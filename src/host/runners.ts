@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename,rm,chmod} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -28,7 +28,20 @@ export class RunnerManager {
  readonly configPath:string;
  private writes:Promise<unknown>=Promise.resolve();
  private testing=false;
+ private cliRefreshed=false;
+ private readonly conversations=new Map<string,RunnerManager>();
  constructor(root:string,private readonly purpose:'testing'|'sshme'='testing'){this.root=resolve(root);this.configPath=join(this.root,'runners.json');}
+ forConversation(id:unknown):RunnerManager {
+  if(this.purpose!=='sshme'||typeof id!=='string'||! /^[a-zA-Z0-9_-]{1,128}$/.test(id))throw new Error('A valid conversation is required for SSHME');
+  let manager=this.conversations.get(id);if(!manager){manager=new RunnerManager(join(this.root,'conversations',id),'sshme');this.conversations.set(id,manager);}return manager;
+ }
+ async guidance():Promise<{revision:string;text?:string}>{return this.serial(async()=>{
+  if(this.purpose!=='testing')return {revision:'none'};
+  const rows=await this.rows();let exists=true;try{await readFile(this.configPath);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')exists=false;else throw error;}
+  if(!exists)return {revision:'none'};
+  if(!this.cliRefreshed){await this.persist(rows);this.cliRefreshed=true;}
+  return {revision:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),text:rows.length?`For remote execution or testing, read the runner configuration at ${this.configPath}.`:'No test server is currently configured; do not use previously supplied test-server connections.'};
+ });}
  private async rows():Promise<Runner[]>{
   try {const value=JSON.parse(await readFile(this.configPath,'utf8'));if(value.version!==1||!Array.isArray(value.runners))throw new Error('Unsupported runner configuration');return value.runners;}
   catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return [];throw error;}
@@ -47,6 +60,7 @@ export class RunnerManager {
  }
  private serial<T>(operation:()=>Promise<T>):Promise<T>{const next=this.writes.then(operation);this.writes=next.catch(()=>undefined);return next;}
  async instruction():Promise<string|undefined>{return this.serial(async()=>{
+  if(this.purpose!=='testing')return undefined;
   const rows=await this.rows();if(!rows.length)return undefined;
   // A newly started native session resolves the CLI in the current Host release.
   await this.persist(rows);
@@ -63,7 +77,8 @@ export class RunnerManager {
    if(!row||!['windows','linux','macos'].includes(row.platform))throw new Error('请先配置你的电脑 SSH 连接');
    const tested=await this.handle({action:'test',id:row.id}) as {ok:boolean;message:string;wslReady?:boolean};
    if(!tested.ok)throw new Error(tested.message);
-   const pointer=await this.instruction();
+   await this.serial(async()=>{const current=await this.rows();if(JSON.stringify(current.find(r=>r.id===row.id))!==JSON.stringify(row))throw new Error('连接配置已改变，请重新确认');await this.persist(current);});
+   const pointer=`For this explicitly requested assistance only, read the connection configuration at ${this.configPath}.`;
    const latest=(await this.rows()).find(r=>r.id===row.id);
    if(JSON.stringify(latest)!==JSON.stringify(row))throw new Error('连接配置已改变，请重新确认');
    const target=JSON.stringify({id:row.id,host:row.host,port:row.port,username:row.username,platform:row.platform});

@@ -1,12 +1,13 @@
-// Shared modal lifecycle: topmost dialog owns focus and shortcuts, background stays inert.
+// Blocking dialogs own focus; pending Agent questions leave navigation available.
 export function createDialogManager(background, fallback) {
   const stack=[];
   const top=()=>stack.at(-1);
   const focusables=node=>[...node.querySelectorAll('button,input,textarea,select,a[href],[tabindex]')].filter(el=>!el.disabled && el.tabIndex>=0 && !el.closest('.hidden,[hidden]'));
-  function sync(){background.inert=stack.length>0;for(const [i,entry] of stack.entries()){entry.node.inert=i!==stack.length-1;entry.node.style.zIndex=String(100+i);}}
-  function show(node,cancel,initial){
+  function sync(){background.inert=stack.some(entry=>!entry.nonModal);for(const [i,entry] of stack.entries()){entry.node.inert=i!==stack.length-1;entry.node.style.zIndex=String(100+i);}}
+  function show(node,cancel,initial,{nonModal=false}={}){
     const existing=stack.find(e=>e.node===node);
-    if(!existing)stack.push({node,cancel,opener:document.activeElement});
+    if(!existing)stack.push({node,cancel,opener:document.activeElement,nonModal});
+    node.classList.toggle('non-blocking',nonModal);node.querySelector('[role="dialog"]')?.setAttribute('aria-modal',String(!nonModal));
     node.classList.remove('hidden');sync();
     queueMicrotask(()=>{if(top()?.node===node)(initial || focusables(node)[0] || node).focus();});
   }
@@ -18,15 +19,17 @@ export function createDialogManager(background, fallback) {
   }
   document.addEventListener('keydown',event=>{
     const current=top();if(!current)return;
+    if(current.nonModal&&!current.node.contains(event.target))return;
     if(event.isComposing || event.keyCode===229)return;
     if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();current.cancel();return;}
     if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='k'){event.preventDefault();event.stopImmediatePropagation();return;}
     if(event.key==='Tab'){
+      if(current.nonModal)return;
       const nodes=focusables(current.node),first=nodes[0],last=nodes.at(-1);
       if(!first){event.preventDefault();return;}
       if(!current.node.contains(document.activeElement) || event.shiftKey && document.activeElement===first || !event.shiftKey && document.activeElement===last){event.preventDefault();(event.shiftKey?last:first).focus();}
     }
   },true);
-  document.addEventListener('focusin',event=>{const current=top();if(current && !current.node.contains(event.target))focusables(current.node)[0]?.focus();});
+  document.addEventListener('focusin',event=>{const current=top();if(current && !current.nonModal && !current.node.contains(event.target))focusables(current.node)[0]?.focus();});
   return {show,hide,active:()=>!!top()};
 }

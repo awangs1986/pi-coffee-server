@@ -18,6 +18,7 @@ export interface SessionSink {
 }
 
 export interface HostSessionOptions {
+  runnerGuidance?:()=>Promise<{revision:string;text?:string}>;
   id?: string;
   factory: PiSessionFactory;
   eventBufferSize?: number;
@@ -54,6 +55,8 @@ export interface SessionOpenResult {
 export class HostSession {
   readonly id: string;
   private readonly inputs:InputQueue;
+  private readonly runnerGuidance?:HostSessionOptions['runnerGuidance'];
+  private runnerRevision?:string;
   private readonly factory: PiSessionFactory;
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
@@ -93,6 +96,7 @@ export class HostSession {
   private externalTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: HostSessionOptions) {
+    this.runnerGuidance=options.runnerGuidance;
     this.id = options.id ?? randomUUID();
     this.inputs=new InputQueue({busy:()=>this.executionBusy,
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
@@ -104,7 +108,7 @@ export class HostSession {
             if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
             this.assertDelivery(generation);
             if(queuedRequestId)this.runCommands.add(queuedRequestId);
-            await this.ready().steer(text,images);
+            await this.deliverWithRunnerGuidance(text,value=>this.ready().steer(value,images),generation);
           }catch(error){if(queuedRequestId)void this.onCommand?.(this.id,queuedRequestId,error instanceof DeliveryCancelledError?"cancelled":"uncertain").catch(()=>undefined);throw error;}
           return;
         }
@@ -251,7 +255,7 @@ export class HostSession {
     const generation=this.deliveryGeneration;
     try {
       await this.onCommand?.(this.id,requestId,"delivering");this.assertDelivery(generation);this.runCommands.add(requestId);
-      await this.pi.prompt(text, images);
+      await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images),generation);
     } catch (error) {
       if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
       const cancelled=error instanceof DeliveryCancelledError;
@@ -261,6 +265,14 @@ export class HostSession {
       if(!this.activeRequestId)void this.onRun?.(this.id,"interrupted").catch(()=>undefined);
       throw error;
     }
+  }
+
+  private async deliverWithRunnerGuidance(text:string,deliver:(value:string)=>Promise<void>,generation:number){
+    const guidance=!text.trimStart().startsWith('/')?await this.runnerGuidance?.():undefined;
+    this.assertDelivery(generation);
+    const changed=guidance&&guidance.revision!==this.runnerRevision;
+    await deliver(changed&&guidance.text?text+'\n\n'+guidance.text:text);
+    if(guidance)this.runnerRevision=guidance.revision;
   }
 
   async acceptCommand(requestId:string,mode:string){const generation=this.deliveryGeneration;await this.onCommand?.(this.id,requestId,"accepted",mode);if(generation!==this.deliveryGeneration)void this.onCommand?.(this.id,requestId,"cancelled").catch(()=>undefined);this.assertDelivery(generation);}
@@ -277,7 +289,7 @@ export class HostSession {
         if(requestId)await this.onCommand?.(this.id,requestId,"delivering");
         this.assertDelivery(generation);
         if(requestId)this.runCommands.add(requestId);
-        await this.pi.steer(text, images);
+        await this.deliverWithRunnerGuidance(text,value=>this.ready().steer(value,images),generation);
       }else await this.inputs.add(text, images,requestId);
     }catch(error){if(requestId)void this.onCommand?.(this.id,requestId,error instanceof DeliveryCancelledError?"cancelled":"uncertain").catch(()=>undefined);throw error;}
   }
@@ -580,7 +592,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(private options: { onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -605,6 +617,7 @@ export class HostSessionRegistry {
     const session=new HostSession({
       ...(id === undefined ? {} : { id }),
       factory: this.factory,
+      runnerGuidance:this.options.runnerGuidance,
       eventBufferSize: this.eventBufferSize,
       idleTimeoutMs: this.idleTimeoutMs,
       ...(this.externalPollMs === undefined ? {} : { externalPollMs: this.externalPollMs }),

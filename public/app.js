@@ -1,4 +1,6 @@
 import {initForkControls} from "./fork.js";
+import {createSidebarInteraction} from './sidebar-interaction.js';
+import {pixelCat} from './sync-status.js';
 import {renderRuntimeStatus} from './runtime-status.js';
 import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
 import {createDialogManager} from './dialogs.js';
@@ -34,6 +36,7 @@ import { compactionNotice, isContextError } from './context-status.js';
 
 
 let taskSelectionEpoch=0;
+let sshmeDraftId=null;
 let creationRequest = (()=>{try{return JSON.parse(sessionStorage.getItem('coffee.pending-creation'));}catch{return null;}})();
 function saveCreation(){if(creationRequest)sessionStorage.setItem('coffee.pending-creation',JSON.stringify(creationRequest));else sessionStorage.removeItem('coffee.pending-creation');}
 const THEME_KEY = 'pi-coffee.theme.v1';
@@ -830,7 +833,9 @@ function sessionTitle(session) {
   const cut = raw.indexOf('[已上传到工作目录的文件]');
   return (cut > 0 ? raw.slice(0, cut).trim() : raw) || '新对话';
 }
-function renderSessionList() {
+const sidebarInteraction=createSidebarInteraction(ui.sessionList);
+function renderSessionList() { sidebarInteraction.render(renderSessionListNow); }
+function renderSessionListNow() {
   const focused=document.activeElement;
   const row=focused?.closest('.session-item'),group=focused?.closest('[data-sidebar-project]');
   const focusId=row?.dataset.sessionId,focusGroup=group?.dataset.sidebarProject,more=focused?.classList.contains('more');
@@ -917,6 +922,7 @@ async function saveSidebar(change){
   }catch(error){toast(error.message);}finally{sidebarSaving=false;$('#show-groups').disabled=!workspaceState;}
 }
 
+function smallRunningCat(){const cat=pixelCat(document);cat.classList.add('sidebar-running-cat');return cat;}
 function sessionRow(session) {
   const attention = attentionOf(session);
   const terminal = isTerminalSession(session);
@@ -943,7 +949,7 @@ function sessionRow(session) {
   item.appendChild(main);
   if (attention === 'waiting') item.appendChild(el('span', 'badge waiting', '?'));
   else if (attention === 'finished') item.appendChild(el('span', 'badge finished', '✓'));
-  else if (attention === 'running') item.appendChild(el('span', 'running'));
+  else if (attention === 'running') item.appendChild(smallRunningCat());
   const menu = el('button', 'more', '⋯');
   menu.type = 'button';
   menu.title = workspaceState ? '重命名 / Fork / 归档' : '重命名 / 删除';
@@ -961,9 +967,10 @@ function attentionCount() {
 }
 
 let menuNode;
-function closeMenu() { if (menuNode) { menuNode.remove(); menuNode = undefined; } }
+function closeMenu() { if (menuNode) { menuNode.remove(); menuNode = undefined; } sidebarInteraction.menu(false); }
 function openSessionMenu(session, anchor) {
   closeMenu();
+  sidebarInteraction.menu(true);
   menuNode = el('div', 'popmenu');
   const rename = el('button', 'popitem', '重命名');
   rename.type = 'button';
@@ -1006,8 +1013,8 @@ function openSessionMenu(session, anchor) {
   }
   document.body.appendChild(menuNode);
   const rect = anchor.getBoundingClientRect();
-  menuNode.style.top = rect.bottom + 4 + 'px';
-  menuNode.style.left = Math.min(rect.left, window.innerWidth - 160) + 'px';
+  menuNode.style.top = Math.max(8,Math.min(rect.bottom+4,window.innerHeight-menuNode.offsetHeight-8))+'px';
+  menuNode.style.left = Math.max(8,Math.min(rect.left,window.innerWidth-menuNode.offsetWidth-8))+'px';
 }
 ui.brandBtn?.addEventListener('click', toggleBrandMenu);
 $('#show-groups').addEventListener('click',()=>saveSidebar({action:'sidebar_display',showGroups:workspaceState?.sidebar?.showGroups===false}));
@@ -1074,7 +1081,7 @@ function renderHeader() {
 
   const pending = attentionCount();
   document.title = (finishedWhileHidden ? '✅ ' : '') + (pending ? '(' + pending + ') ' : '') + (activeId && title !== '新对话' ? title + ' · ' : '') + 'PI Coffee';
-  ui.topbarState.replaceChildren();if(takeoverBusy())ui.topbarState.append(el('span','dot busy'),document.createTextNode(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…'));else if(streaming)ui.topbarState.append(el('span','dot busy'),document.createTextNode(engineName()+' 正在工作…'));
+  ui.topbarState.replaceChildren();if(takeoverBusy())ui.topbarState.append(smallRunningCat(),document.createTextNode(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…'));else if(streaming)ui.topbarState.append(smallRunningCat(),document.createTextNode(engineName()+' 正在工作…'));
 
   renderStats();
 }
@@ -1187,7 +1194,7 @@ ui.title.addEventListener('click', () => {
 // ---------- connection ----------
 function setConnection(text, kind) {
   ui.status.textContent = text;
-  ui.dot.className = 'dot' + (kind ? ' ' + kind : '');
+  ui.dot.className = 'dot' + (kind ? ' ' + kind : '');ui.dot.replaceChildren(...(kind==='busy'?[smallRunningCat()]:[]));
   connected = kind === 'ready' || kind === 'busy';
   queueControls.connection(connected);
   // The footer dot is too subtle: the center column must also announce a lost link.
@@ -1244,7 +1251,7 @@ function refreshComposer() {
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   if (connected) {
     ui.status.textContent = streaming ? engineName()+' 正在工作…' : '已连接';
-    ui.dot.className = 'dot ' + (streaming ? 'busy' : 'ready');
+    ui.dot.className = 'dot ' + (streaming ? 'busy' : 'ready');ui.dot.replaceChildren(...(streaming?[smallRunningCat()]:[]));
   }
 }
 
@@ -1481,7 +1488,7 @@ async function openSession(id) {
     if(workspaceKind==='project' && !projectId) {restoreQueuedPrompt();toast(forgeCapabilities().github ? '请先选择 Gitea 或 GitHub 仓库' : '请先选择 Gitea 项目');return;}
     const selectedEngine=existing?.engine || $("#task-engine").value;
     const signature=JSON.stringify([selectedEngine,workspaceKind,projectId,existing?.startBranch || ui.startBranch.value.trim()]);
-    if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
+    if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || sshmeDraftId || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
     saveCreation();pendingOpenId='creating';refreshComposer();$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
     try {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
@@ -1974,7 +1981,7 @@ function showNextUiDialog() {
   if (req.method === 'input') { ui.uiInput.type=req.secret?'password':'text'; ui.uiInput.value = req.secret?'':uiDrafts.get(uiDraftKey(req))||''; ui.uiInput.placeholder = req.placeholder || ''; setTimeout(() => ui.uiInput.focus(), 0); }
   if (req.method === 'editor') { ui.uiEditor.value = uiDrafts.get(uiDraftKey(req))??req.prefill??''; setTimeout(() => ui.uiEditor.focus(), 0); }
   if (req.method === 'confirm') setTimeout(() => ui.uiOk.focus(), 0);
-  dialogs.show(ui.uiModal,()=>answerUi({cancelled:true}));
+  dialogs.show(ui.uiModal,()=>answerUi({cancelled:true}),undefined,{nonModal:true});
 }
 function answerUi(answer) {
   if (!uiCurrent || [...pendingUiAnswers.values()].some(p=>p.question.id===uiCurrent.id)) return;
@@ -2657,7 +2664,8 @@ $('#composer').addEventListener('submit', (event) => {
   if(sshmeRequest!==null){
     if(!sshmeRequest){toast('请在 /sshme 后输入需要协助的内容');return;}
     if(streaming||compacting||pendingOpenId){toast('请等待当前任务就绪后使用 /sshme');return;}
-    void sshmePanel.open({request:sshmeRequest,context:{activeId,user:currentUser,epoch:taskSelectionEpoch,text}});return;
+    const conversationId=activeId || creationRequest?.id || sshmeDraftId || crypto.randomUUID();if(!activeId)sshmeDraftId=conversationId;
+    void sshmePanel.open({request:sshmeRequest,conversationId,context:{activeId,user:currentUser,epoch:taskSelectionEpoch,text}});return;
   }
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   if (activeUploadsBusy || uploads.some(u=>u.state==='failed')) { toast('请等待原始附件上传成功，或移除失败附件'); return; }
@@ -2750,6 +2758,7 @@ const skillPanel=initSkills({
 
 // ---------- session actions ----------
 function switchSession(id) {
+  closeMenu();sshmeDraftId=null;
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return;}
@@ -2776,6 +2785,7 @@ function switchSession(id) {
   connect();
 }
 function newSession(focus = true) {
+  closeMenu();sshmeDraftId=null;
   saveVisiblePosition();saveTextDraft();
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
@@ -2845,7 +2855,6 @@ document.addEventListener('keydown', (event) => {
   if(event.isComposing || event.keyCode===229 || event.defaultPrevented)return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); newSession(); return; }
   if (event.key === 'Escape') {
-    if (!ui.uiModal.classList.contains('hidden')) { answerUi({ cancelled: true }); return; }
     if (!ui.pluginsModal.classList.contains('hidden')) { closePlugins(); return; }
     if (!ui.modal.classList.contains('hidden')) { ui.modalCancel.click(); return; }
     if (!$('#github-modal').classList.contains('hidden')) { closeGitHubPicker(); return; }
@@ -2859,6 +2868,7 @@ document.addEventListener('keydown', (event) => {
     if (workspaceDetailOpen) { closeWorkspaceDetail(); return; }
     if(skillPanel.isOpen()){skillPanel.close();return;}
     if(searchOpen){setSearchOpen(false);$('#search-open').focus();return;}
+    if (!ui.uiModal.classList.contains('hidden')) return;
     closeSidebarOnMobile();
     if ((streaming || compacting) && opened && document.activeElement !== ui.prompt) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); }
   }

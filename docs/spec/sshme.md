@@ -11,7 +11,7 @@ or sending a model prompt. This is a Web feature, not a Skill or MCP service.
 ## Independent connection boundary
 
 SSHME is separate from **Configure test server**. It has its own authenticated,
-user-scoped `/api/sshme` endpoint, configuration, credentials and known-host file.
+user-and-conversation-scoped `/api/sshme` endpoint, configuration, credentials and known-host file.
 It may reuse the SSH transport and CLI implementation, but must never read,
 overwrite, delete or automatically migrate test-server records. Historical records
 saved by the earlier combined implementation remain untouched because their
@@ -29,7 +29,7 @@ address is only a hint, not verified device identity; proxies, VPNs and NAT may
 hide the computer's address. The user confirms address, OS, port and SSH login.
 
 The explicit **Save connection and continue** action saves one assistance
-connection for the current Web account. It can be edited or cleared in this same
+connection for the current conversation within the authenticated Web account. It can be edited or cleared in this same
 SSHME dialog. Saving a different endpoint replaces only the assistance record.
 Changing address, port, username or OS cannot silently reuse a saved password.
 A blank password for a new target uses the Host's SSH keys. Credentials stay in
@@ -44,7 +44,7 @@ and the relationship: the target is the Web user's computer, distinct from the
 Agent's Linux Host. The message directs the Agent to perform the requested work
 there using the CLI, verify the saved endpoint, and respect the request's scope.
 
-SSHME never contributes an automatic testing instruction to other conversations.
+SSHME never contributes an automatic instruction, tool description or Skill advertisement to any conversation. Before explicit `/sshme`, the Agent receives no user-computer address, credential reference or SSHME discovery hint. The slash-menu item belongs to the browser UI only.
 Only explicit `/sshme` adds assistance guidance as user-request context. Chat's
 tools and system prompt remain unchanged; native sessions need no restart to
 receive the request. Installation requests do not authorize unrelated changes.
@@ -66,3 +66,22 @@ never enter model frames. Editing/clearing occurs in SSHME, not the test-server
 menu. All three Agent slash menus and Chat tools retain their existing behavior.
 Real Windows and macOS operations require an available configured target; command
 routing tests alone are not proof of a real remote OS run.
+
+## Explicit activation and storage (2026-10-03)
+
+[Server #42](https://github.com/awangs1986/pi-coffee-server/issues/42): every SSHME
+API operation requires a validated `conversationId` within the authenticated
+user's scope. Its private records live under `sshme/conversations/<id>/`; lists,
+connection tests, deletion and preparation all use that same scope. A new-dialog
+request reserves the eventual conversation ID without creating a task or sending
+a prompt; successful confirmation uses that ID when creating the conversation.
+Cancellation can retain private connection data for that reserved ID but never
+dispatches a prompt. Other conversations do not inherit the saved connection.
+Existing account-level SSHME records remain untouched and are not automatically
+selected or copied. Previously supplied transcript information cannot be erased
+by this change; no new unsolicited connection information is injected.
+
+The assistance pointer says it is for this explicitly requested assistance only.
+It never uses the shared testing pointer. Windows/Linux/macOS assistance remains
+independent from the Windows-plus-WSL test target. Saving the test target does not
+activate SSHME, and confirming SSHME never changes the test target.
