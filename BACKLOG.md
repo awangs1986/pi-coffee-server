@@ -474,3 +474,9 @@ defines user-scoped persistence and the strict separation from task execution id
   repairs inline image/download rendering in the durable transcript: per-message
   completion replaces the conversation-wide rendering gate, with late file-grant
   binding and visible unavailable-image feedback. See the task-storage contract.
+
+- 2026-10-04: [Server #44](https://github.com/awangs1986/pi-coffee-server/issues/44)
+  fixes review findings in cached body retention, restored attachment downloads,
+  older-history buffers and Git destination authorization; preserves conversation
+  row gestures during busy sidebar refreshes; centralizes lifecycle classification
+  and consumes official Pi 1.0.1 to resolve the inherited dependency advisory.

@@ -352,3 +352,12 @@ has no running cat. Reduced-motion mode shows the cat without animation, and the
 dark theme adds a subtle outline to retain contrast.
 
 The owner clarified that compact welcome means simplifying the original cat-maid character, not replacing her with a coffee-cup icon. The character asset remains transparent and the greeting stays small and nonblocking.
+
+### Busy conversation selection (2026-10-04, Server #44)
+
+A running task's sidebar refresh must not replace the row under an active pointer
+or keyboard activation gesture. Defer the coalesced list refresh through the
+complete gesture for conversation rows, group controls and action buttons.
+Pointer cancellation, drag completion and window blur release the deferral.
+Selecting another task preserves the old task's execution and immediately shows
+available cached content independently of a new network/history response.

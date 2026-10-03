@@ -84,3 +84,15 @@ concurrent account identity; missing/revoked authorization with hostile ambient
 credentials; native environment propagation; preserved Gitea/model integration.
 Real GitHub consent and repository write verification require an operator-configured
 OAuth App. Fixture success alone is not evidence of production OAuth activation.
+
+### Destination-specific Git admission (2026-10-04, Server #44)
+
+Managed Git authorization checks the operation's selected destination, not every
+remote configured in the caller's current directory. Pure local clones and
+Gitea operations remain usable without a GitHub binding, including inside a
+historical GitHub checkout. Actual GitHub destinations require the selected live
+binding and retain legacy-header rejection and isolated credential helpers.
+Resolve explicit targets, default branch remotes, push URLs, fetch groups and
+Git URL rewrites using config-only Git probes. Parse option operands separately
+for each subcommand (for example, `push -u` takes no value, while `clone -u` does).
+Clone-local `-c` URL rewrites participate in target resolution before transport.

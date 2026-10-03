@@ -1,3 +1,4 @@
+import {splitUploadedFilesText} from './uploaded-files.js';
 // Rendering of messages, tool calls and Markdown. Pure view code: it turns
 // data the Host already produced into DOM and never talks to the network.
 import { Marked } from './vendor-marked.js';
@@ -363,13 +364,14 @@ export function fileChips(files) {
 }
 
 export function userBubble(entry) {
+  const parsed = !entry.files && !entry.contentTruncated ? splitUploadedFilesText(entry.text) : {text:entry.text||'',files:entry.files||[]};
   const node = el('div', 'msg user');
   const bubble = el('div', 'bubble');
   const text = el('div', 'text');
-  if (fitsRichText(entry.text)) text.textContent = entry.text || '';
-  else renderBoundedText(text, entry.text || '');
+  if (fitsRichText(parsed.text)) text.textContent = parsed.text;
+  else renderBoundedText(text, parsed.text);
   bubble.appendChild(text);
-  if (entry.files && entry.files.length) bubble.appendChild(fileChips(entry.files));
+  if (parsed.files.length) bubble.appendChild(fileChips(parsed.files));
   if (entry.images && entry.images.length) {
     const strip = el('div', 'thumbs');
     for (const image of entry.images) {
@@ -387,7 +389,7 @@ export function userBubble(entry) {
   const copy = el('button', 'msg-tool', '复制');
   copy.type = 'button';
   copy.title = '复制这条消息';
-  copy.addEventListener('click', async () => { if (await copyText(entry.text || '')) flashButton(copy); });
+  copy.addEventListener('click', async () => { if (await copyText(parsed.text)) flashButton(copy); });
   tools.appendChild(copy);
   node.appendChild(tools);
   return node;

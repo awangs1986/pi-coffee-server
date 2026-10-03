@@ -84,3 +84,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [T1–T4 workbench refinements, Server #42](https://github.com/awangs1986/pi-coffee-server/issues/42): responsive conversation actions, compact welcome, sidebar running cat, account-wide testing guidance and explicitly invoked conversation-scoped SSHME.
 
 - Inline image preview/download: [task-storage contract](spec/task-storage.md#inline-conversation-images-2026-10-04), [Server #43](https://github.com/awangs1986/pi-coffee-server/issues/43).
+
+- Review corrections and busy conversation switching: [Server #44](https://github.com/awangs1986/pi-coffee-server/issues/44), [sync contract](spec/local-first-conversation-sync.md#review-corrections-2026-10-04-server-44), [Pi security patch](deployment/unified-release.md#pi-101-security-patch-2026-10-04-server-44).

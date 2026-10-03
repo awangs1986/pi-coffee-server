@@ -1,3 +1,5 @@
+import {splitUploadedFilesText as parseUploadedFiles} from './uploaded-files.js';
+const splitUploadedFilesText = text => parseUploadedFiles(text, downloadUrl);
 import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
 import {initForkControls} from "./fork.js";
 import {createSidebarInteraction} from './sidebar-interaction.js';
@@ -96,7 +98,7 @@ const conversationRepository=new ConversationRepository({onUnauthorized:()=>{rev
   if((durableSync||!historyReady)&&details?.reason!=='status'&&state.bindingEpoch&&(state.entries?.length||state.sourceFreshness==='current')){localSyncShown=true;syncedView.show(state,{details});}
 }});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
-  onRendered:(visible,state)=>{entries=visible;renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=visible[i].text||'';break;}scheduleRecentThread();},
+  onRendered:(visible,state)=>{entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
 function requestConversationSync(){
   if(!activeId||!currentUser)return;
@@ -737,24 +739,6 @@ function showThinking(show) {
   }
 }
 
-function splitUploadedFilesText(rawText) {
-  const text = String(rawText || '');
-  const marker = '\n\n[已上传到工作目录的文件]\n';
-  const cut = text.indexOf(marker);
-  if (cut < 0) return { text, files: [] };
-  const body = text.slice(0, cut);
-  const tail = text.slice(cut + marker.length);
-  const files = [];
-  for (const line of tail.split('\n')) {
-    const match = /^- (.+?)(?: \(([^()]+)\))?$/.exec(line.trim());
-    if (!match) continue;
-    const path = match[1].trim();
-    const name = path.split('/').pop() || path;
-    const sizeText = match[2] || '';
-    files.push({ name, path, uploadPath: path, sizeText, href: downloadUrl(path) });
-  }
-  return { text: body, files };
-}
 
 function historyDisplayEntry(item) {
   if(item.kind!=='tool')return {kind:item.kind,text:item.text||''};
