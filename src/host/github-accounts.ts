@@ -58,7 +58,11 @@ export class GitHubAccounts {
       ['url.https://github.com/.insteadOf','git@github.com:'],['url.https://github.com/.insteadOf','ssh://git@github.com/'],
       ['url.https://github.com/.insteadOf','ssh://git@github.com:22/'],
     ];
-    return {PATH:bin+':'+(process.env.PATH??''),GH_CONFIG_DIR:config,GH_HOST:'github.com',GH_TOKEN:'coffee-no-shared-auth',GITHUB_TOKEN:'coffee-no-shared-auth',GH_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GITHUB_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GIT_TERMINAL_PROMPT:'0',GIT_ASKPASS:'/bin/false',SSH_ASKPASS:'/bin/false',SSH_AUTH_SOCK:'',GIT_CONFIG_PARAMETERS:'',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_COUNT:String(settings.length),...Object.fromEntries(settings.flatMap(([key,value],index)=>[['GIT_CONFIG_KEY_'+index,key],['GIT_CONFIG_VALUE_'+index,value]]))};
+    const env:Record<string,string>={PATH:bin+':'+(process.env.PATH??''),GH_CONFIG_DIR:config,GH_HOST:'github.com',GH_TOKEN:'coffee-no-shared-auth',GITHUB_TOKEN:'coffee-no-shared-auth',GH_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GITHUB_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GIT_TERMINAL_PROMPT:'0',GIT_ASKPASS:'/bin/false',SSH_ASKPASS:'/bin/false',SSH_AUTH_SOCK:'',GIT_CONFIG_PARAMETERS:'',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_COUNT:String(settings.length),...Object.fromEntries(settings.flatMap(([key,value],index)=>[['GIT_CONFIG_KEY_'+index,key],['GIT_CONFIG_VALUE_'+index,value]]))};
+    const bashEnv=join(bin,'bash-env'),bashTemporary=bashEnv+'.'+randomUUID();
+    const exports=Object.entries(env).filter(([key])=>key!=='PATH').map(([key,value])=>'export '+key+'='+quote(value)).join('\n');
+    await writeFile(bashTemporary,'export PATH='+quote(bin)+':"${COFFEE_MANAGED_PATH:-}":"$PATH"\n'+exports+'\n',{mode:0o600});await rename(bashTemporary,bashEnv);
+    return {...env,BASH_ENV:bashEnv,COFFEE_MANAGED_PATH:env.PATH};
   }
   async handle(input:Record<string,unknown>):Promise<unknown>{
     if(input.action==='list')return {accounts:await this.list()};
