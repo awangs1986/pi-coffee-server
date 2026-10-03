@@ -4,8 +4,9 @@ Implementation started from GitHub main `6cb1d3244fdf6305d2b798f48082c5d27e03a83
 and was integrated with OAuth main `b39e85160c871194430f78d21abb2d46fe560a41` before publication.
 This changes the Browser/Host display path, not native model ownership. Native tasks
 continue when their Browser view switches or disconnects. Stopping a task remains
-an explicit command. PR #32's unrelated continuity/model-selection work and
-pi-coffee PR #8's Harness changes are not incorporated.
+an explicit command. The October 3 integration incorporates PR #32's continuity/model-selection work
+and PR #40's Conversation Fork while preserving current OAuth and watchdog behavior.
+Pi PR #8 remains a separately versioned plugin source change; this does not update Server pins.
 
 ## Three lifetimes
 

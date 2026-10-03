@@ -1,3 +1,7 @@
+> Integration update: the original cloud-environment results below are historical.
+> Current merged-candidate validation and corrections are recorded in
+> [the integration report](pr-integration-20261003.md). Production activation remains separate.
+
 # Local-first synchronization verification — 2026-10-03
 
 Implementation code reviewed and tested at `ff88e27373a76ccd8b6a2cda8a9edcc0058016b9`,
