@@ -83,6 +83,9 @@ export interface ModelChoice {
   id: string;
   contextWindow?: number;
   reasoning?: boolean;
+  /** Native model-specific choices, available without creating a task. */
+  thinkingLevels?: string[];
+  defaultThinkingLevel?: string;
 }
 
 export type ContextPreset = "272k" | "maximum";
