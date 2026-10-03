@@ -889,7 +889,7 @@ function openSessionMenu(session, anchor) {
   rename.disabled ||= forkControls.busy(session.id);del.disabled ||= forkControls.busy(session.id);
   const fork=el('button','popitem','Fork（分叉）');fork.type='button';
   const task=workspaceState?.conversations.find(c=>c.id===session.id);
-  fork.disabled=!task||archived||task.creationState==='failed'||task.creationState==='creating'||(task.fork&&task.fork.status!=='completed')||Boolean(session.running)||forkControls.busy(session.id)||!(forkModes[taskEngine]??[]).length;
+  fork.disabled=!task||archived||task.creationState==='failed'||task.creationState==='creating'||(task.fork&&task.fork.status!=='completed')||Boolean(session.running)||(forkControls.busy(session.id)&&!forkControls.recoverable(session.id))||!(forkModes[taskEngine]??[]).length;
   if(fork.disabled)fork.title='需已就绪且空闲的任务，以及此 Agent 支持的 Fork 模式';
   fork.addEventListener('click',()=>{closeMenu();forkControls.open(session);});
   menuNode.append(rename, fork, del);
@@ -2662,7 +2662,7 @@ connect();
 // Project metadata stays on the VM. This panel extends the existing shell rather than replacing it.
 async function workspaceApi(value) {
   const r=await fetch('/api/workspace',value ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)} : {});
-  const data=await r.json();if(!r.ok)throw new Error(data.error || '工作区请求失败');
+  const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error || '工作区请求失败'),{status:r.status});
   if(value&&['archive','delete'].includes(value.action)){invalidatePreview(value.id);if(value.id===activeId)historyReady=false;announceCacheClear('cache');}
   return data;
 }

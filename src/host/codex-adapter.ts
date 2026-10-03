@@ -60,6 +60,8 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
   reasoningEffort?: string;
   /** Codex sandbox for the agent's own tools; full access mirrors Pi's Execution Seam (ADR-0005). */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Automatic Fork preparation only; never carries over to normal task execution. */
+  preparation?:boolean;
   /** `never` runs unattended; `on-request` / `untrusted` route approvals to the browser as confirm dialogs. */
   approvalPolicy?: "never" | "on-request" | "untrusted";
   /** Extra `codex app-server` arguments (e.g. `-c key=value`). */
@@ -101,7 +103,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   private unsubscribeAccount?: () => void;
 
   constructor(options: CodexSessionFactoryOptions) {
-    this.options = options;
+    this.options = options.preparation?{...options,sandbox:'read-only',approvalPolicy:'never'}:options;
     this.mappingFile = options.mappingFile ?? join(options.cwd, ".pi-coffee", "codex-threads.json");
   }
 
@@ -120,7 +122,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   private async startConnection(): Promise<CodexAppServer> {
-    const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? [])];
+    const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? []),...(this.options.preparation?Object.entries(forkPreparationConfig()).flatMap(([key,value])=>['-c',key+'='+JSON.stringify(value)]):[])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment({...this.options.env,...await this.options.envForSession?.()}),
       ...(this.options.codexHome === undefined ? {} : { CODEX_HOME: this.options.codexHome }),
@@ -255,7 +257,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const source=await server.request('thread/read',{threadId:sourceNativeId,includeTurns:false}) as Obj;
     const sourceThread=source.thread as Obj;
     if(typeof sourceThread?.cwd!=='string'||resolve(sourceThread.cwd)!==resolve(options.sourceCwd))throw new Error('Native Fork source does not belong to this task');
-    const response=await server.request('thread/fork',{threadId:sourceNativeId,cwd:options.cwd,excludeTurns:true,approvalPolicy:this.options.approvalPolicy??'never',...(this.options.sandbox?{sandbox:this.options.sandbox}:{})}) as Obj;
+    const response=await server.request('thread/fork',{threadId:sourceNativeId,cwd:options.cwd,excludeTurns:true,...(this.options.preparation?{config:forkPreparationConfig()}:{}),approvalPolicy:this.options.approvalPolicy??'never',...(this.options.sandbox?{sandbox:this.options.sandbox}:{})}) as Obj;
     const thread=response.thread as Obj;if(typeof thread?.id!=='string'||thread.id===sourceNativeId||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(options.cwd))throw new Error('Native Fork result did not confirm a new task identity');
     await this.remember(options.sessionId,thread.id);await this.options.onBound?.(options.sessionId,thread.id);
     return this.create({sessionId:options.sessionId});
@@ -275,7 +277,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     }
     const common = {
       ...(developerInstructions===undefined?{}:{developerInstructions}),
-      config:nativeThreadConfig(preset),
+      config:{...nativeThreadConfig(preset),...(this.options.preparation?forkPreparationConfig():{})},
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -314,6 +316,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       preset,
       developerInstructions,
       sandbox:this.options.sandbox,
+      preparation:this.options.preparation,
       savePreferences:(id,values)=>this.savePreferences(id,values),
       rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
       model: typeof response.model === "string" ? response.model : resumed?preferences.model:this.options.model,
@@ -465,6 +468,15 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 }
 
+// Native restrictions apply before the model sees inherited history. Native
+// read-only/no-network remains a backstop even if a future tool is introduced.
+function forkPreparationConfig():Obj {
+ return {mcp_servers:{},web_search:'disabled',...Object.fromEntries([
+  'shell_tool','unified_exec','apply_patch_freeform','js_repl','multi_agent','collab',
+  'apps','connectors','plugins','hooks','codex_hooks','plugin_hooks','computer_use',
+  'browser_use','remote_control','image_generation','request_permissions_tool',
+ ].map(name=>['features.'+name,false]))};
+}
 function nativeThreadConfig(preset:ContextPreset):Obj {
   const limit=preset==='272k'?272000:500000;
   return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95),'features.default_mode_request_user_input':true};
@@ -478,6 +490,7 @@ interface CodexSessionSettings {
   developerInstructions?:string;
   preset:ContextPreset;
   sandbox?:string;
+  preparation?:boolean;
   savePreferences:(id:string,preferences:CodexPreferences)=>Promise<void>;
   rebind:(id:string)=>Promise<void>;
   cwd: string;
@@ -578,6 +591,7 @@ class CodexSession implements PiSession {
       threadId: this.threadId,
       input: await this.input(text, images),
       ...this.turnOverrides(),
+      ...(this.settings.preparation?{sandboxPolicy:{type:'readOnly',networkAccess:false},approvalPolicy:'never'}:{}),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
     if (turn && typeof turn.id === "string") this.activeTurnId = turn.id;
@@ -702,7 +716,7 @@ class CodexSession implements PiSession {
     if((await this.getState()).isStreaming)throw new Error('Wait for the current turn before changing context');
     await this.preferenceWrites;
     const history=await this.getHistory(),oldId=this.threadId;
-    const config={...nativeThreadConfig(preset),...(this.effort?{model_reasoning_effort:this.effort}:{})};
+    const config={...nativeThreadConfig(preset),...(this.settings.preparation?forkPreparationConfig():{}),...(this.effort?{model_reasoning_effort:this.effort}:{})};
     const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
     // Native resume ignores changed config on a subscribed thread. Release only
     // this idle thread; no model turn is replayed and other threads keep running.

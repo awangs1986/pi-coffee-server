@@ -13,11 +13,11 @@ async function setup(){
  return {root,ws,c,git,call,calls:()=>calls,setBusy:(v:boolean)=>busy=v,setFail:(v:boolean)=>fail=v};
 }
 it('forks into an independent clone with staged/unstaged code and attachments while retaining the source',async()=>{
- const a=await setup();await writeFile(join(a.c.cwd,'file.txt'),'staged');await a.git(a.c.cwd,['add','file.txt']);await writeFile(join(a.c.cwd,'file.txt'),'working');await writeFile(join(a.c.cwd,'new.txt'),'untracked');await writeFile(join(await a.ws.inboxDirectory(a.c.id),'picture.txt'),'attachment');
+ const a=await setup();await writeFile(join(a.c.cwd,'file.txt'),'staged\n');await a.git(a.c.cwd,['add','file.txt']);await writeFile(join(a.c.cwd,'file.txt'),'working');await writeFile(join(a.c.cwd,'new.txt'),'untracked');await writeFile(join(await a.ws.inboxDirectory(a.c.id),'picture.txt'),'attachment');
  const before=(await a.git(a.c.cwd,['status','--porcelain'])).stdout,branch=(await a.git(a.c.cwd,['branch','--show-current'])).stdout;
  const id=randomUUID();const response=await a.call({action:'fork',id:a.c.id,targetId:id,mode:'native'});expect(response.status,JSON.stringify(response.body)).toBe(202);
  await expect.poll(async()=>(await a.ws.lookup(id))?.fork?.status).toBe('completed');const fork=(await a.ws.lookup(id))!;
- expect(fork.cwd).not.toBe(a.c.cwd);expect(fork.branch).not.toBe(a.c.branch);expect(await readFile(join(fork.cwd,'file.txt'),'utf8')).toBe('working');expect((await a.git(fork.cwd,['show',':file.txt'])).stdout).toBe('staged');expect(await readFile(join(fork.cwd,'new.txt'),'utf8')).toBe('untracked');expect(await readFile(join(await a.ws.inboxDirectory(id),'picture.txt'),'utf8')).toBe('attachment');
+ expect(fork.cwd).not.toBe(a.c.cwd);expect(fork.branch).not.toBe(a.c.branch);expect(await readFile(join(fork.cwd,'file.txt'),'utf8')).toBe('working');expect((await a.git(fork.cwd,['show',':file.txt'])).stdout).toBe('staged\n');expect(await readFile(join(fork.cwd,'new.txt'),'utf8')).toBe('untracked');expect(await readFile(join(await a.ws.inboxDirectory(id),'picture.txt'),'utf8')).toBe('attachment');
  await writeFile(join(fork.cwd,'file.txt'),'child');expect(await readFile(join(a.c.cwd,'file.txt'),'utf8')).toBe('working');expect((await a.git(a.c.cwd,['status','--porcelain'])).stdout).toBe(before);expect((await a.git(a.c.cwd,['branch','--show-current'])).stdout).toBe(branch);
  expect((await a.call({action:'fork',id:a.c.id,targetId:id,mode:'native'})).status).toBe(200);expect(a.calls()).toBe(1);
 });

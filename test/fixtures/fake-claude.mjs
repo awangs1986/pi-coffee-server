@@ -24,7 +24,11 @@ createInterface({input:process.stdin}).on('line',async line=>{
   if(m.message.content[0].text==='finish background')send({type:'system',subtype:'background_tasks_changed',tasks:[]});
   if(m.message.content[0].text==='ask approval'){send({type:'control_request',request_id:'permission-1',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'/tmp/test'}}});return;}
   await appendFile(path,JSON.stringify({type:'user',uuid:'u1',sessionId:id,message:m.message})+'\n');
-  const assistant={type:'assistant',uuid:'a1',sessionId:id,message:{role:'assistant',content:[{type:'text',text:'Claude native marker'}]}};
+  const text=m.message.content[0].text;
+  const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
+  if(preparing&&process.env.FORK_POLICY_ASSERT&&(!args.includes('--tools')||args[args.indexOf('--tools')+1]!==''||!args.includes('--strict-mcp-config'))){send({type:'result',is_error:true});return;}
+  const answer=text.startsWith('Prepare a handoff for a NEW independent fork')?'Goal: preserve original requirement. Pending: run tests.\n[FORK_HANDOFF_READY]':text.startsWith('[PI Coffee Handoff Fork]')?'Waiting for user.\n[FORK_READY]':'Claude native marker';
+  const assistant={type:'assistant',uuid:'a1',sessionId:id,message:{role:'assistant',content:[{type:'text',text:answer}]}};
   await appendFile(path,JSON.stringify(assistant)+'\n');send({...assistant,session_id:id});send({type:'result',subtype:'success',session_id:id,is_error:false,result:'Claude native marker'});
  }
 });

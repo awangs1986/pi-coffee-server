@@ -1,6 +1,6 @@
 import {applyForkSettings,handoffPrompt,seedForkPrompt,forkTurn,HANDOFF_END,FORK_END,type ForkMode} from '../fork.js';
 import {join} from 'node:path';
-import {writeFile} from 'node:fs/promises';
+import {writeFile,readFile} from 'node:fs/promises';
 import {prepareTakeoverRecords,takeoverPrompt,reconstruct,priorHistory,withPriorHistory,type TakeoverState} from "../takeover.js";
 import type {AgentHistory,AgentSession} from "../agent-adapter.js";
 import { capabilitiesFor } from "../../shared/protocol.js";
@@ -14,7 +14,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -54,25 +54,26 @@ export class NativeAgentFactory implements AgentSessionFactory {
           await applyForkSettings(child,target.fork.settings);await child.rename(target.fork.title);return;
         }
         const tempId=randomUUID();
-        temporaryFactory=this.options.codexSessionFactory(targetId+'-handoff',cwd,id=>this.options.workspaces.retainForkNative(targetId,id),()=>this.options.workspaces.runtimeEnvironment(targetId));
+        temporaryFactory=this.options.codexSessionFactory(targetId+'-handoff',cwd,id=>this.options.workspaces.retainForkNative(targetId,id),()=>this.options.workspaces.runtimeEnvironment(targetId),true);
         if(!temporaryFactory.forkNative)throw new Error('Native Codex Fork unavailable');
         track(await temporaryFactory.forkNative(sourceNative,{sessionId:tempId,cwd,sourceCwd:source.cwd}));
       }else{
         if(mode!=='handoff'||!this.options.claude)throw new Error('Claude supports Handoff Fork only');
         const tempId=randomUUID();await this.options.workspaces.retainForkNative(targetId,tempId);
         const command={...this.options.claude,env:{...this.options.claude.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
-        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:tempId},async()=>{},[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n')).start());
+        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:tempId},async()=>{},[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
       }
       await applyForkSettings(session!,target.fork.settings);
-      const summary=await forkTurn(session!,handoffPrompt(records,cwd,engine==='codex'),HANDOFF_END,controller.signal);
+      const exported=engine==='claude'?await readFile(records,'utf8'):undefined;if(exported&&Buffer.byteLength(exported)>1024*1024)throw new Error('Claude Handoff history is too large for preparation; source and snapshot retained');
+      const summary=await forkTurn(session!,handoffPrompt(records,cwd,engine==='codex',exported),HANDOFF_END,controller.signal);
       await writeFile(join(await this.options.workspaces.forkRecordsDirectory(targetId),'handoff.md'),summary+'\n',{mode:0o600});
       await closeChild();if(this.closing)throw new Error('Host is stopping');
       if(engine==='codex'){
-        const factory=await this.codexFactory(targetId,cwd);if(!factory)throw new Error('Codex unavailable');track(await factory.create({sessionId:targetId}));
+        temporaryFactory=this.options.codexSessionFactory!(targetId,cwd,id=>this.options.workspaces.setNativeBinding(targetId,{state:'bound',id}),()=>this.options.workspaces.runtimeEnvironment(targetId),true);track(await temporaryFactory.create({sessionId:targetId}));
       }else{
         const nativeId=randomUUID();
         const command={...this.options.claude!,env:{...this.options.claude!.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
-        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:nativeId},binding=>this.options.workspaces.setNativeBinding(targetId,binding),[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n')).start());
+        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:nativeId},binding=>this.options.workspaces.setNativeBinding(targetId,binding),[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
       }
       await applyForkSettings(session!,{...target.fork.settings,contextPreset:undefined});await forkTurn(session!,seedForkPrompt(summary,records,cwd),FORK_END,controller.signal);await applyForkSettings(session!,target.fork.settings);
       if(engine==='codex')await session!.rename(target.fork.title);
@@ -216,9 +217,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
         ? await this.options.codexSummary(await this.options.workspaces.file(c.id,""),c.nativeBinding.id).catch(()=>undefined)
         : c.engine==="codex" && c.nativeBinding?.id && this.options.codexListings
         ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===(c.nativeBinding?.id??c.id)):undefined;
-      return {createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":"Claude Code Task",...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),id:c.id,engine:c.engine};
+      return {createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),id:c.id,engine:c.engine};
     }));
-    return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:task.fork.title,preview:task.fork.title}:row;}),...summaries];
+    return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:row.name||task.fork.title,preview:row.preview||task.fork.title}:row;}),...summaries];
   }
   async delete(id:string) {
     const task=await this.options.workspaces.lookup(id);
