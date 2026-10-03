@@ -10,6 +10,7 @@
       (() => { try { document.documentElement.dataset.theme = localStorage.getItem('pi-coffee.theme.v1') === 'dark' ? 'dark' : 'light'; } catch { document.documentElement.dataset.theme = 'light'; } })();
     </script>
     <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/login-coffee.css" />
   </head>
   <body>
     <div class="app" id="app">
@@ -136,6 +137,7 @@
           </div>
         </section>
 
+        <div id="conversation-sync-status"></div>
         <div class="scroller" id="scroller">
           <div class="thread" id="thread"></div>
         </div>

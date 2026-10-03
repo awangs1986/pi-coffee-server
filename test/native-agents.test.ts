@@ -97,7 +97,7 @@ it('renders replayed native items once, answers a native question and never rese
  emit({type:'native_request',id:'q1',method:'input',title:'Choose color',message:'blue'},6);
  expect(document.querySelector('#ui-title')?.textContent).toBe('Choose color');(document.querySelector('#ui-input') as HTMLInputElement).value='blue';document.querySelector<HTMLButtonElement>('#ui-ok')!.click();
  expect(app.frames.find(f=>f.type==='ui_response')).toMatchObject({id:'q1',value:'blue'});emit({type:'run_completed',status:'completed'},7);
- await vi.advanceTimersByTimeAsync(50);expect(document.querySelector('#thread')?.textContent).toContain('native content');expect(document.querySelector('#thread')?.textContent).not.toContain('HelloHello');
+ await vi.advanceTimersByTimeAsync(50);const nativeTool=document.querySelector<HTMLDetailsElement>('#thread .tool')!;nativeTool.open=true;nativeTool.dispatchEvent(new Event('toggle'));expect(document.querySelector('#thread')?.textContent).toContain('native content');expect(document.querySelector('#thread')?.textContent).not.toContain('HelloHello');
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='one turn';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);expect(document.querySelector('#thread')?.textContent).toContain('不会自动重发');
@@ -1116,17 +1116,21 @@ it.each(['diff','args'])('keeps oversized authoritative tool %s expandable and o
   args:field==='args'?{path:'a.ts',content:evidence}:{path:'a.ts'},diff:field==='diff'?evidence:undefined};
  socket.receive({type:'opened',sessionId:'large-history',engine:'pi',state:{isStreaming:false}});
  socket.receive({type:'history',sessionId:'large-history',entries:[tool]});
- const node=document.querySelector<HTMLElement>('[data-preview-kind="tool"]')!;
- expect(node.textContent).toContain('evidence-start');
- expect(node.textContent).not.toContain('evidence-end');
- expect(node.querySelector('.body')!.textContent!.length).toBeLessThanOrEqual(8192);
- expect(node.classList.contains('failure')).toBe(true);
- expect(node.textContent).toContain('错误');
- node.querySelector<HTMLButtonElement>('button')!.click();
+ const node=document.querySelector<HTMLDetailsElement>('#thread .tool')!;
+ expect(node.open).toBe(false);expect(node.classList.contains('error')).toBe(true);
+ node.open=true;node.dispatchEvent(new Event('toggle'));
+ const source=node.querySelector<HTMLSelectElement>('.tool-source-select')!;
+ source.value=field==='diff'?'修改':'写入内容';source.dispatchEvent(new Event('change'));
  expect(node.textContent).toContain('evidence-end');
- expect(node.textContent).toContain('a.ts');
+ expect(node.querySelector('.tool-bounded-content')!.textContent!.length).toBeLessThanOrEqual(8192+300);
+ node.querySelector<HTMLButtonElement>('[data-text-page="previous"]')!.click();
+ expect(node.textContent).toContain('evidence-start');
+ node.querySelector<HTMLButtonElement>('[data-text-page="latest"]')!.click();
+ expect(node.textContent).toContain('evidence-end');
+ source.value='输出';source.dispatchEvent(new Event('change'));
  expect(node.textContent).toContain('Permission denied');
- expect(node.querySelector('button')).toBeNull();
+ source.value='参数摘要';source.dispatchEvent(new Event('change'));
+ expect(node.textContent).toContain('a.ts');
  expect(node.querySelector('img')).toBeNull();
  // Inspect the public persistent-store boundary, not controller internals.
  // @ts-expect-error browser module
@@ -1160,7 +1164,8 @@ it('preserves authoritative tool evidence when paging into earlier history witho
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const saved=new ConversationPreviewStore().get('owner','earlier-tools');
  await vi.advanceTimersByTimeAsync(200);
- expect((await saved).entries[0]).toEqual({kind:'tool',text:'edit\nFailed edit'});
+ const preview=await saved;expect(preview.entries).toHaveLength(40);expect(preview.entries[0]).toEqual({kind:'user',text:'Later message 0'});
+ expect(JSON.stringify(preview)).not.toContain('earlier-patch');expect(JSON.stringify(preview)).not.toContain('earlier.ts');
 });
 
 it('bounds authoritative history to forty recent messages and pages older messages in order',async()=>{

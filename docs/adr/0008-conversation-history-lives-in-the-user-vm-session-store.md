@@ -34,3 +34,12 @@ plain-text display snapshots in page memory and IndexedDB, following the
 This changes browser display caching only. It does not add a Control Plane
 transcript store, change Session lifetime, or make cached text a recovery source
 for native Agent execution.
+
+## 2026-10-03 amendment: durable derived display index
+
+[ADR-0024](./0024-durable-display-index.md) permits a rebuildable, user-scoped
+Host display index inside the User VM and negotiated bounded v2 synchronization.
+Native Transcript/Model Context remain authoritative; Web/Control Plane does not
+persist content. Read-only prefetch never resumes a native session, and an index
+never proves prompt delivery. Legacy explicit open remains the compatibility path
+for unsupported/unverified source formats.
