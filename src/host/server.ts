@@ -1,3 +1,4 @@
+import type {GitHubAccounts} from './github-accounts.js';
 import {takeoverId,type TakeoverState} from "./takeover.js";
 
 import type { RunnerManager } from "./runners.js";
@@ -43,6 +44,7 @@ export interface UserScope {
   workdir?: string;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  githubAccounts?: GitHubAccounts;
   runners?: RunnerManager;
   sshme?: RunnerManager;
 }
@@ -72,6 +74,7 @@ export interface HostServerOptions {
   transfer?: TransferServer;
   workspaces?: Workspaces;
   skills?: SkillManagerOptions;
+  githubAccounts?: GitHubAccounts;
   runners?: RunnerManager;
   sshme?: RunnerManager;
 
@@ -90,6 +93,7 @@ interface UserSlot {
   broadcastTimer?: ReturnType<typeof setTimeout>;
   workspaces?: Workspaces;
   skills?: SkillManager;
+  githubAccounts?: GitHubAccounts;
   runners?: RunnerManager;
   sshme?: RunnerManager;
   lifecycleLocks: Set<string>;
@@ -130,6 +134,7 @@ export class HostServer {
   private readonly workspaces?: Workspaces;
   private execution?:ExecutionCapability;
   private readonly skillsOptions?: SkillManagerOptions;
+  private readonly githubAccounts?: GitHubAccounts;
   private readonly runners?: RunnerManager;
   private readonly sshme?: RunnerManager;
 
@@ -146,6 +151,7 @@ export class HostServer {
     this.sharedSkillOwner = options.sharedSkillOwner;
     this.workspaces = options.workspaces;
     this.skillsOptions = options.skills;
+    this.githubAccounts=options.githubAccounts;
     this.runners = options.runners; this.sshme = options.sshme;
     this.registryOptions = {
 
@@ -196,6 +202,12 @@ export class HostServer {
       try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover)}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
+    }
+    if(req.url === '/api/github-accounts') {
+      if(!slot.githubAccounts){json(res,404,{error:'GitHub account management is unavailable'});return;}
+      if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
+      try {json(res,200,await slot.githubAccounts.handle(await readJson(req)));}
+      catch {json(res,409,{error:'GitHub authorization failed; check the account or reconnect it'});}return;
     }
     if(req.url === "/api/runners" || req.url === "/api/sshme") {
       const manager=req.url === "/api/sshme" ? slot.sshme : slot.runners;
@@ -248,6 +260,17 @@ export class HostServer {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
       const input=await readJson(req);
+      if(input.action==='github_bind'){
+        const ids=(await ws.list()).conversations.filter(c=>c.projectId===input.projectId).map(c=>c.id);
+        if(ids.some(id=>slot.lifecycleLocks.has(id)))throw new Error('Project lifecycle operation in progress');
+        for(const id of ids)slot.lifecycleLocks.add(id);
+        try {
+          for(const id of ids){const live=slot.registry.get(id);if(live){if(live.isBusy)throw new Error('Finish running tasks before binding');const state=await live.backgroundState();if(!state.known||state.active)throw new Error('Background work is active or unknown');}}
+          const result=await ws.bindGitHubProject(input.projectId,input.accountId);
+          for(const id of ids){await slot.registry.stopIdle(id);for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();}
+          json(res,200,result);
+        }finally{for(const id of ids)slot.lifecycleLocks.delete(id);}return;
+      }
       if(input.action==='takeover'){
         const id=input.id;
         if(typeof id!=='string'||input.acceptDrift!==true||!['pi','codex'].includes(input.engine)||!['pi','codex'].includes(input.expectedEngine))throw new Error('Confirm context drift and select Pi or Codex');
@@ -333,8 +356,8 @@ export class HostServer {
         case "discover": result=await ws.discover();break;
         case "gitea_repos": result=await ws.giteaRepositories();break;
         case "gitea_project": result=await ws.registerGiteaProject(input.repository);break;
-        case "github_repos": result=await ws.githubRepositories();break;
-        case "github_project": result=await ws.registerGitHubProject(input.repository);break;
+        case "github_repos": result=await ws.githubRepositories(input.accountId);break;
+        case "github_project": result=await ws.registerGitHubProject(input.repository,input.accountId);break;
         case "project": result=await ws.createProject(input.name,input.url);break;
         case "bind_project": result=await ws.bindProjectRepository(input.projectId,input.repoUrl,input.repoId,input.webUrl);break;
         case "import": {
@@ -390,9 +413,9 @@ export class HostServer {
     const created = (async (): Promise<UserSlot> => {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
-        : { factory: this.factory, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
+        : { factory: this.factory, githubAccounts:this.githubAccounts, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history),onRun:async(id,state,requestId)=>{await scope.workspaces!.markRun(id,state,requestId);}} : {}) });
-      const slot: UserSlot = { user, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, githubAccounts:scope.githubAccounts, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);

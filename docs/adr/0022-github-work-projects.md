@@ -36,3 +36,11 @@
 
 - **共享令牌，不做每用户 GitHub OAuth。** 这样实现和运维最简单，和现有 Gitea 令牌的模型一致。代价是 PR 作者都是令牌账号，令牌能看到的仓库对这个 Host 的所有用户可见。每个用户的 Project 列表仍然各自独立；需要区分作者时，再单独做 GitHub OAuth。
 - **写权限只核对，不代管 Git 凭据。** 令牌负责 API，VM Git 凭据负责传输，两者分开配置。添加仓库时用 `ls-remote` 当场验证传输，失败会给出配置提示，而不是等到创建任务时才失败。
+
+## Superseded authorization policy (2026-10-03)
+
+[User-scoped GitHub authorizations](../spec/github-accounts.md), Server #36,
+replaces the shared-token and VM-global Git credential paragraphs above. Gitea
+login may bind multiple GitHub accounts; projects/tasks select one explicitly.
+The preceding shared-token tradeoff remains historical, not the current production
+contract. Fork remains outside this change.

@@ -1,3 +1,4 @@
+import './github-env-probe.mjs';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";

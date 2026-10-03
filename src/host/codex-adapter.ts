@@ -65,6 +65,7 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
   /** Extra `codex app-server` arguments (e.g. `-c key=value`). */
   args?: string[];
   env?: Record<string, string>;
+  envForSession?:()=>Promise<Record<string,string>>;
   /** Where PI Coffee session ids that predate their Codex thread are remembered (keep it beside the session store, not in the agent's cwd). */
   mappingFile?: string;
   /** Stop the user's app-server after this long with no open session; 0 keeps it for the Host's lifetime. */
@@ -121,7 +122,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? [])];
     const env: Record<string, string | undefined> = {
-      ...nativeEnvironment(this.options.env),
+      ...nativeEnvironment({...this.options.env,...await this.options.envForSession?.()}),
       ...(this.options.codexHome === undefined ? {} : { CODEX_HOME: this.options.codexHome }),
     };
     const server = new CodexAppServer({
