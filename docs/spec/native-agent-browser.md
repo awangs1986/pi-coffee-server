@@ -167,7 +167,10 @@ Choosing a level is local draft state. A supported explicit choice survives a
 model switch; an incompatible choice resets to medium when available. Changing
 Agent or starting a new task resets to the default. First Send waits for catalog
 readiness, then model confirmation and any required `set_thinking` acknowledgement
-before sending the prompt. Unrelated or stale metadata is not an acknowledgement.
+before sending the prompt. Model confirmation requires the matching mutation ACK
+and its correlated model read with the requested model identity. Unrelated or
+stale metadata is not an acknowledgement.
 Failure or disconnect retains the text for explicit retry without automatic
-fallback delivery. Existing tasks keep their native selected effort when reopened.
+fallback delivery. Explicit reconnection, including cross-tab cache invalidation,
+clears abandoned setting requests and retains queued text without replay. Existing tasks keep their native selected effort when reopened.
 Claude controls continue to follow its native capabilities.
