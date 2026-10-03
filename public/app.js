@@ -92,6 +92,7 @@ let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
 let catalogRequest = null, draftModel = null, historyReady = false;
+let modelTarget=null,modelConfirmation=null;
 let draftThinking='medium',draftThinkingExplicit=false,thinkingToApply=null,thinkingPending=null;
 const thinkingLabel=level=>level==='medium'?'med':level;
 let entries = [], historyBatch=null;
@@ -1201,6 +1202,7 @@ async function whoAmI(epoch) {
   }
 }
 function revokeCachedIdentity(){
+  abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   opened=false;historyReady=false;connected=false;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
@@ -1323,6 +1325,7 @@ function renderProjectContext() {
 
 
 function connect() {
+  abandonPendingSettings();
   clearTimeout(reconnectTimer);
   abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   const epoch=++connectionEpoch;
@@ -1361,8 +1364,8 @@ function connectSocket() {
     abandonRenames();unconfirmedUiAnswers();
     abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);
     queuedRequests.clear();
-    restoreQueuedPrompt();
-    modelPending=null;thinkingPending=null;thinkingToApply=null;contextPending=null;
+    restoreQueuedPrompt();abandonPendingSettings();
+    contextPending=null;
     opened = false;
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
@@ -1477,7 +1480,13 @@ function handleFrame(frame, ws) {
       renderModels();refreshComposer();return;
     case 'models':
       if(frame.sessionId && frame.sessionId!==activeId)return;
-      models = frame;modelPending=null;
+      if(modelPending){
+        if(!modelConfirmation || frame.requestId!==modelConfirmation)return;
+        const confirmed=frame.current?.provider===modelTarget?.provider && frame.current?.id===modelTarget?.id;
+        modelPending=null;modelTarget=null;modelConfirmation=null;
+        if(!confirmed){thinkingToApply=null;restoreQueuedPrompt();toast('模型设置尚未得到确认，请重新选择');}
+      }
+      models = frame;
       if(thinkingToApply && !thinkingPending){
         const wanted=thinkingToApply;thinkingToApply=null;
         if(frame.thinkingLevels?.includes(wanted.level)){
@@ -1528,7 +1537,10 @@ function handleFrame(frame, ws) {
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
       if(frame.operation==='set_thinking'&&frame.requestId===thinkingPending){thinkingPending=null;refreshComposer();flushFirstPrompt();}
-      if (frame.operation === 'set_model' || frame.operation === 'set_thinking') send({ v: 1, type: 'get_models' });
+      if(frame.operation==='set_model'&&frame.requestId===modelPending){
+        modelConfirmation=requestId('model-state');send({v:1,type:'get_models',requestId:modelConfirmation});
+      }
+      if(frame.operation==='set_thinking')send({v:1,type:'get_models'});
       if(frame.operation==='set_context'&&frame.requestId===contextPending){contextPending=null;send({v:1,type:'get_stats'});}
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
@@ -1543,6 +1555,7 @@ function handleFrame(frame, ws) {
       return;
     case 'error':
       if(frame.code==='metadata_unavailable'){
+        if(modelConfirmation&&frame.requestId===modelConfirmation){abandonPendingSettings();toast('模型设置确认失败，输入已保留');refreshComposer();return;}
         if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令超时或失败';renderSlash();}
         if(frame.operation==='get_commands'){commandState='error';commandError='读取命令超时或失败';renderSlash();}
         if(frame.operation==='get_model_catalog'&&frame.requestId===catalogRequest){catalogRequest=null;refreshComposer();}
@@ -1559,7 +1572,7 @@ function handleFrame(frame, ws) {
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
       const rejectedPrompt=promptOutbox.get(frame.requestId);
       if(rejectedPrompt){rejectedPrompt.uncertain=true;rejectedPrompt.reason='请求返回错误：'+frame.code;renderUncertainPrompts();}
-      if(modelPending && frame.requestId===modelPending){modelPending=null;thinkingToApply=null;renderModels();refreshComposer();}
+      if(modelPending && frame.requestId===modelPending){modelPending=null;modelTarget=null;modelConfirmation=null;thinkingToApply=null;renderModels();refreshComposer();}
       // A transient native-open failure does not make the cached transcript invalid.
       // Identity, binding and lifecycle changes still invalidate it at their own boundaries.
       if(!opened&&pendingOpenId&&activeId&&frame.code!=='operation_failed')invalidatePreview(activeId);
@@ -2006,13 +2019,18 @@ ui.model.addEventListener('change', () => {
 });
 function chooseModel(provider,id) {
   if(!opened && draftModelEngine()){draftModel={provider,id};models={...models,current:draftModel};syncDraftThinking();renderModels();refreshComposer();return;}
-  modelPending=requestId('model');refreshComposer();
-  send({v:1,type:'set_model',requestId:modelPending,provider,id});
+  modelPending=requestId('model');modelTarget={provider,id};modelConfirmation=null;refreshComposer();
+  if(!send({v:1,type:'set_model',requestId:modelPending,provider,id})){abandonPendingSettings();refreshComposer();}
 }
 ui.modelSource.addEventListener('change',()=>{
   const next=models?.models.find(m=>(m.source || 'native')===ui.modelSource.value);
   if(next)chooseModel(next.provider,next.id);else renderModels();
 });
+function abandonPendingSettings(restore=true){
+  if(restore&&(modelPending||thinkingPending||thinkingToApply))restoreQueuedPrompt();
+  if(!restore){queuedPrompt=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;}
+  modelPending=null;modelTarget=null;modelConfirmation=null;thinkingPending=null;thinkingToApply=null;
+}
 function syncDraftThinking(){
   const model=selectedModelInfo(),levels=model?.thinkingLevels||[];
   if(!draftThinkingExplicit || !levels.includes(draftThinking)){

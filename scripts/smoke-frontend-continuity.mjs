@@ -31,7 +31,7 @@ wss.on('connection',ws=>{let effort='low';ws.on('message',raw=>{
  if(f.type==='open'){emit({type:'opened',sessionId:f.sessionId,engine:'pi',state:{}});emit({type:'history',sessionId:f.sessionId,entries:[{kind:'user',text:'Synthetic acceptance fixture'},{kind:'assistant',text:'Ready for a browser continuity check.'}]});}
  if(f.type==='get_commands')emit({type:'commands',commands:[{name:'work',description:'Work fixture'}]});
  if(f.type==='get_model_catalog')emit({type:'model_catalog',engine:'pi',requestId:f.requestId,models:[model],current:model,thinkingLevels:model.thinkingLevels,thinkingLevel:'low'});
- if(f.type==='get_models')emit({type:'models',models:[model],current:model,thinkingLevels:model.thinkingLevels,thinkingLevel:effort});
+ if(f.type==='get_models')emit({type:'models',requestId:f.requestId,models:[model],current:model,thinkingLevels:model.thinkingLevels,thinkingLevel:effort});
  if(f.type==='set_model')emit({type:'ack',operation:'set_model',requestId:f.requestId});
  if(f.type==='set_thinking'){effort=f.level;emit({type:'ack',operation:'set_thinking',requestId:f.requestId});}
  if(f.type==='prompt')prompts.push({text:f.text,effort});

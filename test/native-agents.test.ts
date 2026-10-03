@@ -319,7 +319,7 @@ it.each(['pi','codex'].flatMap(agent=>['history-first','models-first','rejected'
  expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
  if(order==='rejected'){ws.receive({type:'error',requestId:change.requestId,code:'operation_failed',message:'Model unavailable'});expect(app.frames.some(f=>f.type==='prompt')).toBe(false);expect(prompt.value).toBe('first message');return;}
  ws.receive({type:'ack',operation:'set_model',requestId:change.requestId});
- ws.receive({type:'models',models:[{provider:agent,id:'chosen-model'}],current:{provider:agent,id:'chosen-model'},thinkingLevels:[],thinkingLevel:''});
+ ws.receive({type:'models',requestId:app.frames.filter(f=>f.type==='get_models').at(-1).requestId,models:[{provider:agent,id:'chosen-model'}],current:{provider:agent,id:'chosen-model'},thinkingLevels:[],thinkingLevel:''});
  if(order==='models-first'){expect(app.frames.some(f=>f.type==='prompt')).toBe(false);ws.receive({type:'history',sessionId:id,entries:[]});}
  expect(app.frames.filter(f=>f.type==='prompt')).toEqual([expect.objectContaining({text:'first message'})]);
 });
@@ -350,7 +350,7 @@ it.each(['pi','codex'].flatMap(agent=>['default','high','rejected'].map(selectio
  const id=app.requests.find(r=>r.action==='conversation').id;
  ws.receive({type:'opened',engine:agent,sessionId:id,state:{},capabilities:{models:true}});ws.receive({type:'history',sessionId:id,entries:[]});
  const model=app.frames.find(f=>f.type==='set_model');ws.receive({type:'ack',operation:'set_model',requestId:model.requestId});
- ws.receive({type:'models',models:[{provider:agent,id:'reasoner'}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'low'});
+ ws.receive({type:'models',requestId:app.frames.filter(f=>f.type==='get_models').at(-1).requestId,models:[{provider:agent,id:'reasoner'}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'low'});
  const thinking=app.frames.find(f=>f.type==='set_thinking');expect(thinking).toMatchObject({level});
  expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
  if(selection==='rejected'){ws.receive({type:'error',requestId:thinking.requestId,code:'operation_failed',message:'Effort unavailable'});expect(prompt.value).toBe('first at high');expect(app.frames.some(f=>f.type==='prompt')).toBe(false);return;}
@@ -389,6 +389,34 @@ it('retains the first draft while model and effort discovery is still pending',a
  const app=await setup(false,false,true,true);const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Wait for model options';
  document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);expect(prompt.value).toBe('Wait for model options');
+});
+
+it('does not send the first prompt on stale model metadata before a rejected model choice',async()=>{
+ const app=await setup(false,false,true,true),ws=app.sockets.at(-1),query=app.frames.find(f=>f.type==='get_model_catalog');
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:'pi',models:[{provider:'pi',id:'wanted',thinkingLevels:['medium']}],current:{provider:'pi',id:'wanted'},thinkingLevels:['medium'],thinkingLevel:'medium'});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Only with wanted model';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;ws.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{models:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const model=app.frames.find(f=>f.type==='set_model');
+ ws.receive({type:'models',requestId:'older-read',models:[{provider:'pi',id:'old'}],current:{provider:'pi',id:'old'},thinkingLevels:['medium'],thinkingLevel:'medium'});
+ expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+ ws.receive({type:'error',requestId:model.requestId,code:'operation_failed',message:'Model rejected'});
+ expect(prompt.value).toBe('Only with wanted model');expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+});
+
+it('releases a pending effort change on cross-tab cache reconnection without replaying the prompt',async()=>{
+ const app=await setup(false,false,true,true),ws=app.sockets.at(-1),query=app.frames.find(f=>f.type==='get_model_catalog');
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:'pi',models:[{provider:'pi',id:'reasoner',thinkingLevels:['low','medium']}],current:{provider:'pi',id:'reasoner'},thinkingLevels:['low','medium'],thinkingLevel:'low'});
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Retain this request';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;ws.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{models:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const model=app.frames.find(f=>f.type==='set_model');ws.receive({type:'ack',operation:'set_model',requestId:model.requestId});
+ const metadata={type:'models',models:[{provider:'pi',id:'reasoner'}],current:{provider:'pi',id:'reasoner'},thinkingLevels:['low','medium'],thinkingLevel:'low'};
+ ws.receive({...metadata,requestId:app.frames.filter(f=>f.type==='get_models').at(-1).requestId});
+ expect(app.frames.find(f=>f.type==='set_thinking')).toMatchObject({level:'medium'});
+ window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'cache:fixture'}));await vi.advanceTimersByTimeAsync(20);
+ const next=app.sockets.at(-1);expect(next).not.toBe(ws);
+ next.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{models:true}});next.receive({type:'history',sessionId:id,entries:[]});next.receive(metadata);
+ expect(prompt.value).toBe('Retain this request');expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+ expect(app.frames.filter(f=>f.type==='set_thinking')).toHaveLength(1);expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
 });
 
 it('locks draft model controls while explicit task creation is in flight',async()=>{
