@@ -26,6 +26,9 @@ import {
 } from "./pi-adapter.js";
 import { CodexAppServer, type Json, type Obj, type PendingServerRequest } from "./codex/rpc.js";
 import { countMessages, projectTurns, toIso, toolCallOf, toolResultOf, toUserInput } from "./codex/translate.js";
+import { readCodexHistory } from "./codex/history.js";
+import { unknownHistory } from "./native/history-source.js";
+import type { AgentHistoryRead } from "./agent-adapter.js";
 
 export { projectTurns } from "./codex/translate.js";
 
@@ -110,6 +113,19 @@ export class CodexSessionFactory implements PiSessionFactory {
   /** Whether this user's app-server process is currently up (diagnostics and tests). */
   get serverRunning(): boolean {
     return this.server?.alive === true;
+  }
+
+  async readHistory(sessionId: string): Promise<AgentHistoryRead> {
+    // Re-read the durable mapping: another Host or an external binding update
+    // must not be hidden behind the execution factory's in-memory cache.
+    let nativeId = sessionId;
+    try {
+      const mapping = JSON.parse(await readFile(this.mappingFile, "utf8"));
+      if (typeof mapping?.[sessionId] === "string") nativeId = mapping[sessionId];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return unknownHistory(`codex:${sessionId}`);
+    }
+    return readCodexHistory(this.options, nativeId);
   }
 
   private async connection(): Promise<CodexAppServer> {
@@ -841,7 +857,7 @@ class CodexSession implements PiSession {
       }
       case "item/agentMessage/delta":
         if (typeof params.itemId === "string") this.streamedItems.add(params.itemId);
-        this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: String(params.delta ?? "") } });
+        this.emit({ type: "message_update", id: params.itemId, assistantMessageEvent: { type: "text_delta", delta: String(params.delta ?? "") } });
         return;
       case "item/reasoning/textDelta":
       case "item/reasoning/summaryTextDelta":
@@ -938,24 +954,27 @@ class CodexSession implements PiSession {
     switch (item.type) {
       case "userMessage":
         this.messageCount += 1;
+        for (const entry of projectTurns([{ items: [item] }])) this.emit({ type: "sync_entity", entry });
         return;
       case "agentMessage": {
         const text = typeof item.text === "string" ? item.text : "";
         // Older servers (or opted-out deltas) deliver the message only here.
         if (!this.streamedItems.has(item.id) && text.length > 0) {
-          this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } });
+          this.emit({ type: "message_update", id: item.id, assistantMessageEvent: { type: "text_delta", delta: text } });
         }
         this.streamedItems.delete(item.id);
         this.messageCount += 1;
-        this.emit({ type: "message_end", message: { role: "assistant" } });
+        this.emit({ type: "message_end", id: item.id, text, message: { role: "assistant" } });
         return;
       }
       case "plan": {
         const text = typeof item.text === "string" ? item.text : "";
+        for (const entry of projectTurns([{ items: [item] }])) this.emit({ type: "sync_entity", entry });
         if (text.trim().length > 0) this.emit({ type: "message_end", message: { role: "custom", display: true, content: [{ type: "text", text }] } });
         return;
       }
       case "contextCompaction":
+        for (const entry of projectTurns([{ items: [item] }])) this.emit({ type: "sync_entity", entry });
         if(this.compactionPending)this.compactionPending.observed=true;
         this.emit({ type: "compaction_end" });
         return;

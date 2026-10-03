@@ -1,4 +1,6 @@
 import type {GitHubAccounts} from './github-accounts.js';
+import {join} from "node:path";
+import {ConversationIndex,ConversationIndexError} from "./conversation-index.js";
 import {takeoverId,type TakeoverState} from "./takeover.js";
 
 import type { RunnerManager } from "./runners.js";
@@ -82,6 +84,9 @@ export interface HostServerOptions {
   externalPollMs?: number;
   /** Deadline for auxiliary native reads; they never occupy the task command queue. */
   metadataTimeoutMs?: number;
+  /** Durable display index; defaults to the user workspace metadata directory. */
+  conversationIndexRoot?: string;
+  syncProtocolV2?: boolean;
 }
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
@@ -90,6 +95,7 @@ interface UserSlot {
   workdir?: string;
   factory: PiSessionFactory;
   registry: HostSessionRegistry;
+  index?: ConversationIndex;
   broadcastTimer?: ReturnType<typeof setTimeout>;
   workspaces?: Workspaces;
   skills?: SkillManager;
@@ -131,14 +137,19 @@ export class HostServer {
   private closing = false;
   private closePromise?: Promise<void>;
   private readonly apiOperations = new Set<Promise<void>>();
+  private readonly backgroundOperations = new Set<Promise<unknown>>();
   private readonly workspaces?: Workspaces;
   private execution?:ExecutionCapability;
   private readonly skillsOptions?: SkillManagerOptions;
   private readonly githubAccounts?: GitHubAccounts;
   private readonly runners?: RunnerManager;
   private readonly sshme?: RunnerManager;
+  private readonly conversationIndexRoot?:string;
+  private readonly syncV2Enabled:boolean;
 
   constructor(options: HostServerOptions) {
+    this.conversationIndexRoot=options.conversationIndexRoot;
+    this.syncV2Enabled=options.syncProtocolV2??process.env.PI_COFFEE_SYNC_V2!=="off";
     this.factory = options.factory;
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 8788;
@@ -185,7 +196,7 @@ export class HostServer {
       const slot = this.slotFor(user);
       const hostSocket = new HostSocket(socket, slot, this.transfer, (scope, sessionId) => {
         this.transferTargets.set(scope, { slot, sessionId });
-      }, options.metadataTimeoutMs ?? 10000);
+      }, options.metadataTimeoutMs ?? 10000,this.syncV2Enabled,work=>this.trackBackground(work));
       this.sockets.add(hostSocket);
       hostSocket.onClose = () => this.sockets.delete(hostSocket);
     });
@@ -197,6 +208,26 @@ export class HostServer {
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    const readUrl=new URL(req.url??'/', 'http://host');
+    const syncRoute=/^\/api\/conversations\/([^/]+)\/(meta|page|changes|content|commands)$/.exec(readUrl.pathname);
+    if(syncRoute){
+      res.setHeader('cache-control','no-store');
+      if(req.method!=='GET'){json(res,405,{error:'Use GET'});return;}
+      if(!slot.index||!this.syncV2Enabled){json(res,503,{error:'sync_unavailable'});return;}
+      try {
+        const id=decodeURIComponent(syncRoute[1]);if(!id||id.length>256||/[\/\\\x00]/.test(id)){json(res,400,{error:'invalid_conversation'});return;}
+        if(slot.workspaces && ((!await slot.workspaces.lookup(id)&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
+        const args=Object.fromEntries(readUrl.searchParams);if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
+        let value:unknown;
+        if(syncRoute[2]==='meta')value=await slot.index.meta(id);
+        else if(syncRoute[2]==='page')value=await slot.index.page(id,args);
+        else if(syncRoute[2]==='changes')value=await slot.index.changes(id,args);
+        else if(syncRoute[2]==='commands')value=await slot.index.commands(id,args);
+        else value=await slot.index.content(id,args);
+        json(res,200,value);
+      }catch(error){const code=error instanceof ConversationIndexError?error.code:'index_unavailable';json(res,['reset_required','entity_changed','entity_deleted','conversation_deleted'].includes(code)?409:code.startsWith('invalid')||code==='limit_too_small'?400:503,{error:code,...(error instanceof ConversationIndexError?error.meta:{})});}
+      return;
+    }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
     if(req.url === "/api/engines" && req.method === "GET") {
       try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
@@ -419,6 +450,7 @@ export class HostServer {
             if(input.id!==input.confirmation || !await ws.isArchived(input.id))throw new Error("Archive and confirm the exact conversation ID first");
             await slot.registry.delete(input.id);await ws.archiveLegacy(input.id,false);result={ok:true,retained:["legacy workspace","uploads"]};
           }
+          await slot.index?.remove(input.id);
           break;
         }
         default: throw new Error("Unknown workspace action");
@@ -441,13 +473,15 @@ export class HostServer {
       const scope: UserScope = user !== undefined && this.scopeForUser !== undefined
         ? await this.scopeForUser(user)
         : { factory: this.factory, githubAccounts:this.githubAccounts, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, ...(scope.workspaces ? {onHistory:(id,history)=>scope.workspaces!.exportHistory(id,history),onRun:async(id,state,requestId)=>{await scope.workspaces!.markRun(id,state,requestId);}} : {}) });
-      const slot: UserSlot = { user, githubAccounts:scope.githubAccounts, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
+      const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, onEvent:(id,event)=>index?.event(id,event),onCommand:index?(id,requestId,state,mode)=>index.command(id,requestId,state,mode):undefined, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
+      const slot: UserSlot = { user, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
-        if(session?.wasInterrupted) void slot.workspaces?.markRun(session.id,"interrupted").catch(()=>undefined);
-        void slot.workspaces?.settleRuns(id=>registry.get(id)?.wasInterrupted ? undefined : registry.get(id)?.isBusy).catch(()=>undefined);
+        if(session?.wasInterrupted&&slot.workspaces) void this.trackBackground(slot.workspaces.markRun(session.id,"interrupted")).catch(()=>undefined);
+        if(slot.workspaces)void this.trackBackground(slot.workspaces.settleRuns(id=>registry.get(id)?.wasInterrupted ? undefined : registry.get(id)?.isBusy)).catch(()=>undefined);
       });
       return slot;
     })();
@@ -464,9 +498,15 @@ export class HostServer {
     return pending;
   }
 
+  private trackBackground<T>(work:Promise<T>):Promise<T> {
+    this.backgroundOperations.add(work);
+    void work.then(()=>this.backgroundOperations.delete(work),()=>this.backgroundOperations.delete(work));
+    return work;
+  }
+
   private broadcastSessions(slot: UserSlot): void {
-    if (slot.broadcastTimer !== undefined) return;
-    slot.broadcastTimer = setTimeout(async () => {
+    if (this.closing || slot.broadcastTimer !== undefined) return;
+    slot.broadcastTimer = setTimeout(() => {void this.trackBackground((async () => {
       slot.broadcastTimer = undefined;
       const targets = [...this.sockets].filter((socket) => socket.user === slot.user);
       if (targets.length === 0) return;
@@ -476,7 +516,7 @@ export class HostServer {
       } catch {
         // Listing is best-effort; the browser can still ask explicitly.
       }
-    }, 150);
+    })());}, 150);
   }
 
   async start(): Promise<void> {
@@ -549,6 +589,15 @@ export class HostServer {
     for (const slot of slots) {
       if (slot.status !== "fulfilled") continue;
       await slot.value.registry.close();
+    }
+    // Detaching a browser does not cancel a started open, metadata read or
+    // workspace bookkeeping callback. Stop native sessions first so their RPCs
+    // can settle, then drain those owned operations before releasing the index.
+    // Native model-turn promises are owned by the sessions, never this queue.
+    while(this.backgroundOperations.size)await Promise.allSettled([...this.backgroundOperations]);
+    for (const slot of slots) {
+      if (slot.status !== "fulfilled") continue;
+      await slot.value.index?.close();
       await slot.value.factory.close?.().catch(() => undefined);
     }
     this.wsServer.close();
@@ -600,11 +649,15 @@ class HostSocket implements SessionSink {
   private listing=false;
   private readonly metadataReads=new Map<string,Promise<ServerFrame>>();
   private metadataEpoch=0;
+  private syncProtocol?:2;
+  private bindingEpoch?:string;
+  private index?:ConversationIndex;
   private messageQueue: Promise<void>;
+  private urgentControls=0;
   onClose: () => void = () => undefined;
 
 
-  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void, private readonly metadataTimeoutMs=10000) {
+  constructor(socket: WebSocket, slot: Promise<UserSlot>, transfer?: TransferServer, private readonly registerTransfer?: (scope: string, sessionId: string) => void, private readonly metadataTimeoutMs=10000,private readonly syncV2Enabled=true,private readonly trackOperation:(work:Promise<unknown>)=>void=()=>undefined) {
 
     this.socket = socket;
     this.slot = slot;
@@ -613,7 +666,7 @@ class HostSocket implements SessionSink {
     // race its own registry creation.
     this.messageQueue = this.slot.then((resolved) => {
       this.user = resolved.user;
-      this.registry = resolved.registry;
+      this.registry = resolved.registry;this.index=resolved.index;
       this.factory=resolved.factory;
       this.workdir = resolved.workdir;
       this.workspaces = resolved.workspaces;
@@ -623,7 +676,23 @@ class HostSocket implements SessionSink {
       this.close();
     });
     socket.on("message", (data) => {
-      this.messageQueue = this.messageQueue.then(() => this.handleMessage(data)).catch(() => undefined);
+      if(this.closed)return;
+      let decoded:ClientFrame|undefined;
+      const receivedGeneration=this.session?.commandGeneration;
+      // Stop and pending answers must not queue behind durable prompt acceptance.
+      // The normal handler still enforces identity, lifecycle and pending-request checks.
+      if(this.opened&&!this.closed){
+        try {
+          const frame=decodeClientFrame(rawDataToBytes(data));decoded=frame;
+          if(frame.type==='abort'||frame.type==='ui_response'){
+            if(this.urgentControls>=16){this.send({v:1,type:'error',code:'control_busy',message:'Too many pending control requests',...rid(frame)});return;}
+            this.urgentControls++;
+            this.trackOperation(this.handleMessage(data,frame).finally(()=>{this.urgentControls--;}));return;
+          }
+        }catch{/* The ordered decoder reports malformed input consistently. */}
+      }
+      this.messageQueue = this.messageQueue.then(() => this.handleMessage(data,decoded,receivedGeneration)).catch(() => undefined);
+      this.trackOperation(this.messageQueue);
     });
     socket.on("close", () => void this.detach());
     socket.on("error", () => void this.detach());
@@ -632,6 +701,10 @@ class HostSocket implements SessionSink {
   get sessionId():string|undefined {return this.session?.id;}
 
   send(frame: ServerFrame): void {
+    if(frame.type==='sync_changed'&&this.syncProtocol!==2)return;
+    if(frame.type==='sync_changed'&&this.bindingEpoch&&frame.bindingEpoch!==this.bindingEpoch){this.send({v:1,type:'error',code:'binding_changed',message:'Conversation binding changed. Reopen to continue.',fatal:true});this.close();return;}
+    if(this.syncProtocol===2&&this.session&&this.bindingEpoch)frame={...frame,conversationId:this.session.id,bindingEpoch:this.bindingEpoch};
+    if(this.syncProtocol===2&&frame.type==='event'&&frame.event&&typeof frame.event==='object'&&!Array.isArray(frame.event)&&['sync_entity','message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(String(frame.event.type)))return;
     if (this.closed || this.socket.readyState !== WebSocket.OPEN) return;
     try {
       this.socket.send(encodeFrame(frame));
@@ -656,6 +729,7 @@ class HostSocket implements SessionSink {
       if(this.metadataReads.size>=16){this.send({v:1,type:'error',code:'metadata_unavailable',operation:frame.type,message:'Too many pending metadata reads',...rid(frame)});return;}
       let timer:ReturnType<typeof setTimeout>;
       const work=Promise.resolve().then(run);
+      this.trackOperation(work);
       read=Promise.race([work,new Promise<never>((_,reject)=>{
         timer=setTimeout(()=>reject(new Error('Auxiliary Agent read timed out')),this.metadataTimeoutMs);timer.unref();
       })]);
@@ -671,11 +745,11 @@ class HostSocket implements SessionSink {
     });
   }
 
-  private async handleMessage(data: RawData): Promise<void> {
+  private async handleMessage(data: RawData,decoded?:ClientFrame,receivedGeneration?:number): Promise<void> {
     if (this.closed || this.registry === undefined) return;
     let frame: ClientFrame;
     try {
-      frame = decodeClientFrame(rawDataToBytes(data));
+      frame = decoded??decodeClientFrame(rawDataToBytes(data));
     } catch (error) {
       this.send({
         v: 1,
@@ -689,6 +763,10 @@ class HostSocket implements SessionSink {
     }
 
     try {
+      if(frame.type==='prompt'&&receivedGeneration!==undefined)this.session?.assertCommandGeneration(receivedGeneration);
+      if(this.syncProtocol===2&&this.session&&!['open','list_sessions','close'].includes(frame.type)){
+        if(frame.conversationId!==this.session.id||frame.bindingEpoch!==this.bindingEpoch)throw new Error('Conversation identity changed; reopen before sending this command');
+      }
       if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
@@ -698,7 +776,7 @@ class HostSocket implements SessionSink {
           // Allowed before open: the sidebar needs the list to choose from.
           if(!this.listing){
             this.listing=true;
-            void this.registry.list().then(sessions=>this.send({v:1,type:"sessions",sessions}),()=>this.send({v:1,type:"error",code:"list_unavailable",message:"Conversation list is temporarily unavailable; the current task remains connected",...rid(frame)})).finally(()=>{this.listing=false;});
+            this.trackOperation(this.registry.list().then(sessions=>this.send({v:1,type:"sessions",sessions}),()=>this.send({v:1,type:"error",code:"list_unavailable",message:"Conversation list is temporarily unavailable; the current task remains connected",...rid(frame)})).finally(()=>{this.listing=false;}));
           }
           break;
         case "delete_session":
@@ -713,6 +791,7 @@ class HostSocket implements SessionSink {
             this.session = undefined;
             this.opened = false;
           }
+          await this.index?.remove(frame.sessionId);
           this.send({ v: 1, type: "ack", operation: "delete_session", ...rid(frame) });
           break;
         case "rename_session":
@@ -827,7 +906,7 @@ class HostSocket implements SessionSink {
       this.send({
         v: 1,
         type: "error",
-        code: error instanceof SessionBusyError
+        code: error instanceof ConversationIndexError ? error.code : error instanceof SessionBusyError
           ? "busy"
           : error instanceof NotOpenError
             ? "not_open"
@@ -854,11 +933,21 @@ class HostSocket implements SessionSink {
     const sessionId = frame.sessionId ?? randomUUID();
     const capabilities = await this.factory.capabilities?.(sessionId) ?? capabilitiesFor(engine);
     if (this.closed) return;
-    const result = await this.registry.open(sessionId, frame.after);
+    let syncPage:any;
+    let useSync=frame.syncProtocol===2&&this.syncV2Enabled&&Boolean(this.index);
+    if(useSync){
+      syncPage=await this.index!.page(sessionId);
+      // V2 enrollment requires one successful native source verification. Older
+      // unsupported formats retain the readable legacy open instead of an empty v2 body.
+      if(!syncPage.lastSourceCheckAt){useSync=false;syncPage=undefined;}
+    }
+    if(this.closed)return;
+    this.syncProtocol=useSync?2:undefined;
+    const result = useSync ? await (async()=>{const session=await this.registry.connect(sessionId);syncPage=await this.index!.page(sessionId);return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},replay:[] as ServerFrame[],resync:undefined};})() : await this.registry.open(sessionId, frame.after);
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
     this.metadataEpoch++;
-    this.session = result.session;
+    this.session = result.session;this.bindingEpoch=syncPage?.bindingEpoch;
     this.opened = true;
     const state = result.session.currentState;
     // Attach before replaying. No await occurs between these operations, so a
@@ -867,13 +956,15 @@ class HostSocket implements SessionSink {
     this.send({
       v: 1,
       type: "opened",
+      ...(syncPage?{syncProtocol:2 as const,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision}:{}),
       engine,
       capabilities,
       sessionId: result.session.id,
       cursor: result.session.currentCursor,
       state,
     });
-    this.send(boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId));
+    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId));
+    if(syncPage)this.index!.scheduleAudit(sessionId,true);
 
     if (result.resync) {
       this.send({
@@ -916,21 +1007,25 @@ class HostSocket implements SessionSink {
   }
 
   private async prompt(frame: Extract<ClientFrame, { type: "prompt" }>): Promise<void> {
+    const originSession=this.session,originGeneration=originSession?.commandGeneration;
     if(this.workspaces && this.session && await this.workspaces.isArchived(this.session.id)) throw new Error("Restore the archived conversation first");
     if(this.session && this.lifecycleLocks.has(this.session.id))throw new Error("Conversation lifecycle operation in progress");
     if (!this.session || !this.opened) throw new NotOpenError();
     if(await this.workspaces?.lookup(this.session.id))await this.workspaces!.cwd(this.session.id);
+    if(originSession&&originGeneration!==undefined)originSession.assertCommandGeneration(originGeneration);
     if (frame.mode === "steer" || frame.mode === "follow_up") {
       // Follow-ups remain editable in the Host until native delivery; steering is native.
       // If nothing is running, treat it as a plain prompt so the message is
       // never silently parked.
       if (this.session.isStreaming) {
-        // The ack accepts the request; queue_state/native events report delivery.
-        this.send({ v: 1, type: "ack", operation: frame.mode, requestId: frame.requestId });
+        // Durable acceptance precedes ACK; native/queue events still follow it.
+        await this.session.acceptCommand(frame.requestId,frame.mode);
+        this.send({v:1,type:"ack",operation:frame.mode,requestId:frame.requestId});
         const engine=(await this.workspaces?.lookup(this.session.id))?.engine??'pi';
         const capabilities=await this.factory.capabilities?.(this.session.id)??capabilitiesFor(engine);
         if(frame.mode==='follow_up'&&!capabilities.followUp)throw new Error('Queueing unavailable for this Agent');
-        await this.session.enqueue(frame.mode, frame.text, frame.images);
+        if(originSession&&originGeneration!==undefined)originSession.assertCommandGeneration(originGeneration);
+        await this.session.enqueue(frame.mode, frame.text, frame.images,frame.requestId,true);
         return;
       }
     }
