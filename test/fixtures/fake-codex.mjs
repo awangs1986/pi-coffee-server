@@ -1,3 +1,4 @@
+import './github-env-probe.mjs';
 // External native CLI fixture: speaks the documented App Server JSONL seam.
 import { createInterface } from 'node:readline';
 import { readFile, writeFile } from 'node:fs/promises';

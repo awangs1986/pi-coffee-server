@@ -28,6 +28,7 @@
               <button id="show-archive" class="brand-menu-item" type="button" role="menuitem">归档对话</button>
               <button id="skills-btn" class="brand-menu-item" type="button" role="menuitem">Skills</button>
               <div class="brand-menu-label">设置</div>
+              <button id="github-accounts-btn" class="brand-menu-item" type="button" role="menuitem">代码托管账号</button>
               <button id="runners-btn" class="brand-menu-item" type="button" role="menuitem">配置测试服务器</button>
               <button class="brand-menu-item" id="show-groups" type="button" role="menuitemcheckbox" aria-checked="true"><span class="group-check" aria-hidden="true">✓</span><span>显示分组</span></button>
               <button class="brand-menu-item theme-toggle" id="theme-toggle" type="button" role="menuitem" aria-pressed="false">
@@ -235,7 +236,7 @@
                 <button id="project-create" class="strip-btn ghost hidden" type="button" aria-label="新建 Gitea 项目" aria-expanded="false">＋ 新建项目</button>
                 <div id="project-create-menu" class="review-scope-menu create-menu hidden" role="menu" aria-label="新建或添加项目">
                   <button id="project-create-gitea" class="review-scope-option" type="button" role="menuitem"><span class="review-scope-text"><strong>新建 Gitea 项目</strong><small>创建私有 Gitea 仓库</small></span></button>
-                  <button id="project-create-github" class="review-scope-option" type="button" role="menuitem"><span class="review-scope-text"><strong>添加 GitHub 仓库</strong><small>从 Host 令牌可访问的仓库中选择</small></span></button>
+                  <button id="project-create-github" class="review-scope-option" type="button" role="menuitem"><span class="review-scope-text"><strong>添加 GitHub 仓库</strong><small>选择已绑定 GitHub 账号的仓库</small></span></button>
                 </div>
               </span>
               <span class="context-sep" aria-hidden="true"></span>
@@ -351,6 +352,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>
+        <label id="github-account-row" hidden>GitHub 账号 <select id="github-account-select" aria-label="GitHub 账号"></select> <button id="github-account-manage" class="btn small" type="button">管理账号</button></label>
         <input id="github-search" type="search" autocomplete="off" spellcheck="false" placeholder="搜索仓库，或粘贴 owner/repo、仓库 URL" aria-label="搜索 GitHub 仓库" aria-controls="github-list" />
         <div class="github-list" id="github-list" role="listbox" aria-label="GitHub 仓库"></div>
         <div class="stats-note">任务分支 <code>coffee/…</code> 会推送到所选仓库，PR 也在所选平台上创建。需要 Host 令牌有写权限，VM 的 Git 能 clone/push 该仓库。</div>
@@ -393,6 +395,14 @@
 
     <script type="module" src="/app.js"></script>
 
+    <dialog id="github-accounts-dialog" class="runners-dialog" aria-labelledby="github-accounts-title">
+      <div class="runner-heading"><h2 id="github-accounts-title">代码托管账号</h2><button id="github-accounts-close" class="icon-btn" type="button" aria-label="关闭账号管理">✕</button></div>
+      <p class="runner-help">使用 Gitea 登录 PI Coffee，在这里连接个人或工作 GitHub 账号。账号只供当前用户使用。</p>
+      <div id="github-accounts-list"></div>
+      <label id="github-legacy-row" class="runner-help" hidden><select id="github-legacy-project" aria-label="尚未绑定的旧项目"></select>旧项目必须手动绑定；请先结束其正在运行的任务。</label>
+      <p id="github-accounts-status" class="runner-help" role="status"></p>
+      <div class="runner-form-foot"><button id="github-accounts-refresh" class="btn small" type="button">刷新</button><button id="github-connect" class="btn small primary" type="button">连接 GitHub 账号</button></div>
+    </dialog>
     <dialog id="takeover-dialog" class="runners-dialog" aria-labelledby="takeover-title">
       <div class="runner-heading"><h2 id="takeover-title">切换 Agent</h2></div>
       <p id="takeover-target"></p>

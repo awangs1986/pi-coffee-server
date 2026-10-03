@@ -1,3 +1,4 @@
+import type {GitHubAccounts} from './github-accounts.js';
 import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
@@ -12,9 +13,9 @@ import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 /** `forge` is absent on Gitea Projects registered before GitHub support (ADR-0022). */
 export type ProjectForge = "gitea" | "github";
-export interface Project { id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
+export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation {takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -32,7 +33,7 @@ export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
 export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface WorkspaceOptions { githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
 export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
@@ -92,6 +93,8 @@ export class Workspaces {
   private readonly ownerId:string;
   private readonly forge?:CodeForge;
   private readonly github?:GitHubForge;
+  private readonly githubAccounts?:GitHubAccounts;
+  private readonly pendingAccounts=new Map<string,string>();
   private readonly taskRoot?:string;
   constructor(readonly root: string, options:WorkspaceOptions={}) {
     this.root = resolve(root);
@@ -99,7 +102,7 @@ export class Workspaces {
     if(this.chatRoot===this.root || this.chatRoot.startsWith(this.root+"/") || this.root.startsWith(this.chatRoot+"/"))throw new Error("Chat and Project roots must be separate");
     this.ownerId=slug(options.ownerId ?? process.env.PI_COFFEE_VM_ID ?? 'vm');
     this.forge=options.forge;
-    this.github=options.github;
+    this.github=options.github;this.githubAccounts=options.githubAccounts;
     this.taskRoot=options.taskRoot ? resolve(options.taskRoot) : undefined;
   }
   private async load() {
@@ -147,14 +150,22 @@ export class Workspaces {
     try {return await next;} finally {if(this.tails.get(name)===next)this.tails.delete(name);}
   }
   private conversationLock(id:string) { return 'conversation:'+id; }
-  private git(cwd:string,args:string[],maxBuffer=2*1024*1024) { return exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'}}).then(r=>args.includes("-z") ? r.stdout : r.stdout.trim()); }
+  private async gitEnvironment(cwd:string,accountId?:string) {
+    if(!this.githubAccounts)return {...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'};
+    const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
+    return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
+  }
+  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string) {
+    const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
+    return args.includes('-z')?r.stdout:r.stdout.trim();
+  }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
     catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
   }
   private async gitResult(cwd:string,args:string[],maxBuffer=2*1024*1024):Promise<{code:number;stdout:string;stderr:string}> {
     try {
-      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
+      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
       return {code:0,stdout:String(r.stdout),stderr:String(r.stderr)};
     } catch(error) {
       const e=error as NodeJS.ErrnoException & {stdout?:string;stderr?:string};
@@ -201,11 +212,11 @@ export class Workspaces {
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;
   }); }
-  async list() { await this.load();await this.saveTail;return {...structuredClone(this.state),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.github)}}}; }
+  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async branches(projectId:string):Promise<string[]> {
     await this.load();const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no remote repository');
-    const rows=await this.git(this.root,['ls-remote','--heads',p.repoUrl]);
+    const rows=await this.git(this.root,['ls-remote','--heads',p.repoUrl],2*1024*1024,p.githubAccountId);
     return rows.split('\n').filter(Boolean).map(row=>row.split('\t')[1].replace(/^refs\/heads\//,'')).sort();
   }
   async registerProject(name:unknown,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {return this.mutate(async()=>{
@@ -234,31 +245,44 @@ export class Workspaces {
     this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
   /** Repositories the Host's GitHub token can see, marked with the Project that already registers them. */
-  async githubRepositories() {
+  async githubRepositories(accountId?:string) {
     await this.load();
-    if(!this.github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
-    const registered=new Map(this.state.projects.filter(p=>p.forge==='github' && p.repoId).map(p=>[p.repoId,p.id]));
-    return (await this.github.listRepositories()).map(repo=>({...repo,...(registered.has(repo.id) ? {projectId:registered.get(repo.id)} : {})}));
+    const github=this.githubAccounts?await this.githubAccounts.client(accountId):this.github;
+    if(!github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
+    const registered=new Map(this.state.projects.filter(p=>p.forge==='github' && p.repoId && (!this.githubAccounts||p.githubAccountId===accountId)).map(p=>[p.repoId,p.id]));
+    return (await github.listRepositories()).map(repo=>({...repo,...(registered.has(repo.id) ? {projectId:registered.get(repo.id)} : {})}));
   }
   /**
    * Register a GitHub repository as a Work Project. Idempotent per GitHub repository ID; a rename refreshes
    * the stored name and URLs. Requires push access (the task branch is pushed there) and verifies that the
    * VM's own Git credentials can read the repository before anything is recorded.
    */
-  async registerGitHubProject(input:unknown) {return this.mutate(async()=>{
-    const github=this.github;if(!github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
+  async registerGitHubProject(input:unknown,accountId?:string) {return this.mutate(async()=>{
+    const github=this.githubAccounts?await this.githubAccounts.client(accountId):this.github;if(!github)throw new Error('GitHub is not configured on this Host (set PI_COFFEE_GITHUB_TOKEN)');
     const repo=await github.repository(parseGitHubRepository(input,github.webHost));
     if(repo.archived)throw new Error(`GitHub repository ${repo.fullName} is archived`);
     if(!repo.canPush)throw new Error(`The Host GitHub token cannot push to ${repo.fullName}; choose a repository it can write to`);
     if(!repo.cloneUrl)throw new Error('GitHub did not return a clone URL');
-    const existing=this.state.projects.find(p=>p.forge==='github' && p.repoId===repo.id);
-    const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch).catch(error=>{
-      throw new Error(`VM Git cannot read ${repo.fullName}. Configure GitHub credentials for the VM owner's Git (for example \`gh auth setup-git\`). ${error instanceof Error ? error.message.slice(0,200) : ''}`.trim());
+    const existing=this.state.projects.find(p=>p.forge==='github' && p.repoId===repo.id && (!this.githubAccounts||p.githubAccountId===accountId));
+    const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch,accountId).catch(error=>{
+      throw new Error(`VM Git cannot read ${repo.fullName} using the selected authorization; check repository access.`);
     });
     if(existing){existing.name=repo.fullName;existing.repoUrl=repoUrl;existing.webUrl=repo.webUrl;existing.branch=repo.defaultBranch;await this.save();return structuredClone(existing);}
-    if(this.state.projects.some(p=>p.name===repo.fullName))throw new Error('Project is already registered');
-    const project:Project={id:`github-${repo.id}`,name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'github'};
+    if(this.state.projects.some(p=>p.name===repo.fullName && (!this.githubAccounts||p.githubAccountId===accountId)))throw new Error('Project is already registered');
+    const project:Project={id:`github-${repo.id}${this.githubAccounts?'-'+accountId:''}`,...(this.githubAccounts?{githubAccountId:accountId}:{}),name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'github'};
     this.state.projects.push(project);await this.save();return structuredClone(project);
+  });}
+  async bindGitHubProject(projectId:string,accountId:string){return this.mutate(async()=>{
+    if(!this.githubAccounts)throw new Error('Account management unavailable');
+    const p=this.project(projectId);if(p.forge!=='github'||p.githubAccountId)throw new Error('Only unbound GitHub projects can be bound');
+    const conversations=this.state.conversations.filter(c=>c.projectId===p.id);
+    if(conversations.some(c=>c.runState==='running'||c.githubAccountId))throw new Error('Finish running project tasks before binding');
+    const client=await this.githubAccounts.client(accountId),repo=await client.repository(p.name);
+    if(!repo.canPush||repo.archived||(p.repoId&&p.repoId!==repo.id))throw new Error('Selected account cannot write this repository');
+    await this.validateRepository(repo.cloneUrl,repo.defaultBranch,accountId);
+    p.githubAccountId=accountId;
+    for(const c of conversations)c.githubAccountId=accountId;
+    await this.save();return structuredClone(p);
   });}
   async bindProjectRepository(projectId:string,repoUrl:string,repoId?:string,webUrl?:string) {return this.mutate(async()=>{
     const p=this.project(projectId);const registered=await this.validateRepository(repoUrl,p.branch);
@@ -282,7 +306,7 @@ export class Workspaces {
     if(await stat(destination).then(()=>true,()=>false))throw new Error('Migration destination already exists; inspect it before retrying');
     await mkdir(join(this.root,'.coffee','migration'),{recursive:true});await mkdir(join(this.root,'checkouts'),{recursive:true});
     try {
-      await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',branch,'--',p.repoUrl,temporary]);
+      await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',branch,'--',p.repoUrl,temporary],2*1024*1024,c.githubAccountId);
       if(await this.git(temporary,['rev-parse','HEAD'])!==head)throw new Error('Migrated remote branch does not match the legacy head');
       await cp(legacyCwd,temporary,{recursive:true,force:true,filter:source=>basename(source)!=='.git'});
       await rename(temporary,destination);
@@ -334,11 +358,11 @@ export class Workspaces {
   private assertProjectAvailable(name:string,repoId?:string,forge:ProjectForge='gitea') {
     if(this.state.projects.some(project=>project.name===name || (repoId && project.repoId===repoId && (project.forge ?? 'gitea')===forge)))throw new Error('Project is already registered');
   }
-  private async validateRepository(repoUrl:string,branch:string) {
+  private async validateRepository(repoUrl:string,branch:string,accountId?:string) {
     if(!repoUrl || /[\r\n\0]/.test(repoUrl))throw new Error('Repository URL is required');
     const normalized=/^(https?:\/\/|ssh:\/\/|git@[a-zA-Z0-9.-]+:)/.test(repoUrl) ? repoUrl : resolve(repoUrl);
     if(/^https?:/.test(normalized) && (new URL(normalized).username || new URL(normalized).password))throw new Error('Use VM Git credential storage, not URL credentials');
-    await this.git(this.root,['-c','protocol.file.allow=always','ls-remote','--exit-code','--heads',normalized,branch]);return normalized;
+    await this.git(this.root,['-c','protocol.file.allow=always','ls-remote','--exit-code','--heads',normalized,branch],2*1024*1024,accountId);return normalized;
   }
   private assertId(id:string) {
     if(!/^[a-zA-Z0-9-]{1,100}$/.test(id))throw new Error('Invalid conversation ID');
@@ -407,7 +431,7 @@ export class Workspaces {
     const c=await this.lookup(id);if(!c)throw new Error('Unknown workspace');
     const root=await this.dataRoot(id),subagentRoot=join(root,'artifacts','subagent-runs');
     await mkdir(subagentRoot,{recursive:true,mode:0o700});
-    return {PI_COFFEE_DATA_ROOT:root,PI_COFFEE_WORKSPACE_CWD:c.cwd,PI_COFFEE_INITIAL_MODE:c.workspaceKind==='chat'?'chat':'work',PI_SUBAGENTS_TEMP_ROOT:subagentRoot};
+    return {...(this.githubAccounts?await this.githubAccounts.environment(c.githubAccountId):{}),PI_COFFEE_DATA_ROOT:root,PI_COFFEE_WORKSPACE_CWD:c.cwd,PI_COFFEE_INITIAL_MODE:c.workspaceKind==='chat'?'chat':'work',PI_SUBAGENTS_TEMP_ROOT:subagentRoot};
   }
   async createChatConversation(id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
@@ -441,13 +465,13 @@ export class Workspaces {
     if(!c) {
       if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
       const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
-      c={...(taskRoot?{taskRoot}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
+      c={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
       this.state.conversations.push(c);await this.save();
     }
     c.creationState='creating';delete c.creationError;await this.save();
     try {
       if(!await lstat(cwd).then(()=>true,()=>false)) {
-        await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',from,'--',p.repoUrl,cwd]);
+        await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',from,'--',p.repoUrl,cwd],2*1024*1024,c.githubAccountId);
       } else {
         if((await lstat(cwd)).isSymbolicLink() || await this.git(cwd,['remote','get-url','origin'])!==p.repoUrl)throw new Error('Failed creation directory changed; inspect it before retrying');
         if(await this.git(cwd,['status','--porcelain']))throw new Error('Failed creation contains local changes; preserve them before retrying');
@@ -500,7 +524,7 @@ export class Workspaces {
     const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
     // This internal command intentionally uses an exclusion pathspec; no user paths enter it.
-    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'0',GIT_INDEX_FILE:index};
+    const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'0',GIT_INDEX_FILE:index};
     const run=(args:string[])=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer:2*1024*1024,env}).then(r=>r.stdout.trim());
     try {
       // Reusing the real index's stat cache keeps large, mostly unchanged checkouts fast.
@@ -621,7 +645,7 @@ export class Workspaces {
   async openPullRequest(id:string,title:string) {return this.mutate(async()=>{
     const c=this.conversation(id),p=this.project(c.projectId);
     await this.assertCodeBranch(c);
-    const forge=p.forge==='github' ? this.github : this.forge;
+    const forge=p.forge==='github' ? (this.githubAccounts?await this.githubAccounts.client(c.githubAccountId):this.github) : this.forge;
     if(!forge)throw new Error(p.forge==='github' ? 'GitHub pull request adapter is not configured (set PI_COFFEE_GITHUB_TOKEN)' : 'Gitea pull request adapter is not configured');
     if(typeof title!=='string' || !title.trim() || title.length>200)throw new Error('Pull request title is required (maximum 200 characters)');
     const status=await this.syncStatusUnlocked(c);
@@ -643,16 +667,17 @@ export class Workspaces {
     const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
     const cwd=taskRoot ? join(taskRoot,'workspace') : join(this.root,'checkouts',id);await mkdir(dirname(cwd),{recursive:true});
     if(await stat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
+    if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);
     try {
-      await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',sourceBranch,'--',p.repoUrl,cwd]);
+      await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',sourceBranch,'--',p.repoUrl,cwd],2*1024*1024,p.githubAccountId);
       const head=await this.git(cwd,['rev-parse','HEAD']);
       if(head!==expectedSha)throw new Error('Remote checkpoint SHA changed; inspect the source before continuing');
       const branch=`coffee/${this.ownerId}/${id}`;
       if(await this.remoteBranchSha(cwd,branch))throw new Error('Conversation branch already exists on the remote; use a new Conversation ID');
       await this.git(cwd,['checkout','-b',branch]);
       await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`]);
-      const c:Conversation={...(taskRoot?{taskRoot}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
-    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}
+      const c:Conversation={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
+    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);}
   },()=>`conversation:${id}`);}
   /** Read-only change view against the last fetched target branch. */
   async changes(id:string) {
@@ -776,7 +801,7 @@ export class Workspaces {
   private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
     const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
-    const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
+    const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
     const run=(args:string[],maxBuffer=2*1024*1024)=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
     try {
       await copyFile(await gitPath('index'),index).catch(()=>undefined);
@@ -792,7 +817,7 @@ export class Workspaces {
     const size=await this.gitResult(cwd,['cat-file','-s',spec]);
     if(size.code!==0)return {text:null};
     if(Number(size.stdout.trim())>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
-    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'}});
+    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:await this.gitEnvironment(cwd)});
     return stdout.includes(0) ? {text:null,reason:'binary'} : {text:stdout.toString('utf8')};
   }
   /** The working-tree side as Git sees it (a symlink is its target text); null when deleted. */

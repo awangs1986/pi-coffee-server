@@ -69,3 +69,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Codex model/effort restoration after Host restart: [native lifecycle contract](spec/native-agent-engines.md), [probe and evidence](development/codex-model-restore.md), [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30).
 
 - [Bounded local watchdog](deployment/watchdog.md): independent Web/Host liveness recovery, durable circuit breaker and maintenance pause; [Server #34](https://github.com/awangs1986/pi-coffee-server/issues/34).
+
+- Per-user GitHub OAuth accounts and task-scoped Git/gh: [contract](spec/github-accounts.md), [Server #36](https://github.com/awangs1986/pi-coffee-server/issues/36).

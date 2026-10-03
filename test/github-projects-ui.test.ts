@@ -10,8 +10,8 @@ const REPOS=[
   {id:'102',fullName:'acme/tools',private:false,archived:false,defaultBranch:'trunk',cloneUrl:'https://github.com/acme/tools.git',webUrl:'https://github.com/acme/tools',canPush:true,description:'Build helpers'},
   {id:'103',fullName:'acme/readonly',private:true,archived:false,defaultBranch:'main',cloneUrl:'https://github.com/acme/readonly.git',webUrl:'https://github.com/acme/readonly',canPush:false},
 ];
-type Options={github?:boolean;task?:Record<string,unknown>|null;reposError?:string;registrationGate?:Promise<void>};
-async function setup({github=true,task=null,reposError,registrationGate}:Options={}){
+type Options={accounts?:boolean;github?:boolean;task?:Record<string,unknown>|null;reposError?:string;registrationGate?:Promise<void>};
+async function setup({accounts=false,github=true,task=null,reposError,registrationGate}:Options={}){
   document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
   Object.defineProperty(window,'matchMedia',{value:()=>({matches:false,addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
   const projects:any[]=[{id:'p',name:'demo',branch:'main',webUrl:'https://gitea.example/owner/demo'}];
@@ -23,11 +23,12 @@ async function setup({github=true,task=null,reposError,registrationGate}:Options
   vi.stubGlobal('WebSocket',Socket);vi.stubGlobal('open',vi.fn());
   const json=(value:unknown,ok=true)=>({ok,status:ok ? 200 : 409,json:async()=>value});
   vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+    if(url==='/api/github-accounts')return json({accounts:[{id:'personal',login:'personal-user'},{id:'work',login:'work-user'}],oauthConfigured:true});
     if(url==='/api/engines')return json({engines:[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true}]});
     if(url==='/api/me')return json(null);
     if(url==='/auth/me')return json({auth:false});
     const body=init?.body ? JSON.parse(init.body) : null;
-    if(!body)return json({projects,conversations,sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true,forges:{gitea:true,github}}});
+    if(!body)return json({projects,conversations,sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true,forges:{gitea:true,github,...(accounts?{githubAccounts:true}:{})}}});
     requests.push(body);
     if(body.action==='gitea_repos')return json([{id:'88',fullName:'awangs/ArenaModels',defaultBranch:'trunk',canPush:true}]);
     if(body.action==='gitea_project'){const project={id:'gitea-88',repoId:'88',name:body.repository,branch:'trunk',forge:'gitea'};projects.push(project);return json(project);}
@@ -193,4 +194,14 @@ it('keeps the GitHub source visible with a configuration explanation when unavai
   expect(github.disabled).toBe(true);expect(github.textContent).toContain('未配置');
   expect(q<HTMLButtonElement>('[data-task-source="github"]').disabled).toBe(true);
   expect(app.requests.some(r=>r.action==='github_repos')).toBe(false);
+});
+
+it('requires an explicit connected account before listing or registering GitHub repositories',async()=>{
+ const app=await setup({accounts:true});await chooseWork();await selectProject('__add_github__');
+ expect(app.requests.filter(r=>r.action==='github_repos')).toHaveLength(0);
+ const account=q<HTMLSelectElement>('#github-account-select');expect([...account.options].map(o=>o.textContent)).toEqual(['请选择 GitHub 账号','personal-user','work-user']);
+ account.value='work';account.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(30);
+ expect(app.requests.filter(r=>r.action==='github_repos')).toEqual([{action:'github_repos',accountId:'work'}]);
+ rows().find(row=>row.dataset.repo==='acme/tools')!.click();await vi.advanceTimersByTimeAsync(30);
+ expect(app.requests.find(r=>r.action==='github_project')).toMatchObject({accountId:'work',repository:'acme/tools'});
 });
