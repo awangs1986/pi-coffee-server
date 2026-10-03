@@ -1,3 +1,4 @@
+import './github-env-probe.mjs';
 import {writeFileSync} from "node:fs";
 if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(process.argv));
 import readline from "node:readline";

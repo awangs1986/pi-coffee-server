@@ -1,3 +1,4 @@
+import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
 import {RecentConversations} from './recent-conversations.js';
 import {ConversationPreviewStore,createConversationPreview} from './conversation-preview-store.js';
 import {renderConversationPreview,conversationPreviewNode} from './conversation-preview-view.js';
@@ -194,6 +195,7 @@ const FORGE_NAMES = { gitea: 'Gitea', github: 'GitHub' };
 const ADD_GITHUB = '__add_github__', ADD_GITEA = '__add_gitea__';
 let repositoryPickerForge = 'github', draftProjectForge = 'gitea';
 let lastProjectValue = '';            // restores the dropdown after the pseudo-option opens the picker
+let githubAccountId='',githubAccountRows=[];
 let githubRepos = null, githubError = '', githubAdding = '', githubSeq = 0;
 function projectForge(project) { return project?.forge === 'github' ? 'github' : 'gitea'; }
 function forgeName(project) { return FORGE_NAMES[projectForge(project)]; }
@@ -2502,6 +2504,7 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened) { send({ v: 1, type: 'abort' }); pushNote('已请求停止当前任务。'); } });
 
+const githubAccountManager=initGitHubAccounts({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},projects:()=>workspaceState?.projects??[],bind:async(projectId,accountId)=>{await workspaceApi({action:'github_bind',projectId,accountId});await loadWorkspace();}});
 initRunners({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
 const sshmePanel=initSshme({
   onOpen:()=>{closeBrandMenu();closeAgentMenu();closeSidebarOnMobile();ui.slash.classList.add('hidden');},
@@ -2758,7 +2761,7 @@ async function createGiteaProject(){
 }
 // ---------- GitHub repositories (ADR-0022): add once through the picker, then choose from the dropdown ----------
 function appendProjectOptions(select,projects) {
-  const forges=forgeCapabilities(),option=(p)=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;o.dataset.forge=projectForge(p);return o;};
+  const forges=forgeCapabilities(),option=(p)=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name+(p.forge==='github'&&workspaceState?.capabilities?.forges?.githubAccounts?' · '+(p.githubAccountLogin||'待绑定授权'):'');o.dataset.forge=projectForge(p);return o;};
   const addOption=forge=>{const add=document.createElement('option');add.value=forge==='gitea'?ADD_GITEA:ADD_GITHUB;add.textContent=forge==='gitea'?'＋ 选择已有 Gitea 仓库…':'＋ 添加 GitHub 仓库…';return add;};
   if(!forges.github && !projects.some(p=>projectForge(p)==='github')){for(const p of projects)select.append(option(p));if(forges.gitea)select.append(addOption('gitea'));return;}
   for(const forge of ['gitea','github']) {
@@ -2785,8 +2788,19 @@ async function openGitHubPicker(forge='github') {
   $('#github-list').setAttribute('aria-label',FORGE_NAMES[forge]+' 仓库');
   $('#github-modal').classList.remove('hidden');search.value='';githubRepos=null;githubError='';renderGitHubPicker();
   setTimeout(()=>search.focus(),0);
-  try{const repos=await workspaceApi({action:forge+'_repos'});if(seq===githubSeq)githubRepos=Array.isArray(repos) ? repos : [];}
-  catch(e){if(seq===githubSeq){githubRepos=[];githubError=e.message;}}
+  try{
+    const managed=forge==='github'&&workspaceState?.capabilities?.forges?.githubAccounts;
+    $('#github-account-row').hidden=!managed;
+    if(managed){
+      const data=await githubAccountRequest({action:'list'});if(seq!==githubSeq)return;
+      githubAccountRows=data.accounts;const select=$('#github-account-select');select.replaceChildren();
+      const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='请选择 GitHub 账号';select.append(placeholder);
+      for(const account of data.accounts){const option=document.createElement('option');option.value=account.id;option.textContent=account.login;select.append(option);}
+      if(!data.accounts.some(a=>a.id===githubAccountId))githubAccountId='';select.value=githubAccountId;
+      if(!githubAccountId){githubRepos=[];githubError=data.accounts.length?'请先选择 GitHub 账号':'请先在「代码托管账号」中连接 GitHub';renderGitHubPicker();return;}
+    }
+    const repos=await workspaceApi({action:forge+'_repos',...(managed?{accountId:githubAccountId}:{})});if(seq===githubSeq)githubRepos=Array.isArray(repos)?repos:[];
+  }catch(e){if(seq===githubSeq){githubRepos=[];githubError=e.message;}}
   if(seq===githubSeq)renderGitHubPicker();
 }
 function closeGitHubPicker() { githubSeq++;$('#github-modal').classList.add('hidden'); }
@@ -2794,12 +2808,12 @@ function renderGitHubPicker() {
   const list=$('#github-list'),query=$('#github-search').value.trim(),lower=query.toLowerCase(),repos=githubRepos || [];
   $('#github-sub').textContent=githubRepos ? `${repos.length} 个可访问仓库` : '正在读取…';
   list.replaceChildren();
-  if(!githubRepos){list.append(el('div','github-empty','正在读取 Host 令牌可访问的 '+FORGE_NAMES[repositoryPickerForge]+' 仓库…'));return;}
-  const typed=repositoryPickerForge==='github'?parseGitHubInput(query):(/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(query)?query:null);
+  if(!githubRepos){list.append(el('div','github-empty','正在读取所选账号可访问的 '+FORGE_NAMES[repositoryPickerForge]+' 仓库…'));return;}
+  const typed=repositoryPickerForge==='github'?(workspaceState?.capabilities?.forges?.githubAccounts&&!githubAccountId?null:parseGitHubInput(query)):(/^[A-Za-z0-9_][A-Za-z0-9_.-]*\/[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(query)?query:null);
   if(typed && !repos.some(r=>r.fullName.toLowerCase()===typed.toLowerCase()))list.append(githubRow({fullName:typed,typed:true}));
   const matches=repos.filter(r=>!lower || r.fullName.toLowerCase().includes(lower) || (r.description || '').toLowerCase().includes(lower));
   for(const repo of matches.slice(0,200))list.append(githubRow(repo));
-  if(!list.children.length)list.append(el('div','github-empty',githubError ? FORGE_NAMES[repositoryPickerForge]+' 仓库列表不可用：'+githubError : query ? '没有匹配的仓库；可直接输入 owner/repo。' : 'Host 令牌没有可访问的仓库；可直接粘贴 owner/repo。'));
+  if(!list.children.length)list.append(el('div','github-empty',githubError ? FORGE_NAMES[repositoryPickerForge]+' 仓库列表不可用：'+githubError : query ? '没有匹配的仓库；可直接输入 owner/repo。' : '所选账号没有可访问的仓库；可直接粘贴 owner/repo。'));
   else if(githubError)list.prepend(el('div','github-empty github-error',FORGE_NAMES[repositoryPickerForge]+' 仓库列表不可用：'+githubError));
 }
 function githubRow(repo) {
@@ -2816,7 +2830,8 @@ function githubRow(repo) {
     : [repo.defaultBranch ? '默认分支 '+repo.defaultBranch : '',repo.description || ''].filter(Boolean).join(' · ');
   row.append(title,badges,el('span','github-row-meta',meta));
   row.disabled=Boolean(githubAdding) || blocked;
-  row.title=blocked ? (repo.archived ? '仓库已归档' : 'Host 令牌没有这个仓库的写权限，任务分支无法推送') : repo.fullName;
+  $('#github-account-select').disabled=Boolean(githubAdding);
+  row.title=blocked ? (repo.archived ? '仓库已归档' : '所选账号没有这个仓库的写权限，任务分支无法推送') : repo.fullName;
   row.addEventListener('click',()=>void chooseGitHubRepo(repo));
   return row;
 }
@@ -2826,7 +2841,7 @@ async function chooseGitHubRepo(repo) {
   const forge=repositoryPickerForge,seq=githubSeq,epoch=taskSelectionEpoch,previousProject=ui.projectSelect.value;
   githubAdding=repo.fullName;renderGitHubPicker();
   try {
-    const project=await workspaceApi({action:forge+'_project',repository:repo.typed ? $('#github-search').value.trim() : repo.fullName});
+    const project=await workspaceApi({action:forge+'_project',...(forge==='github'&&workspaceState?.capabilities?.forges?.githubAccounts?{accountId:githubAccountId}:{}),repository:repo.typed ? $('#github-search').value.trim() : repo.fullName});
     githubAdding='';
     const pickerUnchanged=seq===githubSeq;
     if(pickerUnchanged)closeGitHubPicker();
@@ -2840,6 +2855,8 @@ function selectNewTaskProject(id) {
   if(activeId || pendingOpenId || $('#task-kind').value!=='project' || ![...ui.projectSelect.options].some(o=>o.value===id))return;
   ui.projectSelect.value=id;ui.projectSelect.dispatchEvent(new Event('change'));
 }
+$('#github-account-select').addEventListener('change',()=>{if(githubAdding)return;githubAccountId=$('#github-account-select').value;void openGitHubPicker('github');});
+$('#github-account-manage').addEventListener('click',()=>{closeGitHubPicker();githubAccountManager.open();});
 $('#github-search').addEventListener('input',renderGitHubPicker);
 $('#github-search').addEventListener('keydown',event=>{
   if(event.key==='Enter'){event.preventDefault();$('#github-list').querySelector('.github-row:not(:disabled)')?.click();}

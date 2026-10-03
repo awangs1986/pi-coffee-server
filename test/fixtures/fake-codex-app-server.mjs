@@ -1,3 +1,4 @@
+import './github-env-probe.mjs';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
@@ -36,7 +37,7 @@ function threadView(thread, withTurns) {
     id: thread.id, sessionId: thread.id, forkedFromId: null, parentThreadId: null, preview: thread.preview ?? "",
     ephemeral: false, historyMode: "paginated", modelProvider: "openai", model: thread.model ?? "gpt-fake",
     reasoningEffort: thread.effort ?? null, createdAt: thread.createdAt, updatedAt: thread.updatedAt, recencyAt: thread.updatedAt,
-    status: { type: active.has(thread.id) || thread.activeExternally ? "active" : "idle" }, path: null, cwd: thread.cwd, cliVersion: "fake", originator: "pi_coffee",
+    status: { type: active.has(thread.id) || thread.activeExternally || (process.env.FAKE_CODEX_BACKGROUND_FILE && existsSync(process.env.FAKE_CODEX_BACKGROUND_FILE)) ? "active" : "idle" }, path: null, cwd: thread.cwd, cliVersion: "fake", originator: "pi_coffee",
     source: thread.source ?? "appServer", threadSource: null, agentNickname: null, agentRole: null, gitInfo: null, name: thread.name ?? null,
     turns: withTurns ? thread.turns : [],
   };

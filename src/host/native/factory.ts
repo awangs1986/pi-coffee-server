@@ -11,7 +11,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -19,9 +19,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  async resetTaskRuntime(id:string){
+    for(const [key,factory] of this.codexFactories){if(key.startsWith(id+':')){await factory.close?.();this.codexFactories.delete(key);}}
+  }
   async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
   async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
-  private codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}));this.codexFactories.set(generation,factory);}return factory;}
+  private async codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}),()=>this.options.workspaces.runtimeEnvironment(id));this.codexFactories.set(generation,factory);}return factory;}
   async capabilities(id:string){
     const task=await this.options.workspaces.lookup(id);
     const engine=task?.engine ?? ((await this.options.legacyCodex?.list().catch(()=>[]) ?? []).some(s=>s.id===id)?"codex":"pi");
@@ -93,8 +96,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
         await bound(nativeId);candidate=await this.options.pi.create({sessionId:nativeId,workspaceSessionId:id});
       }else{
         if(!this.options.codex)throw new Error('Codex unavailable');
-        if(this.options.codexSessionFactory){temporaryFactory=this.options.codexSessionFactory(id+'-'+operation.id,cwd,bound);candidate=await temporaryFactory.create({sessionId:operation.id});}
-        else candidate=await new CodexSession(this.options.codex,cwd,this.options.instructions).start(undefined,bound);
+        if(this.options.codexSessionFactory){temporaryFactory=this.options.codexSessionFactory(id+'-'+operation.id,cwd,bound,()=>this.options.workspaces.runtimeEnvironment(id));candidate=await temporaryFactory.create({sessionId:operation.id});}
+        else candidate=await new CodexSession({...this.options.codex,env:{...this.options.codex.env,...await this.options.workspaces.runtimeEnvironment(id)}},cwd,this.options.instructions).start(undefined,bound);
       }
       this.preparations.set(controller,candidate);if(this.closing)controller.abort();
       if(operation.to==='codex'){await candidate.setModel('codex','gpt-6.1-sol');await candidate.setThinkingLevel('medium');}
@@ -122,7 +125,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(!task && !(await this.options.pi.list()).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
     if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length)});
     const readiness=(await this.engines()).find(e=>e.id===task.engine);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
-    const config=this.options[task.engine as "codex"|"claude"];if(!config)throw new Error("Agent not configured");
+    const baseConfig=this.options[task.engine as "codex"|"claude"];if(!baseConfig)throw new Error("Agent not configured");
+    const config={...baseConfig,env:{...baseConfig.env,...await this.options.workspaces.runtimeEnvironment(sessionId)}};
     const cwd=await this.options.workspaces.file(sessionId,"");
     if(task.nativeBinding?.state==="starting" && !task.nativeBinding.id)throw new Error("Native start was uncertain; inspect it before recovery. No prompt was replayed.");
     if(task.engine==="claude"){
@@ -134,7 +138,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     this.generation.set(sessionId,task.takeoverSegments?.at(-1)?.id??'original');
     const nativeId=task.nativeBinding?.id;
     if(!nativeId)await this.options.workspaces.setNativeBinding(sessionId,{state:"starting"});
-    const advanced=this.codexFactory(sessionId,cwd);
+    const advanced=await this.codexFactory(sessionId,cwd);
     if(advanced)return advanced.create({sessionId:nativeId ?? sessionId,requireExisting:Boolean(nativeId)});
     const session=new CodexSession(config,cwd,this.options.instructions);
     try{return await session.start(nativeId,id=>this.options.workspaces.setNativeBinding(sessionId,{state:"bound",id}));}

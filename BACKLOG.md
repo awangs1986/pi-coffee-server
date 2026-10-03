@@ -461,3 +461,5 @@ defines user-scoped persistence and the strict separation from task execution id
   both providers and explicit disable.
 
 - [Server #34](https://github.com/awangs1986/pi-coffee-server/issues/34): bounded per-machine Web/Host watchdog, compatible systemd crash limits, persisted circuit breaker and maintenance controls. Watchdog deployment retains the existing application runtime release; see docs/deployment/watchdog.md.
+
+- 2026-10-03: [Server #36](https://github.com/awangs1986/pi-coffee-server/issues/36) replaces shared GitHub credentials with per-Gitea-user OAuth bindings, explicit task authorization and managed Git/gh execution. Production OAuth activation requires a configured Web OAuth App; SSH assistance and fork workflows are separate follow-ups.
