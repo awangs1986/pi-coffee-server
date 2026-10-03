@@ -2,6 +2,7 @@ import {NativeQuestions} from "./questions.js";
 import type { AgentSession, AgentHistory, AgentModels } from "../agent-adapter.js";
 import type { HistoryEntry, ImageInput, UiResponse, SessionState } from "../../shared/protocol.js";
 import { NativeProcess, type NativeCommand } from "./process.js";
+import { projectTurns } from "../codex/translate.js";
 
 export class CodexSession implements AgentSession {
   private listeners=new Set<(event:unknown)=>void>();
@@ -49,6 +50,7 @@ export class CodexSession implements AgentSession {
     if(message.method==="turn/started"){this.turnId=p.turn.id;this.streaming=true;this.emit({type:"run_started",runId:this.turnId});}
     if(message.method==="item/agentMessage/delta")this.emit({type:"message_delta",id:p.itemId,delta:p.delta});
     if(message.method==="item/completed" && p.item.type==="agentMessage")this.emit({type:"message_completed",id:p.item.id,text:p.item.text});
+    if(message.method==="item/completed" && p.item.type==="userMessage")for(const entry of projectTurns([{items:[p.item]}]))this.emit({type:"sync_entity",entry});
     if(message.method==="turn/completed"){this.streaming=false;this.turnId=undefined;this.requests.clear();this.questions.clear();this.emit({type:"run_completed",status:p.turn.status,...(p.turn.error?{message:"Native Codex turn failed; check native authentication and provider configuration, then retry explicitly"}:{})});}
   }
   async prompt(text:string,images?:ImageInput[]) {
