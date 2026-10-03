@@ -37,7 +37,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { authGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   class Socket {
@@ -52,7 +52,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => {
     const body = init?.body ? JSON.parse(init.body) : {};
     let data: any = {};
-    if (url === '/auth/me') data = { auth: true, user: network.user };
+    if (url === '/auth/me') {await network.authGate;data = { auth: true, user: network.user };}
     else if (url === '/api/me') data = null;
     else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude'].map(id => ({ id, available: true })) };
     else if (url === '/api/workspace') data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };
@@ -94,6 +94,13 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('retains the already rendered cached view when same-user reconnect authentication finishes',async()=>{
+    const app=await setup('codex',2);await app.select('a');await app.select('b');
+    let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>{release=resolve;});
+    choose('a');await tick(32);const cached=thread().querySelector('.synced-transcript');expect(cached).not.toBeNull();
+    release();await tick(64);expect(thread().querySelector('.synced-transcript')).toBe(cached);expect(thread().textContent).toContain('SYNC-a');
+  });
+
   it.each(['pi', 'codex', 'claude'] as const)('bounds %s live deltas and final completion at 45k and 225k', async engine => {
     const app = await setup(engine);
     for (const size of [45_000, 225_000]) {
