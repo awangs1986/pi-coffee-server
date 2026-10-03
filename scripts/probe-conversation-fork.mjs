@@ -26,7 +26,7 @@ try{
   // Cancel must not create anything; reopen and explicitly confirm afterward.
   await page.locator('#fork-cancel').click();if((await ws.list()).conversations.length!==count)throw Error('Cancel created a task');
   await row.hover();await row.locator('.more').click();await page.getByRole('button',{name:'Fork（分叉）',exact:true}).click();await page.locator('input[name="fork-mode"][value="'+mode+'"]').check();
-  const accepted=page.waitForResponse(response=>response.url().endsWith('/api/workspace')&&response.request().method()==='POST');await page.locator('#fork-confirm').click();const response=await accepted;if(response.status()!==202)throw Error('Fork admission: '+response.status()+' '+await response.text());
+  const accepted=page.waitForResponse(response=>response.url().endsWith('/api/workspace')&&response.request().method()==='POST'&&response.request().postDataJSON()?.action==='fork');await page.locator('#fork-confirm').click();const response=await accepted;if(response.status()!==202)throw Error('Fork admission: '+response.status()+' '+await response.text());
   await page.locator('#fork-dialog').waitFor({state:'hidden',timeout:20000});const tasks=(await ws.list()).conversations;const child=tasks.find(task=>task.fork?.mode===mode);if(child?.fork?.status!=='completed')throw Error('Fork did not complete');
   await page.locator('[data-session-id="'+child.id+'"].active').waitFor();await page.screenshot({path:join(evidence,mode+'-completed.png')});
   if(await readFile(join(await ws.inboxDirectory(child.id),'fixture.txt'),'utf8')!=='retained attachment')throw Error('Missing attachment');if(await readFile(original.getSessionFile(),'utf8')!==before)throw Error('Source changed');
