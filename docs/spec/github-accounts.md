@@ -46,7 +46,8 @@ including VM .netrc. Existing Git author name/email are copied without copying
 credentials. Gitea transport continues using the configured Host Gitea credential;
 this change does not introduce per-user Gitea transport grants.
 
-`gh` uses an isolated config directory. Native processes receive no usable global
+`gh` uses an isolated config directory. A task-local `BASH_ENV` restores managed
+Git settings and tool PATH after login-shell profiles; VM startup files are not modified. Native processes receive no usable global
 GitHub token. The wrapper reads the current account credential on every invocation;
 Git asks its helper for each operation. Missing/unbound/disconnected authorization
 fails closed, without trying another account or VM login. `gh auth login`, account
