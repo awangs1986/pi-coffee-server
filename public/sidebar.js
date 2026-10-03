@@ -34,11 +34,32 @@ function rankOf(session) {
   }
 }
 
+/** View-only stable activity order. Never freezes timestamps or native state. */
+export function createSidebarOrder() {
+  let active = new Map();
+  return {
+    snapshot(list) {
+      const next = new Map();
+      const result = list.map(session => {
+        const rank = rankOf(session);
+        if (rank === 3) return session;
+        const prior = active.get(session.id);
+        const state = prior?.rank === rank ? prior : {rank, at:session.updatedAt || session.createdAt || ''};
+        next.set(session.id, state);
+        return {...session, sidebarOrderAt:state.at};
+      });
+      active = next;
+      return result;
+    },
+    clear() { active.clear(); },
+  };
+}
+
 export function orderSessions(list) {
   return list.slice().sort((a, b) => {
     const r = rankOf(a) - rankOf(b);
     if (r !== 0) return r;
-    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    return (b.sidebarOrderAt ?? b.updatedAt ?? '').localeCompare(a.sidebarOrderAt ?? a.updatedAt ?? '') || String(a.id).localeCompare(String(b.id));
   });
 }
 

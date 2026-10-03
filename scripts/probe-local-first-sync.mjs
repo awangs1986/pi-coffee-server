@@ -140,6 +140,13 @@ try {
   await wait(Math.max(0,200-(performance.now()-t)));
  }
  check('5Hz switches include live frames and fresh history',frameDuringSwitch>0&&historyFrameCount>previousHistoryFrames,{switches:n,liveFrames:frameDuringSwitch,historyFrames:historyFrameCount-previousHistoryFrames});
+ const busyRows=()=>[...document.querySelectorAll('#session-list [data-session-id]')].map(node=>node.dataset.sessionId).filter(id=>['probe-0','probe-1'].includes(id));
+ const busySummaries=(a,b)=>conversations.map(item=>({...item,running:['probe-0','probe-1'].includes(item.id),updatedAt:item.id==='probe-0'?a:b}));
+ sockets.at(-1).receive({type:'sessions',sessions:busySummaries('2026-10-04T00:00:01Z','2026-10-04T00:00:02Z')});await paint();const busyOrder=busyRows();
+ sockets.at(-1).receive({type:'sessions',sessions:busySummaries('2026-10-04T00:00:03Z','2026-10-04T00:00:02Z')});await paint();const afterA=busyRows();
+ sockets.at(-1).receive({type:'sessions',sessions:busySummaries('2026-10-04T00:00:03Z','2026-10-04T00:00:04Z')});await paint();
+ check('concurrent busy rows retain order across alternating output timestamps',JSON.stringify(busyOrder)===JSON.stringify(afterA)&&JSON.stringify(busyOrder)===JSON.stringify(busyRows()),{before:busyOrder,after:busyRows()});
+
  }
  // Scroll restoration must survive leaving and returning without a new history.
  await open(0,Array.from({length:10000},(_,i)=>({kind:i%2?'assistant':'user',id:'h'+i,text:'HISTORY-'+i+' '+ 'x'.repeat(2000)})),false);

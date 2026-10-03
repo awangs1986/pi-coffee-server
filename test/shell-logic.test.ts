@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // Pure browser-shell logic (no DOM) shared by public/app.js; tested at the module seam.
-import { attentionOf, orderSessions, sessionGroups, usageBadge, formatReset } from "../public/sidebar.js";
+import { attentionOf, createSidebarOrder, orderSessions, sessionGroups, usageBadge, formatReset } from "../public/sidebar.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -76,4 +76,20 @@ describe("docked diff panel (P2)", () => {
     expect(files[1].text.split("\n")[0]).toBe("diff --git a/README.md b/README.md");
     expect(patchFiles("")).toEqual([]);
   });
+});
+
+describe('stable active sidebar ordering',()=>{
+ it('keeps output changes inert, but honors attention transitions and clears account state',()=>{
+  const order=createSidebarOrder(),ids=(list:any[])=>orderSessions(order.snapshot(list)).map(item=>item.id);
+  const a={id:'a',running:true,updatedAt:'2026-10-04T00:00:01Z'},b={id:'b',running:true,updatedAt:'2026-10-04T00:00:02Z'};
+  expect(ids([a,b])).toEqual(['b','a']);
+  expect(ids([{...a,updatedAt:'2026-10-04T00:00:03Z'},b])).toEqual(['b','a']);
+  expect(ids([{...a,attention:'waiting'},b])).toEqual(['a','b']);
+  order.clear();expect(ids([{...a,updatedAt:'2026-10-04T00:00:03Z'},b])).toEqual(['a','b']);
+ });
+ it('uses a deterministic tie break even when the Host list order changes',()=>{
+  const order=createSidebarOrder(),a={id:'a',running:true,updatedAt:'same'},b={...a,id:'b'};
+  expect(orderSessions(order.snapshot([b,a])).map(s=>s.id)).toEqual(['a','b']);
+  expect(orderSessions(order.snapshot([a,b])).map(s=>s.id)).toEqual(['a','b']);
+ });
 });
