@@ -1,6 +1,7 @@
 # Optional-plugin startup recovery
 
 Base: GitHub/Gitea main `7f32ee245d176757b3578d6190f09692abba60de`.
+Tracking: [Server #41](https://github.com/awangs1986/pi-coffee-server/issues/41).
 Scope: keep Web and Host reachable when optional Pi plugins are missing or broken,
 and retain native Codex availability without changing an existing task's engine.
 
@@ -58,10 +59,12 @@ Local evidence is under `/home/awang/tmp/coffee-deploy-20261003/`:
 `verify-emergency/evidence.json`, and `verify-emergency/emergency.png`.
 Provider tests use synthetic local responses, not paid model-provider turns.
 
-## Publication status
+## Publication and activation
 
-This is a local implementation, not a production release. The current account's
-scoped GitHub account list is empty and its Git helper rejects remote operations.
-GitHub publication, the identical Gitea mirror, Issue evidence and a new release
-deployment remain pending account connection/selection. No shared machine GitHub
-credentials were used to bypass that boundary. Production remains on `7f32ee2`.
+Implementation commit: `411f3d3`. Initial publication was held while the current
+account had no managed GitHub authorization. Web egress to GitHub was repaired
+and the owner completed OAuth; the scoped `awangs1986` account was verified.
+Publication uses that account, without shared machine credentials. GitHub and
+Gitea main were both `7f32ee2` before integration. The two main branches must be
+identical before deployment. Fresh-clone checks and actual activation evidence
+are recorded in Server #41; source publication alone is not activation.
