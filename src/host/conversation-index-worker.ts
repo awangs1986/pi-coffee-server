@@ -1,3 +1,5 @@
+// Source workers run directly under Node's type stripping; releases use JS.
+const {runLifecycle}=await import(new URL(import.meta.url.endsWith('.ts')?'../shared/run-lifecycle.ts':'../shared/run-lifecycle.js',import.meta.url).href);
 /** SQLite work stays off the Host control/event loop. Never opens native runtimes. */
 import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
@@ -166,8 +168,9 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
       if (a.expectedEpoch && a.expectedEpoch !== current.bindingEpoch) fail('stale_event');
       current.sourceFreshness = 'unknown';
       if (e.type === 'run_started' || e.type === 'agent_start') { current.runId = e.runId ?? randomUUID(); current.liveMessage = null; }
-      if (['run_started','agent_start','run_completed','agent_settled','run_interrupted','agent_interrupted'].includes(e.type)) {
-        current.runState = e.type.endsWith('started') || e.type === 'agent_start' ? 'running' : e.type.endsWith('interrupted') ? 'interrupted' : 'settled';
+      const runPhase=runLifecycle(e.type);
+      if (runPhase) {
+        current.runState = runPhase;
         operation(db,current,'setRunState','$run',current.headRevision,{runState:current.runState});
         if (current.runState !== 'running') {current.pendingRequests=[]; operation(db,current,'setPendingRequest','$pending',current.headRevision,{requests:[]});}
       }

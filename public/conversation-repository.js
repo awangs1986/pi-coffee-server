@@ -279,7 +279,7 @@ export class ConversationRepository {
     if (!actor) { actor = { id, queue: Promise.resolve(), receipts: new Map(), listeners: new Set(), lastAccess: this.now(), generation: 0, failures: 0 }; this.actors.set(id, actor); }
     actor.lastAccess = this.now(); return actor;
   }
-  _enqueue(actor, action) { const pending = actor.queue.then(action); actor.queue = pending.catch(() => {}); return pending; }
+  _enqueue(actor, action) { const pending = actor.queue.then(action); actor.queue = pending.then(() => undefined, () => undefined); return pending; }
   _emit(actor, details) {
     if (!actor.state) return;
     try { this.onUpdate(actor.id, actor.state, details); } catch {}

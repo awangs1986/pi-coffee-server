@@ -1,3 +1,4 @@
+import {runLifecycle} from '../shared/run-lifecycle.js';
 import {InputQueue} from "./input-queue.js";
 import { randomUUID } from "node:crypto";
 import type {
@@ -490,8 +491,9 @@ export class HostSession {
   private handlePiEvent(event: unknown): void {
     const safeEvent = toJsonValue(event);
     try{this.onEvent?.(this.id,safeEvent);}catch{/* Display ingestion must never interrupt native execution. */}
-    if(isRecord(safeEvent)&&['agent_start','run_started','agent_settled','run_completed','agent_interrupted','run_interrupted'].includes(String(safeEvent.type))){
-      const status=['agent_start','run_started'].includes(String(safeEvent.type))?'running':['agent_settled','run_completed'].includes(String(safeEvent.type))?'settled':'uncertain';
+    const runPhase=isRecord(safeEvent)?runLifecycle(safeEvent.type):undefined;
+    if(runPhase){
+      const status=runPhase==='interrupted'?'uncertain':runPhase;
       for(const requestId of this.runCommands)void this.onCommand?.(this.id,requestId,status).catch(()=>undefined);
       if(status!=='running')this.runCommands.clear();
     }

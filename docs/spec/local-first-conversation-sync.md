@@ -185,3 +185,17 @@ uses bounded Browser rendering and cache-first display, but does not claim the
 new durable delta/paging guarantees for that unsupported source format. No
 production-native session compatibility or target-device performance has been
 certified in this environment.
+
+## Review corrections (2026-10-04, Server #44)
+
+The internal per-conversation serialization tail must settle to `undefined` on
+both success and failure. Only the result returned to its caller may carry a
+transcript window; clearing an evicted actor's state must release that body.
+Older-page buffers are part of the displayed history projection: replacement,
+append and deletion operations update buffered entries before they are revealed,
+as well as currently visible entries.
+
+Both legacy and V2 user-message renderers parse the same bounded upload marker
+into attachment chips. Cached state contains only inert text/paths; fresh task
+transfer grants bind download URLs when the view renders or a grant arrives.
+No grant is persisted in IndexedDB. Native message text remains unchanged.

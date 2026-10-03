@@ -2,7 +2,7 @@
 // lifetime is owned here. Old requests may populate their cache, never this view.
 import {ScrollAnchor} from './scroll-anchor.js';
 import {createRenderScheduler} from './render-scheduler.js';
-import {assistantNode, userBubble, toolCard, noteNode} from './render.js';
+import {assistantNode, userBubble, toolCard, noteNode, boundedTextSlice} from './render.js';
 
 const MAX_VISIBLE = 80;
 const MAX_TEXT = 64 * 1024;
@@ -73,12 +73,19 @@ export class ConversationSyncView {
         return;
       }else{
         let changed=false;const items=new Map(this.window.entries.map(item=>[keyOf(item),item]));
+        const buffered=new Map(this.olderBuffer.map(item=>[keyOf(item),item]));
         for(const op of operations){
-          if(!items.has(op.entityId)){this.latest.hidden=false;continue;}
-          if(op.type==='deleteEntity'){items.delete(op.entityId);changed=true;}
-          else if(op.payload?.entry){items.set(op.entityId,{...op.payload.entry,entityRevision:op.entityRevision});changed=true;}
-          else if(op.type==='appendText'){const item=items.get(op.entityId);items.set(op.entityId,{...item,entityRevision:op.entityRevision,contentLength:op.payload.baseLength+op.payload.text.length,contentTruncated:true});changed=true;}
+          const target=items.has(op.entityId)?items:buffered.has(op.entityId)?buffered:null;
+          if(!target){this.latest.hidden=false;continue;}
+          if(op.type==='deleteEntity'){target.delete(op.entityId);changed=true;}
+          else if(op.payload?.entry){target.set(op.entityId,{...op.payload.entry,entityRevision:op.entityRevision});changed=true;}
+          else if(op.type==='appendText'){
+            const item=target.get(op.entityId),total=op.payload.baseLength+op.payload.text.length;
+            const text=boundedTextSlice((item.text??item.result??'')+op.payload.text,{tail:true,maxBytes:MAX_ENTRY}).text;
+            target.set(op.entityId,{...item,text,...(item.kind==='tool'?{result:text}:{}),entityRevision:op.entityRevision,contentLength:total,contentOffset:total-text.length,contentTruncated:text.length<total});changed=true;
+          }
         }
+        this.olderBuffer=[...buffered.values()];
         if(changed)this.show({...this.window,entries:[...items.values()]},{force:true});
         return;
       }

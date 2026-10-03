@@ -19,10 +19,10 @@
     "start:relay": "node dist/src/main.js relay"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.0.0",
-    "@earendil-works/pi-ai": "1.0.0",
-    "@earendil-works/pi-coding-agent": "1.0.0",
-    "@earendil-works/pi-tui": "1.0.0",
+    "@earendil-works/pi-agent-core": "1.0.1",
+    "@earendil-works/pi-ai": "1.0.1",
+    "@earendil-works/pi-coding-agent": "1.0.1",
+    "@earendil-works/pi-tui": "1.0.1",
     "context-handoff": "https://github.com/awangs1986/pi-coffee/releases/download/context-handoff%2Fv0.2.0-experimental.4/context-handoff-0.2.0-experimental.4.tgz",
     "pi-antigravity": "0.9.0",
     "pi-coffee-harness": "https://github.com/awangs1986/pi-coffee/releases/download/harness%2Fv0.3.0/pi-coffee-harness-0.3.0.tgz",

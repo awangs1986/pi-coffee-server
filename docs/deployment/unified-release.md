@@ -120,3 +120,17 @@ its application unit (sudo for the system Web monitor). After the health/version
 and served-asset probes pass, run `pi-coffee-watchdog resume`. A pause does not
 clear a circuit breaker or native start limit. Keep the watchdog in its own
 systemd unit so a Host restart cannot terminate the recovery/verification runner.
+
+## Pi 1.0.1 security patch (2026-10-04, Server #44)
+
+The Server pins the four direct upstream Pi packages to 1.0.1. The official
+coding-agent patch replaces vulnerable brace-expansion 5.0.9 with 5.0.12 and no
+longer ships the shrinkwrap that prevented a root override from taking effect.
+No native source or installed package files are patched. The independent Harness,
+LSP and Handoff artifacts remain unchanged, as do model policy and credentials.
+
+Verify the installed dependency tree, not only `npm audit`: an edited root lock
+can make the audit appear clean while an upstream shrinkwrap still installs the
+older dependency. Fresh `npm ci`, native Pi/subagent integration and the complete
+Server check remain release gates. Source pins do not prove production activation;
+record the actual deployed Pi version and served assets in the Issue.

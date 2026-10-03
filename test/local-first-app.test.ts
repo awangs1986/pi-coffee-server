@@ -94,6 +94,32 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('links restored V2 upload chips with current grants regardless of arrival order',async()=>{
+    const app=await setup('codex',2);const ws=await app.select('a');
+    ws.receive({type:'transfer',sessionId:'a',url:'http://files.example',scope:'scope-a',token:'fixture-first'});
+    app.syncStates.set('a',{revision:'2',runState:'settled',entries:[{kind:'user',id:'a-upload',entityRevision:'1',text:'Read report\n\n[已上传到工作目录的文件]\n- ../attachments/report.pdf (10 KB)'}]});
+    ws.receive({type:'history',...app.snapshot('a')});await tick(100);
+    const chip=thread().querySelector<HTMLAnchorElement>('a.file-chip');
+    expect(chip?.href).toContain('fixture-first');expect(chip?.href).toContain('report.pdf');
+    expect(thread().querySelector('.text')?.textContent).toBe('Read report');
+    ws.receive({type:'transfer',sessionId:'a',url:'http://files.example',scope:'scope-a',token:'fixture-renewed'});await tick(32);
+    expect(thread().querySelector<HTMLAnchorElement>('a.file-chip')?.href).toContain('fixture-renewed');
+    await app.select('b');expect(thread().querySelector('a.file-chip')).toBeNull();
+  });
+
+  it('switches on the first pointer gesture while a busy task updates the sidebar', async()=>{
+    const app=await setup('codex',2);await app.select('b');await app.select('a',[],true);
+    const target=document.querySelector<HTMLElement>('#session-list [data-session-id="b"]')!;
+    target.dispatchEvent(new Event('pointerdown',{bubbles:true}));
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:['a','b','c'].map(id=>({id,name:'Conversation '+id,engine:'codex',running:id==='a',createdAt:'2026-10-03T00:00:00Z'}))});
+    await tick(32);
+    expect(target.isConnected,'sidebar refresh detached the row before pointerup').toBe(true);
+    target.dispatchEvent(new Event('pointerup',{bubbles:true}));target.click();await tick(32);
+    expect(document.querySelector('#session-list [data-session-id="b"]')?.classList.contains('active')).toBe(true);
+    expect(thread().textContent).toContain('SYNC-b');
+    expect(allFrames.some(frame=>frame.type==='abort')).toBe(false);
+  });
+
   it('retains the already rendered cached view when same-user reconnect authentication finishes',async()=>{
     const app=await setup('codex',2);await app.select('a');await app.select('b');
     let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>{release=resolve;});
