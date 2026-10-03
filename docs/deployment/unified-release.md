@@ -74,3 +74,12 @@ markers during rollout. If a prior release exited before cleaning up a marker,
 stop ingress and the owning Host, inspect the task's Git status and live Git
 processes, and preserve an audited copy of the stale marker before clearing it.
 Do not clear a marker that still belongs to a live operation.
+
+## Watchdog-aware maintenance
+
+When the [local watchdog](watchdog.md) is installed, run
+`pi-coffee-watchdog pause --seconds 900` on each affected machine before stopping
+its application unit (sudo for the system Web monitor). After the health/version
+and served-asset probes pass, run `pi-coffee-watchdog resume`. A pause does not
+clear a circuit breaker or native start limit. Keep the watchdog in its own
+systemd unit so a Host restart cannot terminate the recovery/verification runner.

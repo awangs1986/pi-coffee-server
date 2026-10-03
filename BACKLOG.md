@@ -459,3 +459,5 @@ defines user-scoped persistence and the strict separation from task execution id
   upgrade: explicitly load pinned pi-antigravity when selected by model policy,
   retaining native OAuth and the Muse default. Native catalog regression covers
   both providers and explicit disable.
+
+- [Server #34](https://github.com/awangs1986/pi-coffee-server/issues/34): bounded per-machine Web/Host watchdog, compatible systemd crash limits, persisted circuit breaker and maintenance controls. Watchdog deployment retains the existing application runtime release; see docs/deployment/watchdog.md.
