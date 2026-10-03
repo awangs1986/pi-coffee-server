@@ -1,4 +1,5 @@
 import {initForkControls} from "./fork.js";
+import {renderRuntimeStatus} from './runtime-status.js';
 import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
 import {createDialogManager} from './dialogs.js';
 import {createLoginCoffee} from './login-coffee.js';
@@ -255,8 +256,11 @@ function canTakeover(){const task=currentTask();return takeoverAvailable&&opened
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;forkModes=data.forkModes??{};}}catch{}
+  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
+}
+async function loadRuntimeStatus(){
+  try{const response=await fetch('/api/runtime');if(response.ok)renderRuntimeStatus($('#runtime-banner'),await response.json());}catch{}
 }
 void loadEngines();
 let requestNumber = 0;
@@ -1427,6 +1431,7 @@ function connectSocket() {
   setConnection('连接中…');
   ws.onopen = () => {
     setConnection('已连接', 'ready');
+    void loadRuntimeStatus();
     // Host handles frames sequentially: open the selected task before the full sidebar scan.
     if (activeId) openSession(activeId).catch(e=>toast(e.message));
     else if(prepareNew){prepareNew=false;openSession(null).catch(e=>toast(e.message));}
@@ -1517,6 +1522,7 @@ function handleFrame(frame, ws) {
       renderHeader();
       return;
     case 'opened':
+      void loadRuntimeStatus();
       if(pendingOpenId && pendingOpenId!=="new" && frame.sessionId!==pendingOpenId)return;
       engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;resetSlashCommands();skillReloadScope=null;
       const sameTransfer=(transfer?.sessionId || transfer?.scope)===frame.sessionId;
@@ -1563,6 +1569,7 @@ function handleFrame(frame, ws) {
       return;
     }
     case 'model_catalog':
+      void loadRuntimeStatus();
       if(!draftModelEngine() || frame.requestId!==catalogRequest || frame.engine!==draftModelEngine())return;
       catalogRequest=null;models={...frame,models:frame.models.map(model=>({
         ...model,
@@ -1652,6 +1659,7 @@ function handleFrame(frame, ws) {
       scheduleRecentThread();
       return;
     case 'error':
+      void loadRuntimeStatus();
       if(frame.code==='metadata_unavailable'){
         if(modelConfirmation&&frame.requestId===modelConfirmation){abandonPendingSettings();toast('模型设置确认失败，输入已保留');refreshComposer();return;}
         if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令超时或失败';renderSlash();}

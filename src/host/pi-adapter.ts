@@ -1,4 +1,4 @@
-import { HANDOFF_REQUEST, HANDOFF_VERSION } from "context-handoff/protocol";
+import type { HostPiRuntime } from './pi-runtime.js';
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -28,6 +28,7 @@ export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 
 
 export interface RpcPiSessionFactoryOptions {
+  runtime?: HostPiRuntime;
   instructions?:(id?:string)=>Promise<string|undefined>;
   runtimeIdForSession?: (id:string)=>string;
   cwd?: string;
@@ -92,15 +93,25 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     this.options = options;
   }
 
+  private extensions(): string[] { return this.options.runtime?.extensions() ?? this.options.extensions ?? []; }
+  private async startWithRecovery<T>(start: () => Promise<T>): Promise<T> {
+    const startedInEmergency = this.options.runtime?.status().mode === 'emergency';
+    try { return await start(); }
+    catch (error) {
+      if (!this.options.runtime?.recoverStartup(error, startedInEmergency)) throw error;
+      return start(); // At most one retry, before any prompt has been submitted.
+    }
+  }
+
   private commandDiscovery?:Promise<CommandInfo[]>;
   async commandCatalog(engine:"pi"):Promise<CommandInfo[]> {
     if(engine!=="pi")throw new Error("This adapter only discovers Pi commands");
     if(this.commandDiscovery)return this.commandDiscovery;
-    this.commandDiscovery=this.discoverCommands();
+    this.commandDiscovery=this.startWithRecovery(()=>this.discoverCommands());
     try{return await this.commandDiscovery;}finally{this.commandDiscovery=undefined;}
   }
   private async discoverCommands():Promise<CommandInfo[]> {
-    const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.options.extensions??[]),this.options.skills??[]);
+    const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.extensions()),this.options.skills??[]);
     args.push("--no-session");
     const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
@@ -110,7 +121,10 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
     if(engine!=="pi")throw new Error("This adapter only discovers Pi models");
-    const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.options.extensions??[]),this.options.skills??[]);
+    return this.startWithRecovery(()=>this.discoverModels());
+  }
+  private async discoverModels():Promise<PiModels> {
+    const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.extensions()),this.options.skills??[]);
     // Native ephemeral mode: discover configured providers without a task or saved transcript.
     args.push("--no-session");
     const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
@@ -121,8 +135,11 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async create(options: { sessionId: string; workspaceSessionId?:string; requireExisting?:boolean }): Promise<PiSession> {
+    return this.startWithRecovery(()=>this.createOnce(options));
+  }
+  private async createOnce(options: { sessionId: string; workspaceSessionId?:string; requireExisting?:boolean }): Promise<PiSession> {
     const args = appendSkillArgs(
-      appendExtensionArgs([...(this.options.args ?? [])], this.options.extensions ?? []),
+      appendExtensionArgs([...(this.options.args ?? [])], this.extensions()),
       this.options.skills ?? [],
     );
     const instructions=await this.options.instructions?.(options.workspaceSessionId??options.sessionId);
@@ -339,9 +356,13 @@ class RpcPiSession implements PiSession {
   async start(): Promise<void> {
     try {
       await this.client.start();
+      // RpcClient.start only waits 100 ms; a package can fail after it returns.
+      // Do not expose a session (or allow a prompt) before native RPC is ready.
+      await this.client.getState();
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
+      await this.client.stop().catch(()=>undefined);
       throw error;
     }
   }
@@ -567,6 +588,7 @@ class RpcPiSession implements PiSession {
     if (!commands.some(command => command.name === "handoff")) {
       throw new Error("Handoff extension is not loaded; no native fallback was requested.");
     }
+    const { HANDOFF_REQUEST, HANDOFF_VERSION } = await import('context-handoff/protocol');
     const state=await this.client.getState();
     if(state.isStreaming || state.isCompacting)throw new Error("Wait for the current Pi operation to finish");
     if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error("Current Pi model is not allowed; select an approved model before Handoff");

@@ -6,8 +6,7 @@ import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
 import {GitHubAccounts} from "./host/github-accounts.js";
-import { resolvePiSkills, withCoffeeLspPath } from "pi-coffee-lsp";
-import { resolveHostPiExtensions } from "./host/pi-extensions.js";
+import { HostPiRuntime } from "./host/pi-runtime.js";
 import { parseUserRoutes } from "./web/identity.js";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -98,12 +97,13 @@ async function run(selectedRole: Role): Promise<void> {
   // One shared User VM, one model login, one Host (ADR-0010). Each Gitea user
   // the Web Server forwards gets a private cwd and session store under the
   // shared roots; the agent dir (model account, models.json) stays common.
+  const piRuntime = wantHost ? await HostPiRuntime.load() : undefined;
   const piOptions = {
     agentDir: process.env.PI_COFFEE_AGENT_DIR,
     provider: process.env.PI_COFFEE_PROVIDER,
     model: process.env.PI_COFFEE_MODEL,
     allowedModels: process.env.PI_COFFEE_PI_ALLOWED_MODELS === undefined ? undefined : envList("PI_COFFEE_PI_ALLOWED_MODELS", ","),
-    extensions: resolveHostPiExtensions(),
+    runtime: piRuntime,
     args: ["--no-extensions"], // Only the reviewed package roots execute in Host sessions.
   };
   const sessionRoot = process.env.PI_COFFEE_SESSION_DIR?.trim();
@@ -134,9 +134,9 @@ async function run(selectedRole: Role): Promise<void> {
     const codexOptions={env:deniedGitHub,instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,instructions,
-      pi:new RpcPiSessionFactory({...piOptions,instructions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:{...deniedGitHub,PATH:deniedGitHub.PATH+':'+withCoffeeLspPath().PATH,COFFEE_MANAGED_PATH:deniedGitHub.PATH+':'+withCoffeeLspPath().PATH},
+      pi:new RpcPiSessionFactory({...piOptions,instructions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:{...deniedGitHub,PATH:deniedGitHub.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:deniedGitHub.PATH+':'+piRuntime!.path()},
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
-        envForSession:async id=>{const env=await workspaces.lookup(id)?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,PATH:env.PATH+':'+withCoffeeLspPath().PATH,COFFEE_MANAGED_PATH:env.PATH+':'+withCoffeeLspPath().PATH};},
+        envForSession:async id=>{const env=await workspaces.lookup(id)?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,PATH:env.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:env.PATH+':'+piRuntime!.path()};},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
         codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>new CodexSessionFactory({...codexOptions,preparation,instructions:async()=>[await instructions(),await workspaces.forkInstructionForCwd(taskCwd)].filter(Boolean).join('\n'),envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
@@ -146,7 +146,7 @@ async function run(selectedRole: Role): Promise<void> {
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:resolvePiSkills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
+    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);
@@ -154,6 +154,7 @@ async function run(selectedRole: Role): Promise<void> {
     host: envString("PI_COFFEE_HOST_BIND", "127.0.0.1"),
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
+    runtimeStatus: piRuntime?.status,
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,
     requireUser: envFlag("PI_COFFEE_REQUIRE_USER"),

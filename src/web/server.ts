@@ -219,11 +219,11 @@ export class WebServer {
       }catch{json(response,502,{error:'sync_unavailable'});}
       return;
     }
-    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
-        if(path === "/api/engines" && request.method !== "GET") {json(response,405,{error:"Method not allowed"});return;}
+        if((path === "/api/engines" || path === "/api/runtime") && request.method !== "GET") {json(response,405,{error:"Method not allowed"});return;}
         if(request.method === "POST" && (this.identity ? !this.identity.originAllowed(request) : this.auth ? !this.auth.originAllowed(request) : request.headers.origin !== `${this.scheme}://${request.headers.host}`)) {json(response,403,{error:"Invalid origin"});return;}
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};

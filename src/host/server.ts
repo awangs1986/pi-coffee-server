@@ -7,7 +7,7 @@ import type { RunnerManager } from "./runners.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SkillManager, type SkillManagerOptions } from "./skills.js";
 import { capabilitiesFor } from "../shared/protocol.js";
-import { stopLspDaemon } from "pi-coffee-lsp";
+import type { PiRuntimeStatus } from './pi-runtime.js';
 import { readJson, json } from "../shared/http.js";
 import type { Workspaces } from "./workspaces.js";
 
@@ -52,6 +52,7 @@ export interface UserScope {
 }
 
 export interface HostServerOptions {
+  runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
   port?: number;
   token?: string;
@@ -147,7 +148,7 @@ export class HostServer {
   private readonly conversationIndexRoot?:string;
   private readonly syncV2Enabled:boolean;
 
-  constructor(options: HostServerOptions) {
+  constructor(private readonly options: HostServerOptions) {
     this.conversationIndexRoot=options.conversationIndexRoot;
     this.syncV2Enabled=options.syncProtocolV2??process.env.PI_COFFEE_SYNC_V2!=="off";
     this.factory = options.factory;
@@ -180,7 +181,7 @@ export class HostServer {
       }
       if (request.url === "/healthz") {
         response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        response.end(JSON.stringify({ ok: true, role: "host", protocolVersion: PROTOCOL_VERSION, capabilities:{giteaCheckouts:Boolean(this.workspaces),chatWorkspaces:Boolean(this.workspaces),ownerEnvironment:this.execution?.ownerEnvironment ?? false,passwordlessRoot:this.execution?.passwordlessRoot ?? false} }));
+        response.end(JSON.stringify({ ok: true, role: "host", runtime:options.runtimeStatus?.(), protocolVersion: PROTOCOL_VERSION, capabilities:{giteaCheckouts:Boolean(this.workspaces),chatWorkspaces:Boolean(this.workspaces),ownerEnvironment:this.execution?.ownerEnvironment ?? false,passwordlessRoot:this.execution?.passwordlessRoot ?? false} }));
         return;
       }
       response.writeHead(404);
@@ -229,8 +230,11 @@ export class HostServer {
       return;
     }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
+    if(req.url === '/api/runtime' && req.method === 'GET') {
+      json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
+    }
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
+      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }
@@ -444,7 +448,9 @@ export class HostServer {
         }
         case "delete": {
           await this.transfer?.quiesce(transferScope(user,input.id));
-          await stopLspDaemon(taskNamespace(user,input.id));
+          // Cleanup fails closed if LSP cannot be loaded: do not delete a tree
+          // that might still have a daemon using it. Basic conversations remain available.
+          await (await import('pi-coffee-lsp')).stopLspDaemon(taskNamespace(user,input.id));
           if(await ws.lookup(input.id)) result=await ws.deleteWorkspace(input.id,input.confirmation,()=>slot.registry.delete(input.id),input.includeLocalFiles===true);
           else {
             if(input.id!==input.confirmation || !await ws.isArchived(input.id))throw new Error("Archive and confirm the exact conversation ID first");
