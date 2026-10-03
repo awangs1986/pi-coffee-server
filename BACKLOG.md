@@ -461,3 +461,5 @@ defines user-scoped persistence and the strict separation from task execution id
   both providers and explicit disable.
 
 - [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31): selectively recover reproducible frontend continuity fixes from old Gitea PR #5 on current main. [Review](docs/reviews/legacy-pr-salvage-20261003.md) records all five old PR dispositions; source PRs remain separate from merge/deployment.
+
+- [Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33): allow thinking selection before creating Pi/Codex tasks, default to medium where supported, and confirm the choice before first prompt delivery. Included in pending Server PR #32; deployment remains separate.

@@ -20,6 +20,7 @@ it('enforces Pi model choices through the authenticated Host, including slash co
   send({type:'get_model_catalog',engine:'pi',requestId:'draft'});
   const preview=await next(f=>f.requestId==='draft' || f.type==='error');
   expect(preview).toMatchObject({type:'model_catalog',engine:'pi',models:[expect.objectContaining({provider:'fake',id:'fake-large'})]});
+  expect(preview.models[0].thinkingLevels).toContain('medium');
   expect(await factory.list()).toEqual([]);
   send({type:'open',sessionId:'policy-task'});await next(f=>f.type==='history');
   send({type:'get_models'});const catalog=await next(f=>f.type==='models');

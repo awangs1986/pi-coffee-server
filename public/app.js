@@ -92,6 +92,8 @@ let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
 let catalogRequest = null, draftModel = null, historyReady = false;
+let draftThinking='medium',draftThinkingExplicit=false,thinkingToApply=null,thinkingPending=null;
+const thinkingLabel=level=>level==='medium'?'med':level;
 let entries = [], historyBatch=null;
 const recentConversations=new RecentConversations();
 const previewStore=new ConversationPreviewStore();
@@ -278,14 +280,14 @@ function toggleBrandMenu() {
 
 // ---------- Agent settings menu ----------
 const draftModelEngine = () => !activeId && !pendingOpenId && engineAvailability.some(e=>e.id===$('#task-engine').value && e.available && e.modelCatalog) ? $('#task-engine').value : null;
-const modelControlsLocked = () => takeoverBusy() || compacting || !!modelPending || !connected || (!opened && !draftModelEngine());
+const modelControlsLocked = () => takeoverBusy() || compacting || !!modelPending || !!thinkingPending || !connected || (!opened && !draftModelEngine());
 function loadDraftModels() {
   if (!connected || !draftModelEngine()) return;
   catalogRequest=requestId("catalog");
   send({v:1,type:"get_model_catalog",engine:draftModelEngine(),requestId:catalogRequest});
 }
 function flushFirstPrompt() {
-  if (!historyReady || modelPending || contextPending || contextToApply || queuedPrompt === null || uploadsBusy() || uploads.some(u=>u.state==='failed')) return;
+  if (!historyReady || modelPending || thinkingPending || thinkingToApply || contextPending || contextToApply || queuedPrompt === null || uploadsBusy() || uploads.some(u=>u.state==='failed')) return;
   const q=queuedPrompt;queuedPrompt=null;
   const draft=ui.prompt.value,laterImages=attachments.filter(image=>!q.images?.includes(image));
   const files=completedUploads();
@@ -423,12 +425,12 @@ function renderAgentPane(kind) {
   const levels = models.thinkingLevels || [];
   for (const level of levels) {
     pane.append(agentOption({
-      label: level,
+      label: thinkingLabel(level),
       selected: models.thinkingLevel === level,
       onClick: () => {
         closeAgentMenu();
         ui.thinking.value = level;
-        send({ v: 1, type: 'set_thinking', requestId: requestId('thinking'), level });
+        chooseThinking(level);
       },
     }));
   }
@@ -466,7 +468,7 @@ function renderAgentSettings() {
   ui.agentValues.model.title = models?.current ? `${models.current.provider}/${models.current.id}` : '';
   const levels = models?.thinkingLevels || [];
   ui.agentRows.thinking.classList.toggle('hidden', levels.length === 0);
-  ui.agentValues.thinking.textContent = models?.thinkingLevel || levels[0] || '—';
+  ui.agentValues.thinking.textContent = thinkingLabel(models?.thinkingLevel || levels[0] || '—');
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
   ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(agent));
   ui.agentRows.context.disabled=takeoverBusy()||streaming||compacting||Boolean(contextPending)||!models?.context;
@@ -1147,7 +1149,7 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.send.disabled = Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -1360,7 +1362,7 @@ function connectSocket() {
     abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);
     queuedRequests.clear();
     restoreQueuedPrompt();
-    modelPending=null;contextPending=null;
+    modelPending=null;thinkingPending=null;thinkingToApply=null;contextPending=null;
     opened = false;
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
@@ -1396,7 +1398,7 @@ async function openSession(id) {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
       if(!isCurrent())return;
       textDrafts.delete(draftKey());
-      id=c.id;activeId=id;contextToApply=draftContextPreset;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
+      id=c.id;activeId=id;contextToApply=draftContextPreset;thinkingToApply=['pi','codex'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
     }catch(e){
       if(!isCurrent())return;
       pendingOpenId=null;toast(e.message);
@@ -1452,6 +1454,7 @@ function handleFrame(frame, ws) {
       renderSessionList();
       historyReady=false;catalogRequest=null;
       if(draftModel && ['pi','codex'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
+      if(!supports('models'))thinkingToApply=null;
       afterOpened();
       return;
     case 'history': {
@@ -1465,13 +1468,22 @@ function handleFrame(frame, ws) {
     }
     case 'model_catalog':
       if(!draftModelEngine() || frame.requestId!==catalogRequest || frame.engine!==draftModelEngine())return;
-      catalogRequest=null;models={...frame,thinkingLevels:[],thinkingLevel:''};
+      catalogRequest=null;models={...frame,models:frame.models.map(model=>({
+        ...model,
+        ...(model.thinkingLevels===undefined&&model.provider===frame.current?.provider&&model.id===frame.current?.id?{thinkingLevels:frame.thinkingLevels||[],defaultThinkingLevel:frame.thinkingLevel}:{}),
+      }))};
       if(draftModel && models.models.some(m=>m.provider===draftModel.provider && m.id===draftModel.id))models.current=draftModel;
-      draftModel=models.current;
+      draftModel=models.current;syncDraftThinking();
       renderModels();refreshComposer();return;
     case 'models':
       if(frame.sessionId && frame.sessionId!==activeId)return;
       models = frame;modelPending=null;
+      if(thinkingToApply && !thinkingPending){
+        const wanted=thinkingToApply;thinkingToApply=null;
+        if(frame.thinkingLevels?.includes(wanted.level)){
+          if(wanted.level!==frame.thinkingLevel)chooseThinking(wanted.level);
+        }else if(wanted.explicit){toast('所选模型不支持该思考强度，请重新选择');restoreQueuedPrompt();}
+      }
       if(contextToApply){const wanted=contextToApply;contextToApply=null;if(frame.context&&wanted!==frame.context.preset){contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset:wanted});}else if(wanted==='maximum'&&!frame.context){toast('Host 尚不支持上下文设置，请稍后刷新');restoreQueuedPrompt();}}
       refreshComposer();
       renderModels();flushFirstPrompt();
@@ -1515,6 +1527,7 @@ function handleFrame(frame, ws) {
       // Host treats queued input as a new prompt if the previous run already ended.
       if (frame.operation === 'prompt') queuedRequests.delete(frame.requestId);
       if (frame.operation === 'steer' || frame.operation === 'follow_up') toast(frame.operation === 'steer' ? '已插话' : '已排队');
+      if(frame.operation==='set_thinking'&&frame.requestId===thinkingPending){thinkingPending=null;refreshComposer();flushFirstPrompt();}
       if (frame.operation === 'set_model' || frame.operation === 'set_thinking') send({ v: 1, type: 'get_models' });
       if(frame.operation==='set_context'&&frame.requestId===contextPending){contextPending=null;send({v:1,type:'get_stats'});}
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
@@ -1539,13 +1552,14 @@ function handleFrame(frame, ws) {
       if(rejectUiAnswer(frame))return;
       if(pendingRenames.delete(frame.requestId)){toast('重命名失败：'+frame.message,5000);return;}
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
+      if(thinkingPending&&frame.requestId===thinkingPending){thinkingPending=null;thinkingToApply=null;restoreQueuedPrompt();toast('思考强度设置失败：'+frame.message);renderModels();refreshComposer();return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
       if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
       const rejectedPrompt=promptOutbox.get(frame.requestId);
       if(rejectedPrompt){rejectedPrompt.uncertain=true;rejectedPrompt.reason='请求返回错误：'+frame.code;renderUncertainPrompts();}
-      if(modelPending && frame.requestId===modelPending){modelPending=null;renderModels();refreshComposer();}
+      if(modelPending && frame.requestId===modelPending){modelPending=null;thinkingToApply=null;renderModels();refreshComposer();}
       // A transient native-open failure does not make the cached transcript invalid.
       // Identity, binding and lifecycle changes still invalidate it at their own boundaries.
       if(!opened&&pendingOpenId&&activeId&&frame.code!=='operation_failed')invalidatePreview(activeId);
@@ -1979,7 +1993,7 @@ function renderModels() {
   for (const level of models.thinkingLevels || []) {
     const option = document.createElement('option');
     option.value = level;
-    option.textContent = '思考：' + level;
+    option.textContent = '思考：' + thinkingLabel(level);
     ui.thinking.appendChild(option);
   }
   ui.thinking.value = models.thinkingLevel || '';
@@ -1991,7 +2005,7 @@ ui.model.addEventListener('change', () => {
   chooseModel(provider,rest.join('/'));
 });
 function chooseModel(provider,id) {
-  if(!opened && draftModelEngine()){draftModel={provider,id};models={...models,current:draftModel};renderModels();refreshComposer();return;}
+  if(!opened && draftModelEngine()){draftModel={provider,id};models={...models,current:draftModel};syncDraftThinking();renderModels();refreshComposer();return;}
   modelPending=requestId('model');refreshComposer();
   send({v:1,type:'set_model',requestId:modelPending,provider,id});
 }
@@ -1999,9 +2013,24 @@ ui.modelSource.addEventListener('change',()=>{
   const next=models?.models.find(m=>(m.source || 'native')===ui.modelSource.value);
   if(next)chooseModel(next.provider,next.id);else renderModels();
 });
-ui.thinking.addEventListener('change', () => {
-  if (ui.thinking.value) send({ v: 1, type: 'set_thinking', requestId: requestId('thinking'), level: ui.thinking.value });
-});
+function syncDraftThinking(){
+  const model=selectedModelInfo(),levels=model?.thinkingLevels||[];
+  if(!draftThinkingExplicit || !levels.includes(draftThinking)){
+    draftThinkingExplicit=false;
+    draftThinking=levels.includes('medium')?'medium':levels.includes(model?.defaultThinkingLevel)?model.defaultThinkingLevel:levels[0]||null;
+  }
+  models={...models,thinkingLevels:levels,thinkingLevel:draftThinking||''};
+}
+function chooseThinking(level){
+  if(!models?.thinkingLevels?.includes(level))return;
+  if(!opened && draftModelEngine()){
+    draftThinking=level;draftThinkingExplicit=true;models={...models,thinkingLevel:level};renderModels();refreshComposer();return;
+  }
+  thinkingPending=requestId('thinking');
+  if(!send({v:1,type:'set_thinking',requestId:thinkingPending,level})){thinkingPending=null;restoreQueuedPrompt();}
+  refreshComposer();
+}
+ui.thinking.addEventListener('change',()=>chooseThinking(ui.thinking.value));
 
 // ---------- slash commands ----------
 let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null;
@@ -2490,11 +2519,12 @@ $('#composer').addEventListener('submit', (event) => {
   if(takeoverBusy())return;
   if(queuedPrompt!==null){toast('首条消息正在准备；新输入保留为草稿');return;}
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
+  if(!opened && draftModelEngine() && !models){toast('正在加载模型和思考强度，请稍后发送');return;}
   const text = ui.prompt.value.trim();
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
-  if(modelPending||contextPending){toast('等待模型或上下文设置确认');return;}
+  if(modelPending||thinkingPending||thinkingToApply||contextPending){toast('等待模型或上下文设置确认');return;}
   const sshmeRequest=parseSshme(text);
   if(sshmeRequest!==null){
     if(!sshmeRequest){toast('请在 /sshme 后输入需要协助的内容');return;}
@@ -2600,7 +2630,7 @@ function switchSession(id) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
   activeId = id;
   restoreTextDraft();
   rememberTask(id);
@@ -2624,7 +2654,7 @@ function newSession(focus = true) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;
+  taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;
   engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
@@ -2778,8 +2808,8 @@ async function loadWorkspace() {
     else {workspaceChanges=null;workspaceSync=null;renderSyncState();for(const id of ['migrate-workspace','checkpoint-workspace','pull-request'])$('#'+id).classList.add('hidden');selectedChangedPath=null;if(workspaceDetailOpen)closeWorkspaceDetail();renderWorkspaceSummary();renderWorkspaceList();}
   } catch(e) {if(seq===workspaceRequestSeq && workspaceState){workspaceSync={...workspaceSync,state:'unknown',error:e.message};renderSyncState();renderProjectContext();}}
 }
-$('#task-engine').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;models=null;engine=$('#task-engine').value;closeAgentMenu();saveCreation();refreshComposer();loadDraftModels();});
-$('#task-kind').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;models=null;closeAgentMenu();saveCreation();refreshComposer();engine=$('#task-engine').value;loadDraftModels();});
+$('#task-engine').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;models=null;engine=$('#task-engine').value;closeAgentMenu();saveCreation();refreshComposer();loadDraftModels();});
+$('#task-kind').addEventListener('change',()=>{resetSlashCommands();creationRequest=null;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;models=null;closeAgentMenu();saveCreation();refreshComposer();engine=$('#task-engine').value;loadDraftModels();});
 $('#create-task').addEventListener('click',async()=>{
   if(activeId && !workspaceState?.conversations.some(c=>c.id===activeId)){
     const id=activeId,workspaceKind=$('#task-kind').value,projectId=ui.projectSelect.value;

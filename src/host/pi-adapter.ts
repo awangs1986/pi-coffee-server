@@ -5,6 +5,7 @@ import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RpcClient, SessionManager, parseSkillBlock } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import type {
   CommandInfo,
   ContextBreakdown,
@@ -413,6 +414,11 @@ class RpcPiSession implements PiSession {
         id: model.id,
         contextWindow: model.contextWindow,
         reasoning: model.reasoning,
+        thinkingLevels: model.provider===current?.provider && model.id===current?.id
+          ? levels.map(String)
+          // Native RPC returns the model record including thinkingLevelMap;
+          // RpcClient's ModelInfo declaration only lists its common fields.
+          : getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]),
       })),
       current: current && this.modelAllowed(current.provider,current.id) && typeof current.provider === "string" && typeof current.id === "string"
         ? { provider: current.provider, id: current.id, source: (process.env.PI_COFFEE_RELAY_PROVIDERS ?? "cpa").split(",").map(v=>v.trim()).includes(current.provider) ? "relay" as const : "native" as const }

@@ -335,6 +335,31 @@ it('ignores a stale Codex catalog after switching back to Pi',async()=>{
  expect(engine.value).toBe('pi');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
 });
 
+it.each(['pi','codex'].flatMap(agent=>['default','high','rejected'].map(selection=>({agent,selection}))))('chooses $agent thinking before task creation ($selection), defaults to med and waits for acceptance',async({agent,selection})=>{
+ const app=await setup(false,false,true,agent==='pi');if(agent==='codex'){chooseWork();const select=document.querySelector<HTMLSelectElement>('#task-engine')!;select.value=agent;select.dispatchEvent(new Event('change'));}
+ const query=app.frames.find(f=>f.type==='get_model_catalog'&&f.engine===agent),ws=app.sockets.at(-1);
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:agent,models:[{provider:agent,id:'reasoner',thinkingLevels:['low','medium','high']}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'low'});
+ const row=document.querySelector<HTMLButtonElement>('#agent-thinking-row')!;
+ expect(row.classList.contains('hidden')).toBe(false);expect(row.disabled).toBe(false);
+ expect(document.querySelector('#agent-thinking-value')!.textContent).toBe('med');
+ const level=selection==='default'?'medium':'high';
+ if(selection!=='default'){document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();row.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-thinking-pane button')].find(b=>b.textContent?.includes('high'))!.click();}
+ expect(app.frames.some(f=>f.type==='set_thinking')).toBe(false);expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first at high';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id;
+ ws.receive({type:'opened',engine:agent,sessionId:id,state:{},capabilities:{models:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const model=app.frames.find(f=>f.type==='set_model');ws.receive({type:'ack',operation:'set_model',requestId:model.requestId});
+ ws.receive({type:'models',models:[{provider:agent,id:'reasoner'}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'low'});
+ const thinking=app.frames.find(f=>f.type==='set_thinking');expect(thinking).toMatchObject({level});
+ expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+ if(selection==='rejected'){ws.receive({type:'error',requestId:thinking.requestId,code:'operation_failed',message:'Effort unavailable'});expect(prompt.value).toBe('first at high');expect(app.frames.some(f=>f.type==='prompt')).toBe(false);return;}
+ ws.receive({type:'models',models:[{provider:agent,id:'reasoner'}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:level});
+ expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+ ws.receive({type:'ack',operation:'set_thinking',requestId:thinking.requestId});
+ expect(app.frames.filter(f=>f.type==='prompt')).toEqual([expect.objectContaining({text:'first at high'})]);
+});
+
 it('does not request a draft model catalog from an older Host',async()=>{
  const app=await setup(false,false,false);chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
  engine.value='codex';engine.dispatchEvent(new Event('change'));
@@ -342,6 +367,28 @@ it('does not request a draft model catalog from an older Host',async()=>{
  const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);button.click();
  expect(document.querySelector<HTMLButtonElement>('#agent-model-row')!.disabled).toBe(true);
  expect(document.querySelector('#agent-menu-note')!.textContent).toContain('模型在任务创建后可选');
+});
+
+it('updates draft effort choices with the model and resets an unavailable choice to med',async()=>{
+ const app=await setup(false,false,true,true),ws=app.sockets.at(-1),query=app.frames.find(f=>f.type==='get_model_catalog');
+ const choices=[{provider:'pi',id:'reasoner',thinkingLevels:['low','medium','high']},{provider:'pi',id:'compact',thinkingLevels:['low','medium']},{provider:'pi',id:'plain',thinkingLevels:[]}];
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:'pi',models:choices,current:{provider:'pi',id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'high'});
+ const select=document.querySelector<HTMLSelectElement>('#thinking')!;select.value='high';select.dispatchEvent(new Event('change'));
+ const models=document.querySelector<HTMLSelectElement>('#model')!;models.value='pi/compact';models.dispatchEvent(new Event('change'));
+ expect(document.querySelector('#agent-thinking-value')!.textContent).toBe('med');expect([...select.options].map(o=>o.value)).toEqual(['low','medium']);
+ models.value='pi/plain';models.dispatchEvent(new Event('change'));expect(document.querySelector('#agent-thinking-row')!.classList.contains('hidden')).toBe(true);
+ models.value='pi/reasoner';models.dispatchEvent(new Event('change'));expect(document.querySelector('#agent-thinking-value')!.textContent).toBe('med');
+ expect(app.frames.some(f=>['set_thinking','set_model'].includes(f.type))).toBe(false);
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const next=app.frames.filter(f=>f.type==='get_model_catalog').at(-1);
+ app.sockets.at(-1).receive({type:'model_catalog',requestId:next.requestId,engine:'pi',models:choices,current:{provider:'pi',id:'reasoner'},thinkingLevel:'high'});
+ expect(document.querySelector('#agent-thinking-value')!.textContent).toBe('med');
+});
+
+it('retains the first draft while model and effort discovery is still pending',async()=>{
+ const app=await setup(false,false,true,true);const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Wait for model options';
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.some(r=>r.action==='conversation')).toBe(false);expect(prompt.value).toBe('Wait for model options');
 });
 
 it('locks draft model controls while explicit task creation is in flight',async()=>{
