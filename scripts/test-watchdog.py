@@ -1,5 +1,6 @@
 """Public CLI / local HTTP / service-manager boundary checks; no real services touched."""
 import contextlib
+import fcntl
 import http.server
 import importlib.util
 import io
@@ -108,7 +109,7 @@ sys.exit(int(state.get('actionExit',0)))
     def test_persistent_fault_opens_circuit_even_after_window_expires(self):
         self.unhealthy()
         for _ in range(4):
-            for _ in range(3):self.tick(301)
+            self.tick(301);self.tick();self.tick()
         self.assertEqual(len(self.actions()),3)
         self.assertTrue(self.status()['circuitOpen'])
         self.tick(7200)
@@ -142,18 +143,20 @@ sys.exit(int(state.get('actionExit',0)))
 
     def test_failed_recovery_commands_consume_the_same_budget(self):
         self.unhealthy();self.unit['actionExit']=1;self.write_unit()
-        for _ in range(12):self.tick(301)
+        for _ in range(4):self.tick(301);self.tick();self.tick()
         self.assertEqual(len(self.actions()),3)
         self.assertTrue(self.status()['circuitOpen'])
 
     def test_sustained_health_resets_budget_but_not_a_latched_circuit(self):
         self.unhealthy()
         for _ in range(3):self.tick()
-        self.status_code=200;self.tick();self.tick(601)
+        self.status_code=200;self.tick()
+        for _ in range(21):self.tick()
         self.assertEqual(self.status()['incidentAttempts'],0)
         self.assertEqual(len(self.status()['attempts']),1)
         self.unit.update(ActiveState='failed',Result='start-limit-hit');self.write_unit();self.tick()
-        self.unit.update(ActiveState='active',Result='success');self.write_unit();self.tick();self.tick(601)
+        self.unit.update(ActiveState='active',Result='success');self.write_unit();self.tick()
+        for _ in range(21):self.tick()
         self.assertTrue(self.status()['circuitOpen'])
         self.run_cli('rearm','host');self.tick()
         self.assertEqual(self.status()['status'],'healthy')
@@ -187,6 +190,33 @@ sys.exit(int(state.get('actionExit',0)))
         self.unit['showExit']=1;self.write_unit();self.tick(500)
         self.unit['showExit']=0;self.write_unit();self.tick(101)
         self.assertEqual(self.status()['incidentAttempts'],1)
+
+    def test_maintenance_lock_contention_cannot_report_false_success(self):
+        self.tick()
+        with (self.root/'state/watchdog.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            self.assertEqual(self.run_cli('check')[0]['event'],'already-running')
+            with patch('time.monotonic',side_effect=[0,16]):
+                result=self.run_cli('pause','--seconds','900',expected=3)
+            self.assertEqual(result[0]['event'],'management-busy')
+            self.assertEqual(self.run_cli('status')[0]['pausedUntil'],0)
+
+    def maintenance_budget(self, explicit_resume):
+        self.unhealthy()
+        for _ in range(3):self.tick()
+        self.status_code=200;self.tick()
+        self.run_cli('pause','--seconds','900');self.now+=901
+        if explicit_resume:self.run_cli('resume')
+        self.tick()
+        self.assertEqual(self.status()['incidentAttempts'],1)
+        for _ in range(20):self.tick()
+        self.assertEqual(self.status()['incidentAttempts'],0)
+
+    def test_maintenance_expiry_requires_fresh_healthy_observation(self):
+        self.maintenance_budget(False)
+
+    def test_explicit_resume_requires_fresh_healthy_observation(self):
+        self.maintenance_budget(True)
 
 
 if __name__ == '__main__':

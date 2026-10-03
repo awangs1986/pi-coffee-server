@@ -19,7 +19,8 @@ transcripts, publish code or reboot the VM.
   spend the same budget. Wait five minutes between recovery attempts.
 - Allow at most three watchdog recoveries per unresolved incident and per 30-minute
   window. Ten minutes of uninterrupted health resets an unlatched incident budget
-  while retaining the rolling 30-minute attempt history.
+  while retaining the rolling 30-minute attempt history. Maintenance, unknown
+  observations and gaps over 90 seconds restart healthy observation.
   Exhausted incidents latch open even after the window expires or the watchdog
   itself restarts. `start-limit-hit` also latches immediately.
 - Native crash recovery remains `Restart=on-failure`, with `RestartSec=10s`,
