@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "policy": {
+    "failureThreshold": 3,
+    "restartLimit": 3,
+    "restartWindowSeconds": 1800,
+    "cooldownSeconds": 300,
+    "healthyResetSeconds": 600,
+    "probeTimeoutSeconds": 3
+  },
+  "targets": [
+    {
+      "id": "web",
+      "unit": "pi-coffee-web.service",
+      "manager": "system",
+      "role": "web",
+      "healthUrl": "http://127.0.0.1:3000/healthz"
+    }
+  ]
+}
