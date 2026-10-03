@@ -309,3 +309,24 @@ language header, copy control and syntax spans. Copying preserves the original
 command text. User message text is italic in the shared live/history rendering;
 assistant prose retains its existing style. This is presentation only and does
 not rewrite native transcripts or modify the Diff panel's syntax palette.
+
+## Task and input continuity (2026-10-03)
+
+Draft text remains local to the selected account and task while switching in one
+page. The page keeps at most 30 text drafts / 4 Mi characters in recency order;
+refresh/sign-out clears them. Attachments are not persisted as drafts. A late task
+creation, status, changes or file-grant result cannot take over another selection,
+including A → B → A. Disconnect leaves sync state unconfirmed.
+
+The first pending send cannot be replaced by a second submit. Creation failure or
+attachment cancellation returns its text without discarding newer edits. Image
+decoding reserves an attachment before Send becomes possible; originals upload
+only after explicit Send. Removed uploads cannot restart after asynchronous work.
+Transfer preparation, upload and saved-file confirmation have bounded waits;
+failed files require explicit retry or removal, never silent message delivery.
+
+IME composition does not trigger slash completion, dialog confirmation or global
+shortcuts. The topmost shell modal owns keyboard focus and blocks background task
+navigation; closing it returns focus to its trigger. Nested sidebar controls do
+not activate their row, and metadata polling preserves equivalent action focus.
+This does not alter the confirmed-message outbox or authoritative native history.

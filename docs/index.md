@@ -67,3 +67,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Pi 1.0 upgrade and activation](deployment/pi-100-upgrade.md): immutable plugin/source pins, native checks and separate production activation.
 
 - Codex model/effort restoration after Host restart: [native lifecycle contract](spec/native-agent-engines.md), [probe and evidence](development/codex-model-restore.md), [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30).
+
+- [Historical PR salvage review](reviews/legacy-pr-salvage-20261003.md): current-main recovery and rejection map for five old Gitea PRs; [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31).
