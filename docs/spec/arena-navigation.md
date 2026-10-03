@@ -361,3 +361,13 @@ complete gesture for conversation rows, group controls and action buttons.
 Pointer cancellation, drag completion and window blur release the deferral.
 Selecting another task preserves the old task's execution and immediately shows
 available cached content independently of a new network/history response.
+
+Concurrent active conversations keep their relative order while their attention
+category is unchanged. The view captures an ordering timestamp on entry into each
+active category; streaming output, tool events and polling can update visible
+metadata without changing that ordering key. A new conversation or an actual
+attention-category change may change placement; idle conversations retain the
+usual recent-activity ordering. Equal timestamps use the conversation ID as a
+stable tie-breaker. This is disposable view state, reset on identity changes and
+pruned when tasks leave the displayed list; it does not change task timestamps,
+project membership, execution or persisted group preferences.

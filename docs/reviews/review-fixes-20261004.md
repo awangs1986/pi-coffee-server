@@ -58,3 +58,12 @@ shared lifecycle refactor; conditional source/release imports repaired it. A
 stale native-child version expectation was updated for the intentional Pi patch.
 Release checks, fresh-clone evidence and actual deployment identity are recorded
 in [Issue #44](https://github.com/awangs1986/pi-coffee-server/issues/44).
+
+## Concurrent sidebar-order follow-up
+
+The owner additionally reported busy conversations swapping positions. The actual
+controller reproduction alternates A/B `updatedAt` values while both stay running;
+it fails because the previous comparator repeatedly orders by the most recent
+output timestamp. The view now retains an ordering timestamp per active attention
+category while displaying fresh metadata. Deterministic ties and identity resets
+are covered. Existing attention-first sections and idle recency remain intact.

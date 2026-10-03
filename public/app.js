@@ -29,7 +29,7 @@ import {
   noteNode, relativeTime, toolCard, toolResultDetails, toolResultText, updateActivity, updateAssistant, userBubble,
 
 } from './render.js';
-import { attentionOf, orderSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
+import { attentionOf, createSidebarOrder, orderSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
 
 
 const ACTIVE_KEY_BASE = 'pi-coffee.active.v2';
@@ -819,6 +819,7 @@ function sessionTitle(session) {
   return (cut > 0 ? raw.slice(0, cut).trim() : raw) || '新对话';
 }
 const sidebarInteraction=createSidebarInteraction(ui.sessionList);
+const sidebarOrder=createSidebarOrder();
 function renderSessionList() { sidebarInteraction.render(renderSessionListNow); }
 function renderSessionListNow() {
   const focused=document.activeElement;
@@ -842,6 +843,7 @@ function renderSessionListContent() {
     for(const c of workspaceState.conversations) if(!known.some(s=>s.id===c.id)) known.push({id:c.id,preview:c.creationState==='failed'?'创建失败 · 点击重试':c.creationState==='creating'?'创建中 · 点击恢复':c.workspaceKind==='chat'?'Chat 任务':'Work 任务',updatedAt:c.createdAt,running:false});
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
+  known=sidebarOrder.snapshot(known);
   if (known.length === 0 && (!grouped || !workspaceState?.projects.length)) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
     return;
@@ -1259,7 +1261,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){recentlySynced=[];if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){sidebarOrder.clear();recentlySynced=[];if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     conversationRepository.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1280,7 +1282,7 @@ function revokeCachedIdentity(){
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  loginCoffee.reset();conversationRepository.setScope(null);recentlySynced=[];syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
+  loginCoffee.reset();sidebarOrder.clear();conversationRepository.setScope(null);recentlySynced=[];syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();
 }

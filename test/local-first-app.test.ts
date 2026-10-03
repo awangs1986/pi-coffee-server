@@ -94,6 +94,17 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('keeps concurrent running conversations in place when their output timestamps alternate',async()=>{
+    const app=await setup('codex',2);await app.select('a');
+    const ws=app.sockets.at(-1)!;
+    const frame=(a:string,b:string)=>({type:'sessions',sessions:[{id:'a',name:'A',engine:'codex',running:true,updatedAt:a},{id:'b',name:'B',engine:'codex',running:true,updatedAt:b}]});
+    const order=()=>[...document.querySelectorAll('#session-list .session-item')].map(node=>node.getAttribute('data-session-id')).filter(id=>id==='a'||id==='b');
+    ws.receive(frame('2026-10-04T00:00:01Z','2026-10-04T00:00:02Z'));await tick();const original=order();
+    ws.receive(frame('2026-10-04T00:00:03Z','2026-10-04T00:00:02Z'));await tick();expect(order()).toEqual(original);
+    ws.receive(frame('2026-10-04T00:00:03Z','2026-10-04T00:00:04Z'));await tick();expect(order()).toEqual(original);
+    expect(document.querySelectorAll('.sidebar-running-cat')).toHaveLength(2);
+  });
+
   it('links restored V2 upload chips with current grants regardless of arrival order',async()=>{
     const app=await setup('codex',2);const ws=await app.select('a');
     ws.receive({type:'transfer',sessionId:'a',url:'http://files.example',scope:'scope-a',token:'fixture-first'});
