@@ -105,6 +105,8 @@ describe("Codex app-server adapter", () => {
       const [raw]=await response;const frame=JSON.parse(raw.toString());
       expect(frame).toMatchObject({type:'model_catalog',engine:'codex',requestId:'draft',models:expect.arrayContaining([expect.objectContaining({provider:'codex',id:'gpt-fake'})])});
       expect(frame.current).toEqual({provider:'codex',id:'gpt-fake-mini'});
+      expect(frame.models.find((model:any)=>model.id==='gpt-fake')).toMatchObject({thinkingLevels:['low','medium','high'],defaultThinkingLevel:'medium'});
+      expect(frame.models.find((model:any)=>model.id==='gpt-fake-mini')).toMatchObject({thinkingLevels:[]});
       expect(await factory.list()).toEqual([]);
     }finally{ws.close();await host.close();}
   });

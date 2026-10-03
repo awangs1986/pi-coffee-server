@@ -465,3 +465,7 @@ defines user-scoped persistence and the strict separation from task execution id
 - 2026-10-03: [Server #36](https://github.com/awangs1986/pi-coffee-server/issues/36) replaces shared GitHub credentials with per-Gitea-user OAuth bindings, explicit task authorization and managed Git/gh execution. Production OAuth activation requires a configured Web OAuth App; SSH assistance and fork workflows are separate follow-ups.
 
 - 2026-10-03: [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39) adds Conversation Fork beside Rename/Archive, with native and experimental Handoff choices. The owner chose independent clones/data folders containing current code changes and attachments. Pi uses the existing context-handoff package in a native copy; Codex uses native thread/fork and a fresh summary-seeded session for Handoff. Claude exposes Handoff only until native Fork is verified. Production activation remains separate from source delivery.
+
+- [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31): selectively recover reproducible frontend continuity fixes from old Gitea PR #5 on current main. [Review](docs/reviews/legacy-pr-salvage-20261003.md) records all five old PR dispositions; source PRs remain separate from merge/deployment.
+
+- [Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33): allow thinking selection before creating Pi/Codex tasks, default to medium where supported, and confirm the choice before first prompt delivery. Included in pending Server PR #32; deployment remains separate.
