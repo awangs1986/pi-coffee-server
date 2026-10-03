@@ -1,3 +1,4 @@
+import {initForkControls} from "./fork.js";
 import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
 import {RecentConversations} from './recent-conversations.js';
 import {ConversationPreviewStore,createConversationPreview} from './conversation-preview-store.js';
@@ -169,14 +170,15 @@ function renderUncertainPrompts(){
 const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
-let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false;
+let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false,forkModes={};
+const forkControls=initForkControls({task:id=>workspaceState?.conversations.find(c=>c.id===id),modes:engine=>forkModes[engine]??[],request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},selection:()=>taskSelectionEpoch,complete:(id,epoch)=>{send({v:1,type:"list_sessions"});if(epoch===taskSelectionEpoch)switchSession(id);},toast:message=>toast(message)});
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
-const takeoverBusy=()=>Boolean(activeId&&takeoverControls.busy(activeId));
+const takeoverBusy=()=>Boolean(activeId&&(takeoverControls.busy(activeId)||forkControls.busy(activeId)));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;}}catch{}
+  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;forkModes=data.forkModes??{};}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
 }
 void loadEngines();
@@ -828,6 +830,8 @@ function sessionRow(session) {
   item.tabIndex = 0;
   const main = el('div', 'session-main');
   main.appendChild(el('span', 'title', sessionTitle(session)));
+  if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='preparing')main.append(el('span','interrupted-badge','Fork 准备中'));
+  if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='failed')main.append(el('span','interrupted-badge','Fork 未完成 · 副本已保留'));
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.runState==='interrupted')main.append(el('span','interrupted-badge','上次运行中断 · 未自动续跑'));
   const metaParts = [relativeTime(session.updatedAt), session.messageCount ? session.messageCount + ' 条' : ''];
   if (attention === 'waiting') metaParts.unshift('等你回答');
@@ -841,11 +845,11 @@ function sessionRow(session) {
   else if (attention === 'running') item.appendChild(el('span', 'running'));
   const menu = el('button', 'more', '⋯');
   menu.type = 'button';
-  menu.title = workspaceState ? '重命名 / 归档' : '重命名 / 删除';
+  menu.title = workspaceState ? '重命名 / Fork / 归档' : '重命名 / 删除';
   menu.setAttribute('aria-label', '对话操作');
   menu.addEventListener('click', (event) => { event.stopPropagation(); openSessionMenu(session, menu); });
   item.appendChild(menu);
-  const open = () => { switchSession(session.id); closeSidebarOnMobile(); };
+  const open = () => {const task=workspaceState?.conversations.find(c=>c.id===session.id);if(task?.fork&&task.fork.status!=='completed'){toast(task.fork.status==='failed'?'Fork 未完成：'+(task.fork.error||'请检查保留的副本')+' · '+task.cwd:'Fork 正在准备，请稍候');return;}switchSession(session.id); closeSidebarOnMobile(); };
   item.addEventListener('click', open);
   item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
   return item;
@@ -882,7 +886,13 @@ function openSessionMenu(session, anchor) {
       try {await workspaceApi({action:'delete',id:session.id,confirmation,includeLocalFiles:true});await loadWorkspace();send({v:1,type:'list_sessions'});}catch(e){toast(e.message);}
     });menuNode.append(remove);
   }
-  menuNode.append(rename, del);
+  rename.disabled ||= forkControls.busy(session.id);del.disabled ||= forkControls.busy(session.id);
+  const fork=el('button','popitem','Fork（分叉）');fork.type='button';
+  const task=workspaceState?.conversations.find(c=>c.id===session.id);
+  fork.disabled=!task||archived||task.creationState==='failed'||task.creationState==='creating'||(task.fork&&task.fork.status!=='completed')||Boolean(session.running)||forkControls.busy(session.id)||!(forkModes[taskEngine]??[]).length;
+  if(fork.disabled)fork.title='需已就绪且空闲的任务，以及此 Agent 支持的 Fork 模式';
+  fork.addEventListener('click',()=>{closeMenu();forkControls.open(session);});
+  menuNode.append(rename, fork, del);
   if(workspaceState?.projects.length){
     const label=el('label','sidebar-move-label','移至侧栏分组');
     const select=el('select','sidebar-move-select');select.setAttribute('aria-label','移至侧栏分组');
@@ -963,7 +973,7 @@ function renderHeader() {
 
   const pending = attentionCount();
   document.title = (finishedWhileHidden ? '✅ ' : '') + (pending ? '(' + pending + ') ' : '') + (activeId && title !== '新对话' ? title + ' · ' : '') + 'PI Coffee';
-  ui.topbarState.replaceChildren();if(takeoverBusy())ui.topbarState.append(el('span','dot busy'),document.createTextNode('正在交接 Agent…'));else if(streaming)ui.topbarState.append(el('span','dot busy'),document.createTextNode(engineName()+' 正在工作…'));
+  ui.topbarState.replaceChildren();if(takeoverBusy())ui.topbarState.append(el('span','dot busy'),document.createTextNode(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…'));else if(streaming)ui.topbarState.append(el('span','dot busy'),document.createTextNode(engineName()+' 正在工作…'));
 
   renderStats();
 }
@@ -1127,7 +1137,7 @@ function refreshComposer() {
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
   if(activeId && !historyReady)ui.hint.textContent='正在同步对话…';
-  if(takeoverBusy())ui.hint.textContent='正在交接 Agent… 当前对话操作已锁定，草稿已保留。';
+  if(takeoverBusy())ui.hint.textContent=(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…')+' 当前对话操作已锁定，草稿已保留。';
   else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
   ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady));
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
@@ -2667,7 +2677,7 @@ async function loadWorkspace() {
   const seq=++workspaceRequestSeq;
   try {
     const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;
-    const previous=workspaceState;workspaceState=data;takeoverControls.sync(currentTask());
+    const previous=workspaceState;workspaceState=data;takeoverControls.sync(currentTask());forkControls.sync();
     for(const task of previous?.conversations||[])if(!data.conversations.some(c=>c.id===task.id))invalidatePreview(task.id);
     for(const task of data.conversations||[]){const saved=recentConversations.get(previewKey(task.id));if(saved&&saved.fingerprint!==previewFingerprint(task.id))invalidatePreview(task.id);}
     if(previewScroll!==null&&(visiblePreviewFingerprint||previewFingerprint(activeId))&&visiblePreviewFingerprint!==previewFingerprint(activeId))invalidatePreview(activeId);
@@ -2686,7 +2696,7 @@ async function loadWorkspace() {
       const id=activeId,c=data.conversations.find(c=>c.id===id),chat=c.workspaceKind==='chat';
       $('#migrate-workspace').classList.toggle('hidden',chat || Boolean(c.startSha));
       $('#checkpoint-workspace').classList.toggle('hidden',chat || !c.startSha);
-      if(c.creationState==='failed' || c.creationState==='creating' || c.takeover?.status==='preparing')return;
+      if(c.creationState==='failed' || c.creationState==='creating' || c.takeover?.status==='preparing'||c.forking?.status==='preparing'||c.fork?.status==='preparing')return;
       const grant=await workspaceApi({action:'files',id}).catch(()=>null);
       if(activeId===id){
         if(grant){

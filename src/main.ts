@@ -130,7 +130,7 @@ async function run(selectedRole: Role): Promise<void> {
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
     const sshme=new RunnerManager(join(runners.root,'sshme'),'sshme');
-    const instructions=async()=>hostSessionInstructions(await runners.instruction());
+    const instructions=async(id?:string)=>{const task=id?await workspaces.lookup(id):undefined;return [hostSessionInstructions(await runners.instruction()),task?await workspaces.forkInstructionForCwd(task.cwd):undefined].filter(Boolean).join('\n');};
     const codexOptions={env:deniedGitHub,instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,instructions,
@@ -139,7 +139,7 @@ async function run(selectedRole: Role): Promise<void> {
         envForSession:async id=>{const env=await workspaces.lookup(id)?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,PATH:env.PATH+':'+withCoffeeLspPath().PATH,COFFEE_MANAGED_PATH:env.PATH+':'+withCoffeeLspPath().PATH};},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
-        codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>new CodexSessionFactory({...codexOptions,envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
+        codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>)=>new CodexSessionFactory({...codexOptions,instructions:async()=>[await instructions(),await workspaces.forkInstructionForCwd(taskCwd)].filter(Boolean).join('\n'),envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
         legacyCodex,
         codexSummary:(taskCwd:string,id:string)=>legacyCodex!.summaryForCwd(taskCwd,id),
         codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),

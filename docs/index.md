@@ -72,3 +72,4 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - Per-user GitHub OAuth accounts and task-scoped Git/gh: [contract](spec/github-accounts.md), [Server #36](https://github.com/awangs1986/pi-coffee-server/issues/36).
 - GitHub OAuth App provisioning and production acceptance: [activation guide](deployment/github-accounts.md).
+- Conversation Fork: [native and Handoff modes](spec/conversation-fork.md), [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39). Independent task snapshots preserve source conversations and scoped authorization.

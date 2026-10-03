@@ -121,7 +121,7 @@ export class HostServer {
   private readonly registryOptions: { eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number };
   /** Key: normalised user name, or "" for identity-less connections. */
   private readonly slots = new Map<string, Promise<UserSlot>>();
-  private readonly takeoverOperations = new Set<Promise<void>>();
+  private readonly taskPreparations = new Set<Promise<void>>();
   private readonly transferTargets = new Map<string, { slot: Promise<UserSlot>; sessionId: string }>();
   private readonly transfer?: TransferServer;
   private readonly http: HttpServer;
@@ -199,7 +199,7 @@ export class HostServer {
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover)}); }
+      try { json(res,200,{engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }
@@ -260,6 +260,34 @@ export class HostServer {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
       const input=await readJson(req);
+      if(input.action==='fork'){
+        const id=input.id,targetId=input.targetId,mode=input.mode;
+        if(typeof id!=='string'||typeof targetId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)||!['native','handoff'].includes(mode))throw new Error('Invalid Fork request');
+        const source=await ws.lookup(id);if(!source||source.archived||source.workspaceRemoved||source.cleanupStarted)throw new Error('Unknown or unavailable source task');
+        const prior=await ws.lookup(targetId);
+        if(prior){if(prior.fork?.sourceId!==id||prior.fork.mode!==mode)throw new Error('Fork request ID belongs to another operation');json(res,200,prior);return;}
+        if(mode==='handoff'&&input.acceptDrift!==true)throw new Error('Confirm possible Handoff drift and model cost');
+        if(!slot.factory.forkConversation||!slot.factory.forkModes?.(source.engine??'pi').includes(mode))throw new Error('This Agent does not support the selected Fork mode');
+        if(slot.lifecycleLocks.has(id)||slot.lifecycleLocks.has(targetId))throw new Error('Task lifecycle operation in progress');
+        slot.lifecycleLocks.add(id);slot.lifecycleLocks.add(targetId);
+        try{
+          const session=(await slot.registry.open(id)).session;
+          const nativeState=await session.readNativeState();
+          if(session.isBusy||nativeState.isStreaming||nativeState.isCompacting||session.pendingUiRequests.length)throw new Error('Finish running work, queued input, compaction and questions before Fork');
+          const background=await session.backgroundState();if(!background.known||background.active)throw new Error('Background work is active or unknown');
+          const history=await session.getHistory(),models=await session.getModels();
+          const finalState=await session.readNativeState();if(session.isBusy||finalState.isStreaming||finalState.isCompacting||session.pendingUiRequests.length)throw new Error('Source resumed during Fork preparation');
+          const listing=(await slot.registry.list()).find(row=>row.id===id);
+          const title=((listing?.name||listing?.preview||history.entries.find(e=>e.kind==='user')?.text||'新对话').replace(/\s+/g,' ').trim().slice(0,140))+' · Fork';
+          const target=await ws.beginFork(id,targetId,mode,title,{...(models.current?{model:{provider:models.current.provider,id:models.current.id}}:{}),thinkingLevel:models.thinkingLevel,...(models.context?{contextPreset:models.context.preset}:{})});
+          const operation=(async()=>{
+            try {await ws.copyForkWorkspace(targetId,history);await slot.factory.forkConversation!(id,targetId,mode,history);await ws.finishFork(targetId);}
+            catch(error){await ws.finishFork(targetId,error instanceof Error?error.message:'Fork failed');}
+            finally{slot.lifecycleLocks.delete(id);slot.lifecycleLocks.delete(targetId);void this.broadcastSessions(slot);}
+          })();this.taskPreparations.add(operation);void operation.finally(()=>this.taskPreparations.delete(operation)).catch(()=>undefined);
+          json(res,202,target);return;
+        }catch(error){slot.lifecycleLocks.delete(id);slot.lifecycleLocks.delete(targetId);throw error;}
+      }
       if(input.action==='github_bind'){
         const ids=(await ws.list()).conversations.filter(c=>c.projectId===input.projectId).map(c=>c.id);
         if(ids.some(id=>slot.lifecycleLocks.has(id)))throw new Error('Project lifecycle operation in progress');
@@ -292,8 +320,8 @@ export class HostServer {
         }).catch(async(error)=>{
           await ws.updateTakeover(id,operation.id,{status:'failed',error:error instanceof Error?error.message:'Takeover failed'});
         }).finally(()=>{slot.lifecycleLocks.delete(id);void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
-        this.takeoverOperations.add(takeover);
-        void takeover.finally(()=>this.takeoverOperations.delete(takeover));
+        this.taskPreparations.add(takeover);
+        void takeover.finally(()=>this.taskPreparations.delete(takeover));
         locked=undefined;json(res,202,operation);return;
       }
       // Reject mutating lifecycle operations while the parent is streaming. External commands remain trusted VM operations.
@@ -517,7 +545,7 @@ export class HostServer {
       // remains owned until that recovery finishes, including a reopened source.
       await slot.value.factory.cancelTakeovers?.().catch(() => undefined);
     }
-    await Promise.allSettled([...this.takeoverOperations]);
+    await Promise.allSettled([...this.taskPreparations]);
     for (const slot of slots) {
       if (slot.status !== "fulfilled") continue;
       await slot.value.registry.close();
@@ -661,7 +689,7 @@ class HostSocket implements SessionSink {
     }
 
     try {
-      if(this.session&&this.lifecycleLocks.has(this.session.id)&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
+      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
           await this.open(frame);

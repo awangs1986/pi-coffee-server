@@ -1,5 +1,5 @@
 import './github-env-probe.mjs';
-import {writeFileSync} from "node:fs";
+import {writeFileSync,appendFileSync} from "node:fs";
 if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(process.argv));
 import readline from "node:readline";
 
@@ -100,6 +100,7 @@ for await (const line of input) {
       response("get_commands", command.id, {
         commands: [
           ...(process.env.FAKE_HANDOFF ? [{name:"handoff",source:"extension"}] : []),
+          ...(process.env.FIXTURE_FORK_RPC_LOG ? [{name:"coffee-workspace-jobs",source:"extension"}] : []),
           { name: "harness", description: "Switch harness mode", source: "extension", sourceInfo: { path: "/opt/pi-coffee/dist/src/harness/extension.js", source: "cli", scope: "temporary", origin: "top-level" } },
           { name: "verify", description: "Run verification", source: "extension", sourceInfo: { path: "/opt/pi-coffee/dist/src/harness/extension.js", source: "cli", scope: "temporary", origin: "top-level" } },
           { name: "llama", description: "Manage llama.cpp", source: "extension", sourceInfo: { path: "<inline:llama.cpp>", source: "inline", scope: "temporary", origin: "top-level" } },
@@ -111,8 +112,8 @@ for await (const line of input) {
     case "get_session_stats":
       response("get_session_stats", command.id, {
         sessionId: "fake-session",
-        userMessages: entries.filter((e) => e.message.role === "user").length,
-        assistantMessages: entries.filter((e) => e.message.role === "assistant").length,
+        userMessages: entries.filter((e) => e.message?.role === "user").length,
+        assistantMessages: entries.filter((e) => e.message?.role === "assistant").length,
         toolCalls: 0,
         toolResults: 0,
         totalMessages: entries.length,
@@ -122,6 +123,7 @@ for await (const line of input) {
       });
       break;
     case "compact":
+      if(process.env.FIXTURE_FORK_RPC_LOG)appendFileSync(process.env.FIXTURE_FORK_RPC_LOG,JSON.stringify({path:resumedFrom,command:'compact',marker:command.customInstructions})+'\n');
       if(process.env.FAKE_HANDOFF==="unobservable"){unobservable=true;send({id:command.id,type:"response",command:"compact",success:false,error:"Timeout waiting for response to compact. Stderr: fixture"});break;}
       if(process.env.FAKE_HANDOFF){
         const commit=()=>{compacting=false;
@@ -173,6 +175,9 @@ for await (const line of input) {
       break;
     }
     case "prompt": {
+      if(process.env.FIXTURE_FORK_RPC_LOG&&command.message.startsWith('/coffee-workspace-jobs ')){
+        entries.push({type:'custom',customType:'coffee-workspace-jobs',id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,data:{nonce:command.message.split(' ')[1],known:true,active:0}});response('prompt',command.id);break;
+      }
       if (command.message.startsWith("reject:")) {
         // What real Pi does when no provider key is configured: the prompt
         // response itself fails and no agent_start / agent_settled follows.

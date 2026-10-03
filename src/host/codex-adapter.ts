@@ -248,6 +248,19 @@ export class CodexSessionFactory implements PiSessionFactory {
     finally {this.creating--;this.scheduleIdleStop();}
   }
 
+  async forkNative(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
+    if(resolve(options.cwd)!==resolve(this.options.cwd))throw new Error('Fork destination does not match its native runtime');
+    const server=await this.connection();const mapping=await this.loadMapping();
+    if(mapping.has(options.sessionId))throw new Error('Native Fork destination already exists');
+    const source=await server.request('thread/read',{threadId:sourceNativeId,includeTurns:false}) as Obj;
+    const sourceThread=source.thread as Obj;
+    if(typeof sourceThread?.cwd!=='string'||resolve(sourceThread.cwd)!==resolve(options.sourceCwd))throw new Error('Native Fork source does not belong to this task');
+    const response=await server.request('thread/fork',{threadId:sourceNativeId,cwd:options.cwd,excludeTurns:true,approvalPolicy:this.options.approvalPolicy??'never',...(this.options.sandbox?{sandbox:this.options.sandbox}:{})}) as Obj;
+    const thread=response.thread as Obj;if(typeof thread?.id!=='string'||thread.id===sourceNativeId||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(options.cwd))throw new Error('Native Fork result did not confirm a new task identity');
+    await this.remember(options.sessionId,thread.id);await this.options.onBound?.(options.sessionId,thread.id);
+    return this.create({sessionId:options.sessionId});
+  }
+
   private async createSession(options: { sessionId: string; requireExisting?: boolean }): Promise<PiSession> {
     const server = await this.connection();
     const mapping = await this.loadMapping();

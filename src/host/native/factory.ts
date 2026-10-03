@@ -1,3 +1,6 @@
+import {applyForkSettings,handoffPrompt,seedForkPrompt,forkTurn,HANDOFF_END,FORK_END,type ForkMode} from '../fork.js';
+import {join} from 'node:path';
+import {writeFile} from 'node:fs/promises';
 import {prepareTakeoverRecords,takeoverPrompt,reconstruct,priorHistory,withPriorHistory,type TakeoverState} from "../takeover.js";
 import type {AgentHistory,AgentSession} from "../agent-adapter.js";
 import { capabilitiesFor } from "../../shared/protocol.js";
@@ -19,6 +22,62 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  forkModes(engine:"pi"|"codex"|"claude"):ForkMode[]{
+    if(engine==='pi')return this.options.pi.forkNative?['native','handoff']:[];
+    if(engine==='codex')return this.options.codexSessionFactory?['native','handoff']:[];
+    return this.options.claude?['handoff']:[];
+  }
+  async forkConversation(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory){
+    if(this.closing)throw new Error('Host is stopping');
+    const source=await this.options.workspaces.lookup(sourceId),target=await this.options.workspaces.lookup(targetId);
+    if(!source||!target?.fork||target.fork.sourceId!==sourceId)throw new Error('Unknown Fork');
+    const engine=source.engine??'pi',sourceNative=source.nativeBinding?.id??source.id,cwd=target.cwd;
+    const records=join(await this.options.workspaces.forkRecordsDirectory(targetId),'source-history.json');
+    const controller=new AbortController();let session:AgentSession|undefined,temporaryFactory:AgentSessionFactory|undefined;
+    const track=(child:AgentSession)=>{session=child;this.preparations.set(controller,child);if(this.closing)controller.abort();return child;};
+    const closeChild=async()=>{this.preparations.delete(controller);await session?.stop();session=undefined;await temporaryFactory?.close?.();temporaryFactory=undefined;};
+    try{
+      if(engine==='pi'){
+        if(!this.options.pi.forkNative)throw new Error('Native Pi Fork unavailable');
+        const child=track(await this.options.pi.forkNative(sourceNative,{sessionId:targetId,cwd,sourceCwd:source.cwd}));
+        if(controller.signal.aborted)throw new Error('Host is stopping');
+        await applyForkSettings(child,target.fork.settings);
+        if(mode==='handoff')await child.compact();
+        await child.rename(target.fork.title);return;
+      }
+      if(engine==='codex'){
+        if(!this.options.codexSessionFactory)throw new Error('Native Codex Fork unavailable');
+        if(mode==='native'){
+          const factory=await this.codexFactory(targetId,cwd);if(!factory?.forkNative)throw new Error('Native Codex Fork unavailable');
+          const child=track(await factory.forkNative(sourceNative,{sessionId:targetId,cwd,sourceCwd:source.cwd}));
+          if(controller.signal.aborted)throw new Error('Host is stopping');
+          await applyForkSettings(child,target.fork.settings);await child.rename(target.fork.title);return;
+        }
+        const tempId=randomUUID();
+        temporaryFactory=this.options.codexSessionFactory(targetId+'-handoff',cwd,id=>this.options.workspaces.retainForkNative(targetId,id),()=>this.options.workspaces.runtimeEnvironment(targetId));
+        if(!temporaryFactory.forkNative)throw new Error('Native Codex Fork unavailable');
+        track(await temporaryFactory.forkNative(sourceNative,{sessionId:tempId,cwd,sourceCwd:source.cwd}));
+      }else{
+        if(mode!=='handoff'||!this.options.claude)throw new Error('Claude supports Handoff Fork only');
+        const tempId=randomUUID();await this.options.workspaces.retainForkNative(targetId,tempId);
+        const command={...this.options.claude,env:{...this.options.claude.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
+        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:tempId},async()=>{},[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n')).start());
+      }
+      await applyForkSettings(session!,target.fork.settings);
+      const summary=await forkTurn(session!,handoffPrompt(records,cwd,engine==='codex'),HANDOFF_END,controller.signal);
+      await writeFile(join(await this.options.workspaces.forkRecordsDirectory(targetId),'handoff.md'),summary+'\n',{mode:0o600});
+      await closeChild();if(this.closing)throw new Error('Host is stopping');
+      if(engine==='codex'){
+        const factory=await this.codexFactory(targetId,cwd);if(!factory)throw new Error('Codex unavailable');track(await factory.create({sessionId:targetId}));
+      }else{
+        const nativeId=randomUUID();
+        const command={...this.options.claude!,env:{...this.options.claude!.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
+        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:nativeId},binding=>this.options.workspaces.setNativeBinding(targetId,binding),[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n')).start());
+      }
+      await applyForkSettings(session!,{...target.fork.settings,contextPreset:undefined});await forkTurn(session!,seedForkPrompt(summary,records,cwd),FORK_END,controller.signal);await applyForkSettings(session!,target.fork.settings);
+      if(engine==='codex')await session!.rename(target.fork.title);
+    }finally{await closeChild();await this.resetTaskRuntime(targetId);}
+  }
   async resetTaskRuntime(id:string){
     for(const [key,factory] of this.codexFactories){if(key.startsWith(id+':')){await factory.close?.();this.codexFactories.delete(key);}}
   }
@@ -121,6 +180,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   private async createNative(sessionId:string):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
+    if(task?.fork&&task.fork.status!=='completed')throw new Error(task.fork.error??'Fork preparation is not complete');
     if(!task && this.options.legacyCodex && (await this.options.legacyCodex.list().catch(()=>[])).some(s=>s.id===sessionId))return this.options.legacyCodex.create({sessionId});
     if(!task && !(await this.options.pi.list()).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
     if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length)});
@@ -132,7 +192,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(task.engine==="claude"){
       if(!task.nativeBinding)await this.options.workspaces.setNativeBinding(sessionId,{state:"prepared",requestedId:randomUUID()});
       const extraDirs=task.taskRoot?[await this.options.workspaces.dataRoot(sessionId)]:[];
-      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs,await this.options.instructions?.());
+      const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs,[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'));
       try{return await session.start();}catch(error){await session.stop();throw error;}
     }
     this.generation.set(sessionId,task.takeoverSegments?.at(-1)?.id??'original');
@@ -147,17 +207,18 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async list() {
     const state=await this.options.workspaces.list();
     const piListings=await this.options.pi.list();
-    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length));
+    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.fork));
     const ids=new Set(native.map(c=>c.id));
     for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if(c.takeoverSegments?.length&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
     const summaries=await Promise.all(native.map(async c=>{
-      const known=c.engine==="codex" && c.nativeBinding?.id && this.options.codexSummary
+      const readable=!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready');
+      const known=!readable?undefined:c.engine==="codex" && c.nativeBinding?.id && this.options.codexSummary
         ? await this.options.codexSummary(await this.options.workspaces.file(c.id,""),c.nativeBinding.id).catch(()=>undefined)
         : c.engine==="codex" && c.nativeBinding?.id && this.options.codexListings
-        ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===c.nativeBinding?.id):undefined;
-      return {createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":"Claude Code Task",...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),id:c.id,engine:c.engine};
+        ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===(c.nativeBinding?.id??c.id)):undefined;
+      return {createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":"Claude Code Task",...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),id:c.id,engine:c.engine};
     }));
-    return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)),...summaries];
+    return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:task.fork.title,preview:task.fork.title}:row;}),...summaries];
   }
   async delete(id:string) {
     const task=await this.options.workspaces.lookup(id);
