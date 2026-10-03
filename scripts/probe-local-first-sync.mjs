@@ -143,11 +143,13 @@ try {
  }
  // Scroll restoration must survive leaving and returning without a new history.
  await open(0,Array.from({length:10000},(_,i)=>({kind:i%2?'assistant':'user',id:'h'+i,text:'HISTORY-'+i+' '+ 'x'.repeat(2000)})),false);
+ await ready(()=>thread().textContent.includes('HISTORY-9999'));await paint();
  check('10000-history DOM is bounded',thread().querySelectorAll('.msg').length<=40&&thread().textContent.length<66536,{rows:thread().querySelectorAll('.msg').length,characters:thread().textContent.length});
- scroller().scrollTop=200;scroller().dispatchEvent(new Event('scroll'));const saved=scroller().scrollTop;type('preserved A');
+ const captureReading=()=>{const top=scroller().getBoundingClientRect().top;const node=[...thread().querySelectorAll('.msg')].find(n=>n.getBoundingClientRect().bottom>top);return node?{id:node.dataset.entityId||/HISTORY-\d+/.exec(node.textContent)?.[0],y:node.getBoundingClientRect().top-top}:null;};
+ scroller().scrollTop=200;scroller().dispatchEvent(new Event('scroll'));const saved=scroller().scrollTop,reading=captureReading();type('preserved A');
  await open(1);type('preserved B');hung=true;await originalFetch('/fixture-hang',{method:'POST'});
  const hangStart=performance.now();choose(0);await paint();
- check('hung reads preserve draft and anchor',prompt().value==='preserved A'&&Math.abs(scroller().scrollTop-saved)<=2,{ms:performance.now()-hangStart,anchorError:Math.abs(scroller().scrollTop-saved),draft:prompt().value});
+ check('hung reads preserve draft and anchor',prompt().value==='preserved A'&&Math.abs(scroller().scrollTop-saved)<=2,{ms:performance.now()-hangStart,anchorError:Math.abs(scroller().scrollTop-saved),draft:prompt().value,readingBefore:reading,readingAfter:captureReading()});
  await wait(3500);const cat=document.querySelector('.conversation-sync-status');
  check('selected sync feedback does not falsely report success',!!cat&&['syncing','timeout','error','offline'].includes(cat.dataset.state),{state:cat?.dataset.state});
  check('bounded sync worker count',peakWorkers<=2,{workerStarts,peakWorkers});
@@ -163,7 +165,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if(url.pathname==='/')servedProtocol=url.searchParams.get('protocol')||'legacy';
     if(servedProtocol==='legacy'&&url.pathname.startsWith('/api/conversations/')){json(res,{error:'not_found'},404);return;}
-    const body = async () => { let text = ''; for await (const part of req) { text += part; if (text.length > 1024 * 1024) throw Error('body limit'); } return text ? JSON.parse(text) : {}; };
+    const body = async () => { let text = ''; for await (const part of req) { text += part; if (text.length > 32 * 1024 * 1024) throw Error('body limit'); } return text ? JSON.parse(text) : {}; };
     if (url.pathname === '/fixture-hang') { holdSyncRequests = true; json(res, { held: true }); return; }
     if (url.pathname === '/fixture-event' && req.method === 'POST') { const b = await body(); json(res, updateFixture(b.id, b.event)); return; }
     if (url.pathname === '/fixture-reset' && req.method === 'POST') { const b = await body(), state = synthetic.get(b.id); state.revision++; state.entries = b.entries.map((entry, i) => ({ ...entry, id: entry.id || b.id + '-h-' + i, entityRevision: String(state.revision) })); json(res, snapshot(b.id)); return; }

@@ -107,7 +107,8 @@ function selectConversationView(id){
   const cached=conversationRepository.peek(id);
   if(cached?.bindingEpoch){localSyncShown=true;syncedView.show(cached);}
   const selection=taskSelectionEpoch,user=currentUser;
-  void conversationRepository.getLocal(id).then(state=>{if(state?.bindingEpoch&&selection===taskSelectionEpoch&&user===currentUser&&!historyReady){localSyncShown=true;syncedView.show(state);}}).catch(()=>{});
+  // A disk result must not repaint a memory snapshot midway through anchor restoration.
+  void conversationRepository.getLocal(id).then(state=>{if(state?.bindingEpoch&&selection===taskSelectionEpoch&&user===currentUser&&!historyReady&&!localSyncShown){localSyncShown=true;syncedView.show(state);}}).catch(()=>{});
   recentlySynced=[id,...recentlySynced.filter(key=>key!==id)].slice(0,5);
   conversationRepository.watch(recentlySynced);
   void conversationRepository.sync(id,{priority:0}).catch(()=>{});
