@@ -1,3 +1,5 @@
+import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
+import {copyForkTree} from './fork-files.js';
 import type {GitHubAccounts} from './github-accounts.js';
 import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
@@ -15,7 +17,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -124,6 +126,7 @@ export class Workspaces {
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
     let interrupted=false;
+    for(const c of this.state.conversations){if(c.fork?.status==='preparing'){c.fork.status='failed';c.fork.error='Host restarted during Fork; retained files and native history require inspection. No automatic retry.';interrupted=true;}if(c.forking?.status==='preparing'){c.forking.status='failed';c.forking.error='Fork interrupted by Host restart';interrupted=true;}}
     for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
     for(const c of this.state.conversations) if(c.runState==="running") {c.runState="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
@@ -155,9 +158,9 @@ export class Workspaces {
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string) {
+  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false) {
     const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
-    return args.includes('-z')?r.stdout:r.stdout.trim();
+    return raw||args.includes('-z')?r.stdout:r.stdout.trim();
   }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
@@ -433,6 +436,59 @@ export class Workspaces {
     await mkdir(subagentRoot,{recursive:true,mode:0o700});
     return {...(this.githubAccounts?await this.githubAccounts.environment(c.githubAccountId):{}),PI_COFFEE_DATA_ROOT:root,PI_COFFEE_WORKSPACE_CWD:c.cwd,PI_COFFEE_INITIAL_MODE:c.workspaceKind==='chat'?'chat':'work',PI_SUBAGENTS_TEMP_ROOT:subagentRoot};
   }
+  async forkInstructionForCwd(cwd:string){await this.load();const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));return c?.fork?`This Conversation is an independent fork. Current project workspace: ${JSON.stringify(c.cwd)}. Source workspace ${JSON.stringify(c.fork.sourceCwd)} is historical evidence; do not modify it or reuse its Git branch. Use the new workspace for project edits unless the user explicitly directs otherwise.`:undefined;}
+  async forkRecordsDirectory(id:string){
+    const c=await this.lookup(id);if(!c)throw new Error('Unknown Fork');const data=await this.dataRoot(id);
+    const root=join(data,c.workspaceKind==='chat'&&!c.taskRoot?'.pi-coffee':'','fork');
+    await mkdir(root,{recursive:true,mode:0o700});await checkedTaskRoot(root);return root;
+  }
+  async beginFork(sourceId:string,targetId:string,mode:ForkMode,title:string,settings:ForkSettings){return this.mutate(async()=>{
+    this.assertId(targetId);const source=this.conversation(sourceId);await this.checkDirectory(source);
+    if(source.archived||source.forking?.status==='preparing'||(source.fork&&source.fork.status!=='completed')||source.takeover?.status==='preparing')throw new Error('Source is unavailable for Fork');
+    if(this.state.conversations.some(c=>c.id===targetId))throw new Error('Fork destination already exists');
+    const chat=source.workspaceKind==='chat',taskRoot=this.taskRoot?await claimTaskRoot(this.taskRoot,targetId):undefined;
+    const cwd=taskRoot?join(taskRoot,'workspace'):join(chat?this.chatRoot:join(this.root,'checkouts'),targetId);
+    if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Fork destination directory already exists');
+    const c:Conversation={id:targetId,engine:source.engine??'pi',workspaceKind:source.workspaceKind??'project',projectId:source.projectId,githubAccountId:source.githubAccountId,...(taskRoot?{taskRoot}:{}),cwd,branch:chat?'':`coffee/${this.ownerId}/${targetId}`,archived:false,createdAt:new Date().toISOString(),vmId:this.ownerId,creationState:'creating',fork:{sourceId,sourceCwd:source.cwd,mode,title,settings,status:'preparing',at:new Date().toISOString()}};
+    this.state.conversations.push(c);source.forking={targetId,mode,status:'preparing'};await this.save();return structuredClone(c);
+  },()=>this.conversationLock(sourceId));}
+  async copyForkWorkspace(targetId:string,history:AgentHistory){return this.mutate(async()=>{
+    const target=this.conversation(targetId);if(target.fork?.status!=='preparing')throw new Error('Fork is not preparing');
+    const source=this.conversation(target.fork.sourceId);await this.checkDirectory(source);const chat=source.workspaceKind==='chat';
+    let staged='';
+    if(!chat){
+      if(await this.git(source.cwd,['ls-files','--unmerged']))throw new Error('Resolve merge conflicts before Fork');
+      const head=await this.git(source.cwd,['rev-parse','HEAD']);target.startSha=head;target.startBranch=source.branch;
+      staged=await this.git(source.cwd,['diff','--cached','--binary','--no-ext-diff','--no-textconv'],32*1024*1024,undefined,true);
+      await mkdir(dirname(target.cwd),{recursive:true});
+      await this.git(this.root,['clone','--no-hardlinks','--no-checkout','--',source.cwd,target.cwd],2*1024*1024,target.githubAccountId);
+      await this.git(target.cwd,['symbolic-ref','HEAD','refs/heads/'+target.branch]);
+      await this.git(target.cwd,['update-ref','HEAD',head]);
+      await this.git(target.cwd,['read-tree',head]);
+      const tracked=new Set((await this.git(source.cwd,['ls-files','-z'])).split('\0').filter(Boolean));
+      await copyForkTree(source.cwd,target.cwd,{workspace:true,tracked});
+      const project=this.project(source.projectId);if(project.repoUrl)await this.git(target.cwd,['remote','set-url','origin',project.repoUrl]);
+    }else await copyForkTree(source.cwd,target.cwd,{workspace:true});
+    target.creationState='ready';target.baseline={};const data=await this.dataRoot(targetId),sourceData=await this.dataRoot(source.id);
+    const dataDirectories=[[source.taskRoot?'attachments':'inbox',target.taskRoot?'attachments':'inbox'],['artifacts','artifacts'],['research','research'],['images','images']];
+    for(const [fromName,toName] of dataDirectories){
+      const from=join(sourceData,fromName);const info=await lstat(from).catch(()=>undefined);if(!info)continue;if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Task data must be a real directory');
+      await copyForkTree(from,join(data,toName));
+    }
+    const records=await this.forkRecordsDirectory(targetId);
+    await writeTaskJson(records,'source-history.json',history);
+    if(!chat&&staged){const patch=join(records,'staged.patch');await writeFile(patch,staged,{mode:0o600});await this.git(target.cwd,['apply','--cached','--binary',patch]);}
+    if(source.taskRoot&&!chat&&sourceData===data)throw new Error('Fork data directory was not isolated');
+    await this.save();return structuredClone(target);
+  },()=>this.conversationLock(targetId));}
+  async finishFork(targetId:string,error?:string){return this.mutate(async()=>{
+    const target=this.conversation(targetId);if(!target.fork)throw new Error('Unknown Fork');const source=this.conversation(target.fork.sourceId);
+    const status=error?'failed':'completed';target.fork.status=status;if(error)target.fork.error=error.slice(0,500);
+    if(source.forking?.targetId===targetId){source.forking.status=status;if(error)source.forking.error=error.slice(0,500);}
+    if(error&&target.creationState==='creating'){target.creationState='failed';target.creationError='Fork failed; retained files require inspection';}
+    await this.save();return structuredClone(target);
+  },()=>this.conversationLock(targetId));}
+  async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
   async createChatConversation(id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');

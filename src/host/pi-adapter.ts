@@ -24,7 +24,7 @@ export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 
 
 export interface RpcPiSessionFactoryOptions {
-  instructions?:()=>Promise<string|undefined>;
+  instructions?:(id?:string)=>Promise<string|undefined>;
   runtimeIdForSession?: (id:string)=>string;
   cwd?: string;
   agentDir?: string;
@@ -121,7 +121,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       appendExtensionArgs([...(this.options.args ?? [])], this.options.extensions ?? []),
       this.options.skills ?? [],
     );
-    const instructions=await this.options.instructions?.();
+    const instructions=await this.options.instructions?.(options.workspaceSessionId??options.sessionId);
     if(instructions)args.push("--append-system-prompt",instructions);
     // Last hook preserves the Host environment sentence after Pi Chat removes system prompts.
     appendExtensionArgs(args, [fileURLToPath(new URL(`./pi-environment-extension.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url))]);
@@ -152,6 +152,14 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels);
     await session.start();
     return session;
+  }
+
+  async forkNative(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
+    const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
+    if(!source)throw new Error('Native Pi source history is unavailable; no replacement was created');
+    if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Native Fork destination already exists');
+    SessionManager.forkFrom(source.path,options.cwd,this.options.sessionDir,{id:options.sessionId});
+    return new RpcPiSessionFactory({...this.options,cwd:options.cwd,cwdForSession:undefined}).create({sessionId:options.sessionId,workspaceSessionId:options.sessionId,requireExisting:true});
   }
 
   async list(): Promise<PiSessionListing[]> {
@@ -369,6 +377,7 @@ class RpcPiSession implements PiSession {
     const state = await this.client.getState();
     return {
       isStreaming: state.isStreaming,
+      ...(state.isCompacting?{isCompacting:true}:{}),
       messageCount: state.messageCount,
       ...(state.sessionName === undefined ? {} : { sessionName: state.sessionName }),
     };

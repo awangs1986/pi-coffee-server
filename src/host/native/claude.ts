@@ -27,10 +27,10 @@ export class ClaudeSession implements AgentSession {
   private bound:boolean;
   private name?:string;
   private model?:string;
-  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>,extraDirs:string[]=[],instructions?:string) {
+  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>,extraDirs:string[]=[],instructions?:string,private preparation=false) {
     this.recoveryUnknown=binding.writers==="unknown";this.nativeId=binding.id??binding.requestedId!;this.bound=binding.state==="bound";
     const addDirArgs=extraDirs.flatMap(dir=>["--add-dir",dir]);
-    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",...addDirArgs,...(instructions?["--append-system-prompt",instructions]:[]),this.bound?"--resume":"--session-id",this.nativeId],cwd);
+    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",...addDirArgs,...(preparation?['--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands','--settings','{"disableAllHooks":true}']:[]),...(instructions?["--append-system-prompt",instructions]:[]),this.bound?"--resume":"--session-id",this.nativeId],cwd);
     this.home=command.env?.CLAUDE_CONFIG_DIR??process.env.CLAUDE_CONFIG_DIR??join(homedir(),".claude");
     this.process.onMessage=message=>this.handle(message);
     this.process.onExit=()=>{
@@ -57,6 +57,7 @@ export class ClaudeSession implements AgentSession {
     }
     if(message.type==="control_request") {
       const request=message.request;
+      if(this.preparation){this.process.send({type:'control_response',response:{subtype:'success',request_id:message.request_id,response:{behavior:'deny',message:'Tools are disabled during Fork preparation'}}});this.emit({type:'native_request',method:'forbidden_preparation_tool'});return;}
       if(request.subtype!=="can_use_tool"){
         this.process.send({type:"control_response",response:{subtype:"error",request_id:message.request_id,error:"Unsupported native request"}});return;
       }
