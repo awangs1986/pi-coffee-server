@@ -106,8 +106,8 @@ Selection remains local to the draft. Switching Agent or task discards it, and
 late discovery replies cannot replace the current Agent's choices. Creating the
 task applies an explicitly selected model through the normal session interface.
 The first prompt waits for history and model confirmation; a rejected model
-restores the draft without sending it using a fallback model. Reasoning controls
-continue to use the opened session's authoritative capabilities.
+restores the draft without sending it using a fallback model. Draft reasoning
+selection is extended by the 2026-10-03 contract below.
 
 ## Pi draft model selection — 2026-09-27
 
@@ -146,3 +146,28 @@ An outstanding context-setting request belongs to its socket. Disconnect clears
 that pending UI lock; reconnect reads the native model/context settings and never
 replays the setting automatically. The send button must not remain disabled
 waiting for an acknowledgement that can only arrive on the obsolete socket.
+
+## Thinking selection before task creation — 2026-10-03
+
+[Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33) extends
+Pi Chat/Work and Codex Work draft controls with model-specific thinking levels.
+The default is native `medium`, displayed as `med`, whenever the selected model
+supports it. Otherwise retain the native supported default/available choice;
+never advertise a medium setting that the model does not support. Models without
+an exposed thinking control do not show a selectable thinking row.
+
+The authenticated model catalog may attach `thinkingLevels` and
+`defaultThinkingLevel` to each ModelChoice. Pi derives availability through its
+native helper/RPC and Codex forwards native model-list capabilities. Discovery
+creates no task, native thread or model turn. Older Hosts can still describe the
+current catalog model through the existing top-level fields; do not reuse those
+fields for another model with unknown capabilities.
+
+Choosing a level is local draft state. A supported explicit choice survives a
+model switch; an incompatible choice resets to medium when available. Changing
+Agent or starting a new task resets to the default. First Send waits for catalog
+readiness, then model confirmation and any required `set_thinking` acknowledgement
+before sending the prompt. Unrelated or stale metadata is not an acknowledgement.
+Failure or disconnect retains the text for explicit retry without automatic
+fallback delivery. Existing tasks keep their native selected effort when reopened.
+Claude controls continue to follow its native capabilities.

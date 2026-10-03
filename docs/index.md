@@ -69,3 +69,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Codex model/effort restoration after Host restart: [native lifecycle contract](spec/native-agent-engines.md), [probe and evidence](development/codex-model-restore.md), [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30).
 
 - [Historical PR salvage review](reviews/legacy-pr-salvage-20261003.md): current-main recovery and rejection map for five old Gitea PRs; [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31).
+
+- [Draft thinking selection](spec/native-agent-browser.md#thinking-selection-before-task-creation--2026-10-03): Pi/Codex model-specific choices, medium default and first-prompt acknowledgement; [Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33).
