@@ -71,11 +71,16 @@ change is part of the Server patch.
 
 The controller regression loop initially failed 11 behavioral cases. Five more
 failed in the attachment/focus pass, and two more failed in the grant/detail-focus
-pass. The final file has 20 passing cases, including positive controls. Initial
+pass. The final file has 23 passing cases, including positive controls. Initial
 missing generated vendor modules were a fixture setup failure and are not counted
 as behavioral evidence. A complete check also caught four cache-test regressions caused
 by an overstrict initial-identity guard; the guard was corrected without weakening
-the existing cache tests.
+the existing cache tests. Final independent review then exposed a slow Checks/Diff
+starvation race; two failing overlap regressions were corrected by coalescing
+same-selection changes reads. A third failing regression exposed the same starvation
+pattern in sync status; slow same-selection status reads are also coalesced. Upload file-grant acquisition/refresh received its
+own abort deadline and a failure/draft-retention regression, without adding a
+blanket timeout to mutating workspace operations.
 
 Commands:
 

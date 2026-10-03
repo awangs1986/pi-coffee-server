@@ -82,7 +82,7 @@ function captureSelection({task=true}={}){
   const id=activeId,user=currentUser,epoch=taskSelectionEpoch,connection=connectionEpoch,ws=socket;
   return ()=>user===currentUser && epoch===taskSelectionEpoch && connection===connectionEpoch && ws===socket && connected && (!task || id===activeId);
 }
-let statusRequestSeq=0,changesRequestSeq=0,detailRequestSeq=0;
+let statusRequest=null,changesRequest=null,detailRequestSeq=0;
 const dialogs=createDialogManager(ui.app,ui.prompt);
 let draftFiles = [];
 const decodingFiles=new Set();
@@ -2060,6 +2060,13 @@ const MAX_IMAGE_BYTES = 600 * 1024;
 const INLINE_IMAGE_LIMIT = 4 * 1024 * 1024; // larger images travel as files
 const HASH_LIMIT = 32 * 1024 * 1024;         // sha256 in the browser only for files this small
 
+async function workspaceFileGrant(id){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),30000);
+  try{return await workspaceApi({action:'files',id},{signal:controller.signal});}
+  finally{clearTimeout(timeout);}
+}
+
 function normalizeTransferGrant(grant, fallbackSessionId) {
   if (!grant || typeof grant !== 'object') return null;
   let url = grant.url;
@@ -2112,7 +2119,7 @@ async function uploadFiles(files) {
     if (!opened && !pendingOpenId && connected && canAutoOpen) { void openSession(activeId); toast('正在为文件建立对话…'); }
     else if (opened && activeId && workspaceState) {
       const id = activeId,isCurrent=captureSelection();
-      void workspaceApi({ action: 'files', id }).then((grant) => {
+      void workspaceFileGrant(id).then((grant) => {
         if (!isCurrent() || !grant) return;
         transfer = normalizeTransferGrant(grant, id);
         if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
@@ -2183,7 +2190,7 @@ async function uploadFiles(files) {
     let response = await prepareWithFallback(grant);
     if ((response.status === 401 || response.status === 403) && workspaceState && entries.some(currentUpload)) {
       const usedSameOrigin = grant.url === location.origin;
-      const fresh = await workspaceApi({ action: 'files', id: activeId }).catch(() => null);
+      const fresh = await workspaceFileGrant(activeId).catch(() => null);
       if (fresh && entries.some(currentUpload)) {
         grant = normalizeTransferGrant(fresh, activeId);
         if (usedSameOrigin) grant.url = location.origin;
@@ -2717,8 +2724,8 @@ connect();
 
 
 // Project metadata stays on the VM. This panel extends the existing shell rather than replacing it.
-async function workspaceApi(value) {
-  const r=await fetch('/api/workspace',value ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)} : {});
+async function workspaceApi(value,{signal}={}) {
+  const r=await fetch('/api/workspace',{...(value ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)} : {}),...(signal?{signal}:{})});
   const data=await r.json();if(!r.ok)throw new Error(data.error || '工作区请求失败');
   if(value&&['archive','delete'].includes(value.action)){invalidatePreview(value.id);if(value.id===activeId)historyReady=false;announceCacheClear('cache');}
   return data;
@@ -2755,7 +2762,7 @@ async function loadWorkspace() {
       $('#checkpoint-workspace').classList.toggle('hidden',chat || !c.startSha);
       if(c.creationState==='failed' || c.creationState==='creating' || c.takeover?.status==='preparing')return;
       const isCurrent=captureSelection(),grantVersion=transferRevision;
-      const grant=await workspaceApi({action:'files',id}).catch(()=>null);
+      const grant=await workspaceFileGrant(id).catch(()=>null);
       if(isCurrent() && seq===workspaceRequestSeq){
         if(grant && grantVersion===transferRevision){
           transferRevision++;transfer=normalizeTransferGrant(grant,id);
@@ -2942,10 +2949,16 @@ function renderSyncState() {
 }
 async function refreshWorkspaceStatus() {
   if(!activeId)return;
-  const id=activeId,isCurrent=captureSelection(),seq=++statusRequestSeq;
-  try{const value=await workspaceApi({action:'status',id});if(!isCurrent() || seq!==statusRequestSeq)return;workspaceSync=value;}
-  catch(e){if(!isCurrent() || seq!==statusRequestSeq)return;workspaceSync={...workspaceSync,state:'unknown',error:e.message};}
-  renderSyncState();renderProjectContext();
+  if(statusRequest?.isCurrent())return statusRequest.promise;
+  const id=activeId,isCurrent=captureSelection();
+  const request={isCurrent,promise:null};
+  request.promise=(async()=>{
+    try{const value=await workspaceApi({action:'status',id});if(!isCurrent())return;workspaceSync=value;}
+    catch(e){if(!isCurrent())return;workspaceSync={...workspaceSync,state:'unknown',error:e.message};}
+    renderSyncState();renderProjectContext();
+  })();
+  statusRequest=request;
+  try{return await request.promise;}finally{if(statusRequest===request)statusRequest=null;}
 }
 $('#checkpoint-workspace').addEventListener('click',async()=>{
   const id=activeId;if(!id)return toast('请先打开代码对话');
@@ -3053,13 +3066,18 @@ async function refreshWorkspaceChanges(announce=true) {
   if(!workspaceState || !activeId || !workspaceState.conversations.some(c=>c.id===activeId)){workspaceChanges=null;selectedChangedPath=null;renderWorkspaceSummary();renderWorkspaceList();return null;}
   if(announce)toast('正在读取改动与检查结果…');
   if(workspaceState.conversations.find(c=>c.id===activeId)?.workspaceKind==='chat'){workspaceChanges=null;selectedChangedPath=null;renderWorkspaceSummary();renderWorkspaceList();return null;}
-  const id=activeId,isCurrent=captureSelection(),seq=++changesRequestSeq;
-  const changes=await workspaceApi({action:'changes',id});if(!isCurrent() || seq!==changesRequestSeq)return null;workspaceChanges=changes;
-  if(selectedChangedPath && !workspaceChanges.files.some((file) => file.path === selectedChangedPath)) selectedChangedPath=null;
-  renderWorkspaceSummary();
-  renderWorkspaceList();
-  return workspaceChanges;
+  if(changesRequest?.isCurrent())return changesRequest.promise;
+  const id=activeId,isCurrent=captureSelection();
+  const request={isCurrent,promise:null};
+  request.promise=(async()=>{
+    const changes=await workspaceApi({action:'changes',id});if(!isCurrent())return null;workspaceChanges=changes;
+    if(selectedChangedPath && !workspaceChanges.files.some(file=>file.path===selectedChangedPath))selectedChangedPath=null;
+    renderWorkspaceSummary();renderWorkspaceList();return workspaceChanges;
+  })();
+  changesRequest=request;
+  try{return await request.promise;}finally{if(changesRequest===request)changesRequest=null;}
 }
+
 function changeFileStats(file) {
   return file.additions==null && file.deletions==null ? (file.status==='?' ? '未跟踪' : '二进制') : `+${file.additions ?? 0} −${file.deletions ?? 0}`;
 }
