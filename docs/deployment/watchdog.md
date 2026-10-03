@@ -22,7 +22,10 @@ transcripts, publish code or reboot the VM.
   while retaining the rolling 30-minute attempt history. Maintenance, unknown
   observations and gaps over 90 seconds restart healthy observation.
   Exhausted incidents latch open even after the window expires or the watchdog
-  itself restarts. `start-limit-hit` also latches immediately.
+  itself restarts. `start-limit-hit` also latches immediately. Some systemd
+  versions retain `exit-code` after denying further starts; in that case bounded
+  watchdog requests consume their budget and then latch without resetting the
+  native limit.
 - Native crash recovery remains `Restart=on-failure`, with `RestartSec=10s`,
   `StartLimitIntervalSec=1800` and `StartLimitBurst=3`. The shared systemd limit
   bounds actual process starts from both recovery mechanisms. The watchdog never
