@@ -37,8 +37,8 @@ it('consumes a welcome-screen click instead of activating an unseen app button',
 
 it('loads one bounded local retro artwork and dismisses a failed image without a stalled screen',()=>{
  const coffee=createLoginCoffee({document,matchMedia:()=>({matches:false})});coffee.play('alice');
- const image=document.querySelector<HTMLImageElement>('.login-coffee-picture img')!;expect(image.getAttribute('src')).toBe('/welcome-cup.svg');
- expect(document.querySelector('canvas,video,iframe')).toBeNull();expect(statSync('public/welcome-cup.svg').size).toBeLessThan(5000);
+ const image=document.querySelector<HTMLImageElement>('.login-coffee-picture img')!;expect(image.getAttribute('src')).toBe('/login-coffee-maid-chibi.webp');
+ expect(document.querySelector('canvas,video,iframe')).toBeNull();expect(statSync('public/login-coffee-maid-chibi.webp').size).toBeLessThan(100*1024);
  image.dispatchEvent(new Event('error'));expect(document.querySelector('.login-coffee')).toBeNull();coffee.dispose();
 });
 
