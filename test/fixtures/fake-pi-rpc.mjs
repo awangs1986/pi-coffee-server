@@ -223,8 +223,9 @@ for await (const line of input) {
         const assistant = { role: "assistant", content: [{ type: "text", text: `echo: ${command.message}` }] };
         appendEntry(assistant);
         send({ type: "message_end", message: assistant });
-        streaming = false;
-        send({ type: "agent_settled" });
+        const settle=()=>{streaming=false;send({type:"agent_settled"});};
+        if(process.env.FAKE_SETTLE_DELAY_MS)setTimeout(settle,Number(process.env.FAKE_SETTLE_DELAY_MS));
+        else settle();
       });
       break;
     }
