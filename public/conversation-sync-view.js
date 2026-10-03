@@ -91,11 +91,14 @@ export class ConversationSyncView {
     source.forEach((item,index)=>{
       const id=keyOf(item),revision=String(item.entityRevision??state.appliedRevision??state.baseRevision??'0');
       const existing=this.nodes.get(id);
-      if(existing?.revision===revision){const next=source.slice(index+1).map(keyOf).map(key=>this.nodes.get(key)?.node).find(Boolean)||this.latest;if(existing.node.nextElementSibling!==next)this.root.insertBefore(existing.node,next);return;}
+      // Completion belongs to a message, not the whole conversation. A later
+      // run must never turn already finished Markdown back into plain text.
+      const rich=!item.contentTruncated && (item.status!=='inProgress' || state.runState!=='running');
+      if(existing?.revision===revision && existing.rich===rich){const next=source.slice(index+1).map(keyOf).map(key=>this.nodes.get(key)?.node).find(Boolean)||this.latest;if(existing.node.nextElementSibling!==next)this.root.insertBefore(existing.node,next);return;}
       const run=()=>{
         if(generation!==this.generation)return;
-        const previous=this.nodes.get(id);const entry={...item,id,k:item.kind,done:item.status!=='inProgress'&&item.done!==false,revision};
-        entry.node=item.kind==='assistant'?assistantNode(entry,{done:!item.contentTruncated&&state.runState!=='running'}):item.kind==='user'?userBubble(entry):item.kind==='tool'?toolCard({...entry,name:shortText(item.name,256),result:item.result,error:item.isError}):noteNode(entry);
+        const previous=this.nodes.get(id);const entry={...item,id,k:item.kind,done:item.status!=='inProgress'&&item.done!==false,revision,rich};
+        entry.node=item.kind==='assistant'?assistantNode(entry,{done:rich}):item.kind==='user'?userBubble(entry):item.kind==='tool'?toolCard({...entry,name:shortText(item.name,256),result:item.result,error:item.isError}):noteNode(entry);
         if(item.kind==='tool'&&previous?.node.open)entry.node.open=true;
         entry.node.dataset.entityId=id;entry.node.dataset.entityRevision=revision;
         this.addContentControl(entry,item,generation);

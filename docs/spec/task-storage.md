@@ -66,3 +66,26 @@ display history, never native restore files or attachment grants. Archive retain
 them; complete cleanup remains unavailable. A pre-takeover binary cannot safely resume
 a switched Pi binding, so deployment rollback requires compatible code or a
 consistent pre-switch registry/native-store backup.
+
+## Inline conversation images (2026-10-04)
+
+[Server #43](https://github.com/awangs1986/pi-coffee-server/issues/43)
+tracks image previews and downloads from assistant Markdown. Complete, bounded
+assistant messages render inline images and a Download image action in both live
+and restored transcripts. Completion belongs to each message: a later running
+turn must not turn earlier finished replies into plain text. Incomplete streams
+and oversized content retain the existing bounded plain-text rendering.
+
+Host's durable display index retains assistant `inProgress` status while text
+arrives; completion changes the entity revision even when the final text is
+identical. Historical source entries without status are complete. Interrupted
+streams may render their bounded final content after the run settles.
+
+Local images use the current task's existing file grant for preview and download.
+Grant arrival or renewal rebinds existing image nodes. Missing or inaccessible
+images display an explicit unavailable message. The application does not expose
+arbitrary VM paths: generated images intended for delivery must first be placed
+in the task workspace or its supported sibling attachment/artifact directory.
+Use relative `../attachments/...` references for task attachments; a path outside
+the existing file-serving boundary remains denied. No original model session or
+model context is rewritten by this display behavior.

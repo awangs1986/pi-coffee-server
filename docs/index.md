@@ -82,3 +82,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Local-first conversation synchronization, bounded live rendering and pixel status/welcome animations: [contract](spec/local-first-conversation-sync.md), [durable display-index decision](adr/0024-durable-display-index.md).
 
 - [T1–T4 workbench refinements, Server #42](https://github.com/awangs1986/pi-coffee-server/issues/42): responsive conversation actions, compact welcome, sidebar running cat, account-wide testing guidance and explicitly invoked conversation-scoped SSHME.
+
+- Inline image preview/download: [task-storage contract](spec/task-storage.md#inline-conversation-images-2026-10-04), [Server #43](https://github.com/awangs1986/pi-coffee-server/issues/43).

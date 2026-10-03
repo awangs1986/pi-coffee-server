@@ -50,6 +50,7 @@ function contentText(value:any):string {if(typeof value==='string')return value;
 function boundedEntry(entry: any, revision: string, budget = BLOCK_BYTES): any {
   const fields: Record<string, string> = {};
   const result: any = { kind: entry.kind, id: entry.id, entityRevision: revision, contentOffset:0 };
+  if (entry.kind === 'assistant') result.status = entry.status ?? 'completed';
   if (entry.at) result.at = String(entry.at).slice(0, 80);
   if (entry.kind === 'tool') { result.name = String(entry.name || 'tool').slice(0, 200); result.isError = !!entry.isError; result.status = entry.status ?? 'completed'; result.args = {}; fields.args = JSON.stringify(entry.args ?? {}); fields.result = String(entry.result ?? ''); if (entry.diff) fields.diff = entry.diff; }
   else { fields.text = String(entry.text ?? ''); if (entry.imageCount) result.imageCount = entry.imageCount; }
@@ -172,7 +173,7 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
       }
       if (e.type === 'message_delta' && typeof e.id === 'string' && typeof e.delta === 'string') {
         const prior = db.prepare('SELECT entry FROM entities WHERE id=?').get(e.id);
-        const entry = prior ? JSON.parse(String(prior.entry)) : {kind:'assistant',id:e.id,text:''}; entry.text += e.delta; upsert(db,current,entry);
+        const entry = prior ? JSON.parse(String(prior.entry)) : {kind:'assistant',id:e.id,text:''}; entry.text += e.delta; entry.status='inProgress'; upsert(db,current,entry);
       } else if (e.type === 'message_completed' && typeof e.id === 'string') upsert(db,current,{kind:'assistant',id:e.id,text:String(e.text ?? '')});
       else if (e.type === 'tool_update' && typeof e.id === 'string') {
         const prior = db.prepare('SELECT entry FROM entities WHERE id=?').get(e.id);
@@ -191,7 +192,7 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
         if(typeof e.id==='string')current.liveMessage=e.id;
         current.liveMessage ??= `live:${current.runId ?? (current.runId=randomUUID())}:${randomUUID()}`;
         const prior = db.prepare('SELECT entry FROM entities WHERE id=?').get(current.liveMessage);
-        upsert(db,current,{kind:'assistant',id:current.liveMessage,text:(prior ? JSON.parse(String(prior.entry)).text : '') + String(e.assistantMessageEvent.delta ?? '')});
+        upsert(db,current,{kind:'assistant',id:current.liveMessage,status:'inProgress',text:(prior ? JSON.parse(String(prior.entry)).text : '') + String(e.assistantMessageEvent.delta ?? '')});
       } else if (e.type === 'message_end') {
         const role=e.message?.role;
         if(role==='user'&&(e.id||current.liveUser))upsert(db,current,{kind:'user',id:e.id??current.liveUser,text:contentText(e.message.content)});

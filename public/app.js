@@ -1,3 +1,4 @@
+import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
 import {initForkControls} from "./fork.js";
 import {createSidebarInteraction} from './sidebar-interaction.js';
 import {pixelCat} from './sync-status.js';
@@ -1625,6 +1626,7 @@ function handleFrame(frame, ws) {
       transferRevision++;transfer = normalizeTransferGrant(frame, frame.sessionId);
       refreshToolDownloadLinks();
       renderUploadLogCard(); // relink rows with the fresh token
+      bindWorkspaceArtifacts();
       if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
       return;
     case 'queue_state':
@@ -3575,13 +3577,7 @@ setInterval(()=>{if(!document.hidden || uploadsBusy())void loadWorkspace();},500
 fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
 function bindWorkspaceArtifacts() {
- if(!workspaceState || !transfer)return;
- for(const node of document.querySelectorAll('[data-workspace-path]')) {
-  const path=node.getAttribute('data-workspace-path');
-  const url=fileEndpoint(node.hasAttribute('data-workspace-download')?'workspace-download':'preview',path);
-  if(node.tagName==='IMG'){if(node.getAttribute('src')!==url)node.src=url;}
-  else {node.href=url;node.target='_blank';node.rel='noopener noreferrer';}
- }
+ bindWorkspaceArtifactLinks(document,(action,path)=>workspaceState&&transfer?fileEndpoint(action,path):null);
 }
 new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});
 

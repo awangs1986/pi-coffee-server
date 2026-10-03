@@ -1158,3 +1158,11 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .remote-content-body { overflow-wrap: anywhere; white-space: pre-wrap; }
 
 @media (max-width: 820px) { body:has(#app.side-open) #ui-modal.non-blocking { visibility: hidden; } }
+
+.workspace-image{display:block;margin:8px 0}
+.workspace-image-status{display:block;font-size:12px;color:var(--text-2);padding:8px 0}
+.workspace-image-status[hidden],.workspace-image img[hidden]{display:none}
+.workspace-image .artifact-download{margin:4px 0 8px}
+
+.workspace-image>a:not(.artifact-download){display:block;width:fit-content}
+.workspace-image img{max-height:480px;object-fit:contain}

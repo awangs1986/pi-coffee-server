@@ -104,3 +104,12 @@ it('expires idle audited actors so a new conversation can still accept its first
   await vi.waitFor(async()=>{await expect(index.command('new-conversation','first-command','accepted','prompt')).resolves.toMatchObject({conversationId:'new-conversation'});});
  }finally{clock.mockRestore();}
 },20000);
+
+it.each(['pi','codex'])('retains %s message completion separately from conversation run state',async engine=>{
+ const {index}=await make();await index.reconcile('c',[]);
+ index.event('c',{type:'run_started'});
+ index.event('c',engine==='codex'?{type:'message_delta',id:'reply',delta:'![Preview](image.png)'}:{type:'message_update',id:'reply',assistantMessageEvent:{type:'text_delta',delta:'![Preview](image.png)'}});
+ await index.flush();const before=await index.page('c');expect(before.entries[0].status).toBe('inProgress');
+ index.event('c',engine==='codex'?{type:'message_completed',id:'reply',text:'![Preview](image.png)'}:{type:'message_end',id:'reply',message:{role:'assistant',content:[{type:'text',text:'![Preview](image.png)'}]}});
+ await index.flush();const after=await index.page('c');expect(after.runState).toBe('running');expect(after.entries[0].status).toBe('completed');expect(after.entries[0].entityRevision).not.toBe(before.entries[0].entityRevision);
+});
