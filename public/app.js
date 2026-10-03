@@ -1271,7 +1271,10 @@ async function whoAmI(epoch) {
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
     ui.userBtn.disabled = !info.auth;
-    if(activeId && !historyReady && previewScroll===null){selectConversationView(activeId);showRecentThread(activeId);}
+    if(activeId && !historyReady && previewScroll===null){
+      if(previousUser!==currentUser || syncedView.active!==activeId)selectConversationView(activeId);
+      showRecentThread(activeId);
+    }
     return true;
   } catch {
     return true;   // the Web Server may be restarting; let the socket retry decide
