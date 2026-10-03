@@ -1,0 +1,14 @@
+# System/Web example. The user/Host installer supplies its own absolute paths.
+[Unit]
+Description=Bounded PI Coffee service watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/pi-coffee-watchdog/current/coffee-watchdog.py --config /etc/pi-coffee/watchdog.json --state-dir /var/lib/pi-coffee-watchdog check
+TimeoutStartSec=45s
+Restart=no
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pi-coffee-watchdog

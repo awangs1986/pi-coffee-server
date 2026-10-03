@@ -10,3 +10,6 @@ sessions/
 
 public/vendor-*.js
 public/vendor/
+
+# Python watchdog test/import artifacts
+__pycache__/
