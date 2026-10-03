@@ -100,7 +100,8 @@ export function projectTurns(turns: Obj[]): HistoryEntry[] {
   for (const turn of turns) {
     const at = typeof turn.startedAt === "number" ? toIso(turn.startedAt) : undefined;
     for (const item of Array.isArray(turn.items) ? (turn.items as Obj[]) : []) {
-      const id = String(item.id ?? `${entries.length}`);
+      if (typeof item.id !== "string" || !item.id) throw new Error("Native Codex history item is missing its durable ID");
+      const id = item.id;
       const stamp = at === undefined ? {} : { at };
       switch (item.type) {
         case "userMessage": {

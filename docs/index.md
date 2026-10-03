@@ -77,3 +77,5 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - [Historical PR salvage review](reviews/legacy-pr-salvage-20261003.md): current-main recovery and rejection map for five old Gitea PRs; [Server #31](https://github.com/awangs1986/pi-coffee-server/issues/31).
 
 - [Draft thinking selection](spec/native-agent-browser.md#thinking-selection-before-task-creation--2026-10-03): Pi/Codex model-specific choices, medium default and first-prompt acknowledgement; [Server #33](https://github.com/awangs1986/pi-coffee-server/issues/33).
+
+- Local-first conversation synchronization, bounded live rendering and pixel status/welcome animations: [contract](spec/local-first-conversation-sync.md), [durable display-index decision](adr/0024-durable-display-index.md).

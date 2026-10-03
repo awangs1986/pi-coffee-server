@@ -18,7 +18,7 @@ termdeck's `INVARIANTS.md`; the rules are ours.)
 | Id | Rule | Enforced by |
 |---|---|---|
 | INV-S1 | A browser disconnect never stops a running turn; the Session outlives its sockets (ADR-0006). | `test/host-server.test.ts` "keeps a Pi session alive…" |
-| INV-S2 | The Host keeps no durable conversation content; history is re-read from the agent's own store on every `open` (ADR-0008). | `HostSession.prepare()` |
+| INV-S2 | Native Transcript remains authoritative. The Host may keep a transactional, rebuildable user-scoped display index; v2 reads never resume native execution, and legacy open remains available (ADR-0024, amending ADR-0008). | `test/conversation-index.test.ts`, `test/conversation-sync-http.test.ts`, `test/native-history-read.test.ts` |
 | INV-S3 | `sessions[].attention` is derived state only (pending dialog / unseen settle) and clears on attach; it is never persisted. | `HostSession.attention`; P0 test |
 | INV-S4 | A native thread is resumed or deleted only when its recorded `cwd` is this user's working directory (ownership check before `thread/resume` / `thread/delete`). | `CodexSessionFactory.ownsThread()`; `test/codex-adapter.test.ts` |
 
