@@ -330,3 +330,23 @@ shortcuts. The topmost shell modal owns keyboard focus and blocks background tas
 navigation; closing it returns focus to its trigger. Nested sidebar controls do
 not activate their row, and metadata polling preserves equivalent action focus.
 This does not alter the confirmed-message outbox or authoritative native history.
+
+## Task interaction and compact welcome (2026-10-03)
+
+[Server #42](https://github.com/awangs1986/pi-coffee-server/issues/42): sidebar
+refreshes defer while an action-button gesture is in progress or its menu is open.
+The latest queued render applies after dismissal. Agent questions remain pending
+without making the entire workbench inert; navigating away never manufactures an
+answer. Destructive confirmations and application settings retain their modal
+behavior. Conversation menus remain usable during loading/errors, while native
+operation eligibility is still checked by Host. Menu placement stays in view.
+
+A compact monochrome cup greets a successful login briefly, once per login identity.
+It does not cover the workbench, take focus, or consume Enter. A close control and
+Escape dismiss it; reduced-motion mode avoids animation. The previous oversized
+character artwork is no longer displayed. The workbench layout is unchanged.
+
+A running conversation uses a small black pixel cat in the sidebar instead of a
+pulsing blue dot. Waiting/finished indicators retain their meanings; an idle row
+has no running cat. Reduced-motion mode shows the cat without animation, and the
+dark theme adds a subtle outline to retain contrast.

@@ -37,17 +37,14 @@ it('consumes a welcome-screen click instead of activating an unseen app button',
 
 it('loads one bounded local retro artwork and dismisses a failed image without a stalled screen',()=>{
  const coffee=createLoginCoffee({document,matchMedia:()=>({matches:false})});coffee.play('alice');
- const image=document.querySelector<HTMLImageElement>('.login-coffee-picture img')!;expect(image.getAttribute('src')).toBe('/login-coffee-art.webp');
- expect(document.querySelector('canvas,video,iframe')).toBeNull();expect(statSync('public/login-coffee-art.webp').size).toBeLessThan(500*1024);
- const bytes=readFileSync('public/login-coffee-art.webp');expect(bytes.subarray(8,12).toString()).toBe('WEBP');
- let offset=12,hasAlpha=false;while(offset+8<=bytes.length){const size=bytes.readUInt32LE(offset+4);if(bytes.subarray(offset,offset+4).toString()==='ALPH')hasAlpha=true;offset+=8+size+(size%2);}
- expect(hasAlpha,'the character asset must retain its transparent cutout').toBe(true);
+ const image=document.querySelector<HTMLImageElement>('.login-coffee-picture img')!;expect(image.getAttribute('src')).toBe('/welcome-cup.svg');
+ expect(document.querySelector('canvas,video,iframe')).toBeNull();expect(statSync('public/welcome-cup.svg').size).toBeLessThan(5000);
  image.dispatchEvent(new Event('error'));expect(document.querySelector('.login-coffee')).toBeNull();coffee.dispose();
 });
 
-it('consumes welcome dismissal keys before underlying composer or approval handlers',()=>{
+it('allows Enter to reach the composer and only consumes explicit Escape dismissal',()=>{
  const underlying=vi.fn();document.addEventListener('keydown',underlying);
  const coffee=createLoginCoffee({document,matchMedia:()=>({matches:false})});
- for(const key of ['Escape','Enter']){coffee.reset();coffee.play('alice');document.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));expect(document.querySelector('.login-coffee')).toBeNull();}
- expect(underlying).not.toHaveBeenCalled();document.removeEventListener('keydown',underlying);coffee.dispose();
+ coffee.play('alice');document.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));expect(underlying).toHaveBeenCalledTimes(1);expect(document.querySelector('.login-coffee')).not.toBeNull();
+ document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));expect(document.querySelector('.login-coffee')).toBeNull();expect(underlying).toHaveBeenCalledTimes(1);document.removeEventListener('keydown',underlying);coffee.dispose();
 });

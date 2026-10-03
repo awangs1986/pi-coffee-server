@@ -8,7 +8,7 @@ const TEXT = {
 };
 const FAILURES = new Set(['error', 'timeout', 'offline']);
 
-function pixelCat(document) {
+export function pixelCat(document) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 28 20');
   svg.setAttribute('class', 'running-cat');

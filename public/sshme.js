@@ -3,10 +3,10 @@ export function parseSshme(text){const match=/^\/sshme(?:\s+([\s\S]*))?$/i.exec(
 
 export function initSshme({onOpen,isCurrent,onReady}){
  const $=id=>document.getElementById(id),dialog=$('sshme-dialog'),form=$('sshme-form');
- let saved=null,context=null,request='',epoch=0,busy=false,available=false;
+ let saved=null,context=null,conversationId=null,request='',epoch=0,busy=false,available=false;
  const status=(message)=>{$('sshme-status').textContent=message;};
  const controls=()=>{for(const node of form.querySelectorAll('input,select,button'))node.disabled=busy||!available;};
- async function api(body){const res=await fetch('/api/sshme',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const data=await res.json();if(!res.ok)throw Error(data.error||'连接操作失败');return data;}
+ async function api(body){const res=await fetch('/api/sshme',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...body,conversationId})});const data=await res.json();if(!res.ok)throw Error(data.error||'连接操作失败');return data;}
  function passwordHint(){
   const same=saved && saved.host===$('sshme-host').value.trim() && saved.port===Number($('sshme-port').value) && saved.username===$('sshme-username').value.trim() && saved.platform===$('sshme-platform').value;
   $('sshme-password').placeholder=same&&saved.hasPassword?'已保存，留空保持原密码':'留空使用 VM 的 SSH 密钥';
@@ -15,7 +15,7 @@ export function initSshme({onOpen,isCurrent,onReady}){
  for(const id of ['sshme-host','sshme-port','sshme-username','sshme-platform'])$(id).addEventListener('input',passwordHint);
  async function open(value){
   if(dialog.open||busy)return;
-  const current=++epoch;context=value.context;request=value.request;saved=null;available=false;form.reset();$('sshme-password').value='';
+  const current=++epoch;context=value.context;conversationId=value.conversationId;request=value.request;saved=null;available=false;form.reset();$('sshme-password').value='';
   $('sshme-request').textContent=request;onOpen();dialog.showModal();status('正在读取连接信息…');controls();
   try{
    const [address,data]=await Promise.all([fetch('/api/client-address').then(async res=>{if(!res.ok)throw Error('无法读取访问地址');return res.json();}),api({action:'list'})]);
@@ -36,7 +36,7 @@ export function initSshme({onOpen,isCurrent,onReady}){
   finally{busy=false;controls();}
  });
  $('sshme-close').addEventListener('click',()=>dialog.close());
- dialog.addEventListener('close',()=>{epoch++;$('sshme-password').value='';request='';context=null;});
+ dialog.addEventListener('close',()=>{epoch++;$('sshme-password').value='';request='';context=null;conversationId=null;});
  form.addEventListener('submit',event=>{
   event.preventDefault();if(busy||!available)return;
   if(!isCurrent(context)){status('当前对话或输入已改变，请关闭后重新输入 /sshme。');return;}
@@ -47,7 +47,7 @@ export function initSshme({onOpen,isCurrent,onReady}){
    try{
     const result=await api({action:'save',runner});if(epoch!==current)return;saved=result.runner;passwordHint();
     const prepared=await api({action:'sshme',id:saved.id,request:submittedRequest});if(epoch!==current)return;
-    if(!isCurrent(submittedContext))throw Error('连接已保存，但当前对话或输入已改变；请重新输入 /sshme。');
+    if(!isCurrent(submittedContext))throw Error('当前对话的连接已保存，但对话或输入已改变；请重新输入 /sshme。');
     onReady(prepared.prompt,submittedContext);dialog.close();
    }catch(error){if(epoch===current)status(error.message);}
    finally{busy=false;controls();}

@@ -191,6 +191,9 @@ for await (const line of input) {
         setTimeout(() => process.kill(process.pid, "SIGKILL"), 30);
         break;
       }
+      if (command.message.startsWith("hold:")) {
+        streaming=true;appendEntry({role:"user",content:[{type:"text",text:command.message}]});send({type:"agent_start"});break;
+      }
       if (command.message.startsWith("ask:") || command.message.startsWith("choose:")) {
         // Simulate an extension calling ctx.ui.confirm() / ctx.ui.select():
         // the run blocks until the client answers.

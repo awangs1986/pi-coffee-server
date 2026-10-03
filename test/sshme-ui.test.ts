@@ -21,19 +21,19 @@ it('recognizes only the built-in command, case-insensitively',()=>{
  expect(parseSshme('/SSHME 安装软件')).toBe('安装软件');expect(parseSshme('/sshme')).toBe('');expect(parseSshme('/sshmenu x')).toBeNull();expect(parseSshme('解释 /sshme')).toBeNull();
 });
 it('prefills the observed IP, sends only after save/connect, and clears the password field',async()=>{
- const {controller,calls,ready}=setup();await controller.open({request:'Install editor',context:'task-a'});
+ const {controller,calls,ready}=setup();await controller.open({request:'Install editor',context:'task-a',conversationId:'task-a'});
  expect(input('sshme-host').value).toBe('192.168.1.10');expect(ready).not.toHaveBeenCalled();
  input('sshme-username').value='tester';input('sshme-password').value='fixture-only-secret';
  document.getElementById('sshme-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
- expect(calls.map(c=>c.action)).toEqual(['list','save','sshme']);expect(ready).toHaveBeenCalledWith('Safe model request without credentials.','task-a');
+ expect(calls.every(c=>c.conversationId==='task-a')).toBe(true);expect(calls.map(c=>c.action)).toEqual(['list','save','sshme']);expect(ready).toHaveBeenCalledWith('Safe model request without credentials.','task-a');
  expect(input('sshme-password').value).toBe('');expect(document.body.textContent).not.toContain('fixture-only-secret');
 });
 it.each([{fail:true},{changed:true}])('does not deliver after failed connection or conversation change: %j',async options=>{
- const {controller,ready}=setup(options);await controller.open({request:'Install editor',context:'task-a'});
+ const {controller,ready}=setup(options);await controller.open({request:'Install editor',context:'task-a',conversationId:'task-a'});
  input('sshme-username').value='tester';document.getElementById('sshme-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();expect(ready).not.toHaveBeenCalled();
 });
 it('closing the dialog does not send the request',async()=>{
- const {controller,ready}=setup();await controller.open({request:'Install editor',context:'task-a'});input('sshme-password').value='temporary';(document.getElementById('sshme-close') as HTMLButtonElement).click();expect(ready).not.toHaveBeenCalled();expect(input('sshme-password').value).toBe('');
+ const {controller,ready}=setup();await controller.open({request:'Install editor',context:'task-a',conversationId:'task-a'});input('sshme-password').value='temporary';(document.getElementById('sshme-close') as HTMLButtonElement).click();expect(ready).not.toHaveBeenCalled();expect(input('sshme-password').value).toBe('');
 });
 
 it.each(['switch','close'])('never dispatches when the user changes context during the SSH test: %s',async action=>{
@@ -43,7 +43,7 @@ it.each(['switch','close'])('never dispatches when the user changes context duri
   if(init?.body&&JSON.parse(String(init.body)).action==='sshme')return await new Promise(resolve=>{finish=resolve;});
   return original(url,init);
  }));
- await controller.open({request:'Install editor',context:'task-a'});input('sshme-username').value='tester';
+ await controller.open({request:'Install editor',context:'task-a',conversationId:'task-a'});input('sshme-username').value='tester';
  document.getElementById('sshme-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
  expect(calls.some(c=>c.action==='save')).toBe(true);
  if(action==='close')(document.getElementById('sshme-close') as HTMLButtonElement).click();
@@ -52,7 +52,7 @@ it.each(['switch','close'])('never dispatches when the user changes context duri
 });
 
 it.each(['windows','linux','macos'])('saves the selected local-computer OS through the independent endpoint: %s',async platform=>{
- const {controller,calls}=setup();await controller.open({request:'Check system',context:'task-a'});
+ const {controller,calls}=setup();await controller.open({request:'Check system',context:'task-a',conversationId:'task-a'});
  input('sshme-platform').value=platform;input('sshme-username').value='tester';
  document.getElementById('sshme-form')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
  expect(calls.find(c=>c.action==='save').runner.platform).toBe(platform);
@@ -65,8 +65,8 @@ it('can forget an assistance credential in its own dialog without a model reques
   if(init?.body&&JSON.parse(String(init.body)).action==='list')return {ok:true,json:async()=>({runners:[{id:'saved',host:'192.168.1.10',port:22,username:'tester',platform:'macos',hasPassword:true}]})};
   return original(url,init);
  }));
- await controller.open({request:'Check system',context:'task-a'});expect(input('sshme-platform').value).toBe('macos');
+ await controller.open({request:'Check system',context:'task-a',conversationId:'task-a'});expect(input('sshme-platform').value).toBe('macos');
  (document.getElementById('sshme-forget') as HTMLButtonElement).click();await tick();
- expect(calls).toContainEqual({action:'delete',id:'saved'});expect(ready).not.toHaveBeenCalled();
+ expect(calls).toContainEqual({action:'delete',id:'saved',conversationId:'task-a'});expect(ready).not.toHaveBeenCalled();
  expect(document.getElementById('sshme-forget')!.hidden).toBe(true);
 });

@@ -439,14 +439,14 @@
           <label>用户名<input id="sshme-username" required maxlength="64" autocomplete="off" /></label>
           <label>密码<input id="sshme-password" type="password" maxlength="4096" autocomplete="new-password" /></label>
         </div>
-        <p class="runner-help">让远程 Agent 通过 SSH 协助你正在使用的电脑。请开启该电脑的 SSH 服务（macOS 为“远程登录”），并确认地址和系统。连接仅用于本机协助，保存到当前账号；可在此修改或清除。</p>
+        <p class="runner-help">仅在当前对话显式输入 /sshme 并确认后，Agent 才会获知这台电脑的连接信息。支持 Windows、Linux 和 macOS；请先开启 SSH 服务（macOS 为“远程登录”）。连接与测试服务器独立，可在此修改或清除。</p>
         <div class="runner-form-foot"><span class="runner-help">密码不会发送给模型。</span><button id="sshme-forget" class="btn small" type="button" hidden>清除已保存连接</button><button id="sshme-connect" class="btn small primary" type="submit">保存连接并继续</button></div>
       </form>
       <p id="sshme-status" class="runner-help" role="status" aria-live="polite"></p>
     </dialog>
     <dialog id="runners-dialog" class="runners-dialog" aria-labelledby="runners-title">
       <div class="runner-heading"><h2 id="runners-title">配置测试服务器</h2><button id="runners-close" type="button" class="icon-btn" aria-label="关闭测试服务器配置">✕</button></div>
-      <p class="runner-help">只配置一台 Windows 电脑。Agent 通过 SSH 使用 PowerShell，需要 Linux 时运行这台电脑的 WSL。</p>
+      <p class="runner-help">当前账号所有对话共用的测试目标：配置一台 Windows 电脑，需要 Linux 时使用其 WSL。保存后，各对话在下一轮消息中获得指引；不会自动连接。</p>
       <div id="runners-list" class="runners-list"></div>
       <form id="runner-form" autocomplete="off">
         <h3 id="runner-form-title">Windows 电脑</h3>

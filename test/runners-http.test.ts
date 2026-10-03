@@ -16,7 +16,7 @@ async function setup(){
  host=new HostServer({port:0,token:'runner-test',factory,requireUser:true,scopeForUser:user=>({factory,runners:manager(user),sshme:assistance(user)})});await host.start();
  const base=`http://127.0.0.1:${host.address().port}`;
  const call=async(body:object,user='alice',token='runner-test',path='/api/runners')=>{const r=await fetch(base+path,{method:'POST',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
- return {manager,assistance,base,call,assist:(body:object,user='alice')=>call(body,user,'runner-test','/api/sshme')};
+ return {manager,assistance:(user:string)=>assistance(user).forConversation('task-a'),base,call,assist:(body:object,user='alice',conversationId='task-a')=>call({...body,conversationId},user,'runner-test','/api/sshme')};
 }
 const input={name:'Windows test',host:'192.0.2.10',port:22,username:'tester',platform:'windows',workdir:'C:/work',password:'fixture-private-password'};
 it('scopes runner CRUD, redacts secrets, preserves passwords on edit and conditionally adds one pointer',async()=>{
@@ -72,6 +72,10 @@ it.each(['windows','linux','macos'])('keeps %s user assistance separate from tes
  const saved=await assist({action:'save',runner:{...input,platform,workdir:''}}),id=saved.body.runner?.id;
  expect(saved.status).toBe(200);expect(id).not.toBe(test.body.runner.id);
  expect((await assist({action:'list'},'bob')).body.runners).toEqual([]);
+ expect((await assist({action:'list'},'alice','task-b')).body.runners).toEqual([]);
+ expect((await assist({action:'sshme',id,request:'Help'},'alice','task-b')).status).toBe(409);
+ expect(await assistance('alice').instruction()).toBeUndefined();
+ for(const conversationId of ['', '../task-a', '/tmp/task'])expect((await assist({action:'list'},'alice',conversationId)).status).toBe(409);
  expect((await assist({action:'sshme',id:test.body.runner.id,request:'Help'})).status).toBe(409);
  expect((await call({action:'sshme',id:test.body.runner.id,request:'Help'})).status).toBe(409);
  const run=vi.spyOn(assistance('alice'),'run').mockResolvedValue({code:255,stdout:'',stderr:'private failure'});
