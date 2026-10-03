@@ -302,6 +302,8 @@ export class HostSession {
       throw error;
     }finally{this.contextChanging=false;this.onLifecycle?.(this);this.scheduleIdleCheck();}
   }
+  readNativeState():Promise<SessionState>{return this.ready().getState();}
+  getHistory():Promise<import("./agent-adapter.js").AgentHistory>{return this.ready().getHistory();}
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
   setModel(provider: string, id: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
   async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{

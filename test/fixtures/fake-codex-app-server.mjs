@@ -135,7 +135,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
@@ -208,6 +208,10 @@ rl.on("line", (line) => {
       save();
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never" });
       return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
+    }
+    case "thread/fork": {
+      const source=threads[params.threadId];if(!source)return fail('no such thread');
+      const thread={...structuredClone(source),id:randomUUID(),cwd:params.cwd,createdAt:now(),updatedAt:now()};threads[thread.id]=thread;save();return reply({thread:threadView(thread,true)});
     }
     case "thread/read": {
       const thread = threads[params.threadId];

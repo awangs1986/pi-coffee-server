@@ -403,6 +403,17 @@
       <p id="github-accounts-status" class="runner-help" role="status"></p>
       <div class="runner-form-foot"><button id="github-accounts-refresh" class="btn small" type="button">刷新</button><button id="github-connect" class="btn small primary" type="button">连接 GitHub 账号</button></div>
     </dialog>
+    <dialog id="fork-dialog" class="runners-dialog" aria-labelledby="fork-title">
+      <div class="runner-heading"><h2 id="fork-title">Fork 对话</h2></div>
+      <p id="fork-source" class="runner-help"></p>
+      <label class="fork-choice"><input type="radio" name="fork-mode" value="native" checked><span><strong>传统 Fork</strong><small>保留当前 Agent 的原生上下文，不生成交接摘要。</small></span></label>
+      <p id="fork-native-unavailable" class="runner-help" hidden>此 Agent 尚未提供已验证的原生 Fork，请使用 Handoff 模式。</p>
+      <label class="fork-choice"><input type="radio" name="fork-mode" value="handoff"><span><strong>Handoff Fork</strong><small>使用交接内容建立独立分支，适合重新聚焦任务。</small></span></label>
+      <p id="fork-warning" class="runner-help" hidden>实验性功能：交接可能造成信息遗漏或漂移，并产生额外模型费用。接受后继续。</p>
+      <p class="runner-help">原对话保留。新对话使用独立目录，复制当前代码改动和附件；不复制依赖缓存，不自动提交或推送。</p>
+      <p id="fork-status" class="runner-help" role="status"></p>
+      <div class="runner-form-foot"><button id="fork-cancel" type="button" class="btn small">关闭</button><button id="fork-confirm" type="button" class="btn small primary">创建 Fork</button></div>
+    </dialog>
     <dialog id="takeover-dialog" class="runners-dialog" aria-labelledby="takeover-title">
       <div class="runner-heading"><h2 id="takeover-title">切换 Agent</h2></div>
       <p id="takeover-target"></p>
