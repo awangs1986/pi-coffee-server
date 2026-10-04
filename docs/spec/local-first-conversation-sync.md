@@ -217,3 +217,10 @@ only while that read is pending. Read-only index HTTP requests remain independen
 of execution and never start a native runtime. A later currently verified open
 may negotiate v2 again; source uncertainty must not silently hide newer native
 history behind an old display index.
+
+The [independent-navigation contract](conversation-switching.md#independent-navigation-2026-10-04-server-47)
+now owns selection/source arbitration. A per-conversation serialization tail may
+contain local commits but must never contain a network wait. Existing read tickets
+support priority promotion; a foreground request must not remain behind background
+admission solely because it was already deduplicated. Observer lifetime is separate
+from disposable cache lifetime and ends on unsubscribe or authenticated scope change.

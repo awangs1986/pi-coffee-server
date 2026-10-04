@@ -3,7 +3,7 @@
 // the "＋" menu and GitHub picker, and forge-aware repository icon and PR texts.
 import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
-afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
+afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();history.replaceState(null,'','/');localStorage.clear();sessionStorage.clear();vi.resetModules();});
 
 const REPOS=[
   {id:'101',fullName:'acme/app',private:true,archived:false,defaultBranch:'main',cloneUrl:'https://github.com/acme/app.git',webUrl:'https://github.com/acme/app',canPush:true,projectId:'github-101'},

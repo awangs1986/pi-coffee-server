@@ -933,6 +933,7 @@ class HostSocket implements SessionSink {
     const task=frame.sessionId ? await this.workspaces?.lookup(frame.sessionId) : undefined;
     if(task?.engine && task.engine!=="pi" && frame.nativeProtocol!==1)throw new Error("This Task requires a native-Agent capable client");
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
+    if(frame.sessionId && this.workspaces && !task && !listed)throw new Error("Unknown Task: conversation unavailable");
     const engine=task?.engine ?? listed?.engine ?? "pi";
     // Resolve asynchronous metadata before taking the history/replay snapshot.
     // Nothing may yield between that snapshot, attaching and sending its replay.

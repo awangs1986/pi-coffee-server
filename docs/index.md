@@ -90,3 +90,7 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Latest history after busy switching: [Server #45](https://github.com/awangs1986/pi-coffee-server/issues/45), [freshness and reader-intent contract](spec/local-first-conversation-sync.md#latest-history-correctness-after-selection-2026-10-04-server-45).
 
 Latest-history selection regression and acceptance: [2026-10-04 evidence](reviews/latest-history-switch-20261004.md).
+
+- Independent conversation routes, history synchronization and execution attachment:
+  [contract](spec/conversation-switching.md#independent-navigation-2026-10-04-server-47),
+  [Server #47](https://github.com/awangs1986/pi-coffee-server/issues/47).

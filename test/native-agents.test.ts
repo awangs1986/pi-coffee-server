@@ -2,7 +2,7 @@
 import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
 import {IDBFactory,IDBDatabase as FakeIDBDatabase} from 'fake-indexeddb';
-afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
+afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();history.replaceState(null,'','/');localStorage.clear();sessionStorage.clear();vi.resetModules();});
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();

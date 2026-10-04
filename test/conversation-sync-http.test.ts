@@ -7,6 +7,7 @@ import {WebSocket} from 'ws';
 import {HostServer} from '../src/host/server.js';
 import {HostSession} from '../src/host/session.js';
 import {WebServer} from '../src/web/server.js';
+import {Workspaces} from '../src/host/workspaces.js';
 import {ConversationIndex} from '../src/host/conversation-index.js';
 const roots:string[]=[];const servers:any[]=[];
 afterEach(async()=>{for(const server of servers.splice(0).reverse())await server.close();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
@@ -23,6 +24,13 @@ async function primeV2(host:HostServer,factory:any,entries:any[]=[]){
  await vi.waitFor(async()=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/page`,{headers:{authorization:'Bearer secret'}});expect((await response.json()).sourceFreshness).toBe('current');},{timeout:3000});
 }
 describe('read-only sync seam',()=>{
+ it('rejects an unavailable explicit conversation instead of creating a native session',async()=>{
+  const {factory}=fake();const workspaces=new Workspaces(await root());
+  const host=new HostServer({port:0,token:'secret',factory,workspaces});servers.push(host);await host.start();
+  const {ws,frames}=await socket(host);ws.send(JSON.stringify({v:1,type:'open',sessionId:'missing',nativeProtocol:1,syncProtocol:2}));
+  try{await vi.waitFor(()=>expect(frames.some(f=>f.type==='error')).toBe(true));expect(factory.create).not.toHaveBeenCalled();}
+  finally{ws.close();await once(ws,'close');}
+ });
  it('rechecks freshness after native connection startup yields to a source audit',async()=>{
   const {factory,session}=fake();const dir=await root();
   const host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:dir});servers.push(host);await host.start();

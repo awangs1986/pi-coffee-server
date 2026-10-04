@@ -1,3 +1,4 @@
+import {conversationReturnTo,loginDestination} from './conversation-route.js';
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { normalizeUsername } from "../shared/identity.js";
@@ -54,11 +55,11 @@ export class GiteaAuth {
   private readonly ttlMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
-  /** Outstanding login attempts: state → issued-at. */
+  /** Outstanding login attempts bind the issue time and safe destination to OAuth state. */
   // Cookies and revocations share a process lifetime; restart cannot revive a revoked cookie.
   private readonly epoch = randomBytes(16).toString("hex");
   private readonly generations = new Map<string, string>();
-  private readonly states = new Map<string, number>();
+  private readonly states = new Map<string, {issued:number;returnTo:string}>();
 
   constructor(options: GiteaAuthOptions) {
     this.giteaUrl = options.giteaUrl.replace(/\/+$/, "");
@@ -113,7 +114,7 @@ export class GiteaAuth {
     const url = new URL(request.url ?? "/", this.origin(request));
     switch (url.pathname) {
       case "/login":
-        this.loginPage(response, url.searchParams.get("error"));
+        this.loginPage(response, url.searchParams.get("error"),conversationReturnTo(url.searchParams.get("returnTo")));
         return true;
       case "/auth/login":
         this.startLogin(request, response);
@@ -148,8 +149,8 @@ export class GiteaAuth {
   private startLogin(request: IncomingMessage, response: ServerResponse): void {
     const state = randomBytes(16).toString("hex");
     const now = this.now();
-    for (const [key, issued] of this.states) if (issued + STATE_TTL_MS < now) this.states.delete(key);
-    this.states.set(state, now);
+    for (const [key, issued] of this.states) if (issued.issued + STATE_TTL_MS < now) this.states.delete(key);
+    this.states.set(state, {issued:now,returnTo:conversationReturnTo(new URL(request.url??"/",this.origin(request)).searchParams.get("returnTo"))});
     const target = new URL(`${this.giteaUrl}/login/oauth/authorize`);
     target.searchParams.set("client_id", this.clientId);
     target.searchParams.set("redirect_uri", this.redirectUri(request));
@@ -168,7 +169,7 @@ export class GiteaAuth {
     const code = url.searchParams.get("code");
     const issued = state === null ? undefined : this.states.get(state);
     const browserState = parseCookies(request.headers.cookie)[`${this.cookieName}_oauth_state`];
-    if (state === null || browserState !== state || issued === undefined || issued + STATE_TTL_MS < this.now() || code === null) {
+    if (state === null || browserState !== state || issued === undefined || issued.issued + STATE_TTL_MS < this.now() || code === null) {
       this.redirectWithError(response, "登录已过期或被中断，请重试。");
       return;
     }
@@ -193,7 +194,7 @@ export class GiteaAuth {
         this.cookie(`${payload}.${this.sign(payload)}`, Math.floor(this.ttlMs / 1000), request),
         this.cookie("", 0, request, `${this.cookieName}_oauth_state`),
       ],
-      location: "/",
+      location: issued.returnTo,
       "cache-control": "no-store",
     });
     response.end();
@@ -224,12 +225,12 @@ export class GiteaAuth {
     return profile.login;
   }
 
-  private loginPage(response: ServerResponse, error: string | null): void {
+  private loginPage(response: ServerResponse, error: string | null,returnTo:string): void {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     response.end(page("登录 PI Coffee", `
       ${error ? `<p class="err">${escapeHtml(error)}</p>` : ""}
       <p>用内部 Gitea 帐号登录。两位同事共用同一台 User VM 和模型帐号，但各自只看到自己的对话和文件。</p>
-      <p><a class="btn" href="/auth/login">用 Gitea 登录</a></p>`));
+      <p><a class="btn" href="${escapeHtml(loginDestination('/auth/login',returnTo))}">用 Gitea 登录</a></p>`));
   }
 
   private redirectWithError(response: ServerResponse, message: string): void {

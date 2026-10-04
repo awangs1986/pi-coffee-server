@@ -3,7 +3,7 @@
 // docked Diff panel (Branch / 最近一轮) and one-click 创建 PR.
 import {readFileSync} from 'node:fs';
 import {afterEach,expect,it,vi} from 'vitest';
-afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();localStorage.clear();sessionStorage.clear();vi.resetModules();});
+afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();history.replaceState(null,'','/');localStorage.clear();sessionStorage.clear();vi.resetModules();});
 
 const PATCH=[
   'diff --git a/src/a.ts b/src/a.ts','--- a/src/a.ts','+++ b/src/a.ts',

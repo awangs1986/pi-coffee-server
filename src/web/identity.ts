@@ -1,3 +1,4 @@
+import {conversationReturnTo} from './conversation-route.js';
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -18,7 +19,7 @@ const COOKIE = "coffee_session";
 function cookie(req: IncomingMessage, name: string) { return (req.headers.cookie ?? "").split(';').map(v=>v.trim()).find(v=>v.startsWith(name+'='))?.slice(name.length+1); }
 export class Identity {
   private sessions = new Map<string, Login>();
-  private states = new Map<string, { verifier: string; expires: number }>();
+  private states = new Map<string, { verifier: string; expires: number; returnTo:string }>();
   private request: typeof fetch;
   readonly origin: string;
   constructor(private options: IdentityOptions) {
@@ -74,7 +75,7 @@ export class Identity {
         for (const [k,v] of this.states) if(v.expires < Date.now()) this.states.delete(k);
         if (this.states.size >= 1000) throw new Error('Try again later');
         const state = randomBytes(32).toString('hex'); const verifier = randomBytes(32).toString('base64url');
-        this.states.set(state, {verifier,expires:Date.now()+300000}); this.setCookie(res,'coffee_oauth',state,300);
+        this.states.set(state, {verifier,expires:Date.now()+300000,returnTo:conversationReturnTo(url.searchParams.get('returnTo'))}); this.setCookie(res,'coffee_oauth',state,300);
         const target = new URL('/login/oauth/authorize',this.options.giteaUrl);
         target.search = new URLSearchParams({client_id:this.options.clientId,redirect_uri:this.origin+'/auth/callback',response_type:'code',state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',scope:'read:user'}).toString();
         res.writeHead(302,{location:target.href});res.end();return true;
@@ -94,7 +95,7 @@ export class Identity {
         if(this.sessions.size >= 1000) throw new Error('Session capacity reached');
         const key = randomBytes(32).toString('hex'); const duration = this.options.sessionMs ?? 8*3600000;
         this.sessions.set(key,{id:String(user.id),login:user.login,token:tokens.access_token,expires:Date.now()+duration,checked:Date.now(),route:{...route}});
-        this.setCookie(res,COOKIE,key,Math.floor(duration/1000));res.writeHead(302,{location:'/'});res.end();return true;
+        this.setCookie(res,COOKIE,key,Math.floor(duration/1000));res.writeHead(302,{location:pending.returnTo});res.end();return true;
       }
       if(url.pathname === '/auth/logout' && req.method === 'POST') {
         if(!this.originAllowed(req)) throw new Error('Invalid origin');

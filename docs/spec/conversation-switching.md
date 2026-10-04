@@ -223,3 +223,47 @@ persisted to browser storage and does not survive a page reload or tab closure.
 The recovery-card regression covers both Pi and Codex. Production disconnect causes
 must be verified separately; successful metadata/history probes alone are not proof
 that a user prompt was accepted and executed.
+
+## Independent navigation (2026-10-04, Server #47)
+
+A selection is a local transaction, independent of native attachment and remote
+history reads. `ConversationNavigation` owns canonical `/conversations/<id>`
+routes and selection occurrences. Sidebar links, search, Back/Forward and new-task
+navigation share that transition. URLs contain only an opaque conversation ID;
+every HTTP/WS operation still uses authenticated user scope. An explicit route
+wins over remembered selection. Creation replaces the draft route. Login carries
+only a validated canonical conversation path in OAuth state, never an arbitrary
+redirect target. Invalid paths stay 404; unavailable conversations do not silently
+select another task or create a native runtime.
+
+`ConversationDisplay` owns the visible history source. It subscribes to the scoped
+repository, shows bounded memory/disk data, and admits indexed or native-history
+results for its selected conversation. Compatibility-native history cancels
+pending indexed render work before taking display ownership. Indexed synchronization
+and legacy event rendering do not compete to update the same body. Scroll intent,
+saved anchors and the explicit return-to-latest action retain their existing rules.
+
+Native attachment runs separately after local selection. It still verifies the
+current login before opening the execution socket: another browser tab may have
+replaced the login cookie without broadcasting logout. A pending identity/native
+read cannot prevent switching, reading cached/indexed content or editing the
+selected draft. Sending remains gated on execution/history readiness and existing
+model/effort confirmations. Detaching a socket never stops its native task. The
+compatibility fallback still automatically opens native history in the background
+for unsupported source formats; this release does not promise zero runtime starts
+on browsing. No unverified index is presented as verified native history.
+
+Repository actor queues serialize local load/merge/commit, not network waits.
+Incoming socket snapshots and local reads can complete while a network request is
+pending. Late responses are checked against scope, binding and revisions at commit;
+old metadata cannot downgrade a newer snapshot. Promoting an existing background
+sync raises its queued reads into reserved foreground capacity without duplicating
+requests or increasing concurrency. Display subscriptions survive cache clearing,
+but never survive an account-scope change.
+
+Acceptance crosses the actual DOM, repository, HTTP/WS and Browser/Web/Host seams:
+blocked native startup with readable, updating history; A/B/A and Back/Forward with
+separate drafts; delayed replies unable to repaint another view; login/deep-link
+recovery; unavailable-ID errors; active native task continuity; and queue promotion
+under occupied background capacity. Report local paint, latest reply visibility
+and native readiness separately. A cache paint alone is not a freshness verdict.

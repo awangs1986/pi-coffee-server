@@ -12,7 +12,7 @@ export class BoundedReadPool {
   }
   run(key, task, { timeoutMs = 8000, priority = 2, signal } = {}) {
     if (this.closed) return Promise.reject(new SyncError('closed'));
-    if (this.pending.has(key)) return this.pending.get(key).promise;
+    if (this.pending.has(key)) { const ticket=this.pending.get(key); this.promote(key,priority); return ticket.promise; }
     if (this.queue.length >= this.maxQueue) return Promise.reject(new SyncError('queue_full'));
     const ticket = { key, task, priority, sequence: this.sequence++, started: false, settled: false, controller: new AbortController() };
     ticket.promise = new Promise((resolve, reject) => { ticket.resolve = resolve; ticket.reject = reject; });
@@ -29,16 +29,22 @@ export class BoundedReadPool {
     if (signal?.aborted) cancel('cancelled'); else this._drain();
     return ticket.promise;
   }
+  promote(key, priority) {
+    const ticket=this.pending.get(key);
+    if(!ticket || priority>=ticket.priority)return;
+    ticket.priority=priority;
+    if(!ticket.started)this._drain();
+  }
   _drain() {
     while (!this.closed && this.active < this.concurrency && this.queue.length) {
       // Periodic FIFO admission reserves a small fair share for background reads.
       this.queue.sort(++this.turn % 8 === 0 ? (a, b) => a.sequence - b.sequence : (a, b) => a.priority - b.priority || a.sequence - b.sequence);
       const index = this.queue.findIndex(item => item.priority <= 1 || this.backgroundActive < this.concurrency - this.reservedForeground);
       if (index < 0) break;
-      const [ticket] = this.queue.splice(index, 1); ticket.started = true; this.active++; if (ticket.priority > 1) this.backgroundActive++;
+      const [ticket] = this.queue.splice(index, 1); ticket.started = true; ticket.background = ticket.priority > 1; this.active++; if (ticket.background) this.backgroundActive++;
       Promise.resolve().then(() => ticket.task(ticket.controller.signal)).then(ticket.resolve, ticket.reject).finally(() => {
         ticket.settled = true; clearTimeout(ticket.timer); ticket.externalSignal?.removeEventListener('abort', ticket.cancel);
-        this.active--; if (ticket.priority > 1) this.backgroundActive--; if (this.pending.get(ticket.key) === ticket) this.pending.delete(ticket.key); this._drain();
+        this.active--; if (ticket.background) this.backgroundActive--; if (this.pending.get(ticket.key) === ticket) this.pending.delete(ticket.key); this._drain();
       });
     }
   }

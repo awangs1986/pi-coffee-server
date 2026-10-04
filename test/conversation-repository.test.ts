@@ -175,3 +175,43 @@ describe('authenticated response partition proof',()=>{
   expect(r.peek('a')).toBeUndefined();const b=repo({indexedDB});b.setScope('u');expect(await b.getLocal('a')).toBeUndefined();r.dispose();b.dispose();
  });
 });
+
+describe('foreground reads independent of network synchronization',()=>{
+ it('reads cached data and commits a newer socket snapshot while a background read is pending',async()=>{
+  let finish:any;const r=repo({fetch:()=>new Promise(resolve=>finish=resolve)});r.setScope('u');await r.acceptSnapshot('a',page());
+  const pending=r.sync('a',{priority:3});await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+  let local:any,newSnapshot=false;let localRead:any,incoming:any;
+  try {
+   localRead=r.getLocal('a').then((value:any)=>local=value);
+   incoming=r.ingestSnapshot('a',page('2','new from socket')).then(()=>newSnapshot=true);
+   await vi.waitFor(()=>{expect(local?.entries[0].text).toBe('a');expect(newSnapshot).toBe(true);},{timeout:150});
+   expect(r.peek('a').entries[0].text).toBe('new from socket');
+   finish(new Response(JSON.stringify(meta('1'))));await Promise.all([pending,localRead,incoming]);
+   expect(r.peek('a').entries[0].text).toBe('new from socket');
+  } finally {finish(new Response(JSON.stringify(meta('1'))));await Promise.allSettled([pending,localRead,incoming]);r.dispose();}
+ });
+ it('promotes an existing queued background read into reserved foreground capacity without duplication',async()=>{
+  const pool=new BoundedReadPool({concurrency:2});let release:any;const a=pool.run('a',()=>new Promise(r=>release=r),{priority:3});
+  await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+  const read=vi.fn(async()=>2);const b=pool.run('b',read,{priority:3});const foreground=pool.run('b',read,{priority:0});
+  try{await vi.waitFor(()=>expect(read).toHaveBeenCalledOnce(),{timeout:150});expect(await foreground).toBe(2);expect(b).toBe(foreground);}
+  finally{release(1);await Promise.all([a,b,foreground]);pool.close();}
+ });
+});
+it('reports an unavailable uncached conversation without fabricating an empty history',async()=>{
+ const update=vi.fn();const r=repo({onUpdate:update,fetch:async()=>new Response('{}',{status:404})});r.setScope('u');
+ await r.sync('missing');expect(update).toHaveBeenCalledWith('missing',expect.objectContaining({conversationId:'missing',status:'not_found'}),expect.anything());expect(r.peek('missing')).toBeUndefined();r.dispose();
+});
+it('keeps a display subscription across cache eviction but not an account change',async()=>{
+ const r=repo();r.setScope('u');const listener=vi.fn();const unsubscribe=r.subscribe('a',listener);
+ await r.acceptSnapshot('a',page());listener.mockClear();await r.clear();await r.acceptSnapshot('a',page('2','after cache clear'));
+ expect(listener).toHaveBeenCalledWith(expect.objectContaining({appliedRevision:'2'}),expect.anything());
+ listener.mockClear();r.setScope('v');await r.acceptSnapshot('a',{...page(),userScope:'v'});expect(listener).not.toHaveBeenCalled();unsubscribe();r.dispose();
+});
+it('promotes a selected repository sync that was already queued behind background work',async()=>{
+ let release:any;const r=repo({concurrency:2,fetch:(url:string)=>url.includes('/a/')?new Promise(resolve=>release=resolve):Promise.resolve(new Response(JSON.stringify({...((url.includes('/meta'))?meta():page()),conversationId:'b'})))});r.setScope('u');
+ const a=r.sync('a',{priority:3});await vi.waitFor(()=>expect(release).toBeTypeOf('function'));const b=r.sync('b',{priority:3});await new Promise(resolve=>setTimeout(resolve,10));
+ const foreground=r.sync('b',{priority:0});
+ try{await vi.waitFor(()=>expect(r.peek('b')?.entries[0].text).toBe('a'),{timeout:150});expect(foreground).toBe(b);}
+ finally{r.setScope('v');release(new Response('{}'));await Promise.all([a,b,foreground]);r.dispose();}
+});
