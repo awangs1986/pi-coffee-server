@@ -368,7 +368,7 @@ Pointer cancellation, drag completion and window blur release the deferral.
 Selecting another task preserves the old task's execution and immediately shows
 available cached content independently of a new network/history response.
 
-Concurrent active conversations keep their relative order while their attention
+In grouped mode, concurrent active conversations keep their relative order while their attention
 category is unchanged. The view captures an ordering timestamp on entry into each
 active category; streaming output, tool events and polling can update visible
 metadata without changing that ordering key. A new conversation or an actual
@@ -415,3 +415,16 @@ the process to inspect individual tools and outputs; a failed tool marks its gro
 When live tool activity gives way to dialogue, its group closes. This changes only
 display: native records, model context, retrieval, pagination and error data remain
 intact. Long outputs remain bounded and load additional content on demand.
+
+
+### Fixed ungrouped order (2026-10-04, Server #54)
+
+When “显示分组” is disabled, conversations are ordered by creation time, newest
+first. Today/Yesterday/older date buckets also use creation time. Running,
+waiting, finished and new-message activity update icons and metadata in place;
+they never promote a conversation or move it into an attention section. A new
+conversation enters at its creation position. Workspace creation time takes
+precedence over native-session creation time, so resume/takeover cannot reorder
+a task. Equal timestamps use the stable ID; missing/invalid creation dates sort
+last in the older bucket by ID, without falling back to last activity. The
+separate native terminal section and grouped-mode ordering remain unchanged.
