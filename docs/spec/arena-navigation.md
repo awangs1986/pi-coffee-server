@@ -454,3 +454,10 @@ Native reset settings also survive restart before the first new user message.
 Display history and caches follow the new binding; this is real context reset,
 not a visual hide. Permanent cleanup of a task with retained reset history is
 not offered; archive preserves those records.
+
+### LAN HTTP compatibility — 2026-10-04
+
+Clear-context operation IDs, Fork IDs and draft SSHME task IDs must work on the
+supported LAN HTTP Web origin. Generate UUID v4 identifiers with cryptographic
+`getRandomValues`; do not require the secure-context-only `randomUUID` API. The
+clear button still sends exactly one request without a confirmation dialog.

@@ -1,3 +1,4 @@
+import {randomId} from './ids.js';
 export function initForkControls({task,modes,request,refresh,changed,complete,selection,toast}){
  const $=id=>document.getElementById(id),dialog=$('fork-dialog');let source=null,pending=null,inFlight=false,uncertain=false;
  const choices=()=>[...document.querySelectorAll('input[name="fork-mode"]')];
@@ -18,7 +19,7 @@ export function initForkControls({task,modes,request,refresh,changed,complete,se
  $('fork-confirm').addEventListener('click',()=>{
   if(!source||inFlight||(pending&&!uncertain)||(!pending&&busy(source.id)))return;
   const mode=choices().find(c=>c.checked&&!c.disabled)?.value;if(!mode)return;
-  const operation=pending??{sourceId:source.id,targetId:crypto.randomUUID(),mode,selection:selection()};pending=operation;inFlight=true;const retry=uncertain;uncertain=false;update();changed();$('fork-status').textContent='正在准备独立副本…关闭此窗口不会取消操作。';
+  const operation=pending??{sourceId:source.id,targetId:randomId(),mode,selection:selection()};pending=operation;inFlight=true;const retry=uncertain;uncertain=false;update();changed();$('fork-status').textContent='正在准备独立副本…关闭此窗口不会取消操作。';
   void (async()=>{try{
    if(retry){await refresh();sync();if(pending!==operation)return;}
    await request({action:'fork',id:operation.sourceId,targetId:operation.targetId,mode:operation.mode,...(operation.mode==='handoff'?{acceptDrift:true}:{})});await refresh();sync();

@@ -1,3 +1,4 @@
+import {randomId} from './ids.js';
 import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
 import {ConversationDisplay} from './conversation-display.js';
 import {splitUploadedFilesText as parseUploadedFiles} from './uploaded-files.js';
@@ -1185,7 +1186,7 @@ $('#sp-clear-context').addEventListener('click',async()=>{
   const epoch=taskSelectionEpoch;
   clearingContextId=id;hideStatsPop();refreshComposer();
   try{
-    await workspaceApi({action:'clear_chat_context',id,operationId:crypto.randomUUID(),expectedNativeId:task.nativeBinding?.id||id});
+    await workspaceApi({action:'clear_chat_context',id,operationId:randomId(),expectedNativeId:task.nativeBinding?.id||id});
     await loadWorkspace();await conversationRepository.invalidate(id);recentConversations.delete(previewKey(id));await previewStore.delete(currentUser,id);
     if(id===activeId&&epoch===taskSelectionEpoch){
       disconnectExecution();clearExtensionUi();historyReady=false;models=null;statsCache=null;resetThread();selectConversationView(id);
@@ -2714,7 +2715,7 @@ $('#composer').addEventListener('submit', (event) => {
   if(sshmeRequest!==null){
     if(!sshmeRequest){toast('请在 /sshme 后输入需要协助的内容');return;}
     if(streaming||compacting||pendingOpenId){toast('请等待当前任务就绪后使用 /sshme');return;}
-    const conversationId=activeId || creationRequest?.id || sshmeDraftId || crypto.randomUUID();if(!activeId)sshmeDraftId=conversationId;
+    const conversationId=activeId || creationRequest?.id || sshmeDraftId || randomId();if(!activeId)sshmeDraftId=conversationId;
     void sshmePanel.open({request:sshmeRequest,conversationId,context:{activeId,user:currentUser,epoch:taskSelectionEpoch,text}});return;
   }
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);

@@ -1356,13 +1356,14 @@ it('pins outside project groups and restores membership when unpinned',async()=>
  expect(row().closest('[data-sidebar-pinned]')).toBeNull();document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);expect(row().closest('[data-sidebar-project]')).not.toBeNull();
 });
 
-it('clears Chat from context usage with one click, no confirmation, and blocks duplicate clicks',async()=>{
+it.each([true,false])('clears Chat from context usage with one click (native UUID available: %s), no confirmation, and blocks duplicate clicks',async nativeUuid=>{
+ if(!nativeUuid)vi.stubGlobal('crypto',{getRandomValues:crypto.getRandomValues.bind(crypto)});
  const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
  ws.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{stats:true}});ws.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'old',text:'OLD CHAT'}]});await vi.advanceTimersByTimeAsync(20);
  const button=document.querySelector<HTMLButtonElement>('#sp-clear-context')!;expect(document.querySelector('#sp-chat-actions')!.classList.contains('hidden'),'Chat clear action visibility').toBe(false);expect(button.disabled,'Chat clear action enabled').toBe(false);
  button.click();button.click();await vi.advanceTimersByTimeAsync(100);
- expect(app.requests.filter(r=>r.action==='clear_chat_context')).toEqual([expect.objectContaining({id,expectedNativeId:id,operationId:expect.any(String)})]);
+ expect(app.requests.filter(r=>r.action==='clear_chat_context'),document.querySelector('#toast')!.textContent??'').toEqual([expect.objectContaining({id,expectedNativeId:id,operationId:expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)})]);
  expect(document.querySelector('#modal')!.classList.contains('hidden')).toBe(true);expect(document.querySelector('#thread')!.textContent).not.toContain('OLD CHAT');
 });
 it('hides context clear for Work and disables it while Chat is running',async()=>{
