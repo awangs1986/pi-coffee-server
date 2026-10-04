@@ -83,7 +83,8 @@ function diffFiles(nameStatusRaw:string,numstatRaw:string) {
   }
   return files;
 }
-interface State { sidebar?: {showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
+interface SidebarState {showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}
+interface State { sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
   private state: State = {version:2,projects:[],conversations:[]};
@@ -195,10 +196,39 @@ export class Workspaces {
   }
   private project(id:string|undefined) { const p=this.state.projects.find(p=>p.id===id);if(!p)throw new Error('Unknown project');return p; }
   private conversation(id:string) { const c=this.state.conversations.find(c=>c.id===id);if(!c)throw new Error('Unknown workspace');return c; }
+  private sidebarGroup(id:unknown) {
+    if(typeof id!=='string' || !id || id.length>200)throw new Error('Invalid sidebar group');
+    const sidebar=this.state.sidebar;
+    const group=sidebar?.groups?.find(g=>g.id===id) ?? (!sidebar?.hiddenProjects?.includes(id) ? this.state.projects.find(p=>p.id===id) : undefined);
+    if(!group)throw new Error('Unknown sidebar group');return group;
+  }
+  async createSidebarGroup(value:unknown) { return this.mutate(async()=>{
+    if(typeof value!=='string')throw new Error('请输入分组名称');
+    const name=value.trim().normalize('NFC');
+    if(!name || name.length>64 || /[\u0000-\u001f\u007f]/.test(name))throw new Error('分组名称需为 1–64 个字符，且不能包含控制字符');
+    const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
+    const groups=sidebar.groups ?? [];
+    if(groups.length>=100)throw new Error('自定义分组数量已达上限');
+    const existing=[...groups,...this.state.projects.filter(p=>!sidebar.hiddenProjects?.includes(p.id))];
+    if(existing.some(g=>g.name.normalize('NFC').toLowerCase()===name.toLowerCase()))throw new Error('分组名称已存在');
+    this.state.sidebar={...sidebar,showGroups:true,groups:[...groups,{id:'group-'+randomUUID(),name}]};
+    await this.save();return this.state.sidebar;
+  }); }
+  async deleteSidebarGroup(id:unknown) { return this.mutate(async()=>{
+    const group=this.sidebarGroup(id),sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
+    const assigned=(key:string,projectId?:string)=>Object.hasOwn(sidebar.assignments,key)?sidebar.assignments[key]:projectId;
+    const occupied=this.state.conversations.some(c=>assigned(c.id,c.projectId)===group.id) ||
+      Object.entries(sidebar.assignments).some(([key,value])=>value===group.id&&!this.state.deletedIds?.includes(key));
+    if(occupied)throw new Error('分组内仍有对话（含已归档），请先移出后再删除');
+    this.state.sidebar={...sidebar,groups:(sidebar.groups??[]).filter(g=>g.id!==group.id),
+      hiddenProjects:this.state.projects.some(p=>p.id===group.id)?[...new Set([...(sidebar.hiddenProjects??[]),group.id])]:sidebar.hiddenProjects,
+      collapsed:sidebar.collapsed.filter(key=>key!==group.id),assignments:Object.fromEntries(Object.entries(sidebar.assignments).filter(([,value])=>value!==group.id))};
+    await this.save();return this.state.sidebar;
+  }); }
   /** Sidebar placement is independent of execution identity and never performs Git work. */
   async moveSidebar(id:string,projectId:unknown) { return this.mutate(async()=>{
     if(projectId!==null && typeof projectId!=='string')throw new Error('Invalid sidebar project');
-    if(projectId!==null)this.project(projectId);
+    if(projectId!==null)this.sidebarGroup(projectId);
     const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
     this.state.sidebar={...sidebar,assignments:{...sidebar.assignments,[id]:projectId}};
     await this.save();return this.state.sidebar;
@@ -210,7 +240,7 @@ export class Workspaces {
   }); }
   async collapseSidebar(projectId:unknown,collapsed:unknown) { return this.mutate(async()=>{
     if(typeof projectId!=='string' || typeof collapsed!=='boolean')throw new Error('Invalid sidebar collapse');
-    this.project(projectId);
+    this.sidebarGroup(projectId);
     const sidebar=this.state.sidebar ?? {assignments:{},collapsed:[]};
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;

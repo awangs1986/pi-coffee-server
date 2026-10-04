@@ -158,3 +158,15 @@ export function patchFiles(patch) {
   }
   return files.filter((f) => f.lines.length > 0).map(({ lines: l, ...rest }) => ({ ...rest, text: l.join('\n') }));
 }
+
+/** Visible sidebar groups are independent of repository registration. */
+export function sidebarGroups(projects=[],sidebar={}) {
+  const hidden=new Set(sidebar.hiddenProjects||[]);
+  return [...projects.filter(p=>!hidden.has(p.id)).map(p=>({...p,kind:'project'})),...(sidebar.groups||[]).map(g=>({...g,kind:'custom'}))];
+}
+export function sidebarGroupMembers(groupId,conversations=[],sidebar={},deletedIds=[]) {
+  const assignments=sidebar.assignments||{},deleted=new Set(deletedIds),ids=new Set();
+  for(const c of conversations)if((Object.hasOwn(assignments,c.id)?assignments[c.id]:c.projectId)===groupId)ids.add(c.id);
+  for(const [id,group] of Object.entries(assignments))if(group===groupId&&!deleted.has(id))ids.add(id);
+  return ids;
+}

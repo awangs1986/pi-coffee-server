@@ -100,3 +100,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [Pi 1.0.2 combined integration review](reviews/pi-102-integration-20261004.md):
   immutable published plugins, current navigation preservation and binding feedback;
   [Server #46](https://github.com/awangs1986/pi-coffee-server/issues/46).
+
+- Create sidebar groups and delete empty groups: [contract](spec/arena-navigation.md#sidebar-group-lifecycle-2026-10-04-server-50), [Server #50](https://github.com/awangs1986/pi-coffee-server/issues/50).

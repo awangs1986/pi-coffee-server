@@ -493,3 +493,5 @@ defines user-scoped persistence and the strict separation from task execution id
   visible history ownership, promotes existing foreground reads and adds scoped
   canonical URLs with OAuth return paths. Existing bounded storage/rendering and
   automatic compatibility-native history remain; native readiness gates sending.
+
+- [Server #50](https://github.com/awangs1986/pi-coffee-server/issues/50): custom sidebar groups and empty-only deletion, including archived membership checks; project-group removal changes navigation metadata only.
