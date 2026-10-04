@@ -67,6 +67,8 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - [Pi 1.0 upgrade and activation](deployment/pi-100-upgrade.md): immutable plugin/source pins, native checks and separate production activation.
 
+- [Pi 1.0.2 consumer upgrade](deployment/pi-102-upgrade.md): official npm plugin selection, account binding feedback and scoped activation.
+
 - Codex model/effort restoration after Host restart: [native lifecycle contract](spec/native-agent-engines.md), [probe and evidence](development/codex-model-restore.md), [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30).
 
 - [Bounded local watchdog](deployment/watchdog.md): independent Web/Host liveness recovery, durable circuit breaker and maintenance pause; [Server #34](https://github.com/awangs1986/pi-coffee-server/issues/34).
@@ -94,3 +96,7 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Independent conversation routes, history synchronization and execution attachment:
   [contract](spec/conversation-switching.md#independent-navigation-2026-10-04-server-47),
   [Server #47](https://github.com/awangs1986/pi-coffee-server/issues/47).
+
+- [Pi 1.0.2 combined integration review](reviews/pi-102-integration-20261004.md):
+  immutable published plugins, current navigation preservation and binding feedback;
+  [Server #46](https://github.com/awangs1986/pi-coffee-server/issues/46).

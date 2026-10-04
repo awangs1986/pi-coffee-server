@@ -12,7 +12,7 @@ const roots=['pi-subagents','pi-web-access','pi-coffee-harness','pi-coffee-lsp',
 const env={...process.env,PI_CODING_AGENT_DIR:agentDir,PI_OFFLINE:'1'};
 // Pi owns declarations, identity and discovery. Back up configuration before registering packages.
 for(const file of ['settings.json','web-search.json']){
- try{const data=await readFile(join(agentDir,file));await writeFile(join(agentDir,file+'.before-pi100'),data,{flag:'wx',mode:0o600});}
+ try{const data=await readFile(join(agentDir,file));await writeFile(join(agentDir,file+'.before-pi102'),data,{flag:'wx',mode:0o600});}
  catch(e){if(!['ENOENT','EEXIST'].includes(e.code))throw e;}
 }
 const configured=async file=>{try{return JSON.parse(await readFile(join(agentDir,file),'utf8'));}catch(e){if(e.code==='ENOENT')return {};throw e;}};

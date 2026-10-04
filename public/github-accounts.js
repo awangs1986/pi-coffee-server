@@ -5,8 +5,9 @@ export async function githubAccountRequest(input){
 export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>{}}={}){
  const $=id=>document.getElementById(id),dialog=$('github-accounts-dialog');let busy=false,epoch=0;
  const status=text=>{$('github-accounts-status').textContent=text;};
- const action=async work=>{if(busy)return;busy=true;try{await work();}catch(error){status(error.message);}finally{busy=false;}};
- async function refresh(){
+ const action=async work=>{if(busy)return;busy=true;epoch++;$('github-accounts-refresh').disabled=true;try{await work();}catch(error){status(error.message);}finally{busy=false;$('github-accounts-refresh').disabled=false;}};
+ async function refresh(){if(!busy)await load();}
+ async function load(){
   const sequence=++epoch;status('正在读取…');
   try{
    const data=await githubAccountRequest({action:'list'});if(sequence!==epoch)return;
@@ -24,10 +25,12 @@ export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>
      if(key==='bind'&&legacy.options.length===1)continue;
      const button=document.createElement('button');button.type='button';button.className='btn small';button.textContent=label;if(key==='delete')button.dataset.accountDelete=account.id;
      button.addEventListener('click',()=>void action(async()=>{
+      let boundProject;
       if(key==='delete'&&!confirm('解除 '+account.login+' 的绑定？使用该账号的任务将无法继续访问 GitHub。'))return;
-      if(key==='bind'){if(!legacy.value)throw Error('请先选择旧项目');await bind(legacy.value,account.id);}
+      if(key==='bind'){if(!legacy.value)throw Error('请先选择旧项目');boundProject=legacy.selectedOptions[0].textContent;status('正在绑定 '+boundProject+'…');await bind(legacy.value,account.id);}
       else await githubAccountRequest({action:key,id:account.id});
-      await refresh();if(key==='check')status(account.login+' 授权可用');
+      await load();if(key==='check')status(account.login+' 授权可用');
+      if(key==='bind')status(boundProject+' 已绑定到 '+account.login+'。');
      }));actions.append(button);
     }row.append(actions);list.append(row);
    }
