@@ -234,7 +234,7 @@ export class HostServer {
       json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
     }
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
+      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude")??[]]))}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }
@@ -295,6 +295,27 @@ export class HostServer {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
       const input=await readJson(req);
+      if(input.action==='clear_chat_context'){
+        const id=input.id;
+        if(typeof id!=='string'||!id||id.length>200||typeof input.expectedNativeId!=='string'||!input.expectedNativeId||input.expectedNativeId.length>200||typeof input.operationId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.operationId))throw new Error('Invalid context reset request');
+        const task=await ws.lookup(id);
+        if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi'||task.archived||task.creationState!=='ready'||task.workspaceRemoved||task.cleanupStarted||task.fork&&task.fork.status!=='completed')throw new Error('Only an active Pi Chat can clear context');
+        if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
+        if(task.contextReset?.id===input.operationId){json(res,200,task);return;}
+        if((task.nativeBinding?.id??id)!==input.expectedNativeId)throw new Error('Context changed; refresh before clearing');
+        if(!slot.factory.prepareContextReset)throw new Error('Chat context reset unavailable on this Host');
+        slot.lifecycleLocks.add(id);locked=id;
+        const session=(await slot.registry.open(id)).session;
+        if(session.isBusy||session.pendingUiRequests.length)throw new Error('Finish running and queued instructions before clearing context');
+        const history=await session.getHistory();
+        if(!history.entries.length){json(res,200,task);return;}
+        const listing=(await slot.registry.list()).find(row=>row.id===id);
+        await session.clearContext({id:input.operationId,expectedNativeId:input.expectedNativeId,title:listing?.name||listing?.preview||'Chat'});
+        const changed=await ws.lookup(id),source=await slot.factory.readHistory?.(id);
+        await slot.index?.reconcile(id,[],{binding:source?.binding??`pi:${changed!.nativeBinding!.id}:original`,sourceGeneration:source?.sourceGeneration,sourceFreshness:'current',checkedAt:new Date().toISOString()});
+        for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
+        json(res,200,changed);void this.broadcastSessions(slot);return;
+      }
       if(input.action==='fork'){
         const id=input.id,targetId=input.targetId,mode=input.mode;
         if(typeof id!=='string'||typeof targetId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)||!['native','handoff'].includes(mode))throw new Error('Invalid Fork request');
@@ -374,7 +395,7 @@ export class HostServer {
         if(task?.takeoverSegments?.length)throw new Error("Takeover history is retained; archive this Task instead");
         if(task?.engine && task.engine!=="pi")throw new Error("Native cleanup is unavailable; Workspace and native history are retained. Archive this Task instead.");
       }
-      if(target && !["files","changes","change_file","status","sidebar_move","sidebar_collapse","sidebar_display"].includes(input.action)) {
+      if(target && !["files","changes","change_file","status","sidebar_move","sidebar_pin","sidebar_collapse","sidebar_display"].includes(input.action)) {
         if(slot.lifecycleLocks.has(target) || (input.action!=="archive" && slot.registry.get(target)?.isBusy))throw new Error("Stop the source conversation before changing its lifecycle");
         slot.lifecycleLocks.add(target);locked=target;
       }
@@ -399,6 +420,12 @@ export class HostServer {
           if(typeof input.id!=="string" || input.id.length>200 || !input.id)throw new Error("Invalid conversation");
           if(!await ws.lookup(input.id) && !(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");
           result=await ws.moveSidebar(input.id,input.projectId);break;
+        }
+        case "sidebar_pin": {
+          if(typeof input.id!=="string"||!input.id||input.id.length>200||typeof input.pinned!=="boolean")throw new Error('Invalid pin preference');
+          if(!await ws.lookup(input.id)&&!(await slot.registry.list()).some(s=>s.id===input.id))throw new Error('Unknown conversation');
+          if(await ws.isArchived(input.id))throw new Error('Restore the conversation before pinning it');
+          result=await ws.pinSidebar(input.id,input.pinned);break;
         }
         case "sidebar_group_create": result=await ws.createSidebarGroup(input.name);break;
         case "sidebar_group_delete": result=await ws.deleteSidebarGroup(input.groupId);break;

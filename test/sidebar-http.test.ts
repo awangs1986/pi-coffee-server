@@ -17,6 +17,12 @@ it('persists scoped sidebar placement and collapse without changing task identit
   const start=async()=>{server=new HostServer({port:0,token:'test-sidebar',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:new Workspaces(join(root,user))})});await server.start();};await start();
   const call=async(body?:unknown,user='alice',token='test-sidebar')=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{method:body?'POST':'GET',headers:{authorization:`Bearer ${token}`,'x-pi-coffee-user':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
   const move={action:'sidebar_move',id:c.id,projectId:p.id};
+  expect((await call({action:'sidebar_pin',id:c.id,pinned:true})).status).toBe(200);
+  expect((await call()).data.sidebar.pinned).toEqual([c.id]);
+  expect((await call({action:'sidebar_pin',id:c.id,pinned:true},'bob')).status).toBe(409);
+  expect((await call({action:'sidebar_pin',id:c.id,pinned:'yes'})).status).toBe(409);
+  await server!.close();await start();expect((await call()).data.sidebar.pinned).toEqual([c.id]);
+  expect((await call({action:'sidebar_pin',id:c.id,pinned:false})).status).toBe(200);
   expect((await call(move,'alice','wrong')).status).toBe(401);
   expect((await call(move)).status).toBe(200);
   expect((await call({action:'sidebar_collapse',projectId:p.id,collapsed:true})).status).toBe(200);

@@ -1530,3 +1530,20 @@ it('manages individual pending instructions over WS and preserves images, orderi
  pi.finish('working');await new Promise(r=>setTimeout(r,30));expect(prompt.mock.calls).toHaveLength(1);
  again.close();
 });
+
+it('rejects clear-context during native work and restores the source on binding commit failure',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'coffee-clear-guards-'));let host:HostServer|undefined;
+ try{
+  const workspaces=new Workspaces(join(root,'work'));const task=await workspaces.createChatConversation();
+  const original=new FakePiSession();original.history.push({kind:'user',id:'old',text:'retained question'});
+  let preparations=0,rollbacks=0,createCount=0,failCommit=false;
+  const factory:PiSessionFactory={create:async()=>{createCount++;return original;},list:async()=>[],delete:async()=>false,prepareContextReset:async()=>{preparations++;return {session:new FakePiSession(),commit:async()=>{if(failCommit)throw new Error('fixture persistence failure');},rollback:async()=>{rollbacks++;}};}};
+  host=new HostServer({port:0,token:'fixture',factory,workspaces});await host.start();
+  const reset=()=>fetch(`http://127.0.0.1:${host!.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'clear_chat_context',id:task.id,expectedNativeId:task.id,operationId:'00000000-0000-0000-0000-000000000001'})});
+  original.background={known:false,active:0};expect((await reset()).status).toBe(409);expect(preparations).toBe(0);
+  original.externallyBusy=true;original.background={known:true,active:0};expect((await reset()).status).toBe(409);expect(preparations).toBe(0);
+  original.externallyBusy=false;original.background={known:true,active:1};expect((await reset()).status).toBe(409);expect(preparations).toBe(0);
+  original.background={known:true,active:0};failCommit=true;expect((await reset()).status).toBe(409);expect(preparations).toBe(1);expect(rollbacks).toBe(1);expect(createCount).toBe(2);
+  expect((await workspaces.lookup(task.id))?.nativeBinding).toBeUndefined();expect(original.history).toContainEqual({kind:'user',id:'old',text:'retained question'});
+ }finally{await host?.close();rmSync(root,{recursive:true,force:true});}
+});

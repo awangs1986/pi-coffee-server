@@ -242,15 +242,15 @@ function renderUncertainPrompts(){
 const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
-let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false,forkModes={};
+let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false,forkModes={},clearChatContextAvailable=false,clearingContextId=null;
 const forkControls=initForkControls({task:id=>workspaceState?.conversations.find(c=>c.id===id),modes:engine=>forkModes[engine]??[],request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},selection:()=>taskSelectionEpoch,complete:(id,epoch)=>{send({v:1,type:"list_sessions"});if(epoch===taskSelectionEpoch)switchSession(id);},toast:message=>toast(message)});
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
-const takeoverBusy=()=>Boolean(activeId&&(takeoverControls.busy(activeId)||forkControls.busy(activeId)));
+const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeoverControls.busy(activeId)||forkControls.busy(activeId)));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
+  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
 }
 async function loadRuntimeStatus(){
@@ -847,6 +847,16 @@ function renderSessionListContent() {
     return;
   }
 
+  if(!showArchived){
+    const pins=workspaceState?.sidebar?.pinned||[],byId=new Map(known.map(session=>[session.id,session]));
+    const pinned=pins.map(id=>byId.get(id)).filter(Boolean);
+    if(pinned.length){
+      const section=el('li','pinned-conversations');section.dataset.sidebarPinned='';
+      section.append(el('div','side-label','置顶'));const list=el('ul','project-group-list');
+      for(const session of pinned)list.append(sessionRow(session));section.append(list);ui.sessionList.append(section);
+      const ids=new Set(pins);known=known.filter(session=>!ids.has(session.id));
+    }
+  }
   if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known,{byCreatedAt:true}); return; }
   const assigned=new Map(groups.map(p=>[p.id,[]]));
   const ungrouped=[];
@@ -1017,7 +1027,10 @@ function openSessionMenu(session, anchor) {
   fork.disabled=!task||archived||task.creationState==='failed'||task.creationState==='creating'||(task.fork&&task.fork.status!=='completed')||Boolean(session.running)||(forkControls.busy(session.id)&&!forkControls.recoverable(session.id))||!(forkModes[taskEngine]??[]).length;
   if(fork.disabled)fork.title='需已就绪且空闲的任务，以及此 Agent 支持的 Fork 模式';
   fork.addEventListener('click',()=>{closeMenu();forkControls.open(session);});
-  menuNode.append(rename, fork, del);
+  const pin=el('button','popitem',workspaceState?.sidebar?.pinned?.includes(session.id)?'取消置顶':'置顶');pin.type='button';pin.dataset.pinConversation=session.id;
+  pin.disabled=!workspaceState||archived||sidebarSaving;
+  pin.addEventListener('click',()=>{const pinned=!workspaceState?.sidebar?.pinned?.includes(session.id);closeMenu();void saveSidebar({action:'sidebar_pin',id:session.id,pinned});});
+  menuNode.append(pin,rename, fork, del);
   const groups=sidebarGroups(workspaceState?.projects,workspaceState?.sidebar);
   if(workspaceState && groups.length){
     const label=el('label','sidebar-move-label','移至侧栏分组');
@@ -1166,6 +1179,21 @@ function showStatsPop() {
   ui.stats.setAttribute('aria-expanded', 'true');
   send({ v: 1, type: 'get_stats' });
 }
+$('#sp-clear-context').addEventListener('click',async()=>{
+  const task=currentTask(),id=activeId;
+  if($('#sp-clear-context').disabled||!id||task?.workspaceKind!=='chat'||(task.engine||'pi')!=='pi')return;
+  const epoch=taskSelectionEpoch;
+  clearingContextId=id;hideStatsPop();refreshComposer();
+  try{
+    await workspaceApi({action:'clear_chat_context',id,operationId:crypto.randomUUID(),expectedNativeId:task.nativeBinding?.id||id});
+    await loadWorkspace();await conversationRepository.invalidate(id);recentConversations.delete(previewKey(id));await previewStore.delete(currentUser,id);
+    if(id===activeId&&epoch===taskSelectionEpoch){
+      disconnectExecution();clearExtensionUi();historyReady=false;models=null;statsCache=null;resetThread();selectConversationView(id);
+      clearingContextId=null;connect();toast('上下文已清空');
+    }
+  }catch(error){toast(error.message||'清空未完成，请刷新核对');}
+  finally{if(clearingContextId===id)clearingContextId=null;refreshComposer();}
+});
 function hideStatsPop() {
   if (ui.statsPop.open) ui.statsPop.close();
   ui.stats.setAttribute('aria-expanded', 'false');
@@ -1243,6 +1271,9 @@ function setStreaming(active) {
   renderSessionList();
 }
 function refreshComposer() {
+  const clearChat=currentTask();
+  $('#sp-chat-actions').classList.toggle('hidden',!clearChatContextAvailable||clearChat?.workspaceKind!=='chat'||(clearChat?.engine||'pi')!=='pi'||Boolean(clearChat?.archived));
+  $('#sp-clear-context').disabled=!opened||!connected||!historyReady||streaming||compacting||takeoverBusy()||Boolean(pendingDelivery)||queueControls.hasPending||queuedRequests.size>0||Boolean(sessions.find(s=>s.id===activeId)?.queued)||Boolean(modelPending||thinkingPending||contextPending);
   const switching=takeoverBusy();
   // Inert also covers dynamically rendered queue/file/message action buttons.
   for(const selector of ['#composer-card','#queue','#thread','#project-controls','#workspace-panel','.topbar-actions','#stats-wrap'])$(selector)?.toggleAttribute('inert',switching);
@@ -1264,7 +1295,8 @@ function refreshComposer() {
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
   if(activeId && !historyReady)ui.hint.textContent='正在同步对话…';
-  if(takeoverBusy())ui.hint.textContent=(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…')+' 当前对话操作已锁定，草稿已保留。';
+  if(clearingContextId===activeId&&activeId)ui.hint.textContent='正在清空上下文…';
+  else if(takeoverBusy())ui.hint.textContent=(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…')+' 当前对话操作已锁定，草稿已保留。';
   else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
   ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady));
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
@@ -1646,7 +1678,7 @@ function handleFrame(frame, ws) {
       if (filesAwaitingTransfer.length) { const queued = filesAwaitingTransfer; filesAwaitingTransfer = []; void uploadFiles(queued); }
       return;
     case 'queue_state':
-      if(frame.sessionId===activeId)queueControls.update(frame.items||[]);return;
+      if(frame.sessionId===activeId){queueControls.update(frame.items||[]);refreshComposer();}return;
     case 'ack':
       // Acceptance is known even if the connection drops before the turn ends.
       if(['prompt','steer','follow_up'].includes(frame.operation)){const accepted=promptOutbox.get(frame.requestId);if(accepted?.optimistic)delete accepted.optimistic.pendingRequestId;accepted?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
@@ -2112,7 +2144,7 @@ ui.pluginsModal.addEventListener('click', (e) => { if (e.target === ui.pluginsMo
 
 // ---------- queue strip ----------
 const queueControls=initQueueControls({container:ui.queue,send,requestId,toast,canPromote:()=>supports('steer')});
-function renderQueue(event){queueControls.native(event);}
+function renderQueue(event){queueControls.native(event);refreshComposer();}
 
 // ---------- models ----------
 function renderModels() {

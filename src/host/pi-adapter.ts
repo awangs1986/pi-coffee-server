@@ -150,6 +150,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     // only a genuinely new conversation gets a fresh file with our id.
     const existing = (await this.listWithPaths()).find((session) => session.id === options.sessionId);
     if(options.requireExisting&&!existing)throw new Error("Native Pi history is missing; restore its original store before reopening this task");
+    const resumeContext=options.requireExisting&&existing?.path?SessionManager.open(existing.path).buildSessionContext():undefined;
     if (!args.includes("--session") && !args.includes("--session-id")) {
       if (existing?.path !== undefined) args.push("--session", existing.path);
       else args.push("--session-id", options.sessionId);
@@ -171,10 +172,27 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       args,
     });
     const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels);
-    await session.start();
-    return session;
+    try{
+      await session.start();
+      // Pi applies defaults when resuming a branch with no messages. Restore the
+      // native branch settings captured before startup, without injecting text.
+      if(resumeContext&&!resumeContext.messages.length){
+        if(resumeContext.model)await session.setModel(resumeContext.model.provider,resumeContext.model.modelId);
+        if(resumeContext.thinkingLevel)await session.setThinkingLevel(resumeContext.thinkingLevel);
+      }
+      return session;
+    }catch(error){await session.stop().catch(()=>undefined);throw error;}
   }
 
+  async resetNative(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<PiSession>{
+    const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
+    if(!source)throw new Error('Native Pi history is unavailable; no context was cleared');
+    if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Reset destination already exists');
+    // Native tree APIs preserve evidence while creating an empty active branch.
+    const copy=SessionManager.forkFrom(source.path,options.cwd,this.options.sessionDir,{id:options.sessionId});
+    copy.resetLeaf();copy.appendSessionInfo('Chat');
+    return this.create({sessionId:options.sessionId,workspaceSessionId:options.workspaceSessionId,requireExisting:true});
+  }
   async forkNative(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
     const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
     if(!source)throw new Error('Native Pi source history is unavailable; no replacement was created');
@@ -433,6 +451,7 @@ class RpcPiSession implements PiSession {
     const state = await this.client.getState();
     return {
       isStreaming: state.isStreaming,
+      ...(state.pendingMessageCount>0?{pendingMessageCount:state.pendingMessageCount}:{}),
       ...(state.isCompacting?{isCompacting:true}:{}),
       messageCount: state.messageCount,
       ...(state.sessionName === undefined ? {} : { sessionName: state.sessionName }),

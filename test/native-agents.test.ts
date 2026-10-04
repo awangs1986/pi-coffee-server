@@ -6,7 +6,7 @@ afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();hist
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
- const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
+ const sidebar:{pinned?:string[];showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
  const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
@@ -15,9 +15,10 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
   if(url==='/auth/me'&&authUser)return {ok:true,status:200,json:async()=>({auth:true,user:authUser})};
   if(url==='/api/workspace'&&!init?.body)await workspaceRead;
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,clearChatContext:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
+  if(body.action==='sidebar_pin'){sidebar.pinned=body.pinned?[body.id,...(sidebar.pinned??[]).filter(id=>id!==body.id)]:(sidebar.pinned??[]).filter(id=>id!==body.id);return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_group_create'){sidebar.groups=[...(sidebar.groups??[]),{id:'custom-group',name:body.name.trim()}];sidebar.showGroups=true;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_group_delete'){sidebar.groups=(sidebar.groups??[]).filter(g=>g.id!==body.groupId);return {ok:true,json:async()=>structuredClone(sidebar)};}
@@ -1342,4 +1343,32 @@ it('keeps flat sidebar creation order and date buckets when attention and activi
  document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
  document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(ids()).toEqual(['just-created','newest','first-today','older']);
+});
+
+it('pins outside project groups and restores membership when unpinned',async()=>{
+ const app=await setup();app.conversations.push({id:'pin-me',projectId:'p',workspaceKind:'project',createdAt:new Date().toISOString()});
+ document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
+ const row=()=>document.querySelector<HTMLElement>('[data-session-id="pin-me"]')!;
+ expect(row().closest('[data-sidebar-project]')).not.toBeNull();row().querySelector<HTMLButtonElement>('.more')!.click();document.querySelector<HTMLButtonElement>('[data-pin-conversation="pin-me"]')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(row().closest('[data-sidebar-pinned]')).not.toBeNull();expect(row().closest('[data-sidebar-project]')).toBeNull();expect(document.querySelectorAll('[data-session-id="pin-me"]')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);expect(row().closest('[data-sidebar-pinned]')).not.toBeNull();
+ row().querySelector<HTMLButtonElement>('.more')!.click();const unpin=document.querySelector<HTMLButtonElement>('[data-pin-conversation="pin-me"]')!;expect(unpin.textContent).toBe('取消置顶');unpin.click();await vi.advanceTimersByTimeAsync(20);
+ expect(row().closest('[data-sidebar-pinned]')).toBeNull();document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);expect(row().closest('[data-sidebar-project]')).not.toBeNull();
+});
+
+it('clears Chat from context usage with one click, no confirmation, and blocks duplicate clicks',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ ws.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{stats:true}});ws.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'old',text:'OLD CHAT'}]});await vi.advanceTimersByTimeAsync(20);
+ const button=document.querySelector<HTMLButtonElement>('#sp-clear-context')!;expect(document.querySelector('#sp-chat-actions')!.classList.contains('hidden'),'Chat clear action visibility').toBe(false);expect(button.disabled,'Chat clear action enabled').toBe(false);
+ button.click();button.click();await vi.advanceTimersByTimeAsync(100);
+ expect(app.requests.filter(r=>r.action==='clear_chat_context')).toEqual([expect.objectContaining({id,expectedNativeId:id,operationId:expect.any(String)})]);
+ expect(document.querySelector('#modal')!.classList.contains('hidden')).toBe(true);expect(document.querySelector('#thread')!.textContent).not.toContain('OLD CHAT');
+});
+it('hides context clear for Work and disables it while Chat is running',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);ws.receive({type:'opened',engine:'pi',sessionId:id,state:{isStreaming:true},capabilities:{stats:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector('#sp-chat-actions')!.classList.contains('hidden')).toBe(true);
+ app.conversations.find(c=>c.id===id).workspaceKind='chat';document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(document.querySelector<HTMLButtonElement>('#sp-clear-context')!.disabled).toBe(true);document.querySelector<HTMLButtonElement>('#sp-clear-context')!.click();expect(app.requests.some(r=>r.action==='clear_chat_context')).toBe(false);
 });

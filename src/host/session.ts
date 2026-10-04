@@ -353,25 +353,32 @@ export class HostSession {
   backgroundState():Promise<{known:boolean;active:number}> {return this.ready().backgroundState?.() ?? Promise.resolve({known:false,active:0});}
 
   async takeover(operation:import('./takeover.js').TakeoverState):Promise<void>{
-    if(this.isBusy||this.pendingUi.size)throw new SessionBusyError();
     if(!this.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
+    return this.replaceContext(async original=>this.factory.prepareTakeover!(this.id,operation,await original.getHistory()));
+  }
+  async clearContext(operation:{id:string;expectedNativeId:string;title:string}):Promise<void>{
+    if(!this.factory.prepareContextReset)throw new Error('Chat context reset unavailable on this Host');
+    return this.replaceContext(async original=>this.factory.prepareContextReset!(this.id,operation,await original.getModels()));
+  }
+  private async replaceContext(prepare:(original:PiSession)=>Promise<{session:PiSession;commit():Promise<void>;rollback():Promise<void>}>):Promise<void>{
+    if(this.isBusy||this.pendingUi.size)throw new SessionBusyError();
     this.contextChanging=true;this.clearIdleTimer();this.onLifecycle?.(this);
-    const original=this.ready();let sourceStopped=false,committed=false;let prepared:Awaited<ReturnType<NonNullable<PiSessionFactory['prepareTakeover']>>>|undefined;
+    const original=this.ready();let sourceStopped=false,committed=false;let prepared:Awaited<ReturnType<typeof prepare>>|undefined;
     try{
       const state=await original.getState(),background=await this.backgroundState();
-      if(state.isStreaming||!background.known||background.active)throw new Error('Source has active or unknown work');
-      prepared=await this.factory.prepareTakeover(this.id,operation,await original.getHistory());
+      if(state.isStreaming||state.isCompacting||state.pendingMessageCount||!background.known||background.active)throw new Error('Source has active or unknown work');
+      prepared=await prepare(original);
       const nextState=await prepared.session.getState();
       const finalState=await original.getState(),finalBackground=await original.backgroundState?.();
-      if(finalState.isStreaming||!finalBackground?.known||finalBackground.active)throw new Error('Source resumed during takeover; it was not stopped');
+      if(finalState.isStreaming||finalState.isCompacting||finalState.pendingMessageCount||!finalBackground?.known||finalBackground.active)throw new Error('Source resumed during takeover; it was not stopped');
       sourceStopped=true;await original.stop();
       await prepared.commit();committed=true;
       this.unsubscribe?.();this.pi=prepared.session;this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));
-      this.events.length=0;this.lastMessageEndCursor=this.cursor;this.state=nextState;
+      this.events.length=0;this.lastMessageEndCursor=this.cursor;this.state=nextState;this.unseenSettle=false;this.deliveryGeneration++;
       await this.exportHistory();
     }catch(error){
       if(!committed)await prepared?.rollback().catch(()=>undefined);
-      if(sourceStopped&&!committed){this.unsubscribe?.();this.pi=await this.factory.create({sessionId:this.id});this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));this.state=await this.pi.getState();}
+      if(sourceStopped&&!committed&&this.started){this.unsubscribe?.();this.pi=await this.factory.create({sessionId:this.id});this.unsubscribe=this.pi.onEvent(e=>this.handlePiEvent(e));this.state=await this.pi.getState();}
       // The committed binding is changed only after preparation succeeds.
       throw error;
     }finally{this.contextChanging=false;this.onLifecycle?.(this);this.scheduleIdleCheck();}

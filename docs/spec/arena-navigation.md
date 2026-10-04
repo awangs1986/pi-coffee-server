@@ -428,3 +428,29 @@ precedence over native-session creation time, so resume/takeover cannot reorder
 a task. Equal timestamps use the stable ID; missing/invalid creation dates sort
 last in the older bucket by ID, without falling back to last activity. The
 separate native terminal section and grouped-mode ordering remain unchanged.
+
+### Pins and Chat context reset (2026-10-04, Server #55)
+
+Conversation actions offer Pin/Unpin. Active pinned conversations appear once,
+in a separate top section outside project/custom/date groups in either display
+mode. New pins lead; repeated pin requests do not reorder them. Pin preferences
+are user scoped and durable. Pinning preserves the original group assignment;
+unpin restores that placement (or creation-time order in flat mode). Archiving
+hides the pin until restore. Pinned membership still prevents group deletion.
+
+The Context Usage popup offers “一键清空上下文” only for an active Pi Chat.
+One click executes directly without confirmation. Running/queued instructions,
+blocking questions, lifecycle transitions and active/unknown background work
+prevent reset. Work tasks and other Agents cannot use this operation.
+
+Host prepares and verifies an empty native Pi branch in a new native session,
+using public native session-tree APIs. The Conversation ID, creation time,
+title, model, thinking/context settings and task directory/attachments remain.
+Old native records are retained and excluded from future model requests; no
+handoff summary or prior dialogue is injected. Commit changes the durable native
+binding only after preparation succeeds. Repeated operation IDs are idempotent;
+stale bindings are rejected. Failures before commit retain/reopen the original.
+Native reset settings also survive restart before the first new user message.
+Display history and caches follow the new binding; this is real context reset,
+not a visual hide. Permanent cleanup of a task with retained reset history is
+not offered; archive preserves those records.

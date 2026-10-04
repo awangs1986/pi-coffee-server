@@ -17,7 +17,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { contextReset?:{id:string;at:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -83,7 +83,7 @@ function diffFiles(nameStatusRaw:string,numstatRaw:string) {
   }
   return files;
 }
-interface SidebarState {showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}
+interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}
 interface State { sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
@@ -233,6 +233,12 @@ export class Workspaces {
     this.state.sidebar={...sidebar,assignments:{...sidebar.assignments,[id]:projectId}};
     await this.save();return this.state.sidebar;
   }); }
+  async pinSidebar(id:string,pinned:unknown){return this.mutate(async()=>{
+    if(typeof pinned!=='boolean')throw new Error('Invalid pin preference');
+    const sidebar=this.state.sidebar??{assignments:{},collapsed:[]},prior=sidebar.pinned??[];
+    const pins=pinned?(prior.includes(id)?prior:[id,...prior]):prior.filter(key=>key!==id);
+    this.state.sidebar={...sidebar,pinned:pins.length?pins:undefined};await this.save();return this.state.sidebar;
+  });}
   async displaySidebar(showGroups:unknown) { return this.mutate(async()=>{
     if(typeof showGroups!=='boolean')throw new Error('Invalid sidebar display preference');
     this.state.sidebar={...(this.state.sidebar ?? {assignments:{},collapsed:[]}),showGroups};
@@ -454,6 +460,15 @@ export class Workspaces {
       // native bindings and history segments behind after a failed first switch.
       this.state.conversations[this.state.conversations.indexOf(c)]=old;throw error;
     }
+  },()=>this.conversationLock(id));}
+  async commitContextReset(id:string,operation:{id:string;expectedNativeId:string},nativeId:string){return this.mutate(async()=>{
+    const c=this.conversation(id);
+    if(c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi Chat can clear context');
+    if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
+    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds};
+    c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString()};
+    c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),operation.expectedNativeId])];
+    try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
   async setNativeBinding(id:string,binding:NativeBinding) {return this.mutate(async()=>{
     const c=this.conversation(id);
