@@ -99,7 +99,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }
     const identity = (value: typeof task | undefined) => value ? JSON.stringify({ engine: value.engine ?? "pi", cwd: value.cwd, nativeId: value.nativeBinding?.id, segments: value.takeoverSegments ?? [], removed: value.workspaceRemoved, cleanup: value.cleanupStarted }) : "missing";
     const before = identity(task), segment = task.takeoverSegments?.at(-1), engine = task.engine ?? "pi";
-    const nativeId = engine === "pi" && !segment ? sessionId : task.nativeBinding?.id;
+    const nativeId = engine === "pi" && !segment && !task.contextReset ? sessionId : task.nativeBinding?.id;
     const binding = `${engine}:${nativeId ?? "unbound"}:${segment?.id ?? "original"}`;
     if (!nativeId || task.cleanupStarted || task.workspaceRemoved) return unknownHistory(binding);
     try {
@@ -208,6 +208,21 @@ export class NativeAgentFactory implements AgentSessionFactory {
       },rollback};
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
+  async prepareContextReset(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:import('../agent-adapter.js').AgentModels){
+    const task=await this.options.workspaces.lookup(id);
+    if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi'||task.archived||task.contextReset?.id===operation.id||(task.nativeBinding?.id??id)!==operation.expectedNativeId)throw new Error('Chat context changed; refresh before clearing');
+    if(!this.options.pi.resetNative)throw new Error('Native context reset unavailable');
+    if(this.closing)throw new Error('Host is stopping');
+    const nativeId=randomUUID(),controller=new AbortController();let session:AgentSession|undefined;
+    try{
+      session=await this.options.pi.resetNative(operation.expectedNativeId,{sessionId:nativeId,cwd:task.cwd,workspaceSessionId:id});
+      this.preparations.set(controller,session);if(this.closing||controller.signal.aborted)throw new Error('Host is stopping');
+      await applyForkSettings(session,{model:settings.current??undefined,thinkingLevel:settings.thinkingLevel,contextPreset:settings.context?.preset});
+      await session.rename(operation.title||'Chat');
+      if((await session.getHistory()).entries.some(e=>e.kind==='user'||e.kind==='assistant'||e.kind==='tool'))throw new Error('Native context reset did not produce an empty conversation');
+      return {session,commit:async()=>{if(this.closing||controller.signal.aborted)throw new Error('Host is stopping');await this.options.workspaces.commitContextReset(id,operation,nativeId);this.preparations.delete(controller);},rollback:async()=>{this.preparations.delete(controller);await session!.stop();await this.options.pi.delete(nativeId);}};
+    }catch(error){this.preparations.delete(controller);await session?.stop().catch(()=>undefined);await this.options.pi.delete(nativeId).catch(()=>undefined);throw error;}
+  }
   async create({sessionId}:{sessionId:string}):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
     const segment=task?.takeoverSegments?.at(-1);
@@ -221,7 +236,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(task?.fork&&task.fork.status!=='completed')throw new Error(task.fork.error??'Fork preparation is not complete');
     if(!task && this.options.legacyCodex && (await this.options.legacyCodex.list().catch(()=>[])).some(s=>s.id===sessionId))return this.options.legacyCodex.create({sessionId});
     if(!task && !(await this.options.pi.list()).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
-    if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length)});
+    if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length||task?.contextReset?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length||task?.contextReset)});
     const readiness=(await this.engines()).find(e=>e.id===task.engine);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
     const baseConfig=this.options[task.engine as "codex"|"claude"];if(!baseConfig)throw new Error("Agent not configured");
     const config={...baseConfig,env:{...baseConfig.env,...await this.options.workspaces.runtimeEnvironment(sessionId)}};
@@ -245,9 +260,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async list() {
     const state=await this.options.workspaces.list();
     const piListings=await this.options.pi.list();
-    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.fork));
+    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.contextReset||c.fork));
     const ids=new Set(native.map(c=>c.id));
-    for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if(c.takeoverSegments?.length&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
+    for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if((c.takeoverSegments?.length||c.contextReset)&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
     const summaries=await Promise.all(native.map(async c=>{
       const readable=!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready');
       const known=!readable?undefined:c.engine==="codex" && c.nativeBinding?.id && this.options.codexSummary
@@ -260,7 +275,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   async delete(id:string) {
     const task=await this.options.workspaces.lookup(id);
-    if(task?.takeoverSegments?.length)throw new Error("Takeover history is retained; archive this Task instead");
+    if(task?.takeoverSegments?.length||task?.contextReset)throw new Error("Retained native history exists; archive this Task instead");
     if(task?.engine && task.engine!=="pi")throw new Error("Native history is retained; complete native cleanup is not supported");
     return this.options.pi.delete(id);
   }

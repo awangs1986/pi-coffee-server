@@ -31,6 +31,7 @@ export interface ImageInput {
 }
 
 export interface SessionState {
+  pendingMessageCount?: number;
   isCompacting?: boolean;
   isStreaming: boolean;
   messageCount: number;

@@ -1176,3 +1176,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .project-group-more:hover { background:var(--hover); color:var(--text); }
 .popitem:disabled { opacity:.45; cursor:not-allowed; }
 @media (hover:none) { .project-group-more { opacity:1; } }
+
+.stats-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.stats-actions button { padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); cursor: pointer; font: inherit; font-size: 12px; }
+.stats-actions button:disabled { opacity: .5; cursor: not-allowed; }

@@ -41,6 +41,7 @@ export function initQueueControls({container,send,requestId,toast,canPromote}){
   const sent=action(editing,'edit',text);$('queue-edit-status').textContent=sent?'正在保存…':'未发送，内容仍保留。请检查连接及 1 MiB 传输上限。';
  };
  return {
+  get hasPending(){return items.length>0||native.steering.length>0||native.followUp.length>0||pending.size>0;},
   update(rows){items=rows;render();},
   native(event){native={steering:event.steering||[],followUp:event.followUp||[]};render();},
   connection(value){connected=value;render();},

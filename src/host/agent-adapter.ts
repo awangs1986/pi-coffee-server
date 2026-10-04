@@ -87,6 +87,8 @@ export interface AgentSession {
 export interface AgentSessionFactory {
   forkModes?(engine:"pi"|"codex"|"claude"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
+  resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
+  prepareContextReset?(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:AgentModels):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   forkNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<AgentSession>;
   /** Called after verified-idle sessions are released, before re-opening with changed credentials. */
   resetTaskRuntime?(id:string):Promise<void>;
