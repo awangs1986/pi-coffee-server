@@ -140,3 +140,13 @@ it('uses the shared user-text styling hook for cached and oversized user message
   expect(node.querySelector('.bubble > .text')?.textContent).toBe('A cached user instruction');
   expect(node.querySelector('.bubble > .body.md.text')).not.toBeNull();
 });
+
+it('sanitizes authoritative Markdown while keeping disposable cached previews inert',()=>{
+ const text='```bash\nprintf "%s\\n" "<script>literal</script>"\n```\n\n<img src=x onerror="alert(1)"><script>alert(1)</script>';
+ const authoritative=fixture();renderConversationPreview(authoritative,{entries:[{kind:'assistant',text}]},{cached:false});
+ expect(authoritative.querySelectorAll('.codeblock-copy')).toHaveLength(1);
+ expect(authoritative.querySelector('code')?.textContent).toBe('printf "%s\\n" "<script>literal</script>"');
+ expect(authoritative.querySelector('script,[onerror]')).toBeNull();
+ const cached=fixture();renderConversationPreview(cached,{entries:[{kind:'assistant',text}]});
+ expect(cached.querySelector('.codeblock,script,img,a,[data-copy]')).toBeNull();expect(cached.textContent).toContain('```bash');
+});
