@@ -18,12 +18,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
-async function start(root?: string, native = false, kind: "codex" | "claude" | "cursor" = "codex", extraEnv:Record<string,string>={}) {
+async function start(root?: string, native = false, kind: "codex" | "claude" | "cursor" | "grok" = "codex", extraEnv:Record<string,string>={}) {
   root ??= await mkdtemp(join(tmpdir(), "coffee-native-"));
   if (!roots.includes(root)) roots.push(root);
   const workspaces = new Workspaces(join(root, "projects"));
   const pi = new RpcPiSessionFactory();
-  const command = { command: process.execPath, args: [join(import.meta.dirname, `fixtures/fake-${kind}.mjs`)], env: { ...extraEnv, CLAUDE_CONFIG_DIR: join(root, "native-home") } };
+  const command = { command: process.execPath, args: [join(import.meta.dirname, `fixtures/fake-${kind==="grok"?"cursor":kind}.mjs`)], env: { ...extraEnv, ...(kind==="grok"?{FIXTURE_GROK:"1"}:{}), CLAUDE_CONFIG_DIR: join(root, "native-home") } };
   const factory = native ? new NativeAgentFactory({ pi, workspaces, [kind]: command }) : pi;
   const host = new HostServer({ port: 0, token: "test-token", workspaces, factory });
   hosts.push(host); await host.start();
@@ -187,7 +187,7 @@ it("interrupts only the requested Task and keeps another native run alive across
   one.socket.close(); resumed.socket.close();
 });
 
-it("reports four Agent choices without activating unconfigured engines or falling back to Pi", async () => {
+it("reports five Agent choices without activating unconfigured engines or falling back to Pi", async () => {
   const app = await start();
   const base = `http://127.0.0.1:${app.host.address().port}`;
   expect((await fetch(base + "/api/engines")).status).toBe(401);
@@ -198,6 +198,7 @@ it("reports four Agent choices without activating unconfigured engines or fallin
     expect.objectContaining({ id: "codex", available: false, reason: expect.any(String) }),
     expect.objectContaining({ id: "claude", available: false, reason: expect.any(String) }),
     expect.objectContaining({ id: "cursor", available: false, reason: expect.any(String) }),
+    expect.objectContaining({ id: "grok", available: false, reason: expect.any(String) }),
   ]);
   const unavailable = await app.request({ action: "conversation", workspaceKind: "project", projectId:app.projectId, id: "no-native", engine: "codex" });
   expect(unavailable.status).toBe(409);
@@ -287,7 +288,7 @@ it('restores a pending native approval even when its cursor fell outside the rep
  const next=await connect(app.host,'overflow');await next.next(f=>f.type==='resync_required');expect(await next.next(f=>f.type==='event'&&f.event.type==='native_request')).toMatchObject({event:{id:request.event.id}});next.socket.close();
 });
 
-it.each(['codex','claude','cursor'] as const)('reports missing native authentication before creating a %s Task',async engine=>{
+it.each(['codex','claude','cursor','grok'] as const)('reports missing native authentication before creating a %s Task',async engine=>{
  const app=await start(undefined,true,engine,{FIXTURE_AUTH_MISSING:'1'});const result=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
  expect((await result.json()).engines.find((e:any)=>e.id===engine)).toMatchObject({available:false,authentication:'required',reason:expect.stringContaining('authentication')});
  expect((await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'no-auth',engine})).status).toBe(409);
@@ -346,8 +347,8 @@ it('discovers Claude models before creation and restores confirmed model and eff
 });
 
 
-it('keeps Cursor permission blocked across browser reconnect, rejects stale answers, and drains Host follow-ups',async()=>{
- const app=await start(undefined,true,'cursor');await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'cursor-permission',engine:'cursor'});
+it.each(['cursor','grok'] as const)('keeps %s permission blocked across reconnect and drains Host follow-ups',async engine=>{
+ const app=await start(undefined,true,engine);await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'cursor-permission',engine});
  const client=await connect(app.host,'cursor-permission');await client.next(f=>f.type==='opened');
  client.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'p',text:'ask approval'}));
  const pending=await client.next(f=>f.type==='event'&&f.event.type==='native_request');
@@ -360,4 +361,26 @@ it('keeps Cursor permission blocked across browser reconnect, rejects stale answ
  expect(await next.next(f=>f.type==='event'&&f.event.type==='message_completed')).toMatchObject({event:{text:'Cursor native marker'}});
  next.socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'stale',id:pending.event.id,value:'allow'}));
  expect(await next.next(f=>f.type==='error'&&f.requestId==='stale')).toMatchObject({code:'unknown_ui_request'});next.socket.close();
+});
+
+
+it('binds Grok Work to its own native session and restores the selected model after restart',async()=>{
+ const app=await start(undefined,true,'grok');
+ expect((await app.request({action:'conversation',id:'grok-chat',workspaceKind:'chat',engine:'grok'})).status).toBe(409);
+ expect((await app.request({action:'conversation',id:'grok-task',workspaceKind:'project',projectId:app.projectId,engine:'grok'})).status).toBe(200);
+ const client=await connect(app.host,'grok-task');expect(await client.next(f=>f.type==='opened')).toMatchObject({engine:'grok',capabilities:{images:false,followUp:true,steer:false}});
+ client.socket.send(JSON.stringify({v:1,type:'set_model',requestId:'model',provider:'grok',id:'cursor-other'}));await client.next(f=>f.type==='ack'&&f.requestId==='model');
+ client.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'turn',text:'Native Grok fixture'}));await client.next(f=>f.type==='event'&&f.event.type==='run_completed');
+ client.socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const reopened=await start(app.root,true,'grok'),next=await connect(reopened.host,'grok-task');
+ expect((await next.next(f=>f.type==='history')).entries).toEqual(expect.arrayContaining([expect.objectContaining({kind:'user',text:'Native Grok fixture'})]));
+ next.socket.send(JSON.stringify({v:1,type:'get_models'}));expect(await next.next(f=>f.type==='models')).toMatchObject({current:{provider:'grok',id:'cursor-other'}});
+ next.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'hold',text:'hold'}));await next.next(f=>f.type==='event'&&f.event.type==='run_started');next.socket.send(JSON.stringify({v:1,type:'abort',requestId:'stop'}));expect(await next.next(f=>f.type==='event'&&f.event.type==='run_completed')).toMatchObject({event:{status:'interrupted'}});next.socket.close();
+});
+
+
+it('redacts Grok credentials in native model-control errors before browser delivery',async()=>{
+ const app=await start(undefined,true,'grok',{FIXTURE_GROK_MODEL_ERROR:'1'});await app.request({action:'conversation',id:'grok-redaction',workspaceKind:'project',projectId:app.projectId,engine:'grok'});
+ const client=await connect(app.host,'grok-redaction');await client.next(f=>f.type==='opened');client.socket.send(JSON.stringify({v:1,type:'set_model',provider:'grok',id:'cursor-other',requestId:'model'}));
+ const error=await client.next(f=>f.type==='error'&&f.requestId==='model');expect(error.message).toContain('[redacted]');expect(error.message).not.toContain(['xai','synthetic','test','only'].join('-'));client.socket.close();
 });

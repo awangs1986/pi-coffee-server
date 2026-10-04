@@ -12,7 +12,7 @@ import type {
 } from "../shared/protocol.js";
 
 export interface EngineAvailability {
-  id: "pi" | "codex" | "claude" | "cursor";
+  id: "pi" | "codex" | "claude" | "cursor" | "grok";
   name: string;
   available: boolean;
   reason?: string;
@@ -26,6 +26,7 @@ export const PI_ONLY_ENGINES: EngineAvailability[] = [
   { id: "codex", name: "Codex", available: false, reason: "Not configured on this Host" },
   { id: "claude", name: "Claude Code", available: false, reason: "Not configured on this Host" },
   { id: "cursor", name: "Cursor", available: false, reason: "Not configured on this Host" },
+  { id: "grok", name: "Grok Build", available: false, reason: "Not configured on this Host" },
 ];
 
 export interface AgentHistory {
@@ -86,7 +87,7 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
-  forkModes?(engine:"pi"|"codex"|"claude"|"cursor"):import('./fork.js').ForkMode[];
+  forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
   prepareContextReset?(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:AgentModels):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;

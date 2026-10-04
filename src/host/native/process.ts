@@ -26,7 +26,7 @@ export class NativeProcess {
         const waiting=this.pending.get(message.id);
         if(waiting && !message.method) {
           this.pending.delete(message.id);clearTimeout(waiting.timer);
-          message.error ? waiting.reject(new Error("Native request failed: "+String(message.error.message??"unknown error").replace(/sk-[\w-]+/g,"[redacted]").slice(0,300))) : waiting.resolve(message.result);
+          message.error ? waiting.reject(new Error("Native request failed: "+String(message.error.message??"unknown error").replace(/\b(?:sk|xai)-[\w-]+/g,"[redacted]").slice(0,300))) : waiting.resolve(message.result);
         } else this.messages=this.messages.then(()=>this.onMessage?.(message)).catch(()=>this.fail(new Error("Native event could not be processed")));
       } catch { this.fail(new Error("Invalid native protocol response")); }
     });

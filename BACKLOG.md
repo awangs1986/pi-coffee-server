@@ -1,3 +1,5 @@
+> Native Grok Build support: [contract](docs/spec/grok-build.md), [Server #57](https://github.com/awangs1986/pi-coffee-server/issues/57). Owner completes native device login; authenticated model acceptance follows.
+
 > Cursor ACP and Claude Code completion: [contract](docs/spec/cursor-claude.md), [Server #56](https://github.com/awangs1986/pi-coffee-server/issues/56). Native Cursor login and Claude quota gates remain explicit.
 
 > Skill invocation title fallback: [contract](docs/spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).

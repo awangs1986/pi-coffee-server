@@ -145,6 +145,7 @@ async function run(selectedRole: Role): Promise<void> {
         codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND,env:deniedGitHub}} : {}),
+      ...(process.env.PI_COFFEE_GROK_COMMAND ? {grok:{command:process.env.PI_COFFEE_GROK_COMMAND,env:deniedGitHub}} : {}),
       ...(process.env.PI_COFFEE_CURSOR_COMMAND ? {cursor:{command:process.env.PI_COFFEE_CURSOR_COMMAND,env:deniedGitHub}} : {}),
     });
     return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};

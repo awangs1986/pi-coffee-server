@@ -14,11 +14,11 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_PROMPT_CHARS = MAX_FRAME_BYTES;
 export const MAX_REQUEST_ID_CHARS = 256;
 
-export type AgentEngine = "pi" | "codex" | "claude" | "cursor";
+export type AgentEngine = "pi" | "codex" | "claude" | "cursor" | "grok";
 export function parseAgentEngine(value: unknown): AgentEngine {
   if (value === undefined) return "pi";
-  if (value === "pi" || value === "codex" || value === "claude" || value === "cursor") return value;
-  throw new Error("Unknown Agent; choose Pi, Codex, Claude Code or Cursor");
+  if (value === "pi" || value === "codex" || value === "claude" || value === "cursor" || value === "grok") return value;
+  throw new Error("Unknown Agent; choose Pi, Codex, Claude Code, Cursor or Grok Build");
 }
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -181,8 +181,8 @@ export interface AgentCapabilities {
 }
 
 export function capabilitiesFor(engine:AgentEngine):AgentCapabilities {
-  const pi=engine==="pi",claude=engine==="claude",cursor=engine==="cursor";
-  return {models:true,images:pi||claude||cursor,stop:true,questions:true,tools:true,thinking:pi||claude,steer:pi,followUp:pi||claude||cursor,stats:pi||claude,commands:pi||claude||cursor,extensions:pi,compact:pi,rename:pi||claude,cleanup:pi};
+  const pi=engine==="pi",claude=engine==="claude",cursor=engine==="cursor",grok=engine==="grok";
+  return {models:true,images:pi||claude||cursor,stop:true,questions:true,tools:true,thinking:pi||claude,steer:pi,followUp:pi||claude||cursor||grok,stats:pi||claude,commands:pi||claude||cursor||grok,extensions:pi,compact:pi,rename:pi||claude,cleanup:pi};
 }
 
 export interface UiResponse {
@@ -412,12 +412,12 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "list_sessions":
       return { v: PROTOCOL_VERSION, type: "list_sessions" };
     case "get_model_catalog":
-      if(!["pi","codex","claude","cursor"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent model catalog");
+      if(!["pi","codex","claude","cursor","grok"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent model catalog");
       return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
     case "get_models":
       return { v: PROTOCOL_VERSION, type: "get_models", ...withRequestId(value) };
     case "get_command_catalog":
-      if(!["pi","codex","claude","cursor"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent command catalog");
+      if(!["pi","codex","claude","cursor","grok"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent command catalog");
       return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
     case "set_context":
       if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");

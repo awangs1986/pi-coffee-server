@@ -3,7 +3,7 @@ import {createInterface} from 'node:readline';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-if(process.argv.includes('--version')){console.log('2026.10.01-e373342');process.exit(0);}
+if(process.argv.includes('--version')){console.log(process.env.FIXTURE_GROK?'grok 1.0.46':'2026.10.01-e373342');process.exit(0);}
 if(process.argv.includes('status')){console.log(JSON.stringify({isAuthenticated:!process.env.FIXTURE_AUTH_MISSING}));process.exit(0);}
 const send=m=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\n');
 let id,rows=[],turn,permission;const root=process.env.CLAUDE_CONFIG_DIR;
@@ -13,10 +13,11 @@ async function finish(text){const u={sessionUpdate:'agent_message_chunk',content
 createInterface({input:process.stdin}).on('line',async line=>{
  const m=JSON.parse(line);if(m.jsonrpc!=='2.0')process.exit(2);
  if(!m.method){if(m.id===permission){permission=null;await finish(JSON.stringify(m.result));}return;}
- if(m.method==='initialize'){send({id:m.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}}});return;}
- if(m.method==='authenticate'){send({id:m.id,result:{}});return;}
+ if(m.method==='initialize'){send({id:m.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true,promptCapabilities:{image:!process.env.FIXTURE_GROK}},authMethods:[{id:process.env.FIXTURE_GROK?(process.env.FIXTURE_AUTH_MISSING?'grok.com':'cached_token'):'cursor_login'}]}});return;}
+ if(m.method==='authenticate'){if(process.env.FIXTURE_GROK&&(m.params.methodId!=='cached_token'||m.params._meta?.headless!==true))process.exit(3);send({id:m.id,result:{}});return;}
  if(m.method==='session/new'){id=randomUUID();await mkdir(root,{recursive:true});await writeFile(join(root,id+'.json'),'[]');send({id:m.id,result:{sessionId:id,...config}});return;}
  if(m.method==='session/load'){id=m.params.sessionId;try{rows=JSON.parse(await readFile(join(root,id+'.json'),'utf8'));for(const r of rows)update(r);send({id:m.id,result:config});}catch{send({id:m.id,error:{code:-32000,message:'Missing native session'}});}return;}
+ if(m.method==='session/set_model'&&process.env.FIXTURE_GROK_MODEL_ERROR){send({id:m.id,error:{code:-32000,message:'Rejected credential '+['xai','synthetic','test','only'].join('-')}});return;}
  if(m.method==='session/set_model'){send({id:m.id,result:{}});return;}
  if(m.method==='session/cancel'){if(turn){send({id:turn,result:{stopReason:'cancelled'}});turn=null;}return;}
  if(m.method==='session/prompt'){
