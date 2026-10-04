@@ -86,3 +86,7 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 - Inline image preview/download: [task-storage contract](spec/task-storage.md#inline-conversation-images-2026-10-04), [Server #43](https://github.com/awangs1986/pi-coffee-server/issues/43).
 
 - Review corrections and busy conversation switching: [Server #44](https://github.com/awangs1986/pi-coffee-server/issues/44), [sync contract](spec/local-first-conversation-sync.md#review-corrections-2026-10-04-server-44), [Pi security patch](deployment/unified-release.md#pi-101-security-patch-2026-10-04-server-44).
+
+- Latest history after busy switching: [Server #45](https://github.com/awangs1986/pi-coffee-server/issues/45), [freshness and reader-intent contract](spec/local-first-conversation-sync.md#latest-history-correctness-after-selection-2026-10-04-server-45).
+
+Latest-history selection regression and acceptance: [2026-10-04 evidence](reviews/latest-history-switch-20261004.md).

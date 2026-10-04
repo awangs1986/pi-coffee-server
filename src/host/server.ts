@@ -943,13 +943,23 @@ class HostSocket implements SessionSink {
     let useSync=frame.syncProtocol===2&&this.syncV2Enabled&&Boolean(this.index);
     if(useSync){
       syncPage=await this.index!.page(sessionId);
-      // V2 enrollment requires one successful native source verification. Older
-      // unsupported formats retain the readable legacy open instead of an empty v2 body.
-      if(!syncPage.lastSourceCheckAt){useSync=false;syncPage=undefined;}
+      // An old successful audit does not prove today's native history is indexed.
+      // Unverified/stale sources must use native history on this explicit open.
+      if(!syncPage.lastSourceCheckAt || syncPage.sourceFreshness!=='current'){useSync=false;syncPage=undefined;}
     }
     if(this.closed)return;
+    const result = useSync ? await (async()=>{
+      const session=await this.registry.connect(sessionId);
+      syncPage=await this.index!.page(sessionId);
+      // Native startup can yield long enough for another audit to invalidate
+      // the admission snapshot. Recheck the page that will actually be sent.
+      if(!syncPage.lastSourceCheckAt || syncPage.sourceFreshness!=='current'){
+        useSync=false;syncPage=undefined;
+        return this.registry.open(sessionId,frame.after);
+      }
+      return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},replay:[] as ServerFrame[],resync:undefined};
+    })() : await this.registry.open(sessionId, frame.after);
     this.syncProtocol=useSync?2:undefined;
-    const result = useSync ? await (async()=>{const session=await this.registry.connect(sessionId);syncPage=await this.index!.page(sessionId);return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},replay:[] as ServerFrame[],resync:undefined};})() : await this.registry.open(sessionId, frame.after);
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
     this.metadataEpoch++;

@@ -480,3 +480,10 @@ defines user-scoped persistence and the strict separation from task execution id
   older-history buffers and Git destination authorization; preserves conversation
   row gestures during busy sidebar refreshes; centralizes lifecycle classification
   and consumes official Pi 1.0.1 to resolve the inherited dependency advisory.
+
+- 2026-10-04: [Server #45](https://github.com/awangs1986/pi-coffee-server/issues/45)
+  diagnoses latest history disappearing after switching: programmatic scroll
+  restoration incorrectly entered older-history mode, and historical verification
+  admitted stale/unknown sources into V2. Current native freshness and explicit
+  reader intent now guard these boundaries; private live diagnosis compared
+  fingerprints without publishing user transcripts.

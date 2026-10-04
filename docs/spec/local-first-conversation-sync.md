@@ -199,3 +199,21 @@ Both legacy and V2 user-message renderers parse the same bounded upload marker
 into attachment chips. Cached state contains only inert text/paths; fresh task
 transfer grants bind download URLs when the view renders or a grant arrives.
 No grant is persisted in IndexedDB. Native message text remains unchanged.
+
+## Latest-history correctness after selection (2026-10-04, Server #45)
+
+Layout, message mounting and scroll-anchor restoration produce scroll events.
+Those events alone must never request older history or mark the view as reading
+an older window. Automatic older-page loading requires explicit reader input
+(wheel/touch, upward keyboard navigation or scrollbar interaction); the Load older
+button remains explicit navigation. Selection clears pending scroll intent.
+Returning to latest remains separate from preserving an intentionally older
+reading position. Test latest native reply visibility, not just cached body paint.
+
+An explicit v2 open requires a currently verified native source. A non-null old
+lastSourceCheckAt is insufficient when sourceFreshness is unknown or reconciling.
+In that case, open through the native-history fallback and retain cached preview
+only while that read is pending. Read-only index HTTP requests remain independent
+of execution and never start a native runtime. A later currently verified open
+may negotiate v2 again; source uncertainty must not silently hide newer native
+history behind an old display index.

@@ -33,8 +33,25 @@ export class ConversationSyncView {
     this.scheduler=createRenderScheduler({budgetMs:4,onError});
     this.nodes=new Map();this.saved=new Map();this.generation=0;this.active=null;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];
     this.anchor=new ScrollAnchor(scroller,container,{isCurrent:()=>Boolean(this.active)});
-    this.scroll=()=>{if(this.active&&this.scroller.scrollTop<120)void this.older();};
+    this.userScrollUntil=0;this.scrollbarPressed=false;
+    this.scroll=()=>{
+      if(this.active && (this.scrollbarPressed || Date.now()<this.userScrollUntil) && this.scroller.scrollTop<120){
+        this.userScrollUntil=0;void this.older();
+      }
+    };
+    // Layout/anchor restoration emits scroll events too. Only explicit reader
+    // input may leave the latest window and enter older-history mode.
+    this.scrollIntent=event=>{
+      if(event.type==='wheel' && event.deltaY>=0)return;
+      if(event.type==='keydown' && (!['ArrowUp','PageUp','Home'].includes(event.key) || event.target.closest?.('input,textarea,select,[contenteditable]')))return;
+      this.userScrollUntil=Date.now()+1000;this.scroll();
+    };
+    this.scrollbarDown=event=>{if(event.target===scroller)this.scrollbarPressed=true;};
+    this.scrollbarUp=()=>{if(this.scrollbarPressed)this.userScrollUntil=Date.now()+150;this.scrollbarPressed=false;};
     scroller.addEventListener('scroll',this.scroll,{passive:true});
+    for(const type of ['wheel','touchmove','keydown'])scroller.addEventListener(type,this.scrollIntent,{passive:true});
+    scroller.addEventListener('pointerdown',this.scrollbarDown,{passive:true});
+    for(const type of ['pointerup','pointercancel'])scroller.ownerDocument.addEventListener(type,this.scrollbarUp,{passive:true});
   }
   capture() {return this.anchor.capture();}
   save() {
@@ -43,6 +60,7 @@ export class ConversationSyncView {
     while(this.saved.size>5)this.saved.delete(this.saved.keys().next().value);
   }
   select(id) {
+    this.userScrollUntil=0;this.scrollbarPressed=false;
     this.anchor.stopObserving();this.generation++;this.active=id;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];this.nodes.clear();
     this.root=null;this.scheduler.setView({...this.context(),conversationId:id,viewGeneration:this.generation});
   }
@@ -190,5 +208,5 @@ export class ConversationSyncView {
     finally{if(generation===this.generation){this.loading=false;if(this.earlier)this.earlier.disabled=false;}}
   }
   get entries() {return [...this.root?.querySelectorAll('[data-entity-id]')||[]].map(node=>this.nodes.get(node.dataset.entityId)).filter(Boolean);}
-  dispose(){this.scheduler.dispose();this.anchor.disconnect();this.scroller.removeEventListener('scroll',this.scroll);this.saved.clear();this.nodes.clear();}
+  dispose(){this.scheduler.dispose();this.anchor.disconnect();this.scroller.removeEventListener('scroll',this.scroll);for(const type of ['wheel','touchmove','keydown'])this.scroller.removeEventListener(type,this.scrollIntent);this.scroller.removeEventListener('pointerdown',this.scrollbarDown);for(const type of ['pointerup','pointercancel'])this.scroller.ownerDocument.removeEventListener(type,this.scrollbarUp);this.saved.clear();this.nodes.clear();}
 }
