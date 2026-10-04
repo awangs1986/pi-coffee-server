@@ -1,3 +1,5 @@
+> Cursor ACP and Claude Code completion: [contract](docs/spec/cursor-claude.md), [Server #56](https://github.com/awangs1986/pi-coffee-server/issues/56). Native Cursor login and Claude quota gates remain explicit.
+
 > Skill invocation title fallback: [contract](docs/spec/arena-navigation.md#first-user-title-fallback-2026-10-01), [Server #20](https://github.com/awangs1986/pi-coffee-server/issues/20).
 
 > Codex model/effort recovery: [Server #30](https://github.com/awangs1986/pi-coffee-server/issues/30). Confirmed Web choices persist per native thread across Host restart; deployment defaults seed new threads only. See [native reproduction](docs/development/codex-model-restore.md).

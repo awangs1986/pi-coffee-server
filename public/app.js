@@ -247,7 +247,7 @@ const forkControls=initForkControls({task:id=>workspaceState?.conversations.find
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
 const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeoverControls.busy(activeId)||forkControls.busy(activeId)));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
-const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code"})[value] || value;
+const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code",cursor:"Cursor"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
   let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
@@ -1003,7 +1003,7 @@ function openSessionMenu(session, anchor) {
   rename.type = 'button';
   rename.addEventListener('click', async () => { closeMenu(); await renameSession(session); });
   const taskEngine=workspaceState?.conversations.find(c=>c.id===session.id)?.engine || 'pi';
-  rename.disabled=session.id===activeId ? !supports('rename') : taskEngine==='claude';if(rename.disabled)rename.title='此 Agent 不支持在 Web 重命名原生会话';
+  rename.disabled=session.id===activeId ? !supports('rename') : taskEngine==='cursor';if(rename.disabled)rename.title='此 Agent 不支持在 Web 重命名原生会话';
   const archived=workspaceState?.conversations.find(c=>c.id===session.id)?.archived || workspaceState?.legacyArchived?.includes(session.id);
   const del = el('button', 'popitem', workspaceState ? (archived ? '恢复对话' : '归档') : '删除');
   del.type = 'button';
@@ -1083,7 +1083,7 @@ $('#strip-kind').addEventListener('click', (event) => {
 });
 
 async function renameSession(session) {
-  if(session.id===activeId ? !supports('rename') : (workspaceState?.conversations.find(c=>c.id===session.id)?.engine || 'pi')==='claude'){toast('此 Agent 不支持在 Web 重命名');return;}
+  if(session.id===activeId ? !supports('rename') : (workspaceState?.conversations.find(c=>c.id===session.id)?.engine || 'pi')==='cursor'){toast('此 Agent 不支持在 Web 重命名');return;}
   const user=currentUser;
   const name = await askModal({ title: '重命名对话', input: session.name || session.preview || '', okLabel: '保存' });
   if (name === null || name === '') return;
@@ -1156,7 +1156,7 @@ function renderStats() {
   ui.stats.classList.remove('hidden');ui.stats.classList.toggle('warn',pct!==null && pct>=75);
   ui.spPct.textContent=pct!==null?'已用 '+Math.floor(pct)+'%':'用量暂不可用';
   ui.spCapacity.textContent=`${used!==null?(valid?'~':'')+fmtTokens(used):'—'} / ${fmtTokens(capacity).replace(/\.0([KM])$/,'$1')} 词元`;
-  ui.spCapacity.title=valid?`本地 o200k_base 估算 · ${snapshot.basis==='last_request'?'最近一次实际请求':'当前已加载上下文预览'} · ${snapshot.capturedAt}`:'原生引擎当前上下文用量；不使用累计账单量';
+  ui.spCapacity.title=valid&&snapshot.method==='native_summary'?`Claude 原生上下文摘要（含估算） · ${snapshot.capturedAt}`:valid?`本地 o200k_base 估算 · ${snapshot.basis==='last_request'?'最近一次实际请求':'当前已加载上下文预览'} · ${snapshot.capturedAt}`:'原生引擎当前上下文用量；不使用累计账单量';
   ui.spBar.replaceChildren();ui.spContextLegend.replaceChildren();
   for(const [id,label] of CONTEXT_CATEGORIES){
     const value=valid?snapshot.categories.find(c=>c.id===id).tokens:null;
@@ -1552,7 +1552,7 @@ async function openSession(id) {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
       if(!isCurrent())return;
       textDrafts.delete(draftKey());
-      id=c.id;activeId=id;contextToApply=draftContextPreset;thinkingToApply=['pi','codex'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
+      id=c.id;activeId=id;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
     }catch(e){
       if(!isCurrent())return;
       pendingOpenId=null;toast(e.message);
@@ -1612,7 +1612,7 @@ function handleFrame(frame, ws) {
       renderHeader();
       renderSessionList();
       historyReady=false;catalogRequest=null;
-      if(draftModel && ['pi','codex'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
+      if(draftModel && ['pi','codex','claude','cursor'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       if(!supports('models'))thinkingToApply=null;
       afterOpened();
       return;
@@ -2223,7 +2223,7 @@ function resetSlashCommands(){commands=[];commandRequest=null;commandState='idle
 function loadSlashCommands(){
   if(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)||!connected||commandState!=='idle')return;
   if(opened){if(supports('commands')){commandState='loading';send({v:1,type:'get_commands'});}return;}
-  if(activeId||pendingOpenId||!['pi','codex'].includes($('#task-engine').value))return;
+  if(activeId||pendingOpenId||!['pi','codex','claude'].includes($('#task-engine').value))return;
   commandRequest=requestId('commands');commandState='loading';send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest});
 }
 function slashItems() {
@@ -2246,7 +2246,7 @@ function renderSlash() {
       if(activeId===targetId&&skillReloadScope===targetScope)skillReloadScope=null;
     }catch(e){toast(e.message);reload.disabled=false;}});ui.slash.appendChild(reload);
   }
-  if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(!['pi','codex'].includes(engine)?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
+  if(items.length===0){const note=el('div','skills-help');note.textContent=commandState==='loading'?'正在读取 Agent 命令…':commandError||(!['pi','codex','claude','cursor'].includes(engine)?'此 Agent 暂不提供斜杠菜单。':commandState==='ready'?'没有匹配的命令；Skill 可按名称搜索。':'连接就绪后读取命令。');ui.slash.appendChild(note);return;}
   if(commandState==='loading'||commandError){const note=el('div','skills-help');note.textContent=commandError||'正在读取 Agent 命令…';ui.slash.appendChild(note);}
 
   slashIndex = Math.min(slashIndex, items.length - 1);
@@ -3352,7 +3352,7 @@ function changedFilesCard(data) {
 }
 async function maybeRenderChangesCard(force=false) {
   const task=currentTask();
-  if(!task || task.workspaceKind==='chat' || task.engine==='claude' || streaming)return;
+  if(!task || task.workspaceKind==='chat' || !['pi','codex'].includes(task.engine||'pi') || streaming)return;
   const id=activeId,selection=taskSelectionEpoch;
   const checked=id+':'+selection+':'+JSON.stringify(task.turnSnapshot);
   if(!force && checked===changeCardChecked)return;
@@ -3430,7 +3430,7 @@ function clockTime(value) { const date=new Date(value);return Number.isNaN(date.
 // 最近一轮 needs the Host's start-of-turn snapshot (Pi and Codex Work tasks).
 function turnScopeState(task=currentTask()) {
   if(!task || task.workspaceKind==='chat')return {available:false,reason:'聊天没有项目改动'};
-  if((task.engine || 'pi')==='claude')return {available:false,reason:'Claude Code 暂不支持最近一轮'};
+  if(['claude','cursor'].includes(task.engine))return {available:false,reason:engineName(task.engine)+' 暂不支持最近一轮'};
   if(!task.turnSnapshot)return {available:false,reason:'发送消息后开始记录最近一轮'};
   if(!task.turnSnapshot.tree)return {available:false,reason:'最近一轮快照不可用'};
   return {available:true,reason:''};

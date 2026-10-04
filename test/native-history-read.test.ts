@@ -141,3 +141,11 @@ it.each(['rebound','deleted'])('rechecks a %s workspace binding record rather th
  const factory=new NativeAgentFactory({pi,workspaces:{lookup:async()=>structuredClone(current)} as unknown as Workspaces});
  expect((await factory.readHistory('task')).sourceFreshness).toBe('unknown');
 });
+
+it('does not start Cursor merely to audit passive browser history',async()=>{
+ const forbidden=vi.fn(()=>{throw new Error('Passive read cannot start a CLI');});
+ const pi={create:forbidden,list:forbidden,delete:forbidden} as unknown as AgentSessionFactory;
+ const workspaces={lookup:async()=>({engine:'cursor',cwd:'/synthetic',nativeBinding:{state:'bound',id:'cursor-native'}}),file:forbidden,dataRoot:forbidden} as unknown as Workspaces;
+ const factory=new NativeAgentFactory({pi,workspaces,cursor:{command:'/no-executable-allowed'}});
+ expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:'cursor:cursor-native:original'});expect(forbidden).not.toHaveBeenCalled();
+});

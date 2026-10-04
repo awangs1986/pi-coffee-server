@@ -12,7 +12,7 @@ import type {
 } from "../shared/protocol.js";
 
 export interface EngineAvailability {
-  id: "pi" | "codex" | "claude";
+  id: "pi" | "codex" | "claude" | "cursor";
   name: string;
   available: boolean;
   reason?: string;
@@ -25,6 +25,7 @@ export const PI_ONLY_ENGINES: EngineAvailability[] = [
   { id: "pi", name: "Pi", available: true },
   { id: "codex", name: "Codex", available: false, reason: "Not configured on this Host" },
   { id: "claude", name: "Claude Code", available: false, reason: "Not configured on this Host" },
+  { id: "cursor", name: "Cursor", available: false, reason: "Not configured on this Host" },
 ];
 
 export interface AgentHistory {
@@ -85,7 +86,7 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
-  forkModes?(engine:"pi"|"codex"|"claude"):import('./fork.js').ForkMode[];
+  forkModes?(engine:"pi"|"codex"|"claude"|"cursor"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
   prepareContextReset?(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:AgentModels):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
@@ -101,8 +102,8 @@ export interface AgentSessionFactory {
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
   /** Read native choices without creating a conversation or running a turn. */
-  commandCatalog?(engine: "pi" | "codex"): Promise<CommandInfo[]>;
-  modelCatalog?(engine: "pi" | "codex"): Promise<AgentModels>;
+  commandCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<CommandInfo[]>;
+  modelCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<AgentModels>;
   /** Start (or resume, when the store already has it) the session with this id. */
   create(options: { sessionId: string; workspaceSessionId?: string; requireExisting?: boolean }): Promise<AgentSession>;
   /** Conversations in the durable store, newest first. */

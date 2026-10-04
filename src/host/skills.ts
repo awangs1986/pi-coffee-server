@@ -40,15 +40,15 @@ export class SkillManager {
  constructor(private options:SkillManagerOptions={},private workspaces?:Workspaces){this.home=resolve(options.home??homedir());this.root=resolve(options.root??join(this.home,'.local/share/pi-coffee/skills'));}
  private async scope(input:any):Promise<Scope>{
   if(!input||typeof input!=='object')throw new Error('Invalid Skill request');
-  if(!['pi','codex','claude'].includes(input.engine))throw new Error('Select a Skill Agent');const engine=parseAgentEngine(input.engine);
+  if(!['pi','codex','claude','cursor'].includes(input.engine))throw new Error('Select a Skill Agent');const engine=parseAgentEngine(input.engine);
   if(!['user','project'].includes(input.scope))throw new Error('Select user or project scope');
   let directory:string;
   if(input.scope==='project'){
    const task=await this.workspaces?.lookup(text(input.conversationId));
    if(!task||task.workspaceKind==='chat'||task.archived||task.workspaceRemoved||task.creationState==='failed')throw new Error('Select an active Work task for project Skills');
    if((task.engine??'pi')!==engine)throw new Error('Project Skill Agent must match the fixed Task Agent');
-   const cwd=await this.workspaces!.file(task.id,'');directory=join(cwd,engine==='pi'?'.pi':engine==='codex'?'.agents':'.claude','skills');
-  }else directory=engine==='pi'?join(this.options.piAgentDir??join(this.home,'.pi/agent'),'skills'):engine==='claude'?join(this.options.claudeDir??join(this.home,'.claude'),'skills'):join(this.home,'.agents/skills');
+   const cwd=await this.workspaces!.file(task.id,'');directory=join(cwd,engine==='pi'?'.pi':engine==='codex'?'.agents':engine==='cursor'?'.cursor':'.claude','skills');
+  }else directory=engine==='cursor'?join(this.home,'.cursor/skills'):engine==='pi'?join(this.options.piAgentDir??join(this.home,'.pi/agent'),'skills'):engine==='claude'?join(this.options.claudeDir??join(this.home,'.claude'),'skills'):join(this.home,'.agents/skills');
   directory=resolve(directory);return {engine,scope:input.scope,conversationId:input.conversationId,directory,key:hash(engine+'\0'+directory)};
  }
  private async records():Promise<RecordEntry[]>{

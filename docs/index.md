@@ -108,3 +108,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Dialogue-first history and folded process details: [contract](spec/arena-navigation.md#dialogue-first-history-2026-10-04-server-53), [Server #53](https://github.com/awangs1986/pi-coffee-server/issues/53).
 
 - Pins and one-click Pi Chat context reset: [contract](spec/arena-navigation.md#pins-and-chat-context-reset-2026-10-04-server-55), [Server #55](https://github.com/awangs1986/pi-coffee-server/issues/55).
+
+- Cursor ACP and Claude Code completion: [contract and native acceptance limits](spec/cursor-claude.md), [Server #56](https://github.com/awangs1986/pi-coffee-server/issues/56).

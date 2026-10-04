@@ -25,6 +25,6 @@ it('discovers current native Pi Skills over authenticated WS without opening a t
   send({type:'get_command_catalog',engine:'pi',requestId:'installed'});
   expect((await next('installed')).commands).toContainEqual({name:'skill:example',description:'Installed after preview.',source:'skill'});
   expect(await pi.list()).toEqual([]);expect(frames.some(f=>f.type==='opened'||f.type==='event')).toBe(false);
-  send({type:'get_command_catalog',engine:'claude',requestId:'invalid'});expect(await next('invalid')).toMatchObject({type:'error',code:'invalid_frame'});
+  send({type:'get_command_catalog',engine:'unknown',requestId:'invalid'});expect(await next('invalid')).toMatchObject({type:'error',code:'invalid_frame'});
  }finally{ws.close();await host.close();await rm(root,{recursive:true,force:true});}
 },30000);

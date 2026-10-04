@@ -1,5 +1,7 @@
 # Native-engine support in the existing Browser Shell
 
+> Current Cursor and Claude capability changes: [Server #56 contract](cursor-claude.md). Older three-engine descriptions below are historical where they conflict.
+
 Status: **M4 merged; M5 production deployment and combined acceptance completed**. See [M4 evidence](../reviews-native-agents-m4-20260923.md) and [M5 production evidence](http://gitea:3000/awangs/pi-coffee/src/branch/main/docs/reviews/native-agents-m5-20260923.md).
 Date: 2026-09-23. Tracking: [Server #6](http://gitea:3000/awangs/pi-coffee-server/issues/6).
 Depends on: [Agent #48](http://gitea:3000/awangs/pi-coffee/issues/48) for the additive Host contract and activation.

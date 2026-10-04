@@ -18,7 +18,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
-async function start(root?: string, native = false, kind: "codex" | "claude" = "codex", extraEnv:Record<string,string>={}) {
+async function start(root?: string, native = false, kind: "codex" | "claude" | "cursor" = "codex", extraEnv:Record<string,string>={}) {
   root ??= await mkdtemp(join(tmpdir(), "coffee-native-"));
   if (!roots.includes(root)) roots.push(root);
   const workspaces = new Workspaces(join(root, "projects"));
@@ -187,7 +187,7 @@ it("interrupts only the requested Task and keeps another native run alive across
   one.socket.close(); resumed.socket.close();
 });
 
-it("reports three Agent choices without activating unconfigured engines or falling back to Pi", async () => {
+it("reports four Agent choices without activating unconfigured engines or falling back to Pi", async () => {
   const app = await start();
   const base = `http://127.0.0.1:${app.host.address().port}`;
   expect((await fetch(base + "/api/engines")).status).toBe(401);
@@ -197,6 +197,7 @@ it("reports three Agent choices without activating unconfigured engines or falli
     expect.objectContaining({ id: "pi", available: true }),
     expect.objectContaining({ id: "codex", available: false, reason: expect.any(String) }),
     expect.objectContaining({ id: "claude", available: false, reason: expect.any(String) }),
+    expect.objectContaining({ id: "cursor", available: false, reason: expect.any(String) }),
   ]);
   const unavailable = await app.request({ action: "conversation", workspaceKind: "project", projectId:app.projectId, id: "no-native", engine: "codex" });
   expect(unavailable.status).toBe(409);
@@ -286,7 +287,7 @@ it('restores a pending native approval even when its cursor fell outside the rep
  const next=await connect(app.host,'overflow');await next.next(f=>f.type==='resync_required');expect(await next.next(f=>f.type==='event'&&f.event.type==='native_request')).toMatchObject({event:{id:request.event.id}});next.socket.close();
 });
 
-it.each(['codex','claude'] as const)('reports missing native authentication before creating a %s Task',async engine=>{
+it.each(['codex','claude','cursor'] as const)('reports missing native authentication before creating a %s Task',async engine=>{
  const app=await start(undefined,true,engine,{FIXTURE_AUTH_MISSING:'1'});const result=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
  expect((await result.json()).engines.find((e:any)=>e.id===engine)).toMatchObject({available:false,authentication:'required',reason:expect.stringContaining('authentication')});
  expect((await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'no-auth',engine})).status).toBe(409);
@@ -299,4 +300,64 @@ it('rejects native Chat creation without persisting a Task and defaults Chat to 
  expect((await (await app.request()).json()).conversations).toEqual([]);
  const allowed=await app.request({action:'conversation',workspaceKind:'chat',id:'default-chat'});
  expect(allowed.status).toBe(200);expect(await allowed.json()).toMatchObject({engine:'pi',workspaceKind:'chat'});
+});
+
+
+it("runs Cursor through ACP, waits for answers, and resumes the bound native session", async () => {
+  const app=await start(undefined,true,'cursor');
+  expect((await app.request({action:'conversation',workspaceKind:'chat',id:'bad-cursor',engine:'cursor'})).status).toBe(409);
+  expect((await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'cursor-task',engine:'cursor'})).status).toBe(200);
+  const client=await connect(app.host,'cursor-task');
+  expect(await client.next(f=>f.type==='opened')).toMatchObject({engine:'cursor',capabilities:{images:true,followUp:true,steer:false}});
+  client.socket.send(JSON.stringify({v:1,type:'prompt',text:'ask question',requestId:'q'}));
+  const q=await client.next(f=>f.type==='event'&&f.event.type==='native_request');
+  client.socket.send(JSON.stringify({v:1,type:'ui_response',id:q.event.id,value:'Second',requestId:'answer'}));
+  expect(await client.next(f=>f.type==='event'&&f.event.type==='message_completed')).toMatchObject({event:{text:expect.stringContaining('"selectedOptionIds":["b"]')}});
+  await client.next(f=>f.type==='event'&&f.event.type==='run_completed');
+  client.socket.send(JSON.stringify({v:1,type:'set_model',provider:'cursor',id:'cursor-other',requestId:'model'}));
+  await client.next(f=>f.type==='ack'&&f.requestId==='model');
+  client.socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  const reopened=await start(app.root,true,'cursor'),resumed=await connect(reopened.host,'cursor-task');
+  expect((await resumed.next(f=>f.type==='history')).entries).toEqual(expect.arrayContaining([expect.objectContaining({kind:'user',text:'ask question'}),expect.objectContaining({kind:'assistant',text:expect.stringContaining('selectedOptionIds')})]));
+  resumed.socket.send(JSON.stringify({v:1,type:'get_models'}));
+  expect(await resumed.next(f=>f.type==='models')).toMatchObject({current:{provider:'cursor',id:'cursor-other'}});
+  resumed.socket.send(JSON.stringify({v:1,type:'prompt',text:'hold',requestId:'hold'}));await resumed.next(f=>f.type==='event'&&f.event.type==='run_started');
+  resumed.socket.send(JSON.stringify({v:1,type:'abort',requestId:'stop'}));
+  expect(await resumed.next(f=>f.type==='event'&&f.event.type==='run_completed')).toMatchObject({event:{status:'interrupted'}});
+  resumed.socket.close();
+});
+
+it('discovers Claude models before creation and restores confirmed model and effort after restart',async()=>{
+ const app=await start(undefined,true,'claude');
+ await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'claude-settings',engine:'claude'});
+ const client=await connect(app.host,'claude-settings');await client.next(f=>f.type==='opened');
+ client.socket.send(JSON.stringify({v:1,type:'get_model_catalog',engine:'claude',requestId:'catalog'}));
+ expect(await client.next(f=>f.type==='model_catalog')).toMatchObject({models:[expect.objectContaining({id:'claude-test',thinkingLevels:['low','medium','high']})]});
+ for(const frame of [{type:'set_model',provider:'claude',id:'claude-test'},{type:'set_thinking',level:'high'}]){client.socket.send(JSON.stringify({v:1,...frame,requestId:frame.type}));await client.next(f=>f.type==='ack'&&f.requestId===frame.type);}
+ client.socket.send(JSON.stringify({v:1,type:'get_stats',requestId:'stats'}));
+ expect(await client.next(f=>f.type==='stats')).toMatchObject({stats:{contextUsage:{tokens:40,contextWindow:200000},contextBreakdown:{method:'native_summary',categories:expect.arrayContaining([{id:'system',tokens:10},{id:'conversation',tokens:30}])}}});
+ client.socket.send(JSON.stringify({v:1,type:'rename_session',name:'Claude persisted title',requestId:'rename'}));await client.next(f=>f.type==='ack'&&f.requestId==='rename');
+ client.socket.send(JSON.stringify({v:1,type:'prompt',text:'test',requestId:'p'}));await client.next(f=>f.type==='event'&&f.event.type==='run_completed');
+ client.socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const reopened=await start(app.root,true,'claude'),resumed=await connect(reopened.host,'claude-settings');expect(await resumed.next(f=>f.type==='opened')).toMatchObject({state:{sessionName:'Claude persisted title'}});
+ expect((await resumed.next(f=>f.type==='sessions')).sessions).toEqual(expect.arrayContaining([expect.objectContaining({id:'claude-settings',name:'Claude persisted title'})]));
+ resumed.socket.send(JSON.stringify({v:1,type:'get_models'}));
+ expect(await resumed.next(f=>f.type==='models')).toMatchObject({current:{provider:'claude',id:'claude-test'},thinkingLevel:'high'});resumed.socket.close();
+});
+
+
+it('keeps Cursor permission blocked across browser reconnect, rejects stale answers, and drains Host follow-ups',async()=>{
+ const app=await start(undefined,true,'cursor');await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'cursor-permission',engine:'cursor'});
+ const client=await connect(app.host,'cursor-permission');await client.next(f=>f.type==='opened');
+ client.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'p',text:'ask approval'}));
+ const pending=await client.next(f=>f.type==='event'&&f.event.type==='native_request');
+ client.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'queued',text:'after permission',mode:'follow_up'}));
+ await client.next(f=>f.type==='ack'&&f.requestId==='queued');
+ client.socket.close();const next=await connect(app.host,'cursor-permission');
+ const restored=await next.next(f=>f.type==='event'&&f.event.type==='native_request');expect(restored.event.id).toBe(pending.event.id);
+ next.socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'deny',id:pending.event.id,value:'deny'}));
+ expect(await next.next(f=>f.type==='event'&&f.event.type==='message_completed')).toMatchObject({event:{text:expect.stringContaining('"optionId":"deny"')}});
+ expect(await next.next(f=>f.type==='event'&&f.event.type==='message_completed')).toMatchObject({event:{text:'Cursor native marker'}});
+ next.socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'stale',id:pending.event.id,value:'allow'}));
+ expect(await next.next(f=>f.type==='error'&&f.requestId==='stale')).toMatchObject({code:'unknown_ui_request'});next.socket.close();
 });

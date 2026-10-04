@@ -1,5 +1,7 @@
 # Native Codex and Claude Code integration
 
+> Current Cursor and Claude capability changes: [Server #56 contract](cursor-claude.md). Older three-engine descriptions below are historical where they conflict.
+
 Status: **M0–M5 implemented, merged and deployed**. See [M5 deployment evidence](../reviews/native-agents-m5-20260923.md) and [supported capabilities](../deployment/native-agents.md).
 Date: 2026-09-23. Owner decisions were synthesized from the current discussion.
 Tracking: [Agent #48](http://gitea:3000/awangs/pi-coffee/issues/48). Browser delivery: [Server #6](http://gitea:3000/awangs/pi-coffee-server/issues/6).
