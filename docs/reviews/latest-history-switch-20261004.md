@@ -28,7 +28,7 @@ path. Read-only index HTTP requests never start an Agent.
   an unsupported audit omitted `LATEST_NATIVE_REPLY`. The patched open returns
   native history. A separate test invalidates verification during native startup;
   it failed before the second check and passes afterward. Known-current V2 still
-  avoids full-history RPC.
+  avoids entire-history RPC.
 - `node scripts/probe-latest-history-switch.mjs`: actual Browser/Web/Host with
   isolated native RPC fixtures. A stays busy, B's native history gains a new
   reply, and B is selected again. With `PROBE_BASELINE_VIEW` pointing to the
@@ -36,7 +36,7 @@ path. Read-only index HTTP requests never start an Agent.
   entering older mode; A remains running. Two consecutive patched runs passed.
 - `PROBE_SYNC_V2=1 node scripts/probe-conversation-images.mjs`: V2 preview,
   download, refresh and native-history fallback passed, including byte equality.
-- Full `npm run check`: 97 files / 762 tests passed.
+- Complete `npm run check`: 97 files / 762 tests passed.
 
 Browser probes use the installed Chromium executable via `CHROMIUM_PATH`
 (latest-history) or `PI_COFFEE_BROWSER_EXECUTABLE` (images). Synthetic screenshots
@@ -62,3 +62,7 @@ input-sink or dependency issue in this diff.
 At diagnosis time both live Web and Host remained `83da477`; later source commits
 had only been staged. Publication, fresh-clone validation and activation evidence
 are recorded separately in Issue #45. A staged release is not a deployed release.
+
+Fresh-clone validation first caught the documentation vocabulary guard rejecting
+ordinary uses of a retired mode word in this report. The wording was corrected;
+no runtime or test behavior was changed for that failure.
