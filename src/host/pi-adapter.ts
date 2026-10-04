@@ -45,6 +45,7 @@ export interface RpcPiSessionFactoryOptions {
   /** Additional Pi skills loaded for every Host session. */
   skills?: string[];
   env?: Record<string, string>;
+  extensionsForSession?: (id:string)=>Promise<string[]>;
   envForSession?: (id:string) => Promise<Record<string,string>>;
   cwdForSession?: (id: string, existing: boolean) => Promise<string>;
 }
@@ -139,7 +140,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
   private async createOnce(options: { sessionId: string; workspaceSessionId?:string; requireExisting?:boolean }): Promise<PiSession> {
     const args = appendSkillArgs(
-      appendExtensionArgs([...(this.options.args ?? [])], this.extensions()),
+      appendExtensionArgs([...(this.options.args ?? [])], [...this.extensions(),...await this.options.extensionsForSession?.(options.workspaceSessionId??options.sessionId)??[]]),
       this.options.skills ?? [],
     );
     const instructions=await this.options.instructions?.(options.workspaceSessionId??options.sessionId);

@@ -1,3 +1,6 @@
+import {MishuCoordinator} from './mishu.js';
+import {createRequire} from 'node:module';
+import {dirname} from 'node:path';
 import type {GitHubAccounts} from './github-accounts.js';
 import {join} from "node:path";
 import {ConversationIndex,ConversationIndexError} from "./conversation-index.js";
@@ -92,6 +95,7 @@ export interface HostServerOptions {
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  mishu?:MishuCoordinator;
   user: string | undefined;
   workdir?: string;
   factory: PiSessionFactory;
@@ -203,12 +207,46 @@ export class HostServer {
     });
   }
 
+  async mishuRuntime(user:string|undefined,id:string):Promise<{extensions:string[];env:Record<string,string>}> {
+    const slot=await this.slotFor(user);if(!slot.mishu)return {extensions:[],env:{}};
+    const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
+    const extension=this.mishuExtension();if(!extension)return {extensions:[],env:{}};
+    const env=await slot.mishu.environment(id,`http://127.0.0.1:${this.address().port}/api/mishu/runtime`);
+    return {extensions:env.PI_COFFEE_MISHU_TOKEN?[extension]:[],env};
+  }
+  private mishuExtension():string|undefined {
+    if(this.options.runtimeStatus?.().mode==='emergency')return undefined;
+    try{return dirname(createRequire(import.meta.url).resolve('pi-coffee-mishu/package.json'));}catch{return undefined;}
+  }
   private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse) {
+    if(req.url==='/api/mishu/runtime'){
+      if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
+      const token=req.headers.authorization?.replace(/^Bearer /,'')??'';
+      const slots=await Promise.all([...this.slots.values()]);
+      const slot=slots.find(s=>s.mishu?.accepts(token));
+      if(!slot?.mishu){json(res,401,{error:'Invalid MISHU capability'});return;}
+      try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
+    }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    if(req.url==='/api/mishu'){
+      if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
+      if(!slot.mishu||!this.mishuExtension()){json(res,503,{error:'MISHU plugin is not installed on this Host'});return;}
+      try{
+        const input=await readJson(req,32768);
+        if(typeof input.id!=='string'||!input.id||input.id.length>128)throw Error('Select a Pi Chat first');
+        let result:unknown;
+        if(input.action==='status')result=await slot.mishu.status(input.id);
+        else if(input.action==='select'&&typeof input.selected==='boolean'){
+          result=await slot.mishu.select(input.id,input.selected);
+          for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
+        }else throw Error('Use /mishu-setup explicitly inside the selected Chat');
+        json(res,200,result);
+      }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
+    }
     const readUrl=new URL(req.url??'/', 'http://host');
     const syncRoute=/^\/api\/conversations\/([^/]+)\/(meta|page|changes|content|commands)$/.exec(readUrl.pathname);
     if(syncRoute){
@@ -510,8 +548,11 @@ export class HostServer {
         : { factory: this.factory, githubAccounts:this.githubAccounts, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners?()=>scope.runners!.guidance():undefined, onEvent:(id,event)=>index?.event(id,event),onCommand:index?(id,requestId,state,mode)=>index.command(id,requestId,state,mode):undefined, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
-      const slot: UserSlot = { user, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks:new Set<string>(), workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const lifecycleLocks=new Set<string>();
+      const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks):undefined;
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners?()=>scope.runners!.guidance():undefined, onEvent:(id,event)=>{index?.event(id,event);mishu?.event(id,event);},onCommand:async(id,requestId,state,mode)=>{await mishu?.command(id,requestId,state,mode);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
+      mishu?.attach(registry);
+      const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -623,6 +664,7 @@ export class HostServer {
     await Promise.allSettled([...this.taskPreparations]);
     for (const slot of slots) {
       if (slot.status !== "fulfilled") continue;
+      await slot.value.mishu?.close();
       await slot.value.registry.close();
     }
     // Detaching a browser does not cancel a started open, metadata read or
@@ -674,6 +716,7 @@ class HostSocket implements SessionSink {
   /** Resolved from `slot` before the first frame is handled. */
   private registry!: HostSessionRegistry;
   private factory!:PiSessionFactory;
+  private mishu?:MishuCoordinator;
   private workdir?: string;
   private workspaces?: Workspaces;
   private lifecycleLocks = new Set<string>();
@@ -702,7 +745,7 @@ class HostSocket implements SessionSink {
     this.messageQueue = this.slot.then((resolved) => {
       this.user = resolved.user;
       this.registry = resolved.registry;this.index=resolved.index;
-      this.factory=resolved.factory;
+      this.factory=resolved.factory;this.mishu=resolved.mishu;
       this.workdir = resolved.workdir;
       this.workspaces = resolved.workspaces;
       this.lifecycleLocks = resolved.lifecycleLocks;
@@ -1084,6 +1127,8 @@ class HostSocket implements SessionSink {
     // deterministic command/event ordering even when a test adapter emits its
     // first Pi event synchronously.
     setImmediate(() => {
+      const setup=frame.text.trim()==='/mishu-setup';
+      if(setup)this.mishu?.beginSetup(session.id,frame.requestId);
       void session.prompt(frame.requestId, frame.text, frame.images).catch((error) => {
         this.send({
           v: 1,
@@ -1092,7 +1137,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      });
+      }).finally(()=>this.mishu?.endSetup(session.id,frame.requestId));
     });
   }
 

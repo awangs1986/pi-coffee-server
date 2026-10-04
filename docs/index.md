@@ -112,3 +112,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Cursor ACP and Claude Code completion: [contract and native acceptance limits](spec/cursor-claude.md), [Server #56](https://github.com/awangs1986/pi-coffee-server/issues/56).
 
 - Grok Build native ACP integration: [capabilities, login and acceptance](spec/grok-build.md), [Server #57](https://github.com/awangs1986/pi-coffee-server/issues/57).
+
+- [MISHU per-Chat coordination](spec/mishu.md): independent plugin, explicit setup, existing native Agent conversations, candidate publication and acceptance.
