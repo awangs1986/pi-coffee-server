@@ -580,7 +580,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .side-label.attention { color: var(--warn, #b45309); }
 .session-item .badge { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; }
 .session-item .badge.waiting { background: var(--warn, #d97706); animation: pulse 1s infinite alternate; }
-.session-item .badge.finished { background: var(--ok, #16a34a); }
+.session-item .finished-coffee { display: block; flex: none; width: 28px; height: 20px; fill: var(--text); image-rendering: pixelated; }
 .session-item.waiting { background: #fff7ed; }
 .session-item.finished { background: #f0fdf4; }
 .session-item.waiting.active, .session-item.finished.active { background: #e4e6ea; }
@@ -1135,7 +1135,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .sync-retry-button:hover { background: var(--bg-subtle); text-decoration: underline; }
 .sync-retry-button:focus-visible { outline: 2px solid var(--focus, #2383e2); outline-offset: 1px; }
 .sync-retry-button[hidden] { display: none; }
-.running-cat { display: block; flex: none; width: 42px; height: 30px; fill: #101112; overflow: visible; image-rendering: pixelated; }
+.running-cat { display: block; flex: none; width: 42px; height: 30px; fill: #7CBAE8; overflow: visible; image-rendering: pixelated; }
 .running-cat .cat-eye { fill: #f7f7f2; }
 .running-cat .cat-legs:not(.cat-legs-a) { opacity: 0; }
 .conversation-sync-status[data-running="true"] .cat-body, .sidebar-running-cat .cat-body { animation: sync-cat-bob .32s steps(2, end) infinite; }

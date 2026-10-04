@@ -1312,3 +1312,15 @@ it('creates sidebar groups, blocks occupied deletion and deletes after moving th
  expect(group()).toBeNull();expect(document.querySelector('[data-sidebar-ungrouped] .session-item')?.getAttribute('data-session-id')).toBe(task.id);
  expect(app.frames.filter(f=>f.type==='abort'||f.type==='prompt')).toEqual([]);
 });
+
+it('replaces the running cat with pixel coffee only for a finished conversation',async()=>{
+ const app=await setup();const ws=app.sockets.at(-1);
+ const show=(state:any)=>ws.receive({type:'sessions',sessions:[{id:'status-task',preview:'Task',updatedAt:new Date().toISOString(),...state}]});
+ show({running:true});expect(document.querySelector('[data-session-id="status-task"] .sidebar-running-cat')).not.toBeNull();
+ show({running:false,attention:'finished'});
+ expect(document.querySelector('[data-session-id="status-task"] .sidebar-running-cat')).toBeNull();
+ expect(document.querySelector('[data-session-id="status-task"] .finished-coffee')?.getAttribute('aria-label')).toBe('已完成，待查看');
+ show({attention:'waiting'});expect(document.querySelector('[data-session-id="status-task"] .badge.waiting')?.textContent).toBe('?');
+ expect(document.querySelector('[data-session-id="status-task"] .finished-coffee')).toBeNull();
+ show({running:false});expect(document.querySelector('[data-session-id="status-task"] .finished-coffee')).toBeNull();
+});
