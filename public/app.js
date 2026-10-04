@@ -1,3 +1,5 @@
+import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
+import {ConversationDisplay} from './conversation-display.js';
 import {splitUploadedFilesText as parseUploadedFiles} from './uploaded-files.js';
 const splitUploadedFilesText = text => parseUploadedFiles(text, downloadUrl);
 import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
@@ -81,22 +83,12 @@ let connected = false, opened = false, streaming = false, compacting = false, mo
 let activeId = null;
 let currentUser = null;
 const loginCoffee=createLoginCoffee();
-let durableSync=false, localSyncShown=false, activeBindingEpoch=null, syncHintTimer=null;
-let recentlySynced=[];
+let activeBindingEpoch=null, syncHintTimer=null;
 const preferDurableSync=new URLSearchParams(location.search).get('syncProtocol')!=='1';
 const viewScheduler=createRenderScheduler({budgetMs:4});
 function currentRenderView(){return {userScope:currentUser,conversationId:activeId,epoch:connectionEpoch,viewGeneration:taskSelectionEpoch};}
 const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened)connect();}},timeoutMs:10000});
-const conversationRepository=new ConversationRepository({onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();},onUpdate:(id,state,details)=>{
-  if(id!==activeId||!currentUser||historyReady&&!durableSync)return;
-  const failed=!['cached','current','syncing'].includes(state.status);
-  if(failed)syncStatus.update({conversationId:id,state:state.status==='timeout'?'timeout':'error',message:'同步暂时失败，仍可阅读本地内容'});
-  else if(state.status==='syncing')syncStatus.update({conversationId:id,state:'syncing'});
-  else if(['error','offline','timeout'].includes(state.status))syncStatus.update({conversationId:id,state:state.status,message:'同步暂时失败，仍可阅读本地内容'});
-  else if(state.sourceFreshness==='unknown'||state.sourceFreshness==='reconciling')syncStatus.update({conversationId:id,state:'synced',message:state.sourceFreshness==='reconciling'?'对话副本已同步，原生历史核对中':'对话副本已同步，原生历史尚未核对'});
-  else syncStatus.update({conversationId:id,state:'idle'});
-  if((durableSync||!historyReady)&&details?.reason!=='status'&&state.bindingEpoch&&(state.entries?.length||state.sourceFreshness==='current')){localSyncShown=true;syncedView.show(state,{details});}
-}});
+const conversationRepository=new ConversationRepository({onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
   onRendered:(visible,state)=>{entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
@@ -106,22 +98,18 @@ function requestConversationSync(){
   const id=activeId,user=currentUser;
   syncHintTimer=setTimeout(()=>{syncHintTimer=null;if(user===currentUser)void conversationRepository.sync(id,{priority:0}).catch(()=>{});},75);
 }
+const conversationDisplay=new ConversationDisplay({repository:conversationRepository,view:syncedView,status:syncStatus,renderNative:frame=>{
+  const scroll=previewScroll===null?null:ui.scroller.scrollTop;
+  renderHistory(frame);if(scroll!==null)ui.scroller.scrollTop=scroll;
+}});
 function selectConversationView(id){
   clearTimeout(syncHintTimer);syncHintTimer=null;
-  durableSync=false;localSyncShown=false;viewScheduler.setView(currentRenderView());syncedView.select(id);syncStatus.select(id);
-  if(!id||!currentUser)return;
-  syncStatus.update({conversationId:id,state:'syncing'});
-  const cached=conversationRepository.peek(id);
-  if(cached?.bindingEpoch){localSyncShown=true;syncedView.show(cached);}
-  const selection=taskSelectionEpoch,user=currentUser;
-  // A disk result must not repaint a memory snapshot midway through anchor restoration.
-  void conversationRepository.getLocal(id).then(state=>{if(state?.bindingEpoch&&selection===taskSelectionEpoch&&user===currentUser&&!historyReady&&!localSyncShown){localSyncShown=true;syncedView.show(state);}}).catch(()=>{});
-  recentlySynced=[id,...recentlySynced.filter(key=>key!==id)].slice(0,5);
-  conversationRepository.watch(recentlySynced);
-  void conversationRepository.sync(id,{priority:0}).catch(()=>{});
+  viewScheduler.setView(currentRenderView());conversationDisplay.select(id);
 }
+const navigation=createConversationNavigation({onSelect:id=>id===null?applyNewSession(false):applySessionSelection(id),
+  onAttach:()=>connect(),onError:error=>toast(error.message)});
 
-function rememberTask(id){if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
+function rememberTask(id){navigation.adopt(id);if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
 let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
 const textDrafts=new Map();
 const draftKey=()=>JSON.stringify([currentUser,activeId]);
@@ -167,7 +155,7 @@ function previewAllowed(id){
 }
 function invalidatePreview(id){
   void conversationRepository.invalidate(id);
-  if(id===activeId){syncedView.select(id);localSyncShown=false;resetThread();}
+  if(id===activeId){conversationDisplay.invalidate(id);resetThread();}
   recentConversations.delete(previewKey(id));
   void previewStore.delete(currentUser,id);
   if(id===activeId && previewScroll!==null)resetThread();
@@ -203,21 +191,21 @@ function displayPreview(id,snapshot){
   // Once metadata arrives, reject either a missing saved binding or a saved
   // binding whose task is now absent. Wait for authoritative history instead.
   if(!previewAllowed(id) || (workspaceState&&(snapshot.fingerprint||fingerprint)&&fingerprint!==snapshot.fingerprint)){invalidatePreview(id);return false;}
-  renderConversationPreview(ui.thread,snapshot);
+  if(!conversationDisplay.preview(()=>{renderConversationPreview(ui.thread,snapshot);return true;}))return false;
   previewScroll=snapshot.scroll;visiblePreviewFingerprint=snapshot.fingerprint;
   ui.scroller.scrollTop=snapshot.scroll;
   ui.thread.removeAttribute('inert');
   return true;
 }
 function showRecentThread(id){
-  if(!id || !previewAllowed(id)||localSyncShown)return;
+  if(!id || !previewAllowed(id)||conversationDisplay.hasIndex)return;
   const cached=recentConversations.get(previewKey(id));
   if(cached){displayPreview(id,cached);return;}
   // Identity must have been verified by /auth/me before reading disk on page startup.
   if(!currentUser)return;
   const user=currentUser,selection=taskSelectionEpoch;
   void previewStore.get(user,id).then(snapshot=>{
-    if(!snapshot||user!==currentUser||selection!==taskSelectionEpoch||id!==activeId||historyReady||localSyncShown||previewScroll!==null)return;
+    if(!snapshot||user!==currentUser||selection!==taskSelectionEpoch||id!==activeId||historyReady||conversationDisplay.hasIndex||previewScroll!==null)return;
     recentConversations.put(previewKey(id),snapshot,snapshot.entries.reduce((n,e)=>n+e.text.length*2+128,256));
     displayPreview(id,snapshot);
   });
@@ -922,7 +910,7 @@ function sessionRow(session) {
   }
   item.setAttribute('role', 'button');
   item.tabIndex = 0;
-  const main = el('div', 'session-main');
+  const main = el('a', 'session-main');main.href=conversationHref(session.id);
   main.appendChild(el('span', 'title', sessionTitle(session)));
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='preparing')main.append(el('span','interrupted-badge','Fork 准备中'));
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='failed')main.append(el('span','interrupted-badge','Fork 未完成 · 副本已保留'));
@@ -944,7 +932,7 @@ function sessionRow(session) {
   menu.addEventListener('click', (event) => { event.stopPropagation(); openSessionMenu(session, menu); });
   item.appendChild(menu);
   const open = () => {const task=workspaceState?.conversations.find(c=>c.id===session.id);if(task?.fork&&task.fork.status!=='completed'){toast(task.fork.status==='failed'?'Fork 未完成：'+(task.fork.error||'请检查保留的副本')+' · '+task.cwd:'Fork 正在准备，请稍候');return;}switchSession(session.id); closeSidebarOnMobile(); };
-  item.addEventListener('click', open);
+  item.addEventListener('click', event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();open();});
   item.addEventListener('keydown', (e) => { if (e.target===item && !e.isComposing && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } });
   return item;
 }
@@ -1253,7 +1241,8 @@ async function whoAmI(epoch) {
     if (response.status === 401) {
       revokeCachedIdentity();await clearPreviews();
       const body = await response.json().catch(() => ({}));
-      location.href = body?.loginUrl || '/login';
+      const loginUrl=body?.loginUrl || '/login';
+      location.href=loginUrl+(loginUrl.includes('?')?'&':'?')+'returnTo='+encodeURIComponent(location.pathname);
       return false;
     }
     if (!response.ok) return true;
@@ -1261,11 +1250,11 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){sidebarOrder.clear();recentlySynced=[];if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     conversationRepository.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
-    if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null; }
+    if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = navigation.initial(sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null); }
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
     ui.userBtn.disabled = !info.auth;
@@ -1282,7 +1271,7 @@ function revokeCachedIdentity(){
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  loginCoffee.reset();sidebarOrder.clear();conversationRepository.setScope(null);recentlySynced=[];syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
+  loginCoffee.reset();sidebarOrder.clear();conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();
 }
@@ -1402,6 +1391,12 @@ function renderProjectContext() {
 }
 
 
+function disconnectExecution() {
+  abandonPendingSettings();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
+  connectionEpoch++;
+  if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
+  opened=false;connected=false;historyReady=false;pendingOpenId=null;activeBindingEpoch=null;
+}
 function connect() {
   abandonPendingSettings();
   clearTimeout(reconnectTimer);
@@ -1524,11 +1519,11 @@ function handleFrame(frame, ws) {
       pendingOpenId = null;
       activeId = frame.sessionId;
       if(syncedView.active!==activeId){resetThread();selectConversationView(activeId);}
-      activeBindingEpoch=frame.syncProtocol===2?frame.bindingEpoch:null;durableSync=frame.syncProtocol===2;
+      activeBindingEpoch=frame.syncProtocol===2?frame.bindingEpoch:null;conversationDisplay.protocol(frame);
       queuedRequests.clear();
       rememberTask(activeId);
       statsCache = null;
-      if(previewScroll===null&&!localSyncShown)resetThread();
+      if(previewScroll===null&&!conversationDisplay.hasIndex)resetThread();
       clearExtensionUi();
       if(!sameTransfer)resetTransfers();
       void loadWorkspace();
@@ -1549,17 +1544,8 @@ function handleFrame(frame, ws) {
       if(frame.sessionId===activeId)requestConversationSync();return;
     case 'history': {
       if (frame.sessionId !== activeId) return;
-      if(frame.syncProtocol===2){
-        durableSync=true;
-        void conversationRepository.ingestSnapshot(activeId,{...frame,conversationId:activeId,appliedRevision:frame.baseRevision}).then(()=>requestConversationSync()).catch(()=>requestConversationSync());
-        historyReady=true;renderUncertainPrompts();refreshComposer();flushFirstPrompt();return;
-      }
-      durableSync=false;localSyncShown=false;syncStatus.update({conversationId:activeId,state:'idle'});
-      const scroll=previewScroll===null?null:ui.scroller.scrollTop;
-      renderHistory(frame);
-      if(scroll!==null)ui.scroller.scrollTop=scroll;
-      renderUncertainPrompts();
-      historyReady=true;rememberRecentThread();refreshComposer();flushFirstPrompt();
+      if(!conversationDisplay.history(frame))return;
+      historyReady=true;renderUncertainPrompts();if(!conversationDisplay.indexed)rememberRecentThread();refreshComposer();flushFirstPrompt();
       return;
     }
     case 'model_catalog':
@@ -1645,7 +1631,7 @@ function handleFrame(frame, ws) {
     case 'event':
       if(frame.sessionId!==activeId)return;
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
-      if(durableSync){
+      if(conversationDisplay.indexed){
         requestConversationSync();
         const type=frame.event?.type;
         if(['message_delta','message_completed','tool_update','message_update','message_start','message_end','tool_execution_start','tool_execution_update','tool_execution_end'].includes(type))return;
@@ -2702,7 +2688,7 @@ function submitPrompt(text, images) {
   promptOutbox.set(frame.requestId,{task:activeId,user:currentUser,text:wireText,images:(frame.images||[]).map(({type,data,mimeType})=>({type,data,mimeType})),bytes,uncertain:false});
   if (mode !== 'prompt') queuedRequests.add(frame.requestId);
   if (mode === 'prompt') {
-    if(!durableSync){const optimistic=pushUser(text, images, undefined, files);optimistic.pendingRequestId=frame.requestId;promptOutbox.get(frame.requestId).optimistic=optimistic;}
+    if(!conversationDisplay.indexed){const optimistic=pushUser(text, images, undefined, files);optimistic.pendingRequestId=frame.requestId;promptOutbox.get(frame.requestId).optimistic=optimistic;}
     lastUserText = text;
     setStreaming(true);
     showThinking(true);
@@ -2745,19 +2731,20 @@ const skillPanel=initSkills({
 });
 
 // ---------- session actions ----------
-function switchSession(id) {
+function switchSession(id) {navigation.select(id);}
+function applySessionSelection(id) {
   closeMenu();sshmeDraftId=null;
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
-  if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return;}
-  if (id === activeId && opened) return;
-  saveVisiblePosition();saveTextDraft();
+  if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return false;}
+  if (id === activeId && opened) return false;
+  saveVisiblePosition();saveTextDraft();disconnectExecution();
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
   taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
   activeId = id;
-  rememberTask(id);
+  if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}
   streaming = false;
   compacting = false;
   statsCache = null;
@@ -2770,11 +2757,11 @@ function switchSession(id) {
   renderProjectContext();
   renderHeader();
   renderSessionList();
-  connect();
 }
-function newSession(focus = true) {
+function newSession(focus = true) {navigation.select(null);if(focus)ui.prompt.focus();}
+function applyNewSession(focus = true) {
   closeMenu();sshmeDraftId=null;
-  saveVisiblePosition();saveTextDraft();
+  saveVisiblePosition();saveTextDraft();disconnectExecution();
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   closeTaskDetails();
@@ -2784,7 +2771,7 @@ function newSession(focus = true) {
   engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
-  rememberTask(null);
+  sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);
   streaming = false;
   compacting = false;
   statsCache = null;
@@ -2796,7 +2783,6 @@ function newSession(focus = true) {
   renderProjectContext();
   renderHeader();
   renderSessionList();
-  connect();
   if (focus) ui.prompt.focus();
 }
 

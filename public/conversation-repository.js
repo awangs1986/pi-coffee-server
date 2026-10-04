@@ -262,13 +262,13 @@ export class ConversationRepository {
     concurrency = 4, maxMemoryConversations = 5, pollMs = 2500, now = Date.now, ...storeOptions } = {}) {
     this.store = store || new ConversationSyncStore({ indexedDB, ...storeOptions }); this.onUpdate = onUpdate; this.onUnauthorized = onUnauthorized;
     this.pool = new BoundedReadPool({ concurrency }); this.transport = new SyncWorkerPool({ fetch, useWorkers: useWorkers && !fetch, workerFactory });
-    this.actors = new Map(); this.generations = new Map(); this.authGeneration = 0; this.maxMemoryConversations = maxMemoryConversations; this.pollMs = pollMs; this.now = now;
+    this.actors = new Map(); this.subscriptions=new Map(); this.generations = new Map(); this.authGeneration = 0; this.maxMemoryConversations = maxMemoryConversations; this.pollMs = pollMs; this.now = now;
     this.scope = undefined; this.closed = false; this.watched = new Set(); this.timers = new Map(); this.authController = new AbortController();
   }
   setScope(scope) {
     const next = typeof scope === 'string' && scope ? scope : undefined; if (next === this.scope) return;
     const previous = this.scope; this.scope = next; this.authGeneration++; this.authController.abort(); this.authController = new AbortController(); this.store.invalidate();
-    this.actors.clear(); this.generations.clear(); this.watched.clear(); for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear();
+    this.actors.clear(); this.subscriptions.clear(); this.generations.clear(); this.watched.clear(); for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear();
     if (!next && previous) void this.store.delete(previous);
   }
   _context(id) { return { userScope: this.scope, conversationId: id, authGeneration: this.authGeneration, conversationGeneration: this.generations.get(id) || 0 }; }
@@ -276,20 +276,20 @@ export class ConversationRepository {
   _actor(id) {
     if (!this.scope || typeof id !== 'string' || !id) throw new SyncError('unauthorized');
     let actor = this.actors.get(id);
-    if (!actor) { actor = { id, queue: Promise.resolve(), receipts: new Map(), listeners: new Set(), lastAccess: this.now(), generation: 0, failures: 0 }; this.actors.set(id, actor); }
+    if (!actor) { actor = { id, queue: Promise.resolve(), receipts: new Map(), listeners: this.subscriptions.get(id)??new Set(), lastAccess: this.now(), generation: 0, failures: 0 }; this.actors.set(id, actor); }
     actor.lastAccess = this.now(); return actor;
   }
   _enqueue(actor, action) { const pending = actor.queue.then(action); actor.queue = pending.then(() => undefined, () => undefined); return pending; }
-  _emit(actor, details) {
-    if (!actor.state) return;
-    try { this.onUpdate(actor.id, actor.state, details); } catch {}
-    for (const listener of actor.listeners) { try { listener(actor.state, details); } catch {} }
+  _emit(actor, details, state=actor.state) {
+    if (!state) return;
+    try { this.onUpdate(actor.id, state, details); } catch {}
+    for (const listener of actor.listeners) { try { listener(state, details); } catch {} }
     const retained = [...this.actors.values()].filter(item => item.state && item !== actor && !item.listeners.size && !item.syncing).sort((a, b) => a.lastAccess - b.lastAccess);
     let count = [...this.actors.values()].filter(item => item.state).length;
     while (count > this.maxMemoryConversations && retained.length) { const old = retained.shift(); old.state = undefined; old.receipts.clear(); count--; }
   }
   peek(id) { const actor = this.actors.get(id); if (actor) actor.lastAccess = this.now(); return actor?.state; }
-  subscribe(id, listener) { const actor = this._actor(id); actor.listeners.add(listener); return () => actor.listeners.delete(listener); }
+  subscribe(id, listener) { const actor = this._actor(id),listeners=actor.listeners; this.subscriptions.set(id,listeners);listeners.add(listener);return ()=>{listeners.delete(listener);if(!listeners.size&&this.subscriptions.get(id)===listeners)this.subscriptions.delete(id);}; }
   async _load(actor, context, refresh = false) {
     if (actor.state && !refresh) return actor.state;
     const disk = await this.store.read(context.userScope, actor.id, () => this._valid(context));
@@ -300,6 +300,7 @@ export class ConversationRepository {
   getLocal(id, { refresh = false } = {}) {
     if (!this.scope) return Promise.resolve(undefined);
     const actor = this._actor(id), context = this._context(id);
+    if(actor.state && !refresh)return Promise.resolve(actor.state);
     return this._enqueue(actor, () => this._load(actor, context, refresh)).catch(() => undefined);
   }
   async _snapshot(actor, frame, context, { allowEpochChange = false } = {}) {
@@ -341,64 +342,88 @@ export class ConversationRepository {
   _read(id, type, params, context, priority = 2) {
     const query = new URLSearchParams(params).toString(), url = `/api/conversations/${encodeURIComponent(id)}/${type}${query ? `?${query}` : ''}`;
     const timeoutMs = type === 'meta' ? 3000 : type === 'changes' ? 8000 : 10000;
-    return this.pool.run(keyFor(context.userScope, context.authGeneration, url), signal => this.transport.read(url, context, signal), { priority, timeoutMs, signal: this.authController.signal }).then(value => {
+    const actor=this._actor(id), key=keyFor(context.userScope, context.authGeneration, url);
+    actor.readKeys??=new Set();actor.readKeys.add(key);
+    return this.pool.run(key, signal => this.transport.read(url, context, signal), { priority: Math.min(priority,actor.priority??priority), timeoutMs, signal: this.authController.signal }).then(value => {
       // The Web gateway stamps this from authenticated identity, never from Host/client input.
       if (!value || value.userScope !== context.userScope) throw new SyncError('unauthorized');
       return value;
     }).catch(error => {
       if (error.code === 'unauthorized' && this._valid(context)) { this.setScope(undefined); try { this.onUnauthorized(); } catch {} }
       throw error;
-    });
+    }).finally(()=>actor.readKeys.delete(key));
   }
   sync(id, { priority = 2, forceSnapshot = false } = {}) {
     if (!this.scope || this.closed) return Promise.resolve(undefined);
-    const actor = this._actor(id); if (forceSnapshot) actor.needsSnapshot = true; if (actor.syncing) return actor.syncing;
+    const actor = this._actor(id); if (forceSnapshot) actor.needsSnapshot = true;
+    actor.priority=Math.min(actor.syncing?actor.priority:priority,priority);
+    if(actor.syncing){for(const key of actor.readKeys??[])this.pool.promote(key,actor.priority);return actor.syncing;}
     const context = this._context(id);
-    actor.syncing = this._enqueue(actor, async () => {
-      await this._load(actor, context);
-      const meta = await this._read(id, 'meta', {}, context, priority);
+    // Serialize only local state transitions. Never hold the commit queue across
+    // network I/O: a socket snapshot and local reading must remain independent.
+    const commit=action=>this._enqueue(actor,()=>{if(!this._valid(context))throw new SyncError('stale_scope');return action();});
+    const snapshot=async()=>{
+      const generation=actor.generation;
+      const frame=await this._read(id,'page',{limitBytes:String(PAGE_BYTES)},context,actor.priority);
+      await commit(async()=>{
+        // A newer socket snapshot may have rebound the conversation during I/O.
+        if(actor.generation!==generation && actor.state?.bindingEpoch!==frame.bindingEpoch)return;
+        await this._snapshot(actor,frame,context,{allowEpochChange:true});actor.needsSnapshot=false;
+      });
+    };
+    actor.syncing = (async () => {
+      await this.getLocal(id);
+      const meta = await this._read(id, 'meta', {}, context, actor.priority);
       if (!this._valid(context)) return undefined;
       identity(meta, id); revision(meta.headRevision);
       if (meta.syncProtocol !== 2) throw new SyncError('unsupported_protocol');
       const old = actor.state;
-      if (actor.needsSnapshot || !old || old.bindingEpoch !== meta.bindingEpoch || compareRevision(old.appliedRevision, meta.headRevision) > 0 ||
-          (meta.oldestAvailableRevision && compareRevision(old.appliedRevision, meta.oldestAvailableRevision) < 0)) {
-        const frame = await this._read(id, 'page', { limitBytes: String(PAGE_BYTES) }, context, priority);
-        if (frame.bindingEpoch !== meta.bindingEpoch) throw new SyncError('epoch_mismatch');
-        await this._snapshot(actor, frame, context, { allowEpochChange: true }); actor.needsSnapshot = false;
-      }
+      if (actor.needsSnapshot || !old || old.bindingEpoch !== meta.bindingEpoch ||
+          (meta.oldestAvailableRevision && compareRevision(old.appliedRevision, meta.oldestAvailableRevision) < 0)) await snapshot();
       let batches = 0;
-      while (this._valid(context) && compareRevision(actor.state.appliedRevision, meta.headRevision) < 0) {
-        const before = actor.state.appliedRevision;
+      while (this._valid(context) && actor.state?.bindingEpoch===meta.bindingEpoch && compareRevision(actor.state.appliedRevision, meta.headRevision) < 0) {
+        const before = actor.state.appliedRevision,epoch=actor.state.bindingEpoch;
         try {
-          const batch = await this._read(id, 'changes', { bindingEpoch: actor.state.bindingEpoch, afterRevision: before, limitBytes: String(PAGE_BYTES) }, context, priority);
-          await this._changes(actor, batch, context);
-          if (actor.needsSnapshot) { const frame = await this._read(id, 'page', { limitBytes: String(PAGE_BYTES) }, context, priority); await this._snapshot(actor, frame, context); actor.needsSnapshot = false; break; }
+          const batch = await this._read(id, 'changes', { bindingEpoch: epoch, afterRevision: before, limitBytes: String(PAGE_BYTES) }, context, actor.priority);
+          await commit(()=>{
+            if(actor.state?.bindingEpoch!==epoch)return;
+            if(compareRevision(actor.state.appliedRevision,batch.throughRevision)>=0)return;
+            return this._changes(actor, batch, context);
+          });
+          if (actor.needsSnapshot) {await snapshot();break;}
           if (actor.state.appliedRevision === before && batch.hasMore) throw new SyncError('revision_gap');
           if (!batch.hasMore) break;
         } catch (error) {
-          if (error.code === 'store_conflict') { await this._load(actor, context, true); }
-          else if (['reset_required', 'epoch_mismatch', 'entity_reset_required', 'revision_gap', 'duplicate_unverifiable', 'unknown_operation'].includes(error.code)) {
-            const frame = await this._read(id, 'page', { limitBytes: String(PAGE_BYTES) }, context, priority); await this._snapshot(actor, frame, context); break;
-          } else throw error;
+          if (error.code === 'store_conflict') { await commit(()=>this._load(actor, context, true)); }
+          else if (['reset_required', 'epoch_mismatch', 'entity_reset_required', 'revision_gap', 'duplicate_unverifiable', 'unknown_operation'].includes(error.code)) {await snapshot();break;}
+          else throw error;
         }
-        // Cooperative batches, bounded independent actor queues; no global lock.
         if (++batches % 4 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       }
+      return commit(()=>{
+        if(!actor.state)return undefined;
+        // A delayed metadata response must not overwrite a newer snapshot's
+        // binding, run state or freshness, even though its body was harmless.
+        if(actor.state.bindingEpoch===meta.bindingEpoch && compareRevision(actor.state.appliedRevision,meta.headRevision)<=0){
+          actor.state = { ...actor.state, sourceFreshness: metadata(meta).sourceFreshness, lastSourceCheckAt: metadata(meta).lastSourceCheckAt,
+            runState: actor.state.appliedRevision === meta.headRevision ? metadata(meta).runState : actor.state.runState, headRevision: meta.headRevision,
+            status: compareRevision(actor.state.appliedRevision, meta.headRevision) >= 0 ? 'current' : 'syncing' };
+        }
+        actor.failures = 0; this._emit(actor, { reason: 'status' }); return actor.state;
+      });
+    })().catch(async error => {
       if (!this._valid(context)) return undefined;
-      actor.state = { ...actor.state, sourceFreshness: metadata(meta).sourceFreshness, lastSourceCheckAt: metadata(meta).lastSourceCheckAt,
-        runState: actor.state.appliedRevision === meta.headRevision ? metadata(meta).runState : actor.state.runState, headRevision: compareRevision(meta.headRevision, actor.state.appliedRevision) < 0 ? actor.state.appliedRevision : meta.headRevision,
-        status: compareRevision(actor.state.appliedRevision, meta.headRevision) >= 0 ? 'current' : 'syncing' };
-      actor.failures = 0; this._emit(actor, { reason: 'status' }); return actor.state;
-    }).catch(async error => {
-      if (!this._valid(context)) return undefined;
-      if (error.code === 'store_conflict') await this._load(actor, context, true);
       if (error.code === 'unauthorized') { this.setScope(undefined); return undefined; }
-      actor.failures++; if (actor.state) { actor.state = { ...actor.state, status: error.code || 'network_error' }; this._emit(actor, { reason: 'status' }); }
-      return actor.state;
+      return commit(async()=>{
+        if (error.code === 'store_conflict') await this._load(actor, context, true);
+        actor.failures++; if (actor.state) actor.state = { ...actor.state, status: error.code || 'network_error' };
+        this._emit(actor,{reason:'status'},actor.state??{conversationId:id,status:error.code||'network_error',sourceFreshness:'unknown'});
+        return actor.state;
+      }).catch(()=>undefined);
     }).finally(() => { actor.syncing = undefined; });
     return actor.syncing;
   }
+
   async loadOlder(id, cursor) {
     if (typeof cursor !== 'string' || !cursor) return undefined;
     const actor = this._actor(id), context = this._context(id); await this.getLocal(id);
@@ -460,7 +485,7 @@ export class ConversationRepository {
     if (scope) await this.store.delete(scope);
   }
   dispose() {
-    this.closed = true; this.authGeneration++; this.authController.abort(); this.pool.close(); this.transport.close(); this.store.close();
+    this.closed = true; this.authGeneration++; this.authController.abort(); this.pool.close(); this.transport.close(); this.store.close(); this.subscriptions.clear();
     for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear(); this.watched.clear(); this.actors.clear();
   }
 }

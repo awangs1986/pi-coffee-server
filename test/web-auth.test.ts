@@ -84,8 +84,8 @@ function fakeGitea(users: Record<string, string>): Promise<{ server: Server; url
 }
 
 /** Drive the browser half of the OAuth dance and return the session cookie. */
-async function login(webUrl: string, code: string): Promise<{ status: number; cookie?: string; location?: string; body: string }> {
-  const start = await fetch(`${webUrl}/auth/login`, { redirect: "manual" });
+async function login(webUrl: string, code: string, returnTo = ""): Promise<{ status: number; cookie?: string; location?: string; body: string }> {
+  const start = await fetch(`${webUrl}/auth/login?returnTo=${encodeURIComponent(returnTo)}`, { redirect: "manual" });
   expect(start.status).toBe(302);
   const authorize = new URL(start.headers.get("location")!);
   expect(authorize.pathname).toBe("/login/oauth/authorize");
@@ -132,6 +132,15 @@ function reader(socket: WebSocket): (count: number) => Promise<ServerFrame[]> {
 }
 
 describe("Gitea login on the Web Server (ADR-0004 / ADR-0010)", () => {
+  it("preserves a conversation deep link through login without allowing external redirects", async () => {
+    const fake=await fakeGitea({"code-alice":"alice"});gitea=fake.server;
+    web=new WebServer({host:"127.0.0.1",port:0,hostUrl:"ws://127.0.0.1:1/host",auth:new GiteaAuth({giteaUrl:fake.url,clientId:"coffee",clientSecret:"s3cret",allowedUsers:["alice"]})});await web.start();
+    const url=`http://127.0.0.1:${web.address().port}`;
+    expect((await login(url,"code-alice","/conversations/abc")).location).toBe("/conversations/abc");
+    for(const target of ["https://evil.test/", "//evil.test/", "/conversations/a/../other", "/api/secret"]){
+      expect((await login(url,"code-alice",target)).location).toBe("/");
+    }
+  });
   it("accepts an OAuth callback only in the browser that started that login and only once", async () => {
     const fake = await fakeGitea({ "code-alice": "alice" });
     gitea = fake.server;

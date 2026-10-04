@@ -25,7 +25,7 @@ function giant(length: number, marker: string) {
 afterEach(() => {
   for (const [target, type, listener, options] of listeners.splice(0)) target.removeEventListener(type, listener, options);
   vi.restoreAllMocks(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals();
-  localStorage.clear(); sessionStorage.clear(); vi.resetModules(); allFrames.length = 0;
+  history.replaceState(null,'','/');localStorage.clear(); sessionStorage.clear(); vi.resetModules(); allFrames.length = 0;
 });
 async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
   const originalAdd = EventTarget.prototype.addEventListener;
@@ -434,4 +434,13 @@ it('binds negotiated task commands to their selected conversation and durable ep
  const app=await setup('codex',2);await app.select('a');await tick(500);draft('Explicit scoped prompt');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(allFrames.find(frame=>frame.type==='prompt')).toMatchObject({conversationId:'a',bindingEpoch:'epoch-a',text:'Explicit scoped prompt'});
  document.querySelector<HTMLButtonElement>('#stop')!.click();expect(allFrames.find(frame=>frame.type==='abort')).toMatchObject({conversationId:'a',bindingEpoch:'epoch-a'});
+});
+it('rechecks identity before attaching after a cookie-account change without a logout broadcast',async()=>{
+ const app=await setup('codex',2);await app.select('a');await tick(500);draft('ACCOUNT-A-UNSENT');
+ let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>release=resolve);app.network.user='account-b';
+ // Keep read-only transport pending so only the attachment identity check can
+ // discover the new login; no storage logout notification is sent.
+ app.network.hang=true;const count=app.sockets.length;choose('b');await tick(50);expect(app.sockets.length).toBe(count);
+ release();await tick(100);expect(app.sockets.length).toBeGreaterThan(count);expect(prompt().value).toBe('');expect(thread().textContent).not.toContain('SYNC-a');
+ choose('a');await tick(100);expect(prompt().value).not.toContain('ACCOUNT-A-UNSENT');
 });

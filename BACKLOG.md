@@ -487,3 +487,9 @@ defines user-scoped persistence and the strict separation from task execution id
   admitted stale/unknown sources into V2. Current native freshness and explicit
   reader intent now guard these boundaries; private live diagnosis compared
   fingerprints without publishing user transcripts.
+
+- 2026-10-04: [Server #47](https://github.com/awangs1986/pi-coffee-server/issues/47)
+  separates local conversation selection from network/Agent waits, centralizes
+  visible history ownership, promotes existing foreground reads and adds scoped
+  canonical URLs with OAuth return paths. Existing bounded storage/rendering and
+  automatic compatibility-native history remain; native readiness gates sending.

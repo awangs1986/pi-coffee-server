@@ -1,3 +1,4 @@
+import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
@@ -173,9 +174,9 @@ export class WebServer {
       if(this.identity && !session){json(response,401,{error:"Login required",loginUrl:"/auth/login"});return;}
       json(response,200,{auth:Boolean(this.identity),user:session?{id:session.id,login:session.login}:this.defaultUser??null});return;
     }
-    if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || path==='/' || path==='/index.html')) {
+    if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || isShellPath(path))) {
       if(path.startsWith('/api/'))json(response,401,{error:"Login required"});
-      else {response.writeHead(302,{location:'/login'});response.end();}return;
+      else {response.writeHead(302,{location:loginDestination('/login',path)});response.end();}return;
     }
     if(path === '/api/client-address') {
       if(this.identity && !await this.identity.authorize(request)) {json(response,401,{error:'Login required'});return;}
@@ -238,8 +239,8 @@ export class WebServer {
       await this.proxyLocalSend(request, response);
       return;
     }
-    if (this.identity && (path === "/" || path === "/index.html") && !await this.identity.authorize(request)) {
-      response.writeHead(302,{location:"/auth/login"});response.end();return;
+    if (this.identity && (isShellPath(path)) && !await this.identity.authorize(request)) {
+      response.writeHead(302,{location:loginDestination("/auth/login",path)});response.end();return;
     }
     const asset = resolveAsset(path);
     if (asset === undefined) {
@@ -515,7 +516,7 @@ const ASSET_TYPES: Record<string, string> = {
  */
 function resolveAsset(path: string): { file: string; contentType: string } | undefined {
   if(path === "/workers/conversation-sync.js")return {file:"workers/conversation-sync.js",contentType:ASSET_TYPES.js};
-  if (path === "/" || path === "/index.html") return { file: "index.html", contentType: ASSET_TYPES.html };
+  if (isShellPath(path)) return { file: "index.html", contentType: ASSET_TYPES.html };
   const vendor = /^\/vendor\/([A-Za-z0-9_-]+)\.js$/.exec(path);
   if (vendor !== null) return { file: `vendor/${vendor[1]}.js`, contentType: ASSET_TYPES.js };
   const match = /^\/([A-Za-z0-9_-]+)\.([a-z0-9]+)$/.exec(path);

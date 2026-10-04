@@ -1166,3 +1166,5 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 
 .workspace-image>a:not(.artifact-download){display:block;width:fit-content}
 .workspace-image img{max-height:480px;object-fit:contain}
+
+.session-item a.session-main { color: inherit; text-decoration: none; }

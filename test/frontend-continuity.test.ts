@@ -21,7 +21,7 @@ class Socket {
   });}
 }
 beforeEach(()=>{
-  vi.resetModules();vi.useFakeTimers();localStorage.clear();sessionStorage.clear();
+  vi.resetModules();vi.useFakeTimers();history.replaceState(null,'','/');localStorage.clear();sessionStorage.clear();
   document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
   Object.defineProperty(window,'matchMedia',{value:()=>({matches:false,addEventListener(){}}),configurable:true});
   Element.prototype.scrollTo=vi.fn();frames=[];requests=[];sockets=[];intercept=()=>undefined;listeners=[];
