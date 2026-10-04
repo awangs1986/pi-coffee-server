@@ -838,13 +838,16 @@ function renderSessionListContent() {
     for(const c of workspaceState.conversations) if(!known.some(s=>s.id===c.id)) known.push({id:c.id,preview:c.creationState==='failed'?'创建失败 · 点击重试':c.creationState==='creating'?'创建中 · 点击恢复':c.workspaceKind==='chat'?'Chat 任务':'Work 任务',updatedAt:c.createdAt,running:false});
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
+  // Workspace creation survives native session replacement, resume and refresh.
+  const taskCreatedAt=new Map((workspaceState?.conversations||[]).map(task=>[task.id,task.createdAt]));
+  known=known.map(session=>({...session,createdAt:taskCreatedAt.get(session.id)||session.createdAt}));
   known=sidebarOrder.snapshot(known);
   if (known.length === 0 && (!grouped || !groups.length)) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
     return;
   }
 
-  if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known); return; }
+  if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known,{byCreatedAt:true}); return; }
   const assigned=new Map(groups.map(p=>[p.id,[]]));
   const ungrouped=[];
   for(const session of known){
@@ -878,8 +881,8 @@ function renderSessionListContent() {
   if(!ungrouped.length)list.append(el('li','sidebar-drop-hint','拖到这里移出分组'));
   outside.append(list);sidebarDropTarget(outside,null);ui.sessionList.append(outside);
 }
-function appendSessionGroups(parent,list){
-  for(const group of sessionGroups(list)){
+function appendSessionGroups(parent,list,options){
+  for(const group of sessionGroups(list,options)){
     const label=el('li','side-label'+(group.label==='需要你'?' attention':''),group.label);
     parent.append(label);for(const session of group.sessions)parent.append(sessionRow(session));
   }

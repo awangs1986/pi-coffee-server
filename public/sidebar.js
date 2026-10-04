@@ -74,21 +74,24 @@ export function isTerminalSession(session) {
  * Terminal sessions are listed last regardless of age: they are somebody
  * else's work until you take them over.
  */
-export function sessionGroups(list) {
+export function sessionGroups(list, {byCreatedAt=false}={}) {
   const groups = [];
   const push = (label, session) => {
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.sessions.push(session);
     else groups.push({ label, sessions: [session] });
   };
-  const ours = orderSessions(list.filter((s) => !isTerminalSession(s)));
+  const created=value=>{const time=Date.parse(value);return Number.isFinite(time)?time:Number.NEGATIVE_INFINITY;};
+  const order=byCreatedAt ? rows=>rows.slice().sort((a,b)=>created(b.createdAt)-created(a.createdAt)||String(a.id).localeCompare(String(b.id))) : orderSessions;
+  const ours = order(list.filter((s) => !isTerminalSession(s)));
   for (const session of ours) {
     const a = attentionOf(session);
-    if (a === 'waiting' || a === 'finished') push('需要你', session);
+    if(byCreatedAt)push(timeGroup(session.createdAt),session);
+    else if (a === 'waiting' || a === 'finished') push('需要你', session);
     else if (a === 'running') push('运行中', session);
     else push(timeGroup(session.updatedAt), session);
   }
-  const terminal = orderSessions(list.filter(isTerminalSession));
+  const terminal = order(list.filter(isTerminalSession));
   for (const session of terminal) push('本机终端会话', session);
   return groups;
 }

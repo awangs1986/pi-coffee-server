@@ -93,3 +93,14 @@ describe('stable active sidebar ordering',()=>{
   expect(orderSessions(order.snapshot([a,b])).map(s=>s.id)).toEqual(['a','b']);
  });
 });
+
+it('uses stable IDs for tied or missing creation dates without activity fallback',()=>{
+ const result=sessionGroups([
+  {id:'z',createdAt:'2026-10-04T10:00:00Z'},
+  {id:'a',createdAt:'2026-10-04T12:00:00+02:00'},
+  {id:'missing-z',updatedAt:'2099-01-01T00:00:00Z',attention:'waiting'},
+  {id:'missing-a',createdAt:'invalid',running:true},
+ ],{byCreatedAt:true});
+ expect(result.flatMap(g=>g.sessions.map(s=>s.id))).toEqual(['a','z','missing-a','missing-z']);
+ expect(result.at(-1)?.label).toBe('更早');
+});
