@@ -499,3 +499,7 @@ defines user-scoped persistence and the strict separation from task execution id
   automatic compatibility-native history remain; native readiness gates sending.
 
 - [Server #50](https://github.com/awangs1986/pi-coffee-server/issues/50): custom sidebar groups and empty-only deletion, including archived membership checks; project-group removal changes navigation metadata only.
+
+## MISHU independent plugin (2026-10-05)
+
+Owner selected per-current-Pi-Chat coordination of existing conversations. [Contract](docs/spec/mishu.md), [candidate evidence](docs/reviews/mishu-20261005.md), [independent source](http://gitea/awangs/pi-coffee-mishu). Menu selection and `/mishu-setup` are separate; Host owns scoped binding checks, native delivery and receipts. Source/publication evidence is distinct from production activation.

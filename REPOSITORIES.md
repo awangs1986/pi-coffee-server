@@ -11,6 +11,8 @@ GitHub main is authoritative; Gitea mirrors the same commits and repository layo
 | LSP tool, diagnostics, CLI and Skill | [packages/lsp](https://github.com/awangs1986/pi-coffee/tree/main/packages/lsp) | Same path in Pi mirror | README, package.json, CHANGELOG.md |
 | Manual Handoff and original-evidence recovery | [packages/context-handoff](https://github.com/awangs1986/pi-coffee/tree/main/packages/context-handoff) | Same path in Pi mirror | README, SPEC.md, package.json |
 
+Owner exception (2026-10-05): [MISHU](http://gitea/awangs/pi-coffee-mishu) is an independent fork of `awangs/MISHU`, with its own versioned package. Its Host/Web integration remains here; its optional Chat tool interface is maintained in Harness. See [the MISHU contract](docs/spec/mishu.md).
+
 Each plugin is independently versioned and released. The standalone Harness/LSP/
 Handoff repositories are historical; maintain code only in the unified directories.
 Official web/subagent plugins remain external upstream packages. Pi customizations

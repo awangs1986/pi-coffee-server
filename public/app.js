@@ -1,3 +1,4 @@
+import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
 import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
 import {ConversationDisplay} from './conversation-display.js';
@@ -212,7 +213,7 @@ function showRecentThread(id){
   });
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;
 // Unacknowledged requests stay in this tab, scoped to their owner and task.
 // Never infer acceptance from matching history text or resend automatically.
 const promptOutbox=new Map();
@@ -334,6 +335,7 @@ function closeBrandMenu() {
 function toggleBrandMenu() {
   const open = ui.brandMenu?.classList.contains('hidden');
   if (!open) { closeBrandMenu(); return; }
+  void mishuControls.refresh();
   ui.brandMenu.classList.remove('hidden');
   ui.brandBtn?.setAttribute('aria-expanded', 'true');
 }
@@ -1272,6 +1274,7 @@ function setStreaming(active) {
   renderSessionList();
 }
 function refreshComposer() {
+  mishuControls?.updateAvailability();
   const clearChat=currentTask();
   $('#sp-chat-actions').classList.toggle('hidden',!clearChatContextAvailable||clearChat?.workspaceKind!=='chat'||(clearChat?.engine||'pi')!=='pi'||Boolean(clearChat?.archived));
   $('#sp-clear-context').disabled=!opened||!connected||!historyReady||streaming||compacting||takeoverBusy()||Boolean(pendingDelivery)||queueControls.hasPending||queuedRequests.size>0||Boolean(sessions.find(s=>s.id===activeId)?.queued)||Boolean(modelPending||thinkingPending||contextPending);
@@ -1286,7 +1289,7 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.send.disabled = Boolean(mishuChangingId&&mishuChangingId===activeId) || Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -2702,7 +2705,7 @@ ui.prompt.addEventListener('keydown', (event) => {
 ui.mode.addEventListener('change', refreshComposer);
 $('#composer').addEventListener('submit', (event) => {
   event.preventDefault();
-  if(takeoverBusy())return;
+  if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return;
   if(queuedPrompt!==null){toast('首条消息正在准备；新输入保留为草稿');return;}
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
   if(!opened && draftModelEngine() && !models){toast('正在加载模型和思考强度，请稍后发送');return;}
@@ -2746,7 +2749,7 @@ $('#composer').addEventListener('submit', (event) => {
 });
 function submitPrompt(text, images) {
   if(activeId&&!historyReady)return false;
-  if(takeoverBusy())return false;
+  if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return false;
   if(compacting){toast('请等待压缩完成，或先停止');return false;}
   if(streaming && !supports('steer') && !supports('followUp')){toast('请等待当前轮次结束，或先停止');return false;}
   const mode = streaming ? ui.mode.value : 'prompt';
@@ -2791,6 +2794,10 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
+mishuControls=initMishuControls({button:$('#mishu-toggle'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
+  request:async body=>{const response=await fetch('/api/mishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;},
+  busyChanged:(busy,id)=>{if(busy)mishuChangingId=id;else if(mishuChangingId===id)mishuChangingId=null;refreshComposer();},
+  changed:id=>{closeBrandMenu();if(activeId===id)connect();},toast:message=>toast(message)});
 const githubAccountManager=initGitHubAccounts({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},projects:()=>workspaceState?.projects??[],bind:async(projectId,accountId)=>{await workspaceApi({action:'github_bind',projectId,accountId});await loadWorkspace();}});
 initRunners({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
 const sshmePanel=initSshme({

@@ -220,7 +220,7 @@ export class WebServer {
       }catch{json(response,502,{error:'sync_unavailable'});}
       return;
     }
-    if(path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
