@@ -6,7 +6,8 @@ in native-agent-engines.md and native-agent-browser.md.
 
 ## Boundaries
 
-The four engine choices are Pi, Codex, Claude Code and Cursor. Chat remains
+Grok Build is now a fifth Work choice; see [its contract](grok-build.md).
+The original four engine choices are Pi, Codex, Claude Code and Cursor. Chat remains
 Pi-only. Work uses the existing independent checkout, authenticated user's Host
 scope and task-scoped Git credentials. Native login stays on the Host VM. The
 Web gateway never forwards provider API traffic or stores native login secrets.

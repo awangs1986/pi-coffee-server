@@ -234,7 +234,7 @@ export class HostServer {
       json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
     }
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude","cursor"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude"|"cursor")??[]]))}); }
+      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude","cursor","grok"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude"|"cursor"|"grok")??[]]))}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }

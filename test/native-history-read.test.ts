@@ -142,10 +142,10 @@ it.each(['rebound','deleted'])('rechecks a %s workspace binding record rather th
  expect((await factory.readHistory('task')).sourceFreshness).toBe('unknown');
 });
 
-it('does not start Cursor merely to audit passive browser history',async()=>{
+it.each(['cursor','grok'] as const)('does not start %s merely to audit passive browser history',async engine=>{
  const forbidden=vi.fn(()=>{throw new Error('Passive read cannot start a CLI');});
  const pi={create:forbidden,list:forbidden,delete:forbidden} as unknown as AgentSessionFactory;
- const workspaces={lookup:async()=>({engine:'cursor',cwd:'/synthetic',nativeBinding:{state:'bound',id:'cursor-native'}}),file:forbidden,dataRoot:forbidden} as unknown as Workspaces;
+ const workspaces={lookup:async()=>({engine,cwd:'/synthetic',nativeBinding:{state:'bound',id:'cursor-native'}}),file:forbidden,dataRoot:forbidden} as unknown as Workspaces;
  const factory=new NativeAgentFactory({pi,workspaces,cursor:{command:'/no-executable-allowed'}});
- expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:'cursor:cursor-native:original'});expect(forbidden).not.toHaveBeenCalled();
+ expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:`${engine}:cursor-native:original`});expect(forbidden).not.toHaveBeenCalled();
 });

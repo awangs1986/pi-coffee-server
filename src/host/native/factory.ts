@@ -1,4 +1,4 @@
-import {CursorSession} from './cursor.js';
+import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js';
 import {NativeSettingsStore} from './settings.js';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -21,7 +21,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -29,8 +29,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
-  forkModes(engine:"pi"|"codex"|"claude"|"cursor"):ForkMode[]{
-    if(engine==='cursor')return [];
+  forkModes(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):ForkMode[]{
+    if(engine==='cursor'||engine==='grok')return [];
     if(engine==='pi')return this.options.pi.forkNative?['native','handoff']:[];
     if(engine==='codex')return this.options.codexSessionFactory?['native','handoff']:[];
     return this.options.claude?['handoff']:[];
@@ -110,7 +110,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     try {
       let read: AgentHistoryRead;
       if (engine === "pi") read = await this.options.pi.readHistory?.(nativeId) ?? unknownHistory(binding);
-      else if (engine === "cursor") read = unknownHistory(binding); // ACP has no verified passive native-history reader.
+      else if ((engine === "cursor" || engine === "grok")) read = unknownHistory(binding); // ACP has no verified passive native-history reader.
       else if (engine === "claude") read = this.options.claude ? await readClaudeHistory(this.options.claude, task.cwd, nativeId) : unknownHistory(binding);
       else {
         this.generation.set(sessionId, segment?.id ?? "original");
@@ -171,15 +171,24 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const result=await exec(config.command,[...(config.args??[]),"--version"],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,reason:"Native executable unavailable"};}
-      const supported=original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1)\b/.test(version) : /\b2\.1\.280\b/.test(version);
+      const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1)\b/.test(version) : /\b2\.1\.280\b/.test(version);
       if(!supported)return {...original,version,available:false,reason:"Unsupported native CLI version; use the verified release"};
       try {
-        const ready=await this.authentication(original.id as "codex"|"claude"|"cursor",config);
+        const ready=await this.authentication(original.id as "codex"|"claude"|"cursor"|"grok",config);
         return {...original,version,available:ready,modelCatalog:original.id==="claude" || (original.id==="codex" && Boolean(this.options.legacyCodex?.modelCatalog)),authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
       } catch {return {...original,version,available:false,authentication:"unknown" as const,reason:"Native authentication status unavailable; inspect this CLI on the User VM"};}
     }));
   }
-  private async authentication(engine:"codex"|"claude"|"cursor",config:NativeCommand):Promise<boolean> {
+  private async authentication(engine:"codex"|"claude"|"cursor"|"grok",config:NativeCommand):Promise<boolean> {
+    if(engine==='grok'){
+      const probe=new NativeProcess(config,acpArguments('grok'),process.cwd(),true);
+      try{
+        const initialized=await initializeAcp(probe,5000);
+        if(initialized.protocolVersion!==1)throw new Error('Unsupported Grok ACP protocol');
+        let params:Record<string,unknown>;try{params=acpAuthentication('grok',initialized,config);}catch{return false;}
+        await probe.call('authenticate',params,5000);return true;
+      }finally{await probe.stop();}
+    }
     if(engine==="codex") {
       const probe=new NativeProcess(config,["app-server"],process.cwd());
       try {
@@ -255,13 +264,13 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(!task && !(await this.options.pi.list()).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
     if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length||task?.contextReset?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length||task?.contextReset)});
     const readiness=(await this.engines()).find(e=>e.id===task.engine);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
-    const baseConfig=this.options[task.engine as "codex"|"claude"|"cursor"];if(!baseConfig)throw new Error("Agent not configured");
+    const baseConfig=this.options[task.engine as "codex"|"claude"|"cursor"|"grok"];if(!baseConfig)throw new Error("Agent not configured");
     const config={...baseConfig,env:{...baseConfig.env,...await this.options.workspaces.runtimeEnvironment(sessionId)}};
     const cwd=await this.options.workspaces.file(sessionId,"");
     if(task.nativeBinding?.state==="starting" && !task.nativeBinding.id)throw new Error("Native start was uncertain; inspect it before recovery. No prompt was replayed.");
-    if(task.engine==='cursor'){
-      const settings=new NativeSettingsStore(join(await this.options.workspaces.dataRoot(sessionId),'cursor-settings.json'));
-      const session=new CursorSession(config,cwd,task.nativeBinding,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),settings,await this.options.instructions?.());
+    if(task.engine==='cursor'||task.engine==='grok'){
+      const settings=new NativeSettingsStore(join(await this.options.workspaces.dataRoot(sessionId),task.engine+'-settings.json'));
+      const session=new AcpSession(task.engine,config,cwd,task.nativeBinding,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),settings,await this.options.instructions?.());
       try{return await session.start();}catch(error){await session.stop();throw error;}
     }
     if(task.engine==="claude"){
@@ -292,7 +301,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         : c.engine==="codex" && c.nativeBinding?.id && this.options.codexListings
         ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===(c.nativeBinding?.id??c.id)):undefined;
       const preferences=c.engine==="claude"&&readable?await new NativeSettingsStore(join(c.taskRoot??join(c.cwd,".pi-coffee"),"claude-settings.json")).load().catch(()=>({name:undefined})):undefined;
-      return {...(preferences?.name?{name:preferences.name}:{}),createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":c.engine==="cursor"?"Cursor Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),id:c.id,engine:c.engine};
+      return {...(preferences?.name?{name:preferences.name}:{}),createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":c.engine==="cursor"?"Cursor Task":c.engine==="grok"?"Grok Build Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),id:c.id,engine:c.engine};
     }));
     return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:row.name||task.fork.title,preview:row.preview||task.fork.title}:row;}),...summaries];
   }

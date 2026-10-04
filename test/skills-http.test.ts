@@ -181,9 +181,9 @@ it.each(['codex','claude'])('disables and restores native %s Skills without touc
 });
 
 
-it('installs Cursor Skills only into the documented Cursor directory',async()=>{
+it.each(['cursor','grok'])('installs %s Skills only into its documented native directory',async engine=>{
  const {source,call}=await setup();
- const result=await call({action:'install',engine:'cursor',scope:'user',repoUrl:source,ref:'main',subdir:'skills/example'});expect(result.status).toBe(200);
- expect(await readFile(join(root,'home/.cursor/skills/example/reference.txt'),'utf8')).toBe('original');
+ const result=await call({action:'install',engine,scope:'user',repoUrl:source,ref:'main',subdir:'skills/example'});expect(result.status).toBe(200);
+ expect(await readFile(join(root,`home/.${engine}/skills/example/reference.txt`),'utf8')).toBe('original');
  for(const engine of ['pi','codex','claude'])expect((await call({action:'list',engine,scope:'user'})).body.skills).toEqual([]);
 });
