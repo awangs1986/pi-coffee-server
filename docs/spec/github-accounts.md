@@ -35,6 +35,11 @@ binds its previously unbound tasks and reconnects idle native sessions. Existing
 bound projects cannot silently switch accounts; reconnect the same GitHub identity
 or add a separate project with another account. No shared token is auto-imported.
 
+Legacy binding displays progress while its request is pending, then confirms the
+project name and selected GitHub login after refreshing the project/account lists.
+Removing a successfully bound project from the legacy picker is not sufficient
+feedback. Failed binding remains visible and leaves the project available for retry.
+
 ## Execution
 
 Host repository lists, repository verification and PR operations use the selected
