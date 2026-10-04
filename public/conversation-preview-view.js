@@ -1,3 +1,4 @@
+import {renderProcessEntries} from './history-process.js';
 // Bounded, plain-text transcript rendering. Host history remains authoritative;
 // this view never interprets cached text as markup or creates artifact links.
 const renders = new WeakMap();
@@ -55,7 +56,9 @@ function previewNode(entry, document, isActive = () => true) {
 
 /** One bounded, expandable display node for an authoritative oversized entry. */
 export function conversationPreviewNode(entry) {
-  return previewNode(displayEntry(entry), document);
+  const item=displayEntry(entry),node=previewNode(item,document);
+  if(item.kind!=='tool')return node;
+  const fragment=document.createDocumentFragment();renderProcessEntries(fragment,[{id:'preview-tool',kind:'tool',error:item.failure,node}]);return fragment.firstChild;
 }
 
 /**
@@ -81,6 +84,7 @@ export function renderConversationPreview(container, snapshot, { cached = true, 
   };
 
   const entryNode = entry => previewNode(entry, document, active);
+  const renderPage=(target,from,to)=>renderProcessEntries(target,entries.slice(from,to).map((entry,index)=>({id:'preview-'+(from+index),kind:entry.kind,error:entry.failure,node:entryNode(entry)})));
 
   const fragment = document.createDocumentFragment();
   if (cached) fragment.append(note('正在显示本地缓存，正在同步最新对话…'));
@@ -93,13 +97,13 @@ export function renderConversationPreview(container, snapshot, { cached = true, 
     if (!active(earlier) || start === 0) return;
     const next = Math.max(0, start - limit);
     const page = document.createDocumentFragment();
-    for (let index = next; index < start; index++) page.append(entryNode(entries[index]));
+    renderPage(page,next,start);
     earlier.after(page);
     start = next;
     if (start === 0) earlier.remove();
   });
   if (start > 0) fragment.append(earlier);
-  for (let index = start; index < entries.length; index++) fragment.append(entryNode(entries[index]));
+  renderPage(fragment,start,entries.length);
   container.replaceChildren(fragment);
 
   return {

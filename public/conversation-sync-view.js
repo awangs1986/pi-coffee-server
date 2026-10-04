@@ -1,3 +1,4 @@
+import {renderProcessEntries} from './history-process.js';
 // A bounded projection of the durable repository. No command, approval or native
 // lifetime is owned here. Old requests may populate their cache, never this view.
 import {ScrollAnchor} from './scroll-anchor.js';
@@ -31,7 +32,7 @@ export class ConversationSyncView {
   constructor({container, scroller, repository, context, onRendered = () => {}, onError = () => {}}) {
     Object.assign(this,{container,scroller,repository,context,onRendered,onError});
     this.scheduler=createRenderScheduler({budgetMs:4,onError});
-    this.nodes=new Map();this.saved=new Map();this.generation=0;this.active=null;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];
+    this.nodes=new Map();this.processGroups=new Map();this.saved=new Map();this.generation=0;this.active=null;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];
     this.anchor=new ScrollAnchor(scroller,container,{isCurrent:()=>Boolean(this.active)});
     this.userScrollUntil=0;this.scrollbarPressed=false;
     this.scroll=()=>{
@@ -61,13 +62,13 @@ export class ConversationSyncView {
   }
   select(id) {
     this.userScrollUntil=0;this.scrollbarPressed=false;
-    this.anchor.stopObserving();this.generation++;this.active=id;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];this.nodes.clear();
+    this.anchor.stopObserving();this.generation++;this.active=id;this.window=null;this.readingOlder=false;this.loading=false;this.olderBuffer=[];this.nodes.clear();this.processGroups.clear();
     this.root=null;this.scheduler.setView({...this.context(),conversationId:id,viewGeneration:this.generation});
   }
   clear() {this.select(null);this.saved.clear();}
   ensureRoot() {
     if(this.root?.isConnected)return;
-    this.nodes.clear();
+    this.nodes.clear();this.processGroups.clear();
     this.root=document.createElement('div');this.root.className='synced-transcript';
     this.container.replaceChildren(this.root);
     this.earlier=document.createElement('button');this.earlier.type='button';this.earlier.className='msg-tool history-page-trigger';this.earlier.textContent='加载更早记录';this.earlier.onclick=()=>void this.older();
@@ -80,7 +81,7 @@ export class ConversationSyncView {
     if(!Array.isArray(state.entries))return;
     const saved=this.saved.get(this.active);
     if(!this.window&&!force&&saved?.readingOlder&&saved.window?.bindingEpoch===state.bindingEpoch){this.readingOlder=true;this.olderBuffer=saved.olderBuffer.slice();this.show(saved.window,{force:true});this.latest.hidden=false;if(saved.window.appliedRevision!==state.appliedRevision)void this.validateHistoryWindow(state);return;}
-    if(this.window&&this.window.bindingEpoch!==state.bindingEpoch){this.nodes.clear();this.root?.remove();this.root=null;this.readingOlder=false;this.window=null;this.scheduler.setView({...this.context(),conversationId:this.active,epoch:state.bindingEpoch,viewGeneration:this.generation});}
+    if(this.window&&this.window.bindingEpoch!==state.bindingEpoch){this.nodes.clear();this.processGroups.clear();this.root?.remove();this.root=null;this.readingOlder=false;this.window=null;this.scheduler.setView({...this.context(),conversationId:this.active,epoch:state.bindingEpoch,viewGeneration:this.generation});}
     if(this.readingOlder&&!force){
       this.latest.hidden=true;
       const operations=details?.operations||[];
@@ -119,7 +120,7 @@ export class ConversationSyncView {
       // Completion belongs to a message, not the whole conversation. A later
       // run must never turn already finished Markdown back into plain text.
       const rich=!item.contentTruncated && (item.status!=='inProgress' || state.runState!=='running');
-      if(existing?.revision===revision && existing.rich===rich){const next=source.slice(index+1).map(keyOf).map(key=>this.nodes.get(key)?.node).find(Boolean)||this.latest;if(existing.node.nextElementSibling!==next)this.root.insertBefore(existing.node,next);return;}
+      if(existing?.revision===revision && existing.rich===rich)return;
       const run=()=>{
         if(generation!==this.generation)return;
         const previous=this.nodes.get(id);const entry={...item,id,k:item.kind,done:item.status!=='inProgress'&&item.done!==false,revision,rich};
@@ -128,15 +129,19 @@ export class ConversationSyncView {
         entry.node.dataset.entityId=id;entry.node.dataset.entityRevision=revision;
         this.addContentControl(entry,item,generation);
         if(previous)previous.node.replaceWith(entry.node);
-        else {const next=source.slice(index+1).map(keyOf).map(key=>this.nodes.get(key)?.node).find(Boolean);this.root.insertBefore(entry.node,next||this.latest);}
         this.nodes.set(id,entry);
+        this.layout(source);
         this.restore(anchor,follow||anchor?.followTail);
         this.anchor.observe(anchor||this.capture());
         this.onRendered(this.entries,state);
       };
       if(first&&index===0)run();else this.scheduler.schedule({entityId:id,entityRevision:revision,priority:0,run});
     });
+    this.layout(source);
     if(!source.length)this.onRendered([],state);
+  }
+  layout(source){
+    renderProcessEntries(this.root,source.map(item=>({id:keyOf(item),kind:item.kind,error:item.isError,node:this.nodes.get(keyOf(item))?.node})),{groups:this.processGroups,end:this.latest});
   }
   async validateHistoryWindow(state){
     if(this.validating||!this.readingOlder||!this.repository.loadAround)return;
@@ -208,5 +213,5 @@ export class ConversationSyncView {
     finally{if(generation===this.generation){this.loading=false;if(this.earlier)this.earlier.disabled=false;}}
   }
   get entries() {return [...this.root?.querySelectorAll('[data-entity-id]')||[]].map(node=>this.nodes.get(node.dataset.entityId)).filter(Boolean);}
-  dispose(){this.scheduler.dispose();this.anchor.disconnect();this.scroller.removeEventListener('scroll',this.scroll);for(const type of ['wheel','touchmove','keydown'])this.scroller.removeEventListener(type,this.scrollIntent);this.scroller.removeEventListener('pointerdown',this.scrollbarDown);for(const type of ['pointerup','pointercancel'])this.scroller.ownerDocument.removeEventListener(type,this.scrollbarUp);this.saved.clear();this.nodes.clear();}
+  dispose(){this.scheduler.dispose();this.anchor.disconnect();this.scroller.removeEventListener('scroll',this.scroll);for(const type of ['wheel','touchmove','keydown'])this.scroller.removeEventListener(type,this.scrollIntent);this.scroller.removeEventListener('pointerdown',this.scrollbarDown);for(const type of ['pointerup','pointercancel'])this.scroller.ownerDocument.removeEventListener(type,this.scrollbarUp);this.saved.clear();this.nodes.clear();this.processGroups.clear();}
 }

@@ -444,3 +444,12 @@ it('rechecks identity before attaching after a cookie-account change without a l
  release();await tick(100);expect(app.sockets.length).toBeGreaterThan(count);expect(prompt().value).toBe('');expect(thread().textContent).not.toContain('SYNC-a');
  choose('a');await tick(100);expect(prompt().value).not.toContain('ACCOUNT-A-UNSENT');
 });
+
+it('collapses finished live tool activity when the Agent resumes dialogue',async()=>{
+ const app=await setup('codex',1),ws=await app.select('a');
+ app.emit(ws,'a',{type:'tool_update',id:'fold-tool',name:'bash',args:{command:'echo fixture'},result:'working',status:'inProgress'});await tick();
+ const group=thread().querySelector<HTMLDetailsElement>('details.activity')!;expect(group.open).toBe(true);
+ app.emit(ws,'a',{type:'tool_update',id:'fold-tool',name:'bash',result:'done',status:'completed'});
+ app.emit(ws,'a',assistantEvent('codex','Here is the answer',true));await tick();
+ expect(thread().textContent).toContain('Here is the answer');expect(group.open).toBe(false);
+});

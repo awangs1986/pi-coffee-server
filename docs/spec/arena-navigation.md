@@ -404,3 +404,14 @@ Moves and deletion use the same registry serialization, so a race cannot remove 
 group while accepting a new member. Browser disabling is feedback, not the guard.
 A failed save retains existing placement and displays the error. Group metadata
 operations do not require interrupting an Agent.
+
+### Dialogue-first history (2026-10-04, Server #53)
+
+Cached previews, older-history pages and the durable indexed transcript group
+contiguous tool records into one closed “工作过程 · N 步” row. User messages and
+Agent replies remain directly visible in chronological order. Readers can expand
+the process to inspect individual tools and outputs; a failed tool marks its group
+“含错误”. Explicit group expansion survives updates within the same visible run.
+When live tool activity gives way to dialogue, its group closes. This changes only
+display: native records, model context, retrieval, pagination and error data remain
+intact. Long outputs remain bounded and load additional content on demand.

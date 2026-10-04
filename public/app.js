@@ -669,6 +669,7 @@ function pushUser(text, images, imageCount, files) {
   entry.node = userBubble(entry);
   entries.push(entry);
   appendNode(entry.node);
+  if(currentActivity){updateActivity(currentActivity,activityCount,false);currentActivity.open=false;}
   currentActivity = undefined;
   return entry;
 }
@@ -678,6 +679,7 @@ function pushAssistant(text) {
   entries.push(entry);
   appendNode(entry.node);
   // Once text arrives, the tool group for this run is closed visually.
+  if(currentActivity){updateActivity(currentActivity,activityCount,false);currentActivity.open=false;}
   currentActivity = undefined;
   return entry;
 }
