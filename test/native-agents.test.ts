@@ -1387,3 +1387,19 @@ it.each(['cursor','grok'])('creates %s Work and hides unverified context and ste
  expect(document.querySelector('#agent-context-row')!.classList.contains('hidden')).toBe(true);
  expect(document.querySelector('#agent-thinking-row')!.classList.contains('hidden')).toBe(true);
 });
+
+it('keeps Bash code blocks and copy actions in expanded authoritative older history',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ const script='#!/usr/bin/env bash\nset -euo pipefail\n\n# Keep indentation and literal shell syntax.\nprintf "%s\\n" "$HOME"\n';
+ ws.receive({type:'opened',sessionId:id,engine:'codex',state:{isStreaming:false}});
+ ws.receive({type:'history',sessionId:id,entries:[{id:'old-script',kind:'assistant',text:'保存为 setup.sh：\n\n```bash\n'+script+'```\n\n然后在终端执行。'},...Array.from({length:40},(_,i)=>({kind:'user',id:'later-'+i,text:'Later message '+i}))]});await vi.advanceTimersByTimeAsync(30);
+ const older=document.querySelector<HTMLDetailsElement>('.history-older')!;older.open=true;older.dispatchEvent(new Event('toggle'));await vi.advanceTimersByTimeAsync(20);
+ expect(older.querySelectorAll('.codeblock'),'Older authoritative Markdown must retain its code frame').toHaveLength(1);
+ expect(older.querySelector('.codeblock-lang')!.textContent).toBe('bash');
+ expect(older.querySelector('pre code')!.textContent).toBe(script.trimEnd());
+ const descriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard'),copied:string[]=[];
+ Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{copied.push(text);}}});
+ try{older.querySelector<HTMLButtonElement>('.codeblock-copy')!.click();await vi.advanceTimersByTimeAsync(20);expect(copied).toEqual([script.trimEnd()]);}
+ finally{if(descriptor)Object.defineProperty(navigator,'clipboard',descriptor);else delete (navigator as any).clipboard;}
+});

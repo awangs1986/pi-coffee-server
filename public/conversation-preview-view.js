@@ -1,6 +1,7 @@
+import {boundedTextSlice,renderMarkdown} from './render.js';
 import {renderProcessEntries} from './history-process.js';
-// Bounded, plain-text transcript rendering. Host history remains authoritative;
-// this view never interprets cached text as markup or creates artifact links.
+// Cached previews remain plain text. Completed, authoritative small replies
+// use the shared sanitized Markdown renderer, including code frames and Copy.
 const renders = new WeakMap();
 const TEXT_PAGE_SIZE = 8 * 1024;
 
@@ -19,7 +20,7 @@ function displayEntry(entry) {
   };
 }
 
-function previewNode(entry, document, isActive = () => true) {
+function previewNode(entry, document, isActive = () => true, {authoritative=false} = {}) {
   const node = document.createElement('div');
   node.className = entry.kind === 'user' || entry.kind === 'assistant' ? `msg ${entry.kind}` : 'note';
   if (entry.failure) node.classList.add('failure');
@@ -30,7 +31,9 @@ function previewNode(entry, document, isActive = () => true) {
   body.style.overflowWrap = 'anywhere';
   let end = textPageEnd(entry.text, 0);
   const text = document.createTextNode(entry.text.slice(0, end));
-  body.append(text);
+  const rich=authoritative && entry.kind==='assistant' && boundedTextSlice(entry.text).end===entry.text.length;
+  if(rich){body.style.whiteSpace='';body.innerHTML=renderMarkdown(entry.text).trimEnd();}
+  else body.append(text);
   if (entry.kind === 'user') {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -83,7 +86,7 @@ export function renderConversationPreview(container, snapshot, { cached = true, 
     return node;
   };
 
-  const entryNode = entry => previewNode(entry, document, active);
+  const entryNode = entry => previewNode(entry, document, active, {authoritative:!cached});
   const renderPage=(target,from,to)=>renderProcessEntries(target,entries.slice(from,to).map((entry,index)=>({id:'preview-'+(from+index),kind:entry.kind,error:entry.failure,node:entryNode(entry)})));
 
   const fragment = document.createDocumentFragment();

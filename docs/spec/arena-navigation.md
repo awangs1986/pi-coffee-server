@@ -461,3 +461,12 @@ Clear-context operation IDs, Fork IDs and draft SSHME task IDs must work on the
 supported LAN HTTP Web origin. Generate UUID v4 identifiers with cryptographic
 `getRandomValues`; do not require the secure-context-only `randomUUID` API. The
 clear button still sends exactly one request without a confirmation dialog.
+
+### Code frames in older authoritative replies — 2026-10-05
+
+Expanding older native history must preserve sanitized Markdown for complete
+assistant replies within the existing rich-text size budget, including fenced
+code frames, language labels and per-block Copy. Copy includes only the code,
+with whitespace and shell syntax preserved, excluding fences and surrounding
+explanations. Disposable cached previews remain plain text; long/live content
+retains its existing rendering bounds. No native transcript or prompt is changed.
