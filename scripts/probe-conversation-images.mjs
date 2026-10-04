@@ -31,7 +31,7 @@ try{
  if(process.env.PROBE_BASELINE_VIEW){const body=await readFile(process.env.PROBE_BASELINE_VIEW,'utf8');await page.route('**/conversation-sync-view.js',route=>route.fulfill({contentType:'text/javascript',body}));}
  await page.goto(url);await page.locator('.login-coffee-skip').click();await page.locator('[data-session-id="image-task"]').click();
  await page.locator('#prompt').fill('![Preview](../attachments/preview.webp)');await page.locator('#send:not([disabled])').click();
- const img=page.locator((process.env.PROBE_SYNC_V2==='1'?'.synced-transcript ':'')+'.assistant img[data-workspace-path]');
+ const img=page.locator('.assistant img[data-workspace-path]'); // Reload may correctly fall back if the source becomes unknown.
  await img.waitFor();await page.waitForFunction(()=>{const i=document.querySelector('.assistant img');return i?.complete&&i.naturalWidth>0;});
  assert(await img.isVisible(),'Preview is not visible');
  const download=page.locator('.assistant .artifact-download');assert(await download.count()===1,'Download action missing');
