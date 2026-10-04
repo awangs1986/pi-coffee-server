@@ -926,6 +926,15 @@ function openGroupMenu(group,anchor){
 }
 
 function smallRunningCat(){const cat=pixelCat(document);cat.classList.add('sidebar-running-cat');return cat;}
+function smallFinishedCoffee(){
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 28 20');svg.setAttribute('class','finished-coffee');
+  svg.setAttribute('role','img');svg.setAttribute('aria-label','已完成，待查看');
+  svg.setAttribute('focusable','false');svg.setAttribute('shape-rendering','crispEdges');
+  // Fixed pixel geometry: steam, cup, handle and saucer.
+  svg.innerHTML='<title>已完成，待查看</title><path d="M8 1h2v3H8zm6 0h2v3h-2zM5 6h16v2h4v7h-6v2H7v-2H5zm2 2v5h2v2h8v-2h2V8zm14 2v3h2v-3zM4 18h20v2H4z" fill-rule="evenodd"/>';
+  return svg;
+}
 function sessionRow(session) {
   const attention = attentionOf(session);
   const terminal = isTerminalSession(session);
@@ -951,7 +960,7 @@ function sessionRow(session) {
   main.appendChild(el('span', 'meta', metaParts.filter(Boolean).join(' · ')));
   item.appendChild(main);
   if (attention === 'waiting') item.appendChild(el('span', 'badge waiting', '?'));
-  else if (attention === 'finished') item.appendChild(el('span', 'badge finished', '✓'));
+  else if (attention === 'finished') item.appendChild(smallFinishedCoffee());
   else if (attention === 'running') item.appendChild(smallRunningCat());
   const menu = el('button', 'more', '⋯');
   menu.type = 'button';

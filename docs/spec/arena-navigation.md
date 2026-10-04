@@ -350,8 +350,10 @@ It does not cover the workbench, take focus, or consume Enter. A close control a
 Escape dismiss it; reduced-motion mode avoids animation. The previous oversized
 character artwork is no longer displayed. The workbench layout is unchanged.
 
-A running conversation uses a small black pixel cat in the sidebar instead of a
-pulsing blue dot. Waiting/finished indicators retain their meanings; an idle row
+A running conversation uses a small light-blue (`#7CBAE8`) pixel cat in the sidebar instead of a
+pulsing blue dot. Finished, unread conversations show a static pixel coffee cup;
+opening the conversation clears it under the existing attention rules. Waiting
+retains its question mark. An idle row
 has no running cat. Reduced-motion mode shows the cat without animation, and the
 dark theme adds a subtle outline to retain contrast.
 

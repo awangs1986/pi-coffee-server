@@ -111,7 +111,7 @@ scroll-to-bottom; a new-message control returns to the latest page.
 
 ## Synchronization and login animations
 
-The selected conversation shows a small code-native pixel black running cat only
+The selected conversation shows a small code-native light-blue pixel running cat only
 while synchronization is in progress. Error, offline and timeout states stop it
 and expose retry. Other conversations' synchronization cannot animate the current
 view. Reduced-motion preference removes motion, and status text remains available
