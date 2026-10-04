@@ -27,7 +27,7 @@ Pi 的 Harness、LSP 和交接插件不会注入 Codex 或 Claude Code。
 | Chat | 新对话默认使用 Pi Chat；也有独立目录，可保存附件和资料 |
 | Work | 创建时选择 Pi、Codex 或 Claude Code，选择 Gitea/GitHub 项目与起始分支 |
 | 项目目录 | 每个任务独立 clone；同一仓库的两个任务不会共用一个工作目录 |
-| 对话导航 | 独立 URL、项目分组、搜索、草稿恢复、前进后退和近期历史缓存 |
+| 对话导航 | 独立 URL、项目/自定义分组、新建与删除空分组、搜索、草稿恢复、前进后退和近期历史缓存 |
 | 开发操作 | 文件浏览、Diff、本轮修改摘要、Checkpoint、同步和 PR 操作 |
 | 输入与执行 | 根据 Agent 能力提供排队、编辑/取消排队、插话、停止和原生确认问题 |
 | 附件 | 粘贴/选择后先留在草稿，点击发送才上传；支持图片预览和文件下载 |
@@ -216,7 +216,7 @@ injected into Codex or Claude Code.
 | Chat | Defaults to Pi Chat, with its own directory for attachments and other task data |
 | Work | Select Pi, Codex or Claude, a Gitea/GitHub repository and a starting branch |
 | Checkouts | One independent clone per task; conversations do not share a writable checkout |
-| Navigation | Canonical conversation URLs, project groups, search, drafts, Back/Forward and bounded recent-history caches |
+| Navigation | Canonical conversation URLs, project/custom groups, creation and empty-only group deletion, search, drafts, Back/Forward and bounded recent-history caches |
 | Development | File browsing, Diff, latest-turn edits, Checkpoint, synchronization and PR operations |
 | Execution | Queues, queue editing/cancellation, steering, stop and native questions according to engine capabilities |
 | Attachments | Stay in the browser draft until Send; image previews and scoped downloads are supported |

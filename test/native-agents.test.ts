@@ -6,7 +6,7 @@ afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();hist
 async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
- const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
+ const sidebar:{showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
  const requests:any[]=[],frames:any[]=[],conversations:any[]=[],sockets:any[]=[],projects:any[]=[{id:'p',name:'demo',branch:'main'}];
  class Socket{static OPEN=1;readyState=1;onopen:any;onmessage:any;onclose:any;onerror:any;constructor(){sockets.push(this);queueMicrotask(()=>this.onopen?.());}close(){}send(text:string){frames.push(JSON.parse(text));}receive(frame:any){this.onmessage?.({data:JSON.stringify(frame)});}}
  vi.stubGlobal('WebSocket',Socket);
@@ -19,6 +19,8 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
   if(body.action==='sidebar_move'){sidebar.assignments[body.id]=body.projectId;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  if(body.action==='sidebar_group_create'){sidebar.groups=[...(sidebar.groups??[]),{id:'custom-group',name:body.name.trim()}];sidebar.showGroups=true;return {ok:true,json:async()=>structuredClone(sidebar)};}
+  if(body.action==='sidebar_group_delete'){sidebar.groups=(sidebar.groups??[]).filter(g=>g.id!==body.groupId);return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_display'){sidebar.showGroups=body.showGroups;return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='sidebar_collapse'){sidebar.collapsed=body.collapsed?[body.projectId]:[];return {ok:true,json:async()=>structuredClone(sidebar)};}
   if(body.action==='conversation'){const c={...body,cwd:'/home/test/chats/'+body.id,creationState:'ready'};conversations.push(c);return {ok:true,json:async()=>c};}
@@ -1271,4 +1273,21 @@ it.each(['before disk','after disk'])('invalidates a deleted task preview when t
  }
  expect(document.querySelector('#thread')!.textContent).not.toContain('Private reply from deleted task');
  expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
+});
+
+it('creates sidebar groups, blocks occupied deletion and deletes after moving the conversation out',async()=>{
+ const app=await setup();const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='Unsent draft';
+ document.querySelector<HTMLButtonElement>('#create-sidebar-group')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLInputElement>('#modal-input')!.value='资料';document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
+ const group=()=>document.querySelector<HTMLElement>('[data-sidebar-project="custom-group"]')!;
+ expect(group().textContent).toContain('资料');expect(prompt.value).toBe('Unsent draft');expect(app.requests.some(r=>r.action==='project')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);const task=app.requests.find(r=>r.action==='conversation');
+ document.querySelector<HTMLButtonElement>('[data-sidebar-ungrouped] .more')!.click();
+ const select=document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;select.value='custom-group';select.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ group().querySelector<HTMLButtonElement>('.project-group-more')!.click();expect(document.querySelector<HTMLButtonElement>('[data-delete-sidebar-group]')!.disabled).toBe(true);
+ document.body.click();group().querySelector<HTMLButtonElement>('.session-item .more')!.click();
+ const move=document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;move.value='';move.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
+ group().querySelector<HTMLButtonElement>('.project-group-more')!.click();document.querySelector<HTMLButtonElement>('[data-delete-sidebar-group]')!.click();await vi.advanceTimersByTimeAsync(20);
+ expect(group()).toBeNull();expect(document.querySelector('[data-sidebar-ungrouped] .session-item')?.getAttribute('data-session-id')).toBe(task.id);
+ expect(app.frames.filter(f=>f.type==='abort'||f.type==='prompt')).toEqual([]);
 });

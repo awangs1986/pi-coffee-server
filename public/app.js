@@ -31,7 +31,7 @@ import {
   noteNode, relativeTime, toolCard, toolResultDetails, toolResultText, updateActivity, updateAssistant, userBubble,
 
 } from './render.js';
-import { attentionOf, createSidebarOrder, orderSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
+import { sidebarGroups, sidebarGroupMembers, attentionOf, createSidebarOrder, orderSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
 
 
 const ACTIVE_KEY_BASE = 'pi-coffee.active.v2';
@@ -823,6 +823,8 @@ function renderSessionListContent() {
   const grouped=workspaceState?.sidebar?.showGroups!==false;
   $('#show-groups').setAttribute('aria-checked',String(grouped));
   $('#show-groups').disabled=!workspaceState || sidebarSaving;
+  $('#create-sidebar-group').disabled=!workspaceState || sidebarSaving;
+  const groups=sidebarGroups(workspaceState?.projects,workspaceState?.sidebar);
   ui.sessionList.innerHTML = '';
   renderSearchResults();
   let known = sessions.slice();
@@ -832,13 +834,13 @@ function renderSessionListContent() {
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
   known=sidebarOrder.snapshot(known);
-  if (known.length === 0 && (!grouped || !workspaceState?.projects.length)) {
+  if (known.length === 0 && (!grouped || !groups.length)) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
     return;
   }
 
   if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known); return; }
-  const assigned=new Map(workspaceState.projects.map(p=>[p.id,[]]));
+  const assigned=new Map(groups.map(p=>[p.id,[]]));
   const ungrouped=[];
   for(const session of known){
     const task=workspaceState.conversations.find(c=>c.id===session.id);
@@ -846,7 +848,7 @@ function renderSessionListContent() {
     const projectId=overrides && Object.hasOwn(overrides,session.id) ? overrides[session.id] : task?.projectId;
     (assigned.get(projectId) || ungrouped).push(session);
   }
-  for(const project of workspaceState.projects){
+  for(const project of groups){
     const items=assigned.get(project.id);
     const group=el('li','project-group');group.dataset.sidebarProject=project.id;
     const folded=workspaceState.sidebar?.collapsed?.includes(project.id) || false;
@@ -860,12 +862,15 @@ function renderSessionListContent() {
     button.addEventListener('click',()=>saveSidebar({action:'sidebar_collapse',projectId:project.id,collapsed:!folded}));
     const list=el('ul','project-group-list');list.hidden=folded;list.setAttribute('aria-label',project.name+' 对话');
     for(const session of orderSessions(items))list.append(sessionRow(session));
-    group.append(button,list);sidebarDropTarget(group,project.id);ui.sessionList.append(group);
+    const header=el('div','project-group-header');
+    const more=el('button','project-group-more','⋯');more.type='button';more.title='分组操作';more.setAttribute('aria-label',project.name+'分组操作');
+    more.addEventListener('click',event=>{event.stopPropagation();openGroupMenu(project,more);});
+    header.append(button,more);group.append(header,list);sidebarDropTarget(group,project.id);ui.sessionList.append(group);
   }
   const outside=el('li','ungrouped-conversations');outside.dataset.sidebarUngrouped='';
   outside.append(el('div','side-label','未分组'));
   const list=el('ul','project-group-list');appendSessionGroups(list,ungrouped);
-  if(!ungrouped.length)list.append(el('li','sidebar-drop-hint','拖到这里移出项目分组'));
+  if(!ungrouped.length)list.append(el('li','sidebar-drop-hint','拖到这里移出分组'));
   outside.append(list);sidebarDropTarget(outside,null);ui.sessionList.append(outside);
 }
 function appendSessionGroups(parent,list){
@@ -888,13 +893,33 @@ function sidebarDropTarget(node,projectId){
   });
 }
 async function saveSidebar(change){
-  if(sidebarSaving)return;sidebarSaving=true;
+  if(sidebarSaving)return;sidebarSaving=true;const user=currentUser;
   try{
     const sidebar=await workspaceApi(change);
-    ++workspaceRequestSeq; // Ignore workspace reads started before this persisted change.
+    if(user!==currentUser)return;
+    ++workspaceRequestSeq;
     if(workspaceState)workspaceState.sidebar=sidebar;
-    renderSessionList();
-  }catch(error){toast(error.message);}finally{sidebarSaving=false;$('#show-groups').disabled=!workspaceState;}
+    return sidebar;
+  }catch(error){if(user===currentUser)toast(error.message);}
+  finally{sidebarSaving=false;renderSessionList();}
+}
+async function createSidebarGroup(){
+  if(!workspaceState||sidebarSaving)return;
+  const user=currentUser;closeBrandMenu();closeMenu();
+  const name=await askModal({title:'新建分组',text:'输入分组名称（最多 64 个字符）。分组仅用于整理对话，不会创建仓库。',input:'',okLabel:'创建'});
+  if(name===null||user!==currentUser)return;
+  if(await saveSidebar({action:'sidebar_group_create',name}))toast('分组已创建，可拖入对话');
+}
+function openGroupMenu(group,anchor){
+  closeMenu();sidebarInteraction.menu(true);
+  menuNode=el('div','popmenu');menuNode.setAttribute('role','menu');
+  const count=sidebarGroupMembers(group.id,workspaceState?.conversations,workspaceState?.sidebar,workspaceState?.deletedIds).size;
+  const remove=el('button','popitem danger','删除分组');remove.type='button';remove.dataset.deleteSidebarGroup=group.id;
+  remove.disabled=sidebarSaving||count>0;remove.title=count?'分组内还有对话（含已归档），请先移出':'仅删除侧栏分组，保留项目和文件';
+  remove.addEventListener('click',async()=>{closeMenu();if(await saveSidebar({action:'sidebar_group_delete',groupId:group.id}))toast('分组已删除');});
+  menuNode.append(remove);document.body.append(menuNode);const rect=anchor.getBoundingClientRect();
+  menuNode.style.top=Math.max(8,Math.min(rect.bottom+4,window.innerHeight-menuNode.offsetHeight-8))+'px';
+  menuNode.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-menuNode.offsetWidth-8))+'px';
 }
 
 function smallRunningCat(){const cat=pixelCat(document);cat.classList.add('sidebar-running-cat');return cat;}
@@ -976,11 +1001,12 @@ function openSessionMenu(session, anchor) {
   if(fork.disabled)fork.title='需已就绪且空闲的任务，以及此 Agent 支持的 Fork 模式';
   fork.addEventListener('click',()=>{closeMenu();forkControls.open(session);});
   menuNode.append(rename, fork, del);
-  if(workspaceState?.projects.length){
+  const groups=sidebarGroups(workspaceState?.projects,workspaceState?.sidebar);
+  if(workspaceState && groups.length){
     const label=el('label','sidebar-move-label','移至侧栏分组');
     const select=el('select','sidebar-move-select');select.setAttribute('aria-label','移至侧栏分组');
     const option=el('option','','未分组');option.value='';select.append(option);
-    for(const p of workspaceState.projects){const o=el('option','',p.name);o.value=p.id;select.append(o);}
+    for(const p of groups){const o=el('option','',p.name);o.value=p.id;select.append(o);}
     const overrides=workspaceState.sidebar?.assignments;
     select.value=(overrides && Object.hasOwn(overrides,session.id)?overrides[session.id]:workspaceState.conversations.find(c=>c.id===session.id)?.projectId) || '';
     select.addEventListener('change',()=>{const projectId=select.value || null;closeMenu();void saveSidebar({action:'sidebar_move',id:session.id,projectId});});
@@ -992,6 +1018,7 @@ function openSessionMenu(session, anchor) {
   menuNode.style.left = Math.max(8,Math.min(rect.left,window.innerWidth-menuNode.offsetWidth-8))+'px';
 }
 ui.brandBtn?.addEventListener('click', toggleBrandMenu);
+$('#create-sidebar-group').addEventListener('click',()=>void createSidebarGroup());
 $('#show-groups').addEventListener('click',()=>saveSidebar({action:'sidebar_display',showGroups:workspaceState?.sidebar?.showGroups===false}));
 ui.themeToggle?.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 ui.agentBtn?.addEventListener('click', toggleAgentMenu);

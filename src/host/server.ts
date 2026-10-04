@@ -400,6 +400,8 @@ export class HostServer {
           if(!await ws.lookup(input.id) && !(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");
           result=await ws.moveSidebar(input.id,input.projectId);break;
         }
+        case "sidebar_group_create": result=await ws.createSidebarGroup(input.name);break;
+        case "sidebar_group_delete": result=await ws.deleteSidebarGroup(input.groupId);break;
         case "sidebar_display": result=await ws.displaySidebar(input.showGroups);break;
         case "sidebar_collapse": result=await ws.collapseSidebar(input.projectId,input.collapsed);break;
         case "files": {

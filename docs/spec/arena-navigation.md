@@ -371,3 +371,30 @@ usual recent-activity ordering. Equal timestamps use the conversation ID as a
 stable tie-breaker. This is disposable view state, reset on identity changes and
 pruned when tasks leave the displayed list; it does not change task timestamps,
 project membership, execution or persisted group preferences.
+
+### Sidebar group lifecycle (2026-10-04, Server #50)
+
+The logo menu offers New group. A custom group has an independent opaque ID and
+trimmed NFC name (1–64 characters, no control characters). Names must be unique
+among visible groups, ignoring case. Creating a group enables grouped display
+without creating a Project, cloning a repository or changing the selected task.
+At most 100 custom groups are retained per authenticated workspace.
+
+Existing project groups and custom groups share collapse, drag/drop and the
+conversation move selector. Each group has an actions button offering Delete
+group. Only an empty group can be removed; archived conversations and retained
+explicit legacy assignments count as members even when absent from the current
+view. Unregistered external deletion is not assumed to prove a reference absent.
+Known permanently deleted IDs no longer block group removal.
+
+Deletion of an automatic project group records a sidebar-only hidden-project
+preference. The Project remains available for new Work tasks; repository, files,
+branches, task identity and execution remain unchanged. New tasks for a hidden
+project appear ungrouped unless explicitly moved. The ungrouped container cannot
+be deleted. Empty custom groups and hidden-project preferences survive restart.
+
+Host validates the authenticated workspace, name, group identity and emptiness.
+Moves and deletion use the same registry serialization, so a race cannot remove a
+group while accepting a new member. Browser disabling is feedback, not the guard.
+A failed save retains existing placement and displays the error. Group metadata
+operations do not require interrupting an Agent.

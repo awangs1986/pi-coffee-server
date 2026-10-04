@@ -37,5 +37,29 @@ it('persists scoped sidebar placement and collapse without changing task identit
   expect((await call(undefined,'bob')).data.sidebar).toBeUndefined();
   expect((await call({action:'sidebar_display',showGroups:true})).status).toBe(200);
   expect((await call()).data.sidebar).toEqual({assignments:{chat:null},collapsed:[p.id],showGroups:true});
+  const created=await call({action:'sidebar_group_create',name:'  阅读资料  '});expect(created.status).toBe(200);
+  const group=created.data.groups[0];expect(group.name).toBe('阅读资料');
+  expect((await call({action:'sidebar_group_create',name:'阅读资料'})).status).toBe(409);
+  expect((await call({action:'sidebar_group_create',name:'  '})).status).toBe(409);
+  expect((await call({action:'sidebar_group_delete',groupId:group.id},'bob')).status).toBe(409);
+  expect((await call({...move,projectId:group.id})).status).toBe(200);
+  expect((await call({action:'sidebar_collapse',projectId:group.id,collapsed:true})).status).toBe(200);
+  expect((await call({action:'sidebar_group_delete',groupId:group.id})).status).toBe(409);
+  expect((await call({action:'archive',id:c.id})).status).toBe(200);
+  expect((await call({action:'sidebar_group_delete',groupId:group.id})).status).toBe(409);
+  await server!.close();await start();expect((await call()).data.sidebar.groups).toEqual([group]);
+  expect((await call({...move,projectId:null})).status).toBe(200);
+  expect((await call({action:'sidebar_group_delete',groupId:group.id})).status).toBe(200);
+  expect((await call({...move,projectId:group.id})).status).toBe(409);
+  expect((await call({action:'sidebar_group_delete',groupId:p.id})).status).toBe(200);
+  const saved=(await call()).data;expect(saved.projects[0].id).toBe(p.id);expect(saved.sidebar.hiddenProjects).toContain(p.id);
+  expect(saved.sidebar.collapsed).not.toContain(p.id);expect(saved.conversations[0].cwd).toBe(c.cwd);
+  await server!.close();await start();expect((await call()).data.sidebar.hiddenProjects).toContain(p.id);
+  const later=await call({action:'conversation',id:'later-work',engine:'pi',workspaceKind:'project',projectId:p.id,branch:'main'});expect(later.status).toBe(200);expect(later.data.projectId).toBe(p.id);expect((await call()).data.sidebar.hiddenProjects).toContain(p.id);
+
+  const concurrent=(await call({action:'sidebar_group_create',name:'并发测试'})).data.groups[0];
+  const race=await Promise.all([call({...move,projectId:concurrent.id}),call({action:'sidebar_group_delete',groupId:concurrent.id})]);
+  expect(race.map(x=>x.status).sort()).toEqual([200,409]);
+
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
