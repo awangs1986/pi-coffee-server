@@ -24,10 +24,12 @@ export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>
      if(key==='bind'&&legacy.options.length===1)continue;
      const button=document.createElement('button');button.type='button';button.className='btn small';button.textContent=label;if(key==='delete')button.dataset.accountDelete=account.id;
      button.addEventListener('click',()=>void action(async()=>{
+      let boundProject;
       if(key==='delete'&&!confirm('解除 '+account.login+' 的绑定？使用该账号的任务将无法继续访问 GitHub。'))return;
-      if(key==='bind'){if(!legacy.value)throw Error('请先选择旧项目');await bind(legacy.value,account.id);}
+      if(key==='bind'){if(!legacy.value)throw Error('请先选择旧项目');boundProject=legacy.selectedOptions[0].textContent;status('正在绑定 '+boundProject+'…');await bind(legacy.value,account.id);}
       else await githubAccountRequest({action:key,id:account.id});
       await refresh();if(key==='check')status(account.login+' 授权可用');
+      if(key==='bind')status(boundProject+' 已绑定到 '+account.login+'。');
      }));actions.append(button);
     }row.append(actions);list.append(row);
    }
