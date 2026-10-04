@@ -104,7 +104,7 @@
           <div class="skills-body">
             <p class="skills-intro">在 Web 管理，在你的 VM 安装和执行。每个 Agent 保留自己的 Skill 加载方式。</p>
             <div class="skills-toolbar">
-              <label>Agent <select id="skills-engine" aria-label="Skill Agent"><option value="pi">Pi</option><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+              <label>Agent <select id="skills-engine" aria-label="Skill Agent"><option value="pi">Pi</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="cursor">Cursor</option></select></label>
               <label>范围 <select id="skills-scope" aria-label="Skill 范围"><option value="user">用户级 · 所有任务</option><option value="project">项目级 · 当前 Work 目录</option></select></label>
               <button id="skills-refresh" class="btn small" type="button">刷新</button>
               <button id="skills-reload" class="btn small" type="button">重新加载当前任务</button>
@@ -214,7 +214,7 @@
             </div>
             <div class="sr-only" aria-hidden="true">
               <input id="file" type="file" multiple tabindex="-1" />
-              <label>Agent<select id="task-engine" tabindex="-1"><option value="pi">Pi</option><option value="codex" disabled>Codex · 未就绪</option><option value="claude" disabled>Claude Code · 未就绪</option></select></label>
+              <label>Agent<select id="task-engine" tabindex="-1"><option value="pi">Pi</option><option value="codex" disabled>Codex · 未就绪</option><option value="claude" disabled>Claude Code · 未就绪</option><option value="cursor" disabled>Cursor · 未就绪</option></select></label>
               <label>新任务类型<select id="task-kind" tabindex="-1"><option value="chat">Chat · 本地目录</option><option value="project">Work · Gitea 项目</option></select></label>
               <label>模型来源<select id="model-source" tabindex="-1"><option value="native">原生 Pi</option><option value="relay">管理员 Relay</option></select></label>
               <label>模型<select id="model" tabindex="-1"><option value="">模型…</option></select></label>

@@ -1,3 +1,5 @@
+import {assertNativePrompt,nativeCommandAllowed} from './commands.js';
+import {NativeSettingsStore} from './settings.js';
 import {NativeQuestions} from "./questions.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -6,7 +8,7 @@ import { join } from "node:path";
 import type { AgentHistory, AgentHistoryRead, AgentModels, AgentSession } from "../agent-adapter.js";
 import { parseSourceLines, readStableSource, sourceHash, unknownHistory } from "./history-source.js";
 import { nativeHistoryJob, nativeHistoryNeedsWorker } from "./history-pool.js";
-import type { HistoryEntry, ImageInput, SessionState, UiResponse } from "../../shared/protocol.js";
+import type { CommandInfo, ContextCategoryId, HistoryEntry, ImageInput, SessionState, SessionStats, UiResponse } from "../../shared/protocol.js";
 import { NativeProcess, type NativeCommand } from "./process.js";
 import type { NativeBinding } from "../workspaces.js";
 
@@ -95,10 +97,12 @@ export class ClaudeSession implements AgentSession {
   private bound:boolean;
   private name?:string;
   private model?:string;
-  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>,extraDirs:string[]=[],instructions?:string,private preparation=false) {
+  private effort="medium";
+  private commands:CommandInfo[]=[];
+  constructor(command:NativeCommand,private cwd:string,binding:NativeBinding,private save:(binding:NativeBinding)=>Promise<void>,extraDirs:string[]=[],instructions?:string,private preparation=false,private settings=new NativeSettingsStore(),metadataOnly=false) {
     this.recoveryUnknown=binding.writers==="unknown";this.nativeId=binding.id??binding.requestedId!;this.bound=binding.state==="bound";
     const addDirArgs=extraDirs.flatMap(dir=>["--add-dir",dir]);
-    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",...addDirArgs,...(preparation?['--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands','--settings','{"disableAllHooks":true}']:[]),...(instructions?["--append-system-prompt",instructions]:[]),this.bound?"--resume":"--session-id",this.nativeId],cwd);
+    this.process=new NativeProcess(command,["--print","--input-format","stream-json","--output-format","stream-json","--verbose","--include-partial-messages","--permission-prompts","host","--permission-prompt-tool","stdio",...addDirArgs,...(metadataOnly?['--no-session-persistence','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--settings','{"disableAllHooks":true}']:[]),...(preparation?['--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands','--settings','{"disableAllHooks":true}']:[]),...(instructions?["--append-system-prompt",instructions]:[]),this.bound?"--resume":"--session-id",this.nativeId],cwd);
     this.home=command.env?.CLAUDE_CONFIG_DIR??process.env.CLAUDE_CONFIG_DIR??join(homedir(),".claude");
     this.process.onMessage=message=>this.handle(message);
     this.process.onExit=()=>{
@@ -107,7 +111,16 @@ export class ClaudeSession implements AgentSession {
     };
   }
   private home:string;
-  async start(){await this.control({subtype:"initialize"}).then(result=>{this.models=result.models??[];this.backgroundKnown=!this.recoveryUnknown && result.session_state==="idle";});return this;}
+  async start(){
+    const result=await this.control({subtype:"initialize"});this.models=result.models??[];
+    this.commands=(result.commands??[]).filter((c:any)=>nativeCommandAllowed(c.name)).map((c:any)=>({name:c.name,description:c.description,invocation:'/'+c.name,source:'skill'}));
+    this.backgroundKnown=!this.recoveryUnknown&&result.session_state==='idle';
+    const settings=await this.settings.load();this.name=settings.name;this.model=settings.model??this.models[0]?.value;
+    if(settings.model)await this.setModel('claude',settings.model);
+    const levels=(await this.getModels()).thinkingLevels;
+    if(settings.effort)await this.setThinkingLevel(settings.effort);else if(levels.includes('medium'))await this.setThinkingLevel('medium');
+    return this;
+  }
   private control(request:unknown):Promise<any>{
     const request_id=randomUUID();
     return new Promise((resolve,reject)=>{
@@ -138,7 +151,7 @@ export class ClaudeSession implements AgentSession {
     }
     if(message.type==="system" && message.subtype==="init") {
       if(message.session_id!==this.nativeId)throw new Error("Claude returned a different native Session identity");
-      await this.save({state:"bound",id:this.nativeId,writers:"unknown"});this.bound=true;this.model=message.model??this.model;
+      await this.save({state:"bound",id:this.nativeId,writers:"unknown"});this.bound=true;this.model=this.model??message.model;
     }
     if(message.type==="system" && message.subtype==="background_tasks_changed") {
       this.backgroundKnown=!this.recoveryUnknown;this.backgroundTasks=new Set((message.tasks??[]).map((task:any)=>task.task_id));
@@ -166,6 +179,7 @@ export class ClaudeSession implements AgentSession {
     }
   }
   async prompt(text:string,images?:ImageInput[]) {
+    assertNativePrompt(text);
     if(!this.bound)await this.save({state:"starting",requestedId:this.nativeId,writers:"unknown"});
     else await this.save({state:"bound",id:this.nativeId,writers:"unknown"});
     this.interruptRequested=false;this.streaming=true;this.emit({type:"run_started",runId:randomUUID()});
@@ -183,16 +197,38 @@ export class ClaudeSession implements AgentSession {
   async getState():Promise<SessionState>{return {isStreaming:this.streaming,messageCount:this.count,...(this.name?{sessionName:this.name}:{})};}
   async backgroundState(){return {known:this.backgroundKnown,active:this.backgroundTasks.size+(this.streaming?1:0)};}
   async abort(){if(!this.streaming)return;this.interruptRequested=true;try{await this.control({subtype:"interrupt"});}catch(error){this.interruptRequested=false;throw error;}}
-  async getModels():Promise<AgentModels>{return {models:this.models.map(m=>({provider:"claude",id:m.value})),current:this.model?{provider:"claude",id:this.model}:null,thinkingLevel:"",thinkingLevels:[]};}
-  async setModel(provider:string,id:string){if(provider!=="claude"||!this.models.some(m=>m.value===id))throw new Error("Model unavailable for Claude Code");await this.control({subtype:"set_model",model:id});this.model=id;}
-  async setThinkingLevel(_level:string){throw new Error("Reasoning selection unavailable");}
-  async steer(_text:string){throw new Error("Steering unavailable");}
-  async followUp(_text:string){throw new Error("Queueing unavailable");}
-  async rename(_name:string){throw new Error("Native rename unavailable");}
-  async getCommands(){return [];}
+  async getModels():Promise<AgentModels>{
+    const choices=this.models.map(m=>({provider:'claude',id:m.value,reasoning:Boolean(m.supportsEffort),thinkingLevels:m.supportsEffort?(m.supportedEffortLevels??[]):[],defaultThinkingLevel:'medium'}));
+    const selected=this.models.find(m=>m.value===this.model||m.resolvedModel===this.model);
+    return {models:choices,current:this.model?{provider:'claude',id:this.model}:null,thinkingLevel:selected?.supportsEffort?this.effort:'',thinkingLevels:selected?.supportsEffort?(selected.supportedEffortLevels??[]):[]};
+  }
+  async setModel(provider:string,id:string){
+    if(this.streaming||provider!=='claude'||!this.models.some(m=>m.value===id||m.resolvedModel===id))throw new Error('Model unavailable for Claude Code or session is busy');
+    await this.control({subtype:'set_model',model:id});this.model=id;
+    const levels=(await this.getModels()).thinkingLevels;const effort=levels.includes(this.effort)?this.effort:levels.includes('medium')?'medium':levels[0]??'';
+    if(effort)await this.control({subtype:'apply_flag_settings',settings:{effortLevel:effort}});
+    await this.settings.save({model:id,effort});this.effort=effort;
+  }
+  async setThinkingLevel(level:string){if(this.streaming||!(await this.getModels()).thinkingLevels.includes(level))throw new Error('Reasoning selection unavailable for this model');await this.control({subtype:'apply_flag_settings',settings:{effortLevel:level}});await this.settings.save({effort:level});this.effort=level;}
+  async steer(_text:string){throw new Error('Steering unavailable');}
+  async validateFollowUp(text:string){assertNativePrompt(text);}
+  async followUp(_text:string){throw new Error('Follow-up messages must use the Host queue');}
+  async rename(name:string){await this.control({subtype:'rename_session',title:name,source:'host',session_id:this.nativeId});await this.settings.save({name});this.name=name;}
+  async getCommands(){return this.commands;}
   async getExtensions(){return [];}
-  async getStats():Promise<never>{throw new Error("Native statistics unavailable");}
-  async compact(){throw new Error("Native compaction unavailable");}
+  async getStats():Promise<SessionStats>{
+    const usage=await this.control({subtype:'get_context_usage',detail:'summary'});
+    if(!Number.isFinite(usage.totalTokens)||!Number.isFinite(usage.maxTokens)||usage.maxTokens<=0)throw new Error('Native Claude context usage unavailable');
+    const ids:ContextCategoryId[]=['system','tools','rules','skills','dynamic','subagents','conversation'];
+    const names:Record<string,ContextCategoryId>={'System prompt':'system','System tools':'tools','Memory files':'rules','Skills':'skills','MCP tools':'dynamic','Custom agents':'subagents','Messages':'conversation'};
+    const used=(usage.categories??[]).filter((c:any)=>c.kind==='used');
+    const mapped=used.every((c:any)=>names[c.name]&&Number.isSafeInteger(c.tokens)&&c.tokens>=0);
+    const categories=ids.map(id=>({id,tokens:used.filter((c:any)=>names[c.name]===id).reduce((n:number,c:any)=>n+c.tokens,0)}));
+    return {userMessages:0,assistantMessages:0,toolCalls:0,tokens:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0},cost:0,
+      contextUsage:{tokens:usage.totalTokens,contextWindow:usage.maxTokens,percent:100*usage.totalTokens/usage.maxTokens},
+      ...(mapped&&categories.reduce((n,c)=>n+c.tokens,0)===usage.totalTokens?{contextBreakdown:{version:1 as const,method:'native_summary' as const,basis:'session_preview' as const,model:usage.model??this.model??'',capturedAt:new Date().toISOString(),contextWindow:usage.maxTokens,totalTokens:usage.totalTokens,categories,mediaOmitted:false}}:{})};
+  }
+  async compact(){throw new Error('Native compaction unavailable');}
   async respondUi(response:UiResponse){
     if(await this.questions.answer(response))return;
     const pending=this.requests.get(response.id);if(!pending)throw new Error("Native request is no longer pending");

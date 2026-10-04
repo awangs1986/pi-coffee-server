@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {afterEach,it,expect,vi} from 'vitest';
 import {IDBFactory,IDBDatabase as FakeIDBDatabase} from 'fake-indexeddb';
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();history.replaceState(null,'','/');localStorage.clear();sessionStorage.clear();vi.resetModules();});
-async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>){
+async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUser?:string,workspaceRead?:Promise<void>,nativeReady=false){
  document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
  Object.defineProperty(window,'matchMedia',{value:(query:string)=>({matches:wide && query.includes('min-width'),addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
  const sidebar:{pinned?:string[];showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}={assignments:{} as Record<string,string|null>,collapsed:[] as string[]};
@@ -15,7 +15,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
   if(url==='/auth/me'&&authUser)return {ok:true,status:200,json:async()=>({auth:true,user:authUser})};
   if(url==='/api/workspace'&&!init?.body)await workspaceRead;
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,clearChatContext:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:false,reason:'CLI unavailable'}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,clearChatContext:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:nativeReady,modelCatalog:nativeReady,reason:'CLI unavailable'},{id:'cursor',name:'Cursor',available:nativeReady,modelCatalog:false}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
   if(body.action==='sidebar_pin'){sidebar.pinned=body.pinned?[body.id,...(sidebar.pinned??[]).filter(id=>id!==body.id)]:(sidebar.pinned??[]).filter(id=>id!==body.id);return {ok:true,json:async()=>structuredClone(sidebar)};}
@@ -34,7 +34,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
 }
 it('fixes Agent at Task creation, scopes Model controls and ignores obsolete socket frames',async()=>{
  const app=await setup();const select=document.querySelector<HTMLSelectElement>('#task-engine')!;
- expect([...select.options].map(o=>o.value)).toEqual(['pi','codex','claude']);expect(select.options[2].disabled).toBe(true);
+ expect([...select.options].map(o=>o.value)).toEqual(['pi','codex','claude','cursor']);expect(select.options[2].disabled).toBe(true);
  chooseWork();select.value='codex';select.dispatchEvent(new Event('change'));document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const created=app.requests.find(r=>r.action==='conversation');expect(created.engine).toBe('codex');expect(select.disabled).toBe(true);
  expect(app.frames.find(f=>f.type==='open')).toMatchObject({sessionId:created.id,nativeProtocol:1});
@@ -67,7 +67,7 @@ it.each(['pi','codex'])('shows the current %s model as a text-only existing conv
  expect([...button.querySelectorAll('svg')].every(icon=>!icon.classList.contains('hidden'))).toBe(true);
 });
 it('keeps Pi available and disables native choices on a legacy Host',async()=>{
- await setup(true);const options=[...document.querySelector<HTMLSelectElement>('#task-engine')!.options];expect(options.map(o=>o.disabled)).toEqual([false,true,true]);
+ await setup(true);const options=[...document.querySelector<HTMLSelectElement>('#task-engine')!.options];expect(options.map(o=>o.disabled)).toEqual([false,true,true,true]);
 });
 it.each(['steer','follow_up'])('keeps the active Pi reply and Stop available after a rejected %s command',async(mode)=>{
  const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
@@ -324,7 +324,7 @@ it('ignores stale Skill inventories after the user changes Agent',async()=>{
 
 
 it.each(['pi','codex'].flatMap(agent=>['history-first','models-first','rejected'].map(order=>({agent,order}))))('selects a $agent draft model and waits before the first prompt ($order)',async({agent,order})=>{
- const app=await setup(false,false,true,agent==='pi');if(agent==='codex')chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+ const app=await setup(false,false,true,agent==='pi',undefined,undefined,agent==='claude');if(agent!=='pi')chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
  if(agent==='codex'){engine.value=agent;engine.dispatchEvent(new Event('change'));}
  const query=app.frames.find(f=>f.type==='get_model_catalog' && f.engine===agent);expect(query).toMatchObject({engine:agent});
  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
@@ -359,8 +359,8 @@ it('ignores a stale Codex catalog after switching back to Pi',async()=>{
  expect(engine.value).toBe('pi');expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
 });
 
-it.each(['pi','codex'].flatMap(agent=>['default','high','rejected'].map(selection=>({agent,selection}))))('chooses $agent thinking before task creation ($selection), defaults to med and waits for acceptance',async({agent,selection})=>{
- const app=await setup(false,false,true,agent==='pi');if(agent==='codex'){chooseWork();const select=document.querySelector<HTMLSelectElement>('#task-engine')!;select.value=agent;select.dispatchEvent(new Event('change'));}
+it.each(['pi','codex','claude'].flatMap(agent=>['default','high','rejected'].map(selection=>({agent,selection}))))('chooses $agent thinking before task creation ($selection), defaults to med and waits for acceptance',async({agent,selection})=>{
+ const app=await setup(false,false,true,agent==='pi',undefined,undefined,agent==='claude');if(agent!=='pi'){chooseWork();const select=document.querySelector<HTMLSelectElement>('#task-engine')!;select.value=agent;select.dispatchEvent(new Event('change'));}
  const query=app.frames.find(f=>f.type==='get_model_catalog'&&f.engine===agent),ws=app.sockets.at(-1);
  ws.receive({type:'model_catalog',requestId:query.requestId,engine:agent,models:[{provider:agent,id:'reasoner',thinkingLevels:['low','medium','high']}],current:{provider:agent,id:'reasoner'},thinkingLevels:['low','medium','high'],thinkingLevel:'low'});
  const row=document.querySelector<HTMLButtonElement>('#agent-thinking-row')!;
@@ -1371,4 +1371,18 @@ it('hides context clear for Work and disables it while Chat is running',async()=
  expect(document.querySelector('#sp-chat-actions')!.classList.contains('hidden')).toBe(true);
  app.conversations.find(c=>c.id===id).workspaceKind='chat';document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelector<HTMLButtonElement>('#sp-clear-context')!.disabled).toBe(true);document.querySelector<HTMLButtonElement>('#sp-clear-context')!.click();expect(app.requests.some(r=>r.action==='clear_chat_context')).toBe(false);
+});
+
+it('creates Cursor Work, uses its bound models, and hides unverified context and steering controls',async()=>{
+ const app=await setup(false,false,true,false,undefined,undefined,true);chooseWork();
+ const select=document.querySelector<HTMLSelectElement>('#task-engine')!;select.value='cursor';select.dispatchEvent(new Event('change'));
+ expect(select.selectedOptions[0].disabled).toBe(false);expect(app.frames.some(f=>f.type==='get_model_catalog'&&f.engine==='cursor')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const task=app.requests.find(r=>r.action==='conversation');expect(task).toMatchObject({engine:'cursor',workspaceKind:'project'});
+ const ws=app.sockets.at(-1);ws.receive({type:'opened',sessionId:task.id,engine:'cursor',state:{isStreaming:false},capabilities:{models:true,images:true,commands:true,followUp:true,steer:false,stats:false}});
+ ws.receive({type:'history',sessionId:task.id,entries:[]});ws.receive({type:'models',current:{provider:'cursor',id:'cursor-native-model'},models:[{provider:'cursor',id:'cursor-native-model'}],thinkingLevel:'',thinkingLevels:[]});await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();
+ expect(document.querySelector('#agent-name')!.textContent).toBe('cursor-nativ');
+ expect(document.querySelector('#agent-context-row')!.classList.contains('hidden')).toBe(true);
+ expect(document.querySelector('#agent-thinking-row')!.classList.contains('hidden')).toBe(true);
 });

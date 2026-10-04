@@ -14,8 +14,9 @@ createInterface({input:process.stdin}).on('line',async line=>{
  const m=JSON.parse(line);
  if(m.type==='control_response'){send({type:'assistant',uuid:'decision',message:{role:'assistant',content:[{type:'text',text:m.response.response.behavior==='deny'?'permission denied':'permission allowed'}]}});send({type:'result',is_error:false});return;}
  if(m.type==='control_request'){
+  if(m.request.subtype==='get_context_usage'){send({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{totalTokens:40,maxTokens:200000,model:'claude-test',categories:[{name:'System prompt',tokens:10,kind:'used'},{name:'Messages',tokens:30,kind:'used'},{name:'Free space',tokens:199960,kind:'free'}]}}});return;}
   if(m.request.subtype==='interrupt')send({type:'result',is_error:true,subtype:'error_during_execution'});
-  send({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{session_state:'idle',models:[{value:'claude-test',resolvedModel:'claude-test'}]}}});return;
+  send({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{session_state:'idle',models:[{value:'claude-test',resolvedModel:'claude-test',supportsEffort:true,supportedEffortLevels:['low','medium','high']}]}}});return;
  }
  if(m.type==='user'){
   send({type:'system',subtype:'init',session_id:id});

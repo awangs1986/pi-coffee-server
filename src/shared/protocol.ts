@@ -14,11 +14,11 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_PROMPT_CHARS = MAX_FRAME_BYTES;
 export const MAX_REQUEST_ID_CHARS = 256;
 
-export type AgentEngine = "pi" | "codex" | "claude";
+export type AgentEngine = "pi" | "codex" | "claude" | "cursor";
 export function parseAgentEngine(value: unknown): AgentEngine {
   if (value === undefined) return "pi";
-  if (value === "pi" || value === "codex" || value === "claude") return value;
-  throw new Error("Unknown Agent; choose Pi, Codex or Claude Code");
+  if (value === "pi" || value === "codex" || value === "claude" || value === "cursor") return value;
+  throw new Error("Unknown Agent; choose Pi, Codex, Claude Code or Cursor");
 }
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -114,8 +114,10 @@ export interface ExtensionInfo {
   commands: Array<{ name: string; description?: string }>;
 }
 
-import type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
-export type { ContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
+import type { ContextBreakdown as PiContextBreakdown, ContextCategoryId } from "pi-coffee-harness";
+export type { ContextCategoryId } from "pi-coffee-harness";
+
+export type ContextBreakdown = Omit<PiContextBreakdown,"method"> & {method:PiContextBreakdown["method"]|"native_summary"};
 
 export interface SessionStats {
   userMessages: number;
@@ -179,8 +181,8 @@ export interface AgentCapabilities {
 }
 
 export function capabilitiesFor(engine:AgentEngine):AgentCapabilities {
-  const pi=engine==="pi";
-  return {models:true,images:pi,stop:true,questions:true,tools:true,thinking:pi,steer:pi,followUp:pi,stats:pi,commands:pi,extensions:pi,compact:pi,rename:pi,cleanup:pi};
+  const pi=engine==="pi",claude=engine==="claude",cursor=engine==="cursor";
+  return {models:true,images:pi||claude||cursor,stop:true,questions:true,tools:true,thinking:pi||claude,steer:pi,followUp:pi||claude||cursor,stats:pi||claude,commands:pi||claude||cursor,extensions:pi,compact:pi,rename:pi||claude,cleanup:pi};
 }
 
 export interface UiResponse {
@@ -228,12 +230,12 @@ export type ClientFrame = (
       requestId?: string;
       sessionId: string;
     }
-  | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: "pi" | "codex"; requestId?: string }
+  | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: AgentEngine; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_models"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
-  | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: "pi" | "codex"; requestId?: string }
+  | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: AgentEngine; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
   | { v: typeof PROTOCOL_VERSION; type: "get_extensions" }
   | { v: typeof PROTOCOL_VERSION; type: "get_stats" }
@@ -286,7 +288,7 @@ export type ServerFrame = (
   | {
       v: typeof PROTOCOL_VERSION;
       type: "models" | "model_catalog";
-      engine?: "pi" | "codex";
+      engine?: AgentEngine;
       requestId?: string;
       models: ModelChoice[];
       current: { provider: string; id: string; source?: "native" | "relay" } | null;
@@ -297,7 +299,7 @@ export type ServerFrame = (
   | {
       v: typeof PROTOCOL_VERSION;
       type: "commands" | "command_catalog";
-      engine?: "pi" | "codex";
+      engine?: AgentEngine;
       requestId?: string;
       commands: CommandInfo[];
     }
@@ -410,13 +412,13 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "list_sessions":
       return { v: PROTOCOL_VERSION, type: "list_sessions" };
     case "get_model_catalog":
-      if(value.engine!=="codex" && value.engine!=="pi")throw new ProtocolError("invalid_frame","Model catalog requires Pi or Codex");
-      return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:value.engine,...withRequestId(value)};
+      if(!["pi","codex","claude","cursor"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent model catalog");
+      return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
     case "get_models":
       return { v: PROTOCOL_VERSION, type: "get_models", ...withRequestId(value) };
     case "get_command_catalog":
-      if(value.engine!=="pi" && value.engine!=="codex")throw new ProtocolError("invalid_frame","Command catalog requires Pi or Codex");
-      return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:value.engine,...withRequestId(value)};
+      if(!["pi","codex","claude","cursor"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent command catalog");
+      return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
     case "set_context":
       if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");
       return {v:PROTOCOL_VERSION,type:"set_context",preset:value.preset,...withRequestId(value)};

@@ -10,12 +10,12 @@ export function nativeEnvironment(overrides: Record<string,string> = {}): NodeJS
 export class NativeProcess {
   readonly child: ChildProcessWithoutNullStreams;
   private sequence = 0;
-  private pending = new Map<string|number,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout}>();
+  private pending = new Map<string|number,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout|undefined}>();
   private closed = false;
   private messages:Promise<void>=Promise.resolve();
   onMessage?: (message:any)=>void|Promise<void>;
   onExit?: ()=>void;
-  constructor(command:NativeCommand,args:string[],cwd:string) {
+  constructor(command:NativeCommand,args:string[],cwd:string,private jsonrpc=false) {
     this.child=spawn(command.command,[...(command.args??[]),...args],{cwd,env:nativeEnvironment(command.env),stdio:"pipe",detached:process.platform!=="win32"});
     this.child.stderr.on("data",()=>{}); // Native diagnostics may include provider data; never forward them to Web.
     const input=createInterface({input:this.child.stdout});
@@ -33,15 +33,16 @@ export class NativeProcess {
     this.child.on("error",()=>this.fail(new Error("Native executable could not start")));
     this.child.on("exit",()=>this.fail(new Error("Native process exited")));
   }
-  send(value:unknown) {if(this.closed)throw new Error("Native process unavailable");this.child.stdin.write(JSON.stringify(value)+"\n");}
+  send(value:unknown) {if(this.closed)throw new Error("Native process unavailable");this.child.stdin.write(JSON.stringify(this.jsonrpc?{jsonrpc:"2.0",...(value as object)}:value)+"\n");}
   call(method:string,params:unknown,timeout=30000):Promise<any> {
     const id=++this.sequence;
     return new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error("Native request timed out; delivery may be uncertain"));},timeout);
+      const timer=timeout>0?setTimeout(()=>{this.pending.delete(id);reject(new Error("Native request timed out; delivery may be uncertain"));},timeout):undefined;
       this.pending.set(id,{resolve,reject,timer});
       try {this.send({id,method,params});} catch(error){clearTimeout(timer);this.pending.delete(id);reject(error);}
     });
   }
+  async drain(){await this.messages;}
   private fail(error:Error) {
     if(this.closed)return;this.closed=true;
     for(const pending of this.pending.values()){clearTimeout(pending.timer);pending.reject(error);}this.pending.clear();
