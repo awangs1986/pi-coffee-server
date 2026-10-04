@@ -13,6 +13,12 @@ describe("PI Coffee wire protocol", () => {
     expect(decodeClientFrame(encodeFrame(frame))).toEqual(frame);
   });
 
+  it("preserves model confirmation request IDs and validates them",()=>{
+    expect(decodeClientFrame(JSON.stringify({v:1,type:'get_models',requestId:'model-confirmation'}))).toEqual({v:1,type:'get_models',requestId:'model-confirmation'});
+    expect(decodeClientFrame(JSON.stringify({v:1,type:'get_models'}))).toEqual({v:1,type:'get_models'});
+    expect(()=>decodeClientFrame(JSON.stringify({v:1,type:'get_models',requestId:123}))).toThrow(/requestId/);
+  });
+
   it("accepts long text within the encoded frame budget",()=>{
     const text='a'.repeat(71636);const frame={v:1 as const,type:'prompt' as const,requestId:'long-text',text};
     expect(decodeClientFrame(encodeFrame(frame))).toEqual(frame);

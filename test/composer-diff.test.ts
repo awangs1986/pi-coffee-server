@@ -110,7 +110,7 @@ it('puts repository | branch, the branch Diff total and 创建 PR inside the com
   expect(hidden('#branch-diff')).toBe(false);expect(q('#branch-diff-add').textContent).toBe('+5');expect(q('#branch-diff-del').textContent).toBe('−1');
   expect(q('#pull-request-label').textContent).toBe('创建 PR');expect(hidden('#pull-request')).toBe(false);
   expect(hidden('#strip-kind')).toBe(true);expect(hidden('#create-task')).toBe(true);
-  expect(q('#agent-name').textContent).toBe('Pi');expect(q<HTMLTextAreaElement>('#prompt').placeholder).toBe('想让 PI Coffee 做什么？');
+  expect(q('#agent-name').textContent).toBe('模型加载中');expect(q<HTMLTextAreaElement>('#prompt').placeholder).toBe('想让 PI Coffee 做什么？');
 });
 
 it('shows only "Chat · 本地目录" for a Chat task, without Diff or PR',async()=>{

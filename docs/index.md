@@ -102,3 +102,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
   [Server #46](https://github.com/awangs1986/pi-coffee-server/issues/46).
 
 - Create sidebar groups and delete empty groups: [contract](spec/arena-navigation.md#sidebar-group-lifecycle-2026-10-04-server-50), [Server #50](https://github.com/awangs1986/pi-coffee-server/issues/50).
+
+- Existing-conversation composer model label: [composer contract](spec/arena-navigation.md#composer), [Server #51](https://github.com/awangs1986/pi-coffee-server/issues/51).

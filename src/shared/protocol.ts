@@ -228,7 +228,7 @@ export type ClientFrame = (
       sessionId: string;
     }
   | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: "pi" | "codex"; requestId?: string }
-  | { v: typeof PROTOCOL_VERSION; type: "get_models" }
+  | { v: typeof PROTOCOL_VERSION; type: "get_models"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
@@ -412,7 +412,7 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
       if(value.engine!=="codex" && value.engine!=="pi")throw new ProtocolError("invalid_frame","Model catalog requires Pi or Codex");
       return {v:PROTOCOL_VERSION,type:"get_model_catalog",engine:value.engine,...withRequestId(value)};
     case "get_models":
-      return { v: PROTOCOL_VERSION, type: "get_models" };
+      return { v: PROTOCOL_VERSION, type: "get_models", ...withRequestId(value) };
     case "get_command_catalog":
       if(value.engine!=="pi" && value.engine!=="codex")throw new ProtocolError("invalid_frame","Command catalog requires Pi or Codex");
       return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:value.engine,...withRequestId(value)};

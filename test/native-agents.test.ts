@@ -44,6 +44,27 @@ it('fixes Agent at Task creation, scopes Model controls and ignores obsolete soc
  const oldHandler=app.sockets[0].onmessage;document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
  oldHandler({data:JSON.stringify({type:'opened',sessionId:'obsolete',state:{}})});expect(localStorage.getItem('pi-coffee.active.v2')).toBeNull();
 });
+it.each(['pi','codex'])('shows the current %s model as a text-only existing conversation trigger',async(agent)=>{
+ const app=await setup();
+ if(agent==='codex'){chooseWork();const select=document.querySelector<HTMLSelectElement>('#task-engine')!;select.value=agent;select.dispatchEvent(new Event('change'));}
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ ws.receive({type:'opened',engine:agent,sessionId:id,state:{},capabilities:{models:true}});
+ ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
+ const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;
+ expect(document.querySelector('#agent-name')!.textContent).toBe('模型加载中');
+ for(const model of ['gpt-6.1-sol','meta/muse-spark-1.3-contributor','模型😀abcdefghijklm']){
+  ws.receive({type:'models',sessionId:id,models:[{provider:agent,id:model}],current:{provider:agent,id:model},thinkingLevels:[],thinkingLevel:''});
+  expect(document.querySelector('#agent-name')!.textContent).toBe(Array.from(model).slice(0,12).join(''));
+  expect(button.title).toContain(model);expect(button.getAttribute('aria-label')).toContain(model);
+  expect([...button.querySelectorAll('svg')].every(icon=>icon.classList.contains('hidden'))).toBe(true);
+ }
+ button.click();expect(document.querySelector('#agent-menu')!.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#agent-engine-value')!.textContent).toBe(agent==='pi'?'Pi':'Codex');
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
+ expect(document.querySelector('#agent-name')!.textContent).toBe('Pi');
+ expect([...button.querySelectorAll('svg')].every(icon=>!icon.classList.contains('hidden'))).toBe(true);
+});
 it('keeps Pi available and disables native choices on a legacy Host',async()=>{
  await setup(true);const options=[...document.querySelector<HTMLSelectElement>('#task-engine')!.options];expect(options.map(o=>o.disabled)).toEqual([false,true,true]);
 });
