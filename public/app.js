@@ -494,7 +494,7 @@ function renderAgentPane(kind) {
     }));
   }
 }
-// The trigger names the Agent. Agent/类型 lock once the task exists; model rows follow the model catalog.
+// Drafts name the Agent; existing conversations show the current model.
 function agentMenuState() {
   const task = currentTask();
   const agent = task ? (task.engine || 'pi') : activeId ? engine : $('#task-engine').value;
@@ -505,9 +505,12 @@ function agentMenuState() {
 }
 function renderAgentTrigger() {
   if (!ui.agentBtn) return;
-  const { agent, kind, choiceLocked, modelLocked } = agentMenuState();
-  ui.agentName.textContent = engineName(agent);
-  ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}`);
+  const { task, agent, kind, choiceLocked, modelLocked } = agentMenuState();
+  const existing = Boolean(task || activeId || pendingOpenId);
+  const model = models?.current?.id;
+  ui.agentName.textContent = existing ? (model ? Array.from(model).slice(0, 12).join('') : '模型加载中') : engineName(agent);
+  for (const icon of ui.agentBtn.querySelectorAll('svg')) icon.classList.toggle('hidden', existing);
+  ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}${existing && model ? `，模型 ${model}` : ''}`);
   ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', models?.current ? `模型 ${models.current.provider}/${models.current.id}` : '', models?.thinkingLevel ? `思考 ${models.thinkingLevel}` : ''].filter(Boolean).join(' · ');
   ui.agentBtn.disabled = takeoverBusy() || !connected || (choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');

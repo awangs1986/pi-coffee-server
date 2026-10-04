@@ -76,8 +76,12 @@ One rounded card, following the Arena reference: the prompt (placeholder 「想�
 做什么？」), a toolbar, a divider and the task strip. Wording is Chinese-first; Diff, Branch,
 Unified and Split stay in English.
 
-- Toolbar left: ⊞+ uploads attachments; the Agent trigger shows the Agent icon and name
-  (Pi / Codex / Claude Code) and opens one menu with Agent, 类型 (Chat/Work), 来源, 模型 and
+- Toolbar left: ⊞+ uploads attachments. Before creation, the Agent trigger shows the Agent
+  icon and name (Pi / Codex / Claude Code). Existing conversations show only the current
+  model ID, limited to its first 12 Unicode characters, without icons or an added ellipsis.
+  The complete model remains in the tooltip and accessible label. While metadata loads, show
+  「模型加载中」 rather than the previous conversation’s model. The trigger still opens
+  one menu with Agent, 类型 (Chat/Work), 来源, 模型 and
   思考深度. For a new task, Agent and 类型 are chosen there (the hidden `#task-engine` and
   `#task-kind` selects stay the source of truth, so Codex/Claude remain Work-only). They lock
   once the task exists; model rows follow the model catalog and are disabled without one.
