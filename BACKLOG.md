@@ -1,5 +1,7 @@
 > Chat zero-system correction (2026-10-05): [contract](docs/spec/session-environment.md#chat-zero-system-boundary--2026-10-05). No automatic project, Host or runner guidance, including after clear-context and restart.
 
+> Incremental MISHU setup (2026-10-05): [Server #63](https://github.com/awangs1986/pi-coffee-server/issues/63). Prefill still-valid prior exact bindings; retain approved older contacts, add only recent ones, remove explicitly and cancel without saving. Consume immutable plugin 0.1.3.
+
 > MISHU setup usability (2026-10-05): [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62). Bounded, scrollable native dialogs; current titles after rename/restart; only recent-72-hour unarchived targets in new selection. Exact native bindings remain authoritative.
 
 > Busy top-conversation scroll correction (2026-10-05): [Server #61](https://github.com/awangs1986/pi-coffee-server/issues/61). Sidebar focus restoration must preserve the user's scroll position in grouped and chronological views; real Chromium regression catches focus-induced scroll-to-top.

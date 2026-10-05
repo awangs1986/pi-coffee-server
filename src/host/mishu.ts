@@ -72,7 +72,7 @@ export class MishuCoordinator {
    const task=await this.source(id),c=this.config(id,task);
    if(!c.selected||!this.tokens.has(token))throw Error('MISHU selection was revoked');
    if(!Array.isArray(input.targets)||input.targets.length<1||input.targets.length>20||typeof input.allowInstructions!=='boolean')throw Error('Select 1–20 target conversations and an explicit instruction mode');
-   const rows=(await this.directory(id)).conversations;
+   const directory=await this.directory(id),rows=[...directory.conversations,...directory.configuredTargets];
    const targets=input.targets.map(value=>{if(!value||typeof value!=='object')throw Error('Invalid target');const v=value as Record<string,unknown>;const row=rows.find(r=>r.id===v.id&&r.binding===v.binding);if(!row)throw Error('Target binding changed; run setup again');return {id:row.id,binding:row.binding,title:row.title,engine:row.engine};});
    if(new Set(targets.map(t=>t.id)).size!==targets.length)throw Error('Duplicate target');
    this.setupWindows.delete(id);c.targets=targets;c.enabled=true;c.allowInstructions=input.allowInstructions;c.sourceBinding=binding(task);this.state.chats[id]=c;
@@ -86,10 +86,13 @@ export class MishuCoordinator {
  }
  private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
   const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();
-  return {conversations:conversations.filter(c=>c.id!==id&&visible(c)&&contactable(c)&&activity(c)>=now-72*3600000&&activity(c)<=now)
-   .sort((a,b)=>activity(b)-activity(a)||a.id.localeCompare(b.id)).slice(0,200).map(c=>{
+  const eligible=conversations.filter(c=>c.id!==id&&visible(c)&&contactable(c)),source=await this.source(id),config=this.config(id,source);
+  const row=(c:Conversation)=>{
   const s=summaries.find(s=>s.id===c.id),live=this.registry!.get(c.id);return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:currentTitle(s,c.takeoverTitle||c.id),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle'};
- })};}
+  };
+  const configuredTargets=config.sourceBinding===binding(source)?config.targets.flatMap(saved=>{const task=eligible.find(c=>c.id===saved.id&&binding(c)===saved.binding);return task?[row(task)]:[];}):[];
+  return {conversations:eligible.filter(c=>activity(c)>=now-72*3600000&&activity(c)<=now)
+   .sort((a,b)=>activity(b)-activity(a)||a.id.localeCompare(b.id)).slice(0,200).map(row),configuredTargets};}
  private async authorize(sourceId:string,targetId:string,expected:string,kind:string,admitted=false){
   if(this.closing)throw Error('MISHU is stopping');
   const source=await this.source(sourceId),config=this.state.chats[sourceId];

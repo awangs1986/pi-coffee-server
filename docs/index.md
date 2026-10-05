@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Incremental MISHU setup, independently versioned plugin 0.1.3: [contract](spec/mishu.md), [Server #63](https://github.com/awangs1986/pi-coffee-server/issues/63).
+
 - Scrollable MISHU setup and current titles with recent-only selection: [contract](spec/mishu.md), [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62).
 - Selected MISHU Chat identity and current permission state: [repair evidence](reviews/mishu-identity-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
