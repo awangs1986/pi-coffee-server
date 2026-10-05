@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU complete-secretary target: [Host resource contracts and staged acceptance](spec/mishu.md#complete-secretary-target-and-implementation-status-2026-10-05), [canonical plugin SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/7ef9b4b72242758d4ffb6203543bb314177b2832/docs/coffee-secretary-spec.md). Planned capabilities are distinct from the deployed 0.1.5 message bridge.
+
 - MISHU communication repair and legacy SPEC gaps: [audit](reviews/mishu-spec-gap-20261005.md), [Firstmate source research](research/firstmate-mishu-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
 - MISHU secretary personality restoration: [evidence](reviews/mishu-personality-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).

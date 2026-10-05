@@ -525,3 +525,6 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
 
 
 - 2026-10-05: MISHU communication follow-through candidate and [SPEC gap audit](docs/reviews/mishu-spec-gap-20261005.md). Current-request delivery repair does not complete legacy Managed Task/Task Brief memory, Assignment/Outbox recovery, delegation budgets, central approval routing, supervision or notifications. Preserve these as migration gaps; the current Coffee contract excludes autonomous watchers and new target creation. Firstmate is a design reference, not an installed runtime.
+
+
+- 2026-10-05: Completed the missing MISHU target specifications: [canonical M01–M13/S0–S6/A01–A28](http://gitea/awangs/pi-coffee-mishu/src/commit/7ef9b4b72242758d4ffb6203543bb314177b2832/docs/coffee-secretary-spec.md), [Host obligations](docs/spec/mishu.md#planned-host-resource-contracts). Implementation remains pending for task briefs/reply responsibility, transparent memory, strong authorization/handoffs/index, explicit notifications/follow-up, optional delegation and approval summaries. This is documentation completion, not feature completion or automatic activation. The prior 0.1.5 rollout completed with synthetic production communication evidence; its release remains `0af6cb9`.
