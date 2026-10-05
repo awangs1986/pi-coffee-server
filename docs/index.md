@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU secretary personality restoration: [evidence](reviews/mishu-personality-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
+
 - Incremental MISHU setup, independently versioned plugin 0.1.3: [contract](spec/mishu.md), [Server #63](https://github.com/awangs1986/pi-coffee-server/issues/63).
 
 - Scrollable MISHU setup and current titles with recent-only selection: [contract](spec/mishu.md), [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62).

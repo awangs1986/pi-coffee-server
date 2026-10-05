@@ -27,7 +27,7 @@
     "pi-antigravity": "0.9.0",
     "pi-coffee-harness": "http://gitea:3000/awangs/pi-coffee/releases/download/harness%2Fv0.3.2/pi-coffee-harness-0.3.2.tgz",
     "pi-coffee-lsp": "https://github.com/awangs1986/pi-coffee/releases/download/lsp%2Fv0.4.6/pi-coffee-lsp-0.4.6.tgz",
-    "pi-coffee-mishu": "http://gitea:3000/awangs/pi-coffee-mishu/releases/download/v0.1.3/pi-coffee-mishu-0.1.3.tgz",
+    "pi-coffee-mishu": "http://gitea:3000/awangs/pi-coffee-mishu/releases/download/v0.1.4/pi-coffee-mishu-0.1.4.tgz",
     "pi-subagents": "0.75.0",
     "pi-web-access": "0.35.0",
     "typebox": "1.3.34",
