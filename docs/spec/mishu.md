@@ -60,7 +60,7 @@ native questions. No periodic watcher, automatic reply loop, or background polli
 is added. The secretary polls `inbox` when asked or while completing the user's
 explicit coordination request. Replies are untrusted data, never new authorization.
 
-## Current-request follow-through (0.1.5 candidate)
+## Current-request follow-through (0.1.5)
 
 An explicit inquiry must resolve configured contacts, send an information-only
 question, inspect its correlated receipt, then report actual evidence. Directory
@@ -176,3 +176,109 @@ A settled native turn is not proof that the requested business outcome was verif
 Candidate publication and browser evidence are recorded separately in
 [the implementation report](../reviews/mishu-20261005.md). Production activation
 requires the normal Server release process and is not implied by published packages.
+
+## Complete-secretary target and implementation status (2026-10-05)
+
+The owner requested completion of the missing specifications. The canonical
+[complete Coffee secretary SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/7ef9b4b72242758d4ffb6203543bb314177b2832/docs/coffee-secretary-spec.md) belongs to the independent
+plugin repository. Its M01–M13 requirements, S0–S6 stages and A01–A28 acceptance
+cases cover the original secretary experience: task briefs, correlated reply
+obligations, durable memory, recoverable notifications, instruction ordering,
+bounded helpers, stronger authorization and human-readable follow-through.
+This is a target contract, not a claim that these capabilities exist in 0.1.5.
+The earlier sections describe the implemented v1 contract; their exclusions of
+background supervision and new helpers remain the installed default.
+
+The 0.1.5 / `0af6cb924eaad1ae8a0d6ec597631c5c5f6f3e99` rollout completed on
+2026-10-05. The deployment record confirms normal Host mode, exact release
+identity, served-asset probes, native setup/incremental setup/disable, and an
+isolated production Pi-to-Pi information-only inquiry with one send, a correlated
+settled reply, same-request reporting and archived synthetic Chats. Prior isolated
+Pi-to-Codex evidence remains in the audit. Neither result completes the target
+SPEC or verifies every live engine account.
+
+### Planned Host resource contracts
+
+These are vNext obligations, **not additional accepted actions on the v1 runtime
+endpoint**. A later implementation must version and validate its wire schemas,
+publish actual capabilities and add public HTTP/WS regressions before exposing
+any operation. MISHU remains a Pi plugin; native execution stays behind the Host's
+existing Agent interfaces, and Web continues to authenticate and forward.
+
+| Resource | Required durable identity and information | Host responsibility |
+| --- | --- | --- |
+| Managed Task / Task Brief | taskId, secretary owner, purpose/scope, exact responsible bindings, versioned summary, evidence/time, next step, work state, separate acceptance state | Explicit user admission, scoped reads/edits, no same-title merging, no inferred success |
+| Assignment / instruction index | assignmentId/instructionId, taskId, target binding, canonical project root, request identity, authorization evidence, priority/order, retryOf | Persist before execution; one live executor per Assignment and serial execution per target; reorder pending work only |
+| Reply Obligation | obligationId, task/assignment/message correlation, source/target generations, expected reply, state, observed evidence, optional deadline | Only a matching reply advances responsibility; reconcile after restart; uncertain never triggers replay |
+| Notification Outbox | notificationId, event revision, recipient binding, bounded summary, delivery/ACK state | Atomic event/outbox creation; idempotent recipient presentation; ACK is not a user read receipt |
+| Memory / daily context | entryId, scope/type, text or artifact reference, source/time, record revision, deletion tombstone | User-inspectable correction/deletion/export, bounded context reads, no restoration of old authorization |
+| Follow-up plan / lease | planId, task/targets, event-only or scheduled policy, interval/deadline/count budget, permission revision, generation/lease | New capability defaults off; one valid worker; stop on revocation/expiry; no missed-interval replay storm |
+| Temporary delegation | delegationId, coordinationId, exact scope, task fingerprint, parent budget, native handle, state, retryOf | Enforce shared 3-per-coordination/6-per-account budget atomically; no duplicate active work or unapproved fallback |
+| Authorization evidence | unguessable Host-issued ID, authenticated user event, exact source/target/task/scope/action, expiry/use/revocation constraints | Model can reference but cannot mint evidence; sender and receiver admission both check current trusted state |
+| Handoff / artifact | schema/correlation/target identity, summary/facts/action/mode/evidence, artifact owner/hash/time/range/retention | Structured total-size budget, private neutral storage, per-object authorization, traversal/symlink/range checks |
+| Approval summary | target native question ID/generation, action/impact, expiry, one-use user-response identity, native ACK | Display/navigation by default; central response only if the native adapter can bind the exact live question |
+
+All resources derive account/source ownership from authentication and the scoped
+capability, never model-supplied `user`, filesystem path or native-session fields.
+Cross-record references require per-record authorization. Operations carry a
+stable operation ID and expected record revision: an identical retry returns the
+same result; changed content or stale revisions conflict rather than overwrite.
+Multi-record intent/obligation/outbox writes require transactional or recoverable
+journal semantics. Local private atomic files remain an acceptable implementation;
+this contract does not require another database or task platform.
+
+New resource capacities, pagination and artifact retention must be explicit in
+the versioned implementation schema. Handoff inline size remains at most 4000
+characters including structured fields; an oversize request is rejected or replaced
+with an authorized bounded artifact reference before delivery, never silently
+truncated into a different instruction. Entire transcripts and terminal dumps do not
+become default handoffs. Existing result truncation must remain visible until a
+bounded continuation-read capability is available.
+
+### Enablement, recovery and compatibility gates
+
+- Current selection/setup, exact source/target binding and original permission
+  checks remain authoritative. Upgrade does not enable memory, notifications,
+  periodic follow-up, helpers or central native approval responses.
+- Event notification permission allows reporting already recorded task changes;
+  scheduled contact additionally requires a task-specific finite plan. A report
+  is never authorization for another task. Enabling execution capability still
+  requires real user authorization for the particular Assignment.
+- Disable/deselection cancels future coordination and unsubmitted work. It does
+  not terminate an already running target or erase the user's notes. Reset/Fork/
+  takeover/replacement never silently adopts old cross-conversation permissions;
+  restoring saved secretary notes requires an explicit user choice.
+- Host restart restores durable state, validates bindings and reconciles native
+  request identity. It resumes observation only when identity is proved; uncertain
+  native admission is never automatically resent. Old writers are fenced by lease
+  generation, including after an apparently successful but unacknowledged delivery.
+- Browser disconnect does not lose accepted tasks. Main secretary input and
+  asynchronous results use the normal serial Host queue. Background communication
+  must not keep the main Chat permanently busy or concurrently mutate its session.
+- A native engine lacking passive history inspection reports unknown without
+  launching the CLI for a read. An engine lacking the required receiver attestation
+  cannot advertise enhanced execution; unsupported native approval response stays
+  a link to the target conversation. Do not fabricate parity across engines.
+- M10/M11 enhanced execution remains gated by independent adversarial tests and
+  explicit owner enablement. This is a future capability gate, not a claim that
+  current free-form authorizationRef already satisfies the old P0-S requirement.
+
+### Requirement coverage and delivery order
+
+| Canonical IDs | Remaining deliverable | Stage | Acceptance |
+| --- | --- | --- | --- |
+| M01 | Independent capability settings, upgrade defaults and scoped secretary ownership | Each capability | A01–A02, A11, A17, A27 |
+| M02, M04 | Task Brief and correlated reply/Assignment responsibility | S1 | A03–A04, A07–A09, A26 |
+| M03 | Bounded passive observation and asynchronous communication while main Chat remains usable | S1–S2 | A04–A06 |
+| M08, M09 | Transparent memory, provenance, deletion and budgeted context | S2 | A16–A18, A28 |
+| M10, M11, M06 | Independent authorization evidence, receiver attestation, structured handoffs and instruction ordering | S3 | A12–A13, A19–A21 |
+| M05, M12 | Recoverable Outbox, explicit low-noise notification/follow-up and diagnostics | S4 | A10–A11, A23–A26 |
+| M07, M13 | Optional bounded helpers and native approval summaries/navigation | S5 | A14–A15, A22 |
+| All | One lifecycle owner, migration/rollback and five-engine compatibility evidence | S6 | A01–A28 |
+
+Each stage must name its actual shipped operations, current configuration defaults,
+public-seam tests and real synthetic user-flow evidence. A successful model reply
+or legacy test count does not complete a stage. Read-only S1/S2 can ship while new
+enhanced execution remains disabled; execution extensions must pass S3 first.
+The historical gap audit remains historical evidence, with this target SPEC as
+its implementation roadmap; do not erase missing requirements from that audit.
