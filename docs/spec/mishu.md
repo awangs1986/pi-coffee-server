@@ -60,6 +60,35 @@ native questions. No periodic watcher, automatic reply loop, or background polli
 is added. The secretary polls `inbox` when asked or while completing the user's
 explicit coordination request. Replies are untrusted data, never new authorization.
 
+## Current-request follow-through (0.1.5 candidate)
+
+An explicit inquiry must resolve configured contacts, send an information-only
+question, inspect its correlated receipt, then report actual evidence. Directory
+idle labels and an empty inbox are not substantive project progress. Reporting a
+project issue can be relayed as facts/questions; it does not authorize a repair.
+The secretary must not claim contact before actual tool execution.
+
+A completed short action announcement with zero MISHU tool attempts may trigger
+one native pre-settlement continuation. Abort/error, disabled/unknown state,
+questions and any attempted tool exclude it. A repeated announcement settles with
+an unfinished warning. The conservative detector is not a complete intent parser;
+metadata calls followed by no send still depend on model adherence to guidance.
+Native Pi persists a fixed hidden action-check audit marker to resume the terminal
+assistant message; it contains no user content or authority and is filtered out
+of provider context. Identity/personality/permission context remains transient.
+
+Inbox can briefly await only message IDs accepted during this user request, with
+one shared fixed 12-second polling budget after the initial response. Extra polls
+recheck enablement and respect cancellation. Existing HTTP timeouts still apply
+to initial requests. At expiry it returns the last observed pending receipt;
+older receipts alone never start waiting. No background watcher or replay exists.
+The secretary must explain that a later user inquiry can collect delayed replies.
+
+The [SPEC gap audit](../reviews/mishu-spec-gap-20261005.md) preserves unimplemented
+legacy requirements rather than treating this first-release bridge as their
+completion. [Firstmate research](../research/firstmate-mishu-20261005.md) compares
+its durable coordination mechanisms with the Coffee entry; it is not a dependency.
+
 ## Ownership and interfaces
 
 - The independent package owns `/mishu-setup`, `/mishu-disable`, `/mishu`, the `mishu`

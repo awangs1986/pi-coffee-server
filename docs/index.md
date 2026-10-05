@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU communication repair and legacy SPEC gaps: [audit](reviews/mishu-spec-gap-20261005.md), [Firstmate source research](research/firstmate-mishu-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
+
 - MISHU secretary personality restoration: [evidence](reviews/mishu-personality-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
 - Incremental MISHU setup, independently versioned plugin 0.1.3: [contract](spec/mishu.md), [Server #63](https://github.com/awangs1986/pi-coffee-server/issues/63).
