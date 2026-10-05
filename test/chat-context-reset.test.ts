@@ -1,3 +1,7 @@
+import {WebSocket} from 'ws';
+import {once} from 'node:events';
+import {RunnerManager} from '../src/host/runners.js';
+import {hostSessionInstructions} from '../src/host/session-instructions.js';
 import {it,expect} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';import {tmpdir} from 'node:os';import {randomUUID} from 'node:crypto';import {createServer} from 'node:http';
@@ -10,11 +14,12 @@ it('clears Pi Chat native context without replay, preserves settings/files, and 
  try{
   await writeFile(join(agent,'models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(model.address() as any).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'fixture',reasoning:true,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(agent,'settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
   const extension=join(root,'jobs.mjs');await writeFile(extension,`export default pi=>pi.registerCommand('coffee-workspace-jobs',{handler:async args=>{pi.appendEntry('coffee-workspace-jobs',{nonce:args.trim(),known:true,active:0});}});`);
+  const runners=new RunnerManager(join(root,'runners'));await runners.handle({action:'save',runner:{name:'Work test server',host:'192.0.2.10',port:22,username:'fixture',platform:'windows',workdir:''}});
   let ws=new Workspaces(join(root,'work'),{taskRoot:join(root,'tasks')});const task=await ws.createChatConversation();await writeFile(join(task.cwd,'keep.txt'),'attachment remains');
   const old=SessionManager.create(task.cwd,store,{id:task.id});old.appendModelChange('fixture','fixture');old.appendThinkingLevelChange('high');old.appendSessionInfo('Keep my title');old.appendMessage({role:'user',content:'OLD_CONTEXT_SECRET_MARKER',timestamp:Date.now()});old.appendMessage({role:'assistant',content:[{type:'text',text:'Old answer'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
   const before=await readFile(old.getSessionFile()!,'utf8');
-  const make=()=>new NativeAgentFactory({workspaces:ws,pi:new RpcPiSessionFactory({agentDir:agent,cwd:task.cwd,sessionDir:store,provider:'fixture',model:'fixture',cliPath:resolve('node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),extensions:[extension],args:['--offline'],cwdForSession:id=>ws.file(id,''),envForSession:id=>ws.runtimeEnvironment(id)})});
-  let factory=make();host=new HostServer({port:0,token:'fixture',requireUser:true,factory,workspaces:ws,scopeForUser:user=>({factory,workspaces:user==='owner'?ws:new Workspaces(join(root,'other-user'))})});await host.start();
+  const make=()=>new NativeAgentFactory({workspaces:ws,pi:new RpcPiSessionFactory({agentDir:agent,cwd:task.cwd,sessionDir:store,provider:'fixture',model:'fixture',cliPath:resolve('node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),instructions:async()=>hostSessionInstructions('WORK_ONLY_GUIDANCE'),extensions:[extension],args:['--offline'],cwdForSession:id=>ws.file(id,''),envForSession:id=>ws.runtimeEnvironment(id)})});
+  let factory=make();host=new HostServer({port:0,token:'fixture',requireUser:true,factory,workspaces:ws,runners,scopeForUser:user=>({factory,runners,workspaces:user==='owner'?ws:new Workspaces(join(root,'other-user'))})});await host.start();
   const call=async(body:any,token='fixture',user='owner')=>fetch(`http://127.0.0.1:${host!.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
   const body={action:'clear_chat_context',id:task.id,operationId:randomUUID(),expectedNativeId:task.id};
   expect((await call(body,'wrong')).status).toBe(401);
@@ -33,7 +38,12 @@ it('clears Pi Chat native context without replay, preserves settings/files, and 
   const resumed=await factory.create({sessionId:task.id});sessions.push(resumed);expect((await resumed.getHistory()).entries.filter(e=>['user','assistant','tool'].includes(e.kind))).toEqual([]);
   expect(await resumed.getModels()).toMatchObject({current:{provider:'fixture',id:'fixture'},thinkingLevel:'high'});
   const listed=await factory.list();expect(listed.filter(s=>s.id===task.id)).toHaveLength(1);expect(listed.some(s=>s.id===reset!.nativeBinding!.id)).toBe(false);expect(listed.find(s=>s.id===task.id)?.name).toBe('Keep my title');
-  await resumed.prompt('NEW_CONTEXT_ONLY');await expect.poll(async()=>(await resumed.getHistory()).entries.some(e=>e.kind==='assistant'&&e.text==='FRESH_REPLY'),{timeout:10000}).toBe(true);
+  await resumed.stop();
+  host=new HostServer({port:0,token:'fixture',factory,workspaces:ws,runners});await host.start();
+  const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer fixture'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:task.id}));await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);
+  socket.send(JSON.stringify({v:1,type:'prompt',text:'NEW_CONTEXT_ONLY',requestId:randomUUID()}));await expect.poll(async()=>(await factory.readHistory(task.id)).history.entries.some(e=>e.kind==='assistant'&&e.text==='FRESH_REPLY'),{timeout:10000}).toBe(true);
+  socket.close();
+  const payload=JSON.stringify(requests);expect({systemMessages:requests.at(-1).messages.filter((m:any)=>['system','developer'].includes(m.role)).length,hasRunnerGuidance:/runner configuration|No test server/.test(payload),hasWorkGuidance:/WORK_ONLY_GUIDANCE|Linux server/.test(payload)},'Reset Chat provider request must contain no automatic guidance').toEqual({systemMessages:0,hasRunnerGuidance:false,hasWorkGuidance:false});
   expect(JSON.stringify(requests)).toContain('NEW_CONTEXT_ONLY');expect(JSON.stringify(requests)).not.toContain('OLD_CONTEXT_SECRET_MARKER');
  }finally{for(const s of sessions)await s.stop();await host?.close();model.closeAllConnections();await new Promise<void>(r=>model.close(()=>r()));await rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 },30000);

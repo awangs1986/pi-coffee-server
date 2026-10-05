@@ -10,7 +10,24 @@ function contains(value: unknown): boolean {
 }
 const append = (value: unknown) => typeof value === "string" && value ? `${value}\n${instruction}` : instruction;
 
-/** Runs after Harness filtering: restore only Host context, never Work/runner guidance. */
+/** Zero-system boundary for Web Chat, including emergency mode without Harness. */
+export function withoutSystemContext(payload: unknown): unknown {
+  if (!record(payload)) return payload;
+  const result = { ...payload };
+  for (const key of ['system', 'instructions', 'systemInstruction', 'system_instruction']) delete result[key];
+  for (const key of ['messages', 'input', 'contents']) {
+    if (Array.isArray(result[key])) result[key] = result[key].filter((message: unknown) =>
+      !record(message) || !['system', 'developer'].includes(String(message.role)));
+  }
+  if (record(result.config)) {
+    result.config = { ...result.config };
+    delete (result.config as RecordValue).systemInstruction;
+    delete (result.config as RecordValue).system_instruction;
+  }
+  return result;
+}
+
+/** Work-only Host context; Web Chat is filtered again at the provider boundary. */
 export function withHostEnvironment(payload: unknown, api?: string): unknown {
   if (!record(payload)) return payload;
   const systemMessages = ["messages", "input", "contents"].flatMap(key => Array.isArray(payload[key])
@@ -38,7 +55,7 @@ export function withHostEnvironment(payload: unknown, api?: string): unknown {
 
 export default function hostEnvironment(pi: ExtensionAPI): void {
   pi.on("before_agent_start", event => ({
-    systemPrompt: contains(event.systemPrompt) ? event.systemPrompt : append(event.systemPrompt),
+    systemPrompt: process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? '' : contains(event.systemPrompt) ? event.systemPrompt : append(event.systemPrompt),
   }));
-  pi.on("before_provider_request", (event, ctx) => withHostEnvironment(event.payload, ctx.model?.api));
+  pi.on("before_provider_request", (event, ctx) => process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? withoutSystemContext(event.payload) : withHostEnvironment(event.payload, ctx.model?.api));
 }
