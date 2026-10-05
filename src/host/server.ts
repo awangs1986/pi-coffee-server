@@ -136,6 +136,7 @@ export class HostServer {
   private readonly transferTargets = new Map<string, { slot: Promise<UserSlot>; sessionId: string }>();
   private readonly transfer?: TransferServer;
   private readonly http: HttpServer;
+  private readonly mishuHttp: HttpServer;
   private readonly sockets = new Set<HostSocket>();
   private readonly wsServer: WebSocketServer;
   private started = false;
@@ -175,7 +176,7 @@ export class HostServer {
       ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
       ...(options.externalPollMs === undefined ? {} : { externalPollMs: options.externalPollMs }),
     };
-    this.http = createServer((request, response) => {
+    const handleRequest = (request:IncomingMessage, response:import("node:http").ServerResponse) => {
       if(this.closing){json(response,503,{error:"Host is stopping"});return;}
       if(request.url?.startsWith("/api/")) {
         const operation=this.handleApi(request,response).catch(()=>{if(!response.headersSent)json(response,500,{error:"Host operation failed"});else response.destroy();});
@@ -190,6 +191,11 @@ export class HostServer {
       }
       response.writeHead(404);
       response.end();
+    };
+    this.http = createServer(handleRequest);
+    this.mishuHttp = createServer((request,response)=>{
+      if(request.url!=='/api/mishu/runtime'){json(response,404,{error:'Not found'});return;}
+      handleRequest(request,response);
     });
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
     this.http.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
@@ -211,7 +217,8 @@ export class HostServer {
     const slot=await this.slotFor(user);if(!slot.mishu)return {extensions:[],env:{}};
     const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
     const extension=this.mishuExtension();if(!extension)return {extensions:[],env:{}};
-    const env=await slot.mishu.environment(id,`http://127.0.0.1:${this.address().port}/api/mishu/runtime`);
+    const address=this.mishuHttp.address();if(!address||typeof address==='string')throw Error('MISHU local interface is not listening');
+    const env=await slot.mishu.environment(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
     return {extensions:env.PI_COFFEE_MISHU_TOKEN?[extension]:[],env};
   }
   private mishuExtension():string|undefined {
@@ -619,6 +626,13 @@ export class HostServer {
       this.http.once("listening", onListening);
       this.http.listen(this.port, this.host);
     });
+    try {
+      await new Promise<void>((resolve,reject)=>{
+        const failed=(error:Error)=>reject(error);
+        this.mishuHttp.once('error',failed);
+        this.mishuHttp.listen(0,'127.0.0.1',()=>{this.mishuHttp.off('error',failed);resolve();});
+      });
+    }catch(error){await new Promise<void>(resolve=>this.http.close(()=>resolve()));throw error;}
     this.started = true;
   }
 
@@ -643,9 +657,7 @@ export class HostServer {
 
   private async finishClose(): Promise<void> {
     this.closing = true;
-    const httpClosed = new Promise<void>((resolve, reject) => {
-      this.http.close(error => error ? reject(error) : resolve());
-    });
+    const httpClosed = Promise.all([this.http,this.mishuHttp].map(server=>new Promise<void>((resolve,reject)=>{server.close(error=>error?reject(error):resolve());})));
     for (const socket of this.sockets) socket.close();
     this.sockets.clear();
     // A disconnected HTTP client does not cancel its workspace mutation. Wait
