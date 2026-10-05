@@ -509,10 +509,12 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .ext-chip { font-size: 12px; color: var(--text-2); background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .widgets { width: min(var(--composer-width), 100%); margin: 0 auto 6px; display: flex; flex-direction: column; gap: 6px; }
 .widget { margin: 0; padding: 8px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--text-2); background: var(--bg-side); border: 1px solid var(--border); border-radius: 10px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
-.ui-dialog { border-top: 3px solid var(--busy); }
+.modal.ui-dialog { border-top: 3px solid var(--busy); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+.ui-dialog > .ui-badge, .ui-dialog > h2, .ui-dialog > .ui-meta, .ui-dialog > .modal-actions { flex: none; }
+.ui-dialog #ui-text { min-height: 0; overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ui-badge { display: inline-block; font-size: 11px; color: var(--busy); border: 1px solid #d4d4d8; border-radius: 999px; padding: 1px 8px; margin-bottom: 8px; }
-.ui-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.ui-option { text-align: left; border: 1px solid var(--border-strong); background: var(--bg); border-radius: 9px; padding: 9px 12px; cursor: pointer; font: inherit; }
+.ui-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.ui-option { flex: none; text-align: left; border: 1px solid var(--border-strong); background: var(--bg); border-radius: 9px; padding: 9px 12px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
 .ui-option:hover, .ui-option:focus-visible { background: var(--bg-subtle); border-color: var(--text-3); }
 .ui-dialog textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 9px; padding: 9px 12px; font: inherit; font-family: var(--mono); font-size: 13px; margin-bottom: 12px; resize: vertical; }
 .ui-meta { font-size: 12px; color: var(--text-3); margin-bottom: 8px; min-height: 1em; }

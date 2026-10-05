@@ -14,13 +14,13 @@ import {Workspaces} from '../src/host/workspaces.js';
 import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
-async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok'){
+async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
  let host:HostServer;
  const fixturePi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions'),cwdForSession:id=>workspaces.file(id,'')});
  const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>(await host.mishuRuntime('owner',id)).extensions,envForSession:async id=>(await host.mishuRuntime('owner',id)).env});
- const pi={create:async(options:{sessionId:string})=>((await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
+ const pi={create:async(options:{sessionId:string})=>(nativePi||(await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
  const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
  const factory=engine?new NativeAgentFactory({pi,workspaces,[engine]:command}):pi;
  const other=new Workspaces(join(root,'other'));
@@ -28,6 +28,31 @@ async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok'){
  const call=(body:unknown,user='owner',token='host-test',path='/api/mishu')=>fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
  return {root,workspaces,host,call};
 }
+
+it('exposes the current native title in directory and enabled target status after a WebSocket rename',async()=>{
+ const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id});
+ native.appendSessionInfo('Original project title');
+ native.appendMessage({role:'user',content:'Synthetic title fixture',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'Synthetic reply'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});const runtime=await app.host.mishuRuntime('owner',source.id);
+ const req=(body:unknown)=>app.call(body,'owner',runtime.env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const initial=(await (await req({action:'directory'})).json()).conversations.find((c:any)=>c.id===target.id);
+ expect(initial.title).toBe('Original project title');
+ await setupThroughChat(app,source.id,target.id,false);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(socket,'open');socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'rename-title',sessionId:target.id,name:'Renamed current project'}));
+  await expect.poll(()=>frames.find(f=>f.requestId==='rename-title'&&['ack','error'].includes(f.type)),{timeout:10000}).toMatchObject({type:'ack'});
+  const fresh=(await (await req({action:'directory'})).json()).conversations.find((c:any)=>c.id===target.id);
+  expect(fresh).toMatchObject({title:'Renamed current project',binding:initial.binding});
+  expect(await (await req({action:'status'})).json()).toMatchObject({enabled:true,targets:[{id:target.id,title:'Renamed current project',binding:initial.binding}]});
+ }finally{socket.close();}
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const resumed=await start(app.root,undefined,true),env=(await resumed.host.mishuRuntime('owner',source.id)).env;
+ expect(await (await resumed.call({action:'status'},'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json()).toMatchObject({enabled:true,targets:[{id:target.id,title:'Renamed current project',binding:initial.binding}]});
+},30000);
 it('requires per-Chat selection and explicit setup before scoped cross-conversation messages, retaining receipts on restart',async()=>{
  const app=await start();const source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
  expect((await app.call({action:'status',id:source.id},'owner','wrong')).status).toBe(401);
