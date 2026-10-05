@@ -58,6 +58,8 @@ it('selected Chat knows MISHU identity through the installed plugin, including d
   expect(request.messages.some((m:any)=>['system','developer'].includes(m.role))).toBe(false);
   const latest=JSON.stringify(request.messages.at(-1));
   expect(latest).toContain('你是 MISHU');expect(latest).toContain(state);
+  expect(latest).toContain('亲切、细心、可靠');
+  expect(latest).toContain('最新偏好为准');
   expect(latest).not.toContain('PI_COFFEE_MISHU_TOKEN');
  }
  try{

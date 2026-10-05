@@ -517,3 +517,8 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
   zero-system ordinary Chat and explicit setup authorization. Independent MISHU
   0.1.2 source/package and isolated real Muse role/state checks are recorded separately
   from production activation.
+
+- 2026-10-05: [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59)
+  restores MISHU secretary personality in independent package 0.1.4 while retaining
+  0.1.3 incremental setup and existing permissions. Actual model checks use isolated
+  synthetic conversation only; publication and production activation remain separate.
