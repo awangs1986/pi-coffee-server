@@ -6,28 +6,84 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
 import {randomUUID} from 'node:crypto';
+import {createServer} from 'node:http';
 import {WebSocket} from 'ws';
 import {NativeAgentFactory} from '../src/host/native/factory.js';
 import {SessionManager} from '@earendil-works/pi-coding-agent';
 import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
 import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
+import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
-async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false){
+async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
  let host:HostServer;
  const fixturePi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions'),cwdForSession:id=>workspaces.file(id,'')});
- const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>(await host.mishuRuntime('owner',id)).extensions,envForSession:async id=>(await host.mishuRuntime('owner',id)).env});
- const pi={create:async(options:{sessionId:string})=>(nativePi||(await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
+ const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),...(fixtureModel?{provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:"off",PI_COFFEE_LSP:"off",PI_COFFEE_WEB:"off",PI_COFFEE_HANDOFF:"off"})}:{}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>(await host.mishuRuntime('owner',id)).extensions,envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime('owner',id)).env})});
+ const pi=nativePi?realPi:{create:async(options:{sessionId:string})=>((await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
  const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
- const factory=engine?new NativeAgentFactory({pi,workspaces,[engine]:command}):pi;
+ const factory=engine||nativePi?new NativeAgentFactory({pi,workspaces,...(engine?{[engine]:command}:{})}):pi;
  const other=new Workspaces(join(root,'other'));
  host=new HostServer({port:0,token:'host-test',requireUser:true,factory,workspaces,scopeForUser:user=>({factory,workspaces:user==='owner'?workspaces:other})});hosts.push(host);await host.start();
  const call=(body:unknown,user='owner',token='host-test',path='/api/mishu')=>fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
  return {root,workspaces,host,call};
 }
+
+it('selected Chat knows MISHU identity through the installed plugin, including disable and context reset',async()=>{
+ const requests:any[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));
+  res.writeHead(200,{'content-type':'text/event-stream'});
+  const frame={id:'identity-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};
+  res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:'IDENTITY_FIXTURE_OK'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});
+ await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});
+ const frames:any[]=[];
+ let socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ async function prompt(text:string){
+  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text}));
+  await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  expect(frames.slice(offset).filter(f=>f.type==='error'||f.event?.type==='extension_error')).toEqual([]);
+ }
+ function identity(state:string){
+  const request=requests.at(-1);expect(request).toBeDefined();
+  expect(request.messages.some((m:any)=>['system','developer'].includes(m.role))).toBe(false);
+  const latest=JSON.stringify(request.messages.at(-1));
+  expect(latest).toContain('你是 MISHU');expect(latest).toContain(state);
+  expect(latest).not.toContain('PI_COFFEE_MISHU_TOKEN');
+ }
+ try{
+  await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));
+  await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  await prompt('Explain your role and current coordination state.');identity('尚未启用');
+  expect(requests.at(-1).tools.some((t:any)=>t.function?.name==='mishu')).toBe(false);
+  await setupThroughChat(app,source.id,target.id,false);
+  await prompt('Explain your role and current coordination state again.');identity('协调已启用');
+  expect(requests.at(-1).tools.some((t:any)=>t.function?.name==='mishu')).toBe(true);
+  await prompt('/mishu-disable');await prompt('Explain your current coordination state after disable.');identity('尚未启用');
+  const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
+  const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');
+  expect(reset.status,await reset.clone().text()).toBe(200);
+  socket.close();
+  socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
+  socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+  await once(socket,'open');
+  socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));
+  await expect.poll(()=>frames.filter(f=>f.type==='opened').length,{timeout:10000}).toBe(2);
+  await prompt('Explain your current role after context reset.');identity('尚未启用');
+  expect(await (await app.call({action:'status',id:source.id})).json()).toMatchObject({selected:true,enabled:false});
+ }finally{
+  socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));
+ }
+},30000);
 
 it('exposes the current native title in directory and enabled target status after a WebSocket rename',async()=>{
  const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
