@@ -32,6 +32,7 @@ it('folds a newly loaded indexed older page without hiding either dialogue bound
  view.show({conversationId:'task',bindingEpoch:'epoch',runState:'settled',olderCursor:'older',entries:[{id:'latest',kind:'assistant',entityRevision:'1',text:'LATEST'}]});
  await view.older();await vi.waitFor(()=>expect(r.querySelectorAll('.history-process .tool')).toHaveLength(12));
  expect(r.querySelector<HTMLDetailsElement>('.history-process')!.open).toBe(false);
- expect([...r.querySelectorAll('.synced-transcript > .msg')].map(n=>n.textContent)).toEqual([expect.stringContaining('Please fix this'),expect.stringContaining('The fix is ready'),expect.stringContaining('LATEST')]);
+ // Dialogue rows are scheduled independently; rendered tools do not imply the final reply is rendered.
+ await vi.waitFor(()=>expect([...r.querySelectorAll('.synced-transcript > .msg')].map(n=>n.textContent)).toEqual([expect.stringContaining('Please fix this'),expect.stringContaining('The fix is ready'),expect.stringContaining('LATEST')]));
  expect(loadOlder).toHaveBeenCalledOnce();
 });
