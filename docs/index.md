@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Scrollable MISHU setup and current titles with recent-only selection: [contract](spec/mishu.md), [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62).
+
 - Busy sidebar scrolling: [navigation contract](spec/arena-navigation.md#navigation), [Server #61](https://github.com/awangs1986/pi-coffee-server/issues/61).
 
 Start with [the repository map](../REPOSITORIES.md) before choosing a source directory or upgrading a plugin.

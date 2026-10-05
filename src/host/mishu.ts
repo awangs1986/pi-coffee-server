@@ -14,6 +14,10 @@ const clean=(s:string)=>s.replace(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}/g,'[REDACTED]')
 const validId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const contactable=(c:Conversation)=>(c.engine??'pi')==='pi'||Boolean(c.nativeBinding?.id);
 const visible=(c:Conversation)=>!c.archived&&!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready')&&!c.takeover&&!c.forking;
+const currentTitle=(summary:{name?:string;preview?:string}|undefined,fallback:string)=>{
+ const raw=summary?.name||summary?.preview||fallback,cut=raw.indexOf('[已上传到工作目录的文件]');
+ return ((cut>0?raw.slice(0,cut).trim():raw)||fallback).slice(0,120);
+};
 
 /** Host-owned scoped coordination. It never exposes a Host token or creates tasks. */
 export class MishuCoordinator {
@@ -39,7 +43,11 @@ export class MishuCoordinator {
  private change<T>(fn:()=>Promise<T>):Promise<T>{const next=this.tail.then(async()=>{await this.load();const value=await fn();await this.save();return value;});this.tail=next.catch(()=>undefined);return next;}
  private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
- async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);return {selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:c.allowInstructions,targets:c.targets};}
+ async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
+  const summaries=c.targets.length?await this.registry!.list():[];
+  const targets=c.targets.map(target=>({...target,title:currentTitle(summaries.find(s=>s.id===target.id),target.title)}));
+  return {selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:c.allowInstructions,targets};
+ }
  async select(id:string,selected:boolean){return this.change(async()=>{
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
   this.locks.add(id);try {
@@ -76,8 +84,11 @@ export class MishuCoordinator {
   if(input.action==='send')return this.send(id,input);
   throw Error('Unknown MISHU operation');
  }
- private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list();return {conversations:conversations.filter(c=>c.id!==id&&visible(c)&&contactable(c)).slice(0,200).map(c=>{
-  const s=summaries.find(s=>s.id===c.id),live=this.registry!.get(c.id);return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:(s?.name||c.takeoverTitle||c.id).slice(0,120),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle'};
+ private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
+  const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();
+  return {conversations:conversations.filter(c=>c.id!==id&&visible(c)&&contactable(c)&&activity(c)>=now-72*3600000&&activity(c)<=now)
+   .sort((a,b)=>activity(b)-activity(a)||a.id.localeCompare(b.id)).slice(0,200).map(c=>{
+  const s=summaries.find(s=>s.id===c.id),live=this.registry!.get(c.id);return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:currentTitle(s,c.takeoverTitle||c.id),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle'};
  })};}
  private async authorize(sourceId:string,targetId:string,expected:string,kind:string,admitted=false){
   if(this.closing)throw Error('MISHU is stopping');

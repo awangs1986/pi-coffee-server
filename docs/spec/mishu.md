@@ -11,7 +11,8 @@ of **existing conversations**, with independent settings for **the current Pi Ch
 
 1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前 Chat）**.
    The idle Chat reconnects with the installed plugin; other tasks continue.
-2. Send `/mishu-setup`. Select up to 20 exact target conversations, finish the
+2. Send `/mishu-setup`. The directory offers only unarchived conversations with
+   activity in the last 72 hours, newest first. Select up to 20 exact target conversations, finish the
    selection, choose information-only or authorized-execution capability, and
    explicitly confirm. Cancellation preserves existing settings.
 3. Ask this Chat to discover status, relay bounded messages, or inspect its inbox.
@@ -66,7 +67,25 @@ limited to 500 characters. Reusing an ID for different content fails. Retries of
 identical accepted message return the existing receipt without another send.
 Replies are bounded to 4000 characters and flag truncation. The inbox returns the
 latest 50 receipts; a Chat retains up to 1000 receipts and at most 20 unsettled ones.
-The selection directory is bounded to 200 eligible existing conversations.
+The selection directory is bounded to 200 eligible existing conversations, **after**
+the 72-hour and lifecycle filters and newest-first ordering. Host records durable
+`lastActivityAt` when a conversation turn starts; existing records fall back to
+their last turn snapshot, native summary update time, then creation time if no
+activity metadata exists. Renaming a record with tracked turn activity does not
+make an old conversation recent. The time window limits new setup selection;
+previously approved target bindings do not silently change as the clock advances.
+
+Directory and status resolve current native names, including confirmed renames
+and Host restart, with first-user-message preview as the unnamed-title fallback.
+Titles are bounded display labels; exact Conversation IDs and binding hashes remain
+the authorization and delivery identity. A rename does not retarget a saved binding,
+and matching titles never merge permissions or make an ambiguous target unique.
+
+Native extension selection and confirmation dialogs fit inside the viewport with
+16-pixel margins. Options and long confirmation text scroll independently of the
+visible action footer. Users can reach Finish selection, cancel, or confirm on
+short and narrow displays. Answers still wait for native acknowledgement; no
+default, focus, scrolling or timeout automatically submits a selection.
 
 Settings and receipts live below the owning workspace root in `.coffee/mishu` and
 are written atomically with private file permissions. Host restart retains them;
@@ -81,6 +100,11 @@ A settled native turn is not proof that the requested business outcome was verif
   all five Agent adapters, and cancellation of queued delivery after disable.
 - `test/mishu-menu.test.ts`: real menu DOM selection, explicit setup hint,
   non-Pi/Work exclusion and stale response rejection after switching conversations.
+- `test/mishu-directory-http.test.ts`: recent-only selection after historical
+  entries exceed the cap, archive exclusion, actual activity and rename-only recency.
+- `scripts/probe-extension-dialog.mjs`: real Chromium, 200 options, long native
+  confirmation, explicit completion/cancel/Escape and desktop/short/mobile viewports.
+  Current-title rename/restart regression is in `test/mishu-http.test.ts`.
 - Independent package tests: public extension + HTTP interface, cancel/default
   handling, validation and revocation. Actual native Pi/Harness/model HTTP fixture
   proves tool execution in both extension loading orders.
