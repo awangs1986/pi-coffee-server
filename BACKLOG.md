@@ -528,3 +528,6 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
 
 
 - 2026-10-05: Completed the missing MISHU target specifications: [canonical M01–M13/S0–S6/A01–A28](http://gitea/awangs/pi-coffee-mishu/src/commit/7ef9b4b72242758d4ffb6203543bb314177b2832/docs/coffee-secretary-spec.md), [Host obligations](docs/spec/mishu.md#planned-host-resource-contracts). Implementation remains pending for task briefs/reply responsibility, transparent memory, strong authorization/handoffs/index, explicit notifications/follow-up, optional delegation and approval summaries. This is documentation completion, not feature completion or automatic activation. The prior 0.1.5 rollout completed with synthetic production communication evidence; its release remains `0af6cb9`.
+
+
+- [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65): interpret direct task instructions and same-scope follow-ups as existing authorization, avoiding repeated confirmation or information-only downgrades. Preserve setup/native permissions and clarify genuinely unresolved risk. See [evidence](docs/reviews/mishu-autonomy-20261006.md). Persistent background task follow-up remains planned in #64.
