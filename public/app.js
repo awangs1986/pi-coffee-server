@@ -824,7 +824,7 @@ function renderSessionListNow() {
   renderSessionListContent();
   if(focused?.isConnected || !ui.sessionList.contains(focused) && !focusId && !focusGroup)return;
   const target=focusId?[...ui.sessionList.querySelectorAll('.session-item')].find(node=>node.dataset.sessionId===focusId):[...ui.sessionList.querySelectorAll('[data-sidebar-project]')].find(node=>node.dataset.sidebarProject===focusGroup)?.querySelector('.project-group-toggle');
-  (more?target?.querySelector('.more'):target)?.focus();
+  (more?target?.querySelector('.more'):target)?.focus({preventScroll:true});
 }
 function renderSessionListContent() {
   if(sidebarDragId)return;

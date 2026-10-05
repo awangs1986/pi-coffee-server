@@ -39,6 +39,13 @@ Native Codex/Claude authentication remains their own user-VM authentication.
 
 ## Navigation
 
+Busy sidebar refreshes preserve the current keyboard/action focus with
+`preventScroll: true`. Restoring a row, menu button or group heading must not
+scroll the list back to that element when the user is reading further down.
+Wheel scrolling remains effective while the top conversation is running, in
+both grouped and chronological views. Browser acceptance is
+`scripts/probe-sidebar-scroll.mjs` ([Server #61](https://github.com/awangs1986/pi-coffee-server/issues/61)).
+
 The upper-left PI Coffee menu owns Add project, Discover existing projects,
 Active conversations and Archived conversations, alongside existing settings.
 These global actions must not appear in the task strip. The new-Work creation

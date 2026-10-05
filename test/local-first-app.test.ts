@@ -94,6 +94,17 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('restores sidebar focus without scrolling back to the busy row on refresh',async()=>{
+    const app=await setup('pi',2);await app.select('a');
+    const row=document.querySelector<HTMLElement>('#session-list [data-session-id="a"]')!;
+    row.focus();
+    const focus=vi.spyOn(HTMLElement.prototype,'focus');
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:['a','b','c'].map(id=>({id,name:'Conversation '+id,engine:'pi',running:id==='a',createdAt:'2026-10-03T00:00:00Z'}))});
+    await tick(32);
+    expect(document.activeElement?.getAttribute('data-session-id')).toBe('a');
+    expect(focus).toHaveBeenCalledWith({preventScroll:true});
+  });
+
   it('keeps concurrent running conversations in place when their output timestamps alternate',async()=>{
     const app=await setup('codex',2);await app.select('a');
     const ws=app.sockets.at(-1)!;
