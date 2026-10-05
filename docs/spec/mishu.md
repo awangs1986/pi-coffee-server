@@ -11,6 +11,8 @@ of **existing conversations**, with independent settings for **the current Pi Ch
 
 1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前 Chat）**.
    The idle Chat reconnects with the installed plugin; other tasks continue.
+   The Chat recognizes its MISHU secretary role even before setup and explains
+   that coordination is disabled. Selection does not authorize cross-conversation access.
 2. Send `/mishu-setup`. The directory offers only unarchived conversations with
    activity in the last 72 hours, newest first. Select up to 20 exact target conversations, finish the
    selection, choose information-only or authorized-execution capability, and
@@ -27,6 +29,16 @@ message says it does not authorize new work, delegation, or permission approval.
 Execution instructions additionally require setup permission and a reference to the
 user's explicit instruction. Model-generated claims are not independent proof of
 user intent. Native permission questions stay with the user in the target Chat/Work.
+
+The plugin refreshes a bounded, transient native Pi custom context message before
+every model call. It identifies the selected MISHU application role, independently
+of the underlying model name, and states the latest enabled/disabled permission
+mode. This latest state replaces historical claims. It contains no capabilities,
+credentials or target-provided text and is never appended to durable history.
+Host-status failure reports uncertainty and removes the tool. Deselection removes
+the identity; ordinary unselected Chat retains zero system instructions. Context
+reset preserves selection but does not restore coordination authorization; the new
+binding requires explicit setup.
 
 The model tools cannot create conversations, stop tasks, change setup, or answer
 native questions. No periodic watcher, automatic reply loop, or background polling
@@ -105,6 +117,8 @@ A settled native turn is not proof that the requested business outcome was verif
 - `scripts/probe-extension-dialog.mjs`: real Chromium, 200 options, long native
   confirmation, explicit completion/cancel/Escape and desktop/short/mobile viewports.
   Current-title rename/restart regression is in `test/mishu-http.test.ts`.
+- `test/mishu-http.test.ts` additionally verifies installed-package identity in actual
+  native provider payloads before setup, after setup/disable, and after context reset.
 - Independent package tests: public extension + HTTP interface, cancel/default
   handling, validation and revocation. Actual native Pi/Harness/model HTTP fixture
   proves tool execution in both extension loading orders.

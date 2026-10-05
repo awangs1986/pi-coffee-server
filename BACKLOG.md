@@ -509,3 +509,9 @@ defines user-scoped persistence and the strict separation from task execution id
 ## MISHU independent plugin (2026-10-05)
 
 Owner selected per-current-Pi-Chat coordination of existing conversations. [Contract](docs/spec/mishu.md), [candidate evidence](docs/reviews/mishu-20261005.md), [independent source](http://gitea/awangs/pi-coffee-mishu). Menu selection and `/mishu-setup` are separate; Host owns scoped binding checks, native delivery and receipts. Source/publication evidence is distinct from production activation.
+
+- 2026-10-05: [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59)
+  repairs selected MISHU Chat identity through native transient context, preserving
+  zero-system ordinary Chat and explicit setup authorization. Independent MISHU
+  0.1.2 source/package and isolated real Muse role/state checks are recorded separately
+  from production activation.
