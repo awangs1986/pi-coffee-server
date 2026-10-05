@@ -61,6 +61,12 @@ it('selected Chat knows MISHU identity through the installed plugin, including d
   expect(latest).toContain('亲切、细心、可靠');
   expect(latest).toContain('最新偏好为准');
   expect(latest).not.toContain('PI_COFFEE_MISHU_TOKEN');
+  if(state==='协调已启用'){
+   expect(latest).toContain('已是该事项的授权');
+   expect(latest).toContain('同一任务中');
+   expect(latest).toContain('目标原生权限问题仍由用户处理');
+   expect(latest).toContain('未获授权');
+  }
  }
  try{
   await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));

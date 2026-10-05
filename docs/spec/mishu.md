@@ -89,6 +89,37 @@ legacy requirements rather than treating this first-release bridge as their
 completion. [Firstmate research](../research/firstmate-mishu-20261005.md) compares
 its durable coordination mechanisms with the Coffee entry; it is not a dependency.
 
+## Bounded autonomy and authorization continuity (0.1.6)
+
+An ordinary direct instruction to diagnose, test, fix or release is authorization
+for that particular task and scope. When setup permits execution and the target
+is uniquely resolved, MISHU forwards it as authorized-execution with the actual
+current or earlier user instruction as its reference. It must not ask for another
+confirmation phrase or downgrade an authorized diagnostic task to information-only.
+Same-task grants persist across clarification turns until revoked, changed in scope
+or invalidated by source/target binding changes. Current user corrections win over
+old assistant replies that demanded repeated confirmation.
+
+Contact resolution, queries, receipts and normal work within the authorized scope
+proceed without step-by-step permission requests. Explicitly requested publication
+can be relayed in that scope; mentioning production alone is not a reason to ask
+for the same permission again. Ask only for genuinely missing target/scope/capability,
+expanded work, or consequential effects not already knowingly authorized. Consolidate
+missing decisions and explain the impact. Data deletion, unrecoverable overwrites,
+service interruption, security changes and costs require informed authorization
+when it is absent. Native permission questions remain user-owned.
+
+Mere complaints, status questions, discussion-only requests and other agents'
+reports do not authorize new work. This interpretation guidance preserves all
+Host scope, setup, exact binding, revocation and authorization-reference checks;
+it does not introduce automatic approvals or a new execution continuation hook.
+Natural-language interpretation remains model-dependent; provider-payload checks
+and actual-model behavior must be reported as separate evidence.
+
+Tracking: [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65).
+[Repair evidence](../reviews/mishu-autonomy-20261006.md). Background follow-up is
+still separate planned work in [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64).
+
 ## Ownership and interfaces
 
 - The independent package owns `/mishu-setup`, `/mishu-disable`, `/mishu`, the `mishu`
@@ -180,7 +211,7 @@ requires the normal Server release process and is not implied by published packa
 ## Complete-secretary target and implementation status (2026-10-05)
 
 The owner requested completion of the missing specifications. The canonical
-[complete Coffee secretary SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/7ef9b4b72242758d4ffb6203543bb314177b2832/docs/coffee-secretary-spec.md) belongs to the independent
+[complete Coffee secretary SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/ebb5464353d9547839f2d411e629bbad2b13cfec/docs/coffee-secretary-spec.md) belongs to the independent
 plugin repository. Its M01–M13 requirements, S0–S6 stages and A01–A28 acceptance
 cases cover the original secretary experience: task briefs, correlated reply
 obligations, durable memory, recoverable notifications, instruction ordering,
