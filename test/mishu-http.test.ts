@@ -193,6 +193,50 @@ async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:s
  }finally{socket.close();}
 }
 
+it('continues an unperformed announcement and returns the selected Codex reply before settling',async()=>{
+ const requests:any[]=[];let phase=0,targetId='';
+ const model=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;const input=JSON.parse(raw);requests.push(input);
+  const last=input.messages.filter((m:any)=>m.role==='tool').at(-1),data=last?JSON.parse(typeof last.content==='string'?last.content:last.content[0].text):{};
+  const tool=(args:unknown)=>({role:'assistant',tool_calls:[{index:0,id:'coordinate-'+phase,type:'function',function:{name:'mishu',arguments:JSON.stringify(args)}}]});
+  let delta:any,reason='stop';
+  if(phase===0)delta={role:'assistant',content:'我先帮你联系选中的对话，问问情况。'};
+  else if(phase===1){delta=tool({action:'directory'});reason='tool_calls';}
+  else if(phase===2){const target=data.conversations.find((t:any)=>t.id===targetId);delta=tool({action:'send',targetId:target.id,binding:target.binding,messageId:'model-loop-send',kind:'information-only',text:'只汇报合成测试状态，不修改代码。'});reason='tool_calls';}
+  else {
+   const receipt=data.messages?.find((m:any)=>m.messageId==='model-loop-send');
+   if(receipt?.state==='settled')delta={role:'assistant',content:'COORDINATION_NATIVE_LOOP_OK '+receipt.result};
+   else {await new Promise(r=>setTimeout(r,50));delta=tool({action:'inbox'});reason='tool_calls';}
+  }
+  phase++;
+  res.writeHead(200,{'content-type':'text/event-stream'});const base={id:'coordinate-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};
+  res.end('data: '+JSON.stringify({...base,choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:reason}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>model.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,'codex',false,true),source=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});
+ await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(model.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ const seed=join(app.root,'seed'),remote=join(app.root,'fixture.git');await mkdir(seed);const git=promisify(execFile);
+ const run=(args:string[])=>git('git',['-c','user.name=Fixture','-c','user.email=fixture@localhost',...args],{cwd:seed});
+ await run(['init','-b','main']);await writeFile(join(seed,'status.txt'),'Synthetic fixture only');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('coordination-fixture',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'codex');targetId=target.id;
+ const sockets:WebSocket[]=[];
+ async function open(id:string){const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];sockets.push(socket);socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {socket,frames};}
+ try{
+  const targetChat=await open(target.id);targetChat.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'prime',text:'Initialize synthetic target'}));await expect.poll(()=>targetChat.frames.some(f=>f.event?.type==='run_completed'),{timeout:10000}).toBe(true);
+  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+  const sourceChat=await open(source.id);sourceChat.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'ordinary-coordination',text:'请向已选演示项目询问进展，仅信息通知，并把回复告诉我。'}));
+  await expect.poll(()=>sourceChat.frames.some(f=>f.event?.type==='agent_settled'),{timeout:15000}).toBe(true);
+  expect(JSON.stringify(sourceChat.frames)).toContain('COORDINATION_NATIVE_LOOP_OK');
+  expect(JSON.stringify(sourceChat.frames)).toContain('native marker');
+  const env=(await app.host.mishuRuntime('owner',source.id)).env;
+  const inbox=await (await app.call({action:'inbox'},'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json();
+  expect(inbox.messages).toHaveLength(1);expect(inbox.messages[0]).toMatchObject({state:'settled',kind:'information-only',result:expect.stringContaining('native marker')});
+  expect(sourceChat.frames.filter(f=>f.type==='error'||f.event?.type==='extension_error')).toEqual([]);
+ }finally{for(const s of sockets)s.close();model.closeAllConnections();await new Promise<void>(r=>model.close(()=>r()));}
+},30000);
+
 it('retains an aged confirmed binding during incremental setup but never carries archived targets',async()=>{
  const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),older=await app.workspaces.createChatConversation(),recent=await app.workspaces.createChatConversation();
  const native=SessionManager.create(older.cwd,join(app.root,'sessions'),{id:older.id});native.appendSessionInfo('Existing configured target');

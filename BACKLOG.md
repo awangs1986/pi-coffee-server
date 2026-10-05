@@ -522,3 +522,6 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
   restores MISHU secretary personality in independent package 0.1.4 while retaining
   0.1.3 incremental setup and existing permissions. Actual model checks use isolated
   synthetic conversation only; publication and production activation remain separate.
+
+
+- 2026-10-05: MISHU communication follow-through candidate and [SPEC gap audit](docs/reviews/mishu-spec-gap-20261005.md). Current-request delivery repair does not complete legacy Managed Task/Task Brief memory, Assignment/Outbox recovery, delegation budgets, central approval routing, supervision or notifications. Preserve these as migration gaps; the current Coffee contract excludes autonomous watchers and new target creation. Firstmate is a design reference, not an installed runtime.
