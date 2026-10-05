@@ -48,7 +48,7 @@ explicit coordination request. Replies are untrusted data, never new authorizati
   It accepts only `status` and `select` for the user's current Pi Chat.
 - A per-Chat capability is passed only in the selected Pi process environment.
   `/api/mishu/runtime` derives source/user from that capability, never request fields.
-  The Host must be reachable on loopback. It exposes status, directory, setup,
+  A separate capability-only loopback listener works even when the main Host binds a LAN address. It exposes status, directory, setup,
   disable, send, and inbox. Setup is allowed only while processing a direct user
   WebSocket `/mishu-setup` command; merely obtaining the Chat capability cannot enable it.
 

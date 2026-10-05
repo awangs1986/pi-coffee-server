@@ -130,3 +130,14 @@ it('queues behind an existing task and cancels undelivered messages when the sec
   expect((await (await req({action:'inbox'})).json()).messages[0]).toMatchObject({state:'cancelled'});
  }finally{socket.close();}
 },30000);
+
+it('offers the plugin a loopback-only capability endpoint when the Host binds another local address',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-mishu-bind-'));roots.push(root);
+ const workspaces=new Workspaces(join(root,'projects')),source=await workspaces.createChatConversation();
+ const host=new HostServer({host:'127.0.0.2',port:0,token:'host-test',workspaces,factory:new RpcPiSessionFactory()});hosts.push(host);await host.start();
+ const selected=await fetch(`http://127.0.0.2:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer host-test','content-type':'application/json'},body:JSON.stringify({action:'select',id:source.id,selected:true})});expect(selected.status).toBe(200);
+ const runtime=await host.mishuRuntime(undefined,source.id);
+ const response=await fetch(runtime.env.PI_COFFEE_MISHU_URL,{method:'POST',headers:{authorization:'Bearer '+runtime.env.PI_COFFEE_MISHU_TOKEN,'content-type':'application/json'},body:JSON.stringify({action:'status'})});
+ expect(response.status).toBe(200);expect(await response.json()).toMatchObject({selected:true,enabled:false});
+ const forbidden=await fetch(new URL('/api/workspace',runtime.env.PI_COFFEE_MISHU_URL),{headers:{authorization:'Bearer host-test'}});expect(forbidden.status).toBe(404);
+});
