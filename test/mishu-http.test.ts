@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {execFile} from 'node:child_process';
@@ -173,7 +173,8 @@ async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:s
  const frames:any[]=[];let chosen=false;
  socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
   if(e.method==='select'){
-   const value=e.title.includes('消息权限')?e.options[allow?1:0]:chosen?e.options.find((v:string)=>v.startsWith('完成选择')):e.options.find((v:string)=>v.includes(targetId));
+   const target=e.options.find((v:string)=>v.includes(targetId));
+   const value=e.title.includes('消息权限')?e.options[allow?1:0]:chosen||target?.startsWith('✓')?e.options.find((v:string)=>v.startsWith('完成选择')):target;
    if(!e.title.includes('消息权限'))chosen=true;
    socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,value}));
   }else if(e.method==='confirm')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,confirmed:true}));
@@ -182,10 +183,37 @@ async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:s
   await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:sourceId,nativeProtocol:1}));
   await expect.poll(()=>frames.some(f=>f.type==='opened'||f.type==='error'),{timeout:10000}).toBe(true);
   expect(frames.find(f=>f.type==='opened'||f.type==='error')).toMatchObject({type:'opened'});
+  frames.length=0; // Exclude prior command notifications replayed on reconnect.
   socket.send(JSON.stringify({v:1,type:'prompt',requestId:'explicit-setup-'+randomUUID(),text:'/mishu-setup'}));
-  await expect.poll(async()=>{const value=await (await app.call({action:'status',id:sourceId})).json();return value.enabled?true:frames.filter(f=>f.type==='error'||f.event?.method==='notify');},{timeout:10000}).toBe(true);
+  // An already-enabled Chat must wait for this setup's completion, not old status.
+  await expect.poll(()=>frames.some(f=>f.event?.method==='notify'&&String(f.event.message).startsWith('MISHU 已启用，可联系')),{timeout:10000}).toBe(true);
+  expect(await (await app.call({action:'status',id:sourceId})).json()).toMatchObject({enabled:true});
  }finally{socket.close();}
 }
+
+it('retains an aged confirmed binding during incremental setup but never carries archived targets',async()=>{
+ const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),older=await app.workspaces.createChatConversation(),recent=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(older.cwd,join(app.root,'sessions'),{id:older.id});native.appendSessionInfo('Existing configured target');
+ native.appendMessage({role:'user',content:'Synthetic previous work',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'Synthetic reply'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});const runtime=await app.host.mishuRuntime('owner',source.id);
+ const req=async(body:unknown)=>await(await app.call(body,'owner',runtime.env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json();
+ await setupThroughChat(app,source.id,older.id,false);
+ const initial=(await req({action:'status'})).targets[0];
+ const old=new Date(Date.now()-96*3600000),file=native.getSessionFile()!;
+ const entries=(await readFile(file,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+ for(const entry of entries){if(entry.type!=='session')entry.timestamp=old.toISOString();if(entry.message)entry.message.timestamp=old.getTime();}
+ await writeFile(file,entries.map(e=>JSON.stringify(e)).join('\n')+'\n');
+ const directory=await req({action:'directory'});
+ expect(directory.conversations.some((t:any)=>t.id===older.id)).toBe(false);
+ expect(directory.configuredTargets).toContainEqual(expect.objectContaining({id:older.id,binding:initial.binding}));
+ await setupThroughChat(app,source.id,recent.id,false);
+ expect((await req({action:'status'})).targets.map((t:any)=>t.id)).toEqual([older.id,recent.id]);
+ await app.workspaces.archive(older.id,true);
+ expect((await req({action:'directory'})).configuredTargets.some((t:any)=>t.id===older.id)).toBe(false);
+ await setupThroughChat(app,source.id,recent.id,false);
+ expect((await req({action:'status'})).targets.map((t:any)=>t.id)).toEqual([recent.id]);
+},30000);
 
 it('queues behind an existing task and cancels undelivered messages when the secretary is disabled',async()=>{
  const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();

@@ -17,6 +17,11 @@ of **existing conversations**, with independent settings for **the current Pi Ch
    activity in the last 72 hours, newest first. Select up to 20 exact target conversations, finish the
    selection, choose information-only or authorized-execution capability, and
    explicitly confirm. Cancellation preserves existing settings.
+   Reopening setup prechecks still-valid prior selections so contacts can be added
+   or removed incrementally. New contacts remain subject to the 72-hour window;
+   previously confirmed contacts can remain selected after aging beyond it.
+   Archived/unavailable targets or changed source/target bindings are not prechecked.
+   Each edited set still requires explicit message-mode choice and final confirmation.
 3. Ask this Chat to discover status, relay bounded messages, or inspect its inbox.
    Targets can be Pi, Codex, Claude Code, Cursor, or Grok. Non-Pi targets must have
    an established native binding (open them and send an initial message first).
@@ -86,6 +91,10 @@ their last turn snapshot, native summary update time, then creation time if no
 activity metadata exists. Renaming a record with tracked turn activity does not
 make an old conversation recent. The time window limits new setup selection;
 previously approved target bindings do not silently change as the clock advances.
+`directory.configuredTargets` separately returns at most 20 retained entries whose
+saved source/target bindings are still current and whose targets remain available.
+Only these entries may bypass the recency window during incremental setup; arbitrary
+older IDs remain rejected. Setup validates the entire edited set again at commit.
 
 Directory and status resolve current native names, including confirmed renames
 and Host restart, with first-user-message preview as the unnamed-title fallback.
@@ -117,6 +126,8 @@ A settled native turn is not proof that the requested business outcome was verif
 - `scripts/probe-extension-dialog.mjs`: real Chromium, 200 options, long native
   confirmation, explicit completion/cancel/Escape and desktop/short/mobile viewports.
   Current-title rename/restart regression is in `test/mishu-http.test.ts`.
+  Its incremental-setup regression uses the published 0.1.3 plugin with native Pi,
+  adds a recent target while retaining an aged binding, then excludes an archived one.
 - `test/mishu-http.test.ts` additionally verifies installed-package identity in actual
   native provider payloads before setup, after setup/disable, and after context reset.
 - Independent package tests: public extension + HTTP interface, cancel/default
