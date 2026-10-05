@@ -1,3 +1,5 @@
+> Chat zero-system correction (2026-10-05): [contract](docs/spec/session-environment.md#chat-zero-system-boundary--2026-10-05). No automatic project, Host or runner guidance, including after clear-context and restart.
+
 > Native Grok Build support: [contract](docs/spec/grok-build.md), [Server #57](https://github.com/awangs1986/pi-coffee-server/issues/57). Owner completes native device login; authenticated model acceptance follows.
 
 > Cursor ACP and Claude Code completion: [contract](docs/spec/cursor-claude.md), [Server #56](https://github.com/awangs1986/pi-coffee-server/issues/56). Native Cursor login and Claude quota gates remain explicit.
@@ -14,7 +16,7 @@
 
 > `/sshme` Web remote assistance: [contract](docs/spec/sshme.md), [Server #17](https://github.com/awangs1986/pi-coffee-server/issues/17).
 
-> Host environment sentence for every Agent, including Pi Chat: [contract](docs/spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
+> Work-only Host environment sentence; Pi Chat has zero system instructions: [contract](docs/spec/session-environment.md), [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
 
 > Windows SSH test computer with same-host WSL: [contract](docs/spec/test-runners.md), [Server #15](https://github.com/awangs1986/pi-coffee-server/issues/15).
 

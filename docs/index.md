@@ -114,3 +114,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Grok Build native ACP integration: [capabilities, login and acceptance](spec/grok-build.md), [Server #57](https://github.com/awangs1986/pi-coffee-server/issues/57).
 
 - [MISHU per-Chat coordination](spec/mishu.md): independent plugin, explicit setup, existing native Agent conversations, candidate publication and acceptance.
+
+- Ordinary Chat zero-system and no automatic runner guidance: [current boundary](spec/session-environment.md#chat-zero-system-boundary--2026-10-05), [Server #60](https://github.com/awangs1986/pi-coffee-server/issues/60). Explicitly enabled MISHU remains independently scoped.

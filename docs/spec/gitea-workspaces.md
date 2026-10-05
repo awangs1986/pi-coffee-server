@@ -12,7 +12,7 @@
 | GW-02 | 完整执行能力不取消产品行为范围。当前任务的本地编辑、检查、必要 sudo，以及登记的 Gitea Conversation 分支正常 commit/push 已预授权；无需逐次确认。默认/共享分支合并、强推、远端删除、对外发布按用户明确授权范围执行，既有授权不重复询问。读取建议/分析请求不触发自动 checkpoint。 |
 | GW-03 | Server 身份、固定 VM 路由、Host token、文件 API scope/路径检查继续存在；它们保护网络访问正确性，不限制 VM 内 Bash。VM root 不意味着可访问其他 VM、虚拟化宿主机或中央 Relay 密钥。 |
 
-通用 Work 正文保持项目中立。由原生扩展/项目上下文向 Work 提供实际执行身份、sudo 探测、仓库与 branch 范围、同步策略；不把 Gitea 产品规则硬编码进通用正文。声明目标权限不能代替真实权限探测，Chat excludes Work prompts; the current minimal Host environment sentence is defined in [session environment](session-environment.md).
+通用 Work 正文保持项目中立。由原生扩展/项目上下文向 Work 提供实际执行身份、sudo 探测、仓库与 branch 范围、同步策略；不把 Gitea 产品规则硬编码进通用正文。声明目标权限不能代替真实权限探测，Chat has zero system instructions and excludes automatic Host/Work/runner guidance; see [session environment](session-environment.md).
 
 ## 代码与数据归属
 

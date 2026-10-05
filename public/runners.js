@@ -36,7 +36,7 @@ export function initRunners({onOpen}) {
  async function open(){
   if(busy)return;onOpen();epoch++;reset();rows=[];render();available=false;
   if(!dialog.open)dialog.showModal();
-  await perform(async()=>{const data=await request({action:'list'});return ()=>{rows=data.runners;available=true;render();status('这是当前账号所有对话共用的测试目标；更新将在各对话下一轮消息时生效，不打断正在运行的任务。');};});
+  await perform(async()=>{const data=await request({action:'list'});return ()=>{rows=data.runners;available=true;render();status('这是当前账号 Work 任务共用的测试目标；Chat 不会接收这些指引。更新在 Work 下一轮消息时生效，不打断运行中的任务。');};});
  }
  $('runners-btn').addEventListener('click',()=>void open());
  $('runners-close').addEventListener('click',()=>dialog.close());

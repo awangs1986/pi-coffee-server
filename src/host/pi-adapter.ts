@@ -143,9 +143,10 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       appendExtensionArgs([...(this.options.args ?? [])], [...this.extensions(),...await this.options.extensionsForSession?.(options.workspaceSessionId??options.sessionId)??[]]),
       this.options.skills ?? [],
     );
-    const instructions=await this.options.instructions?.(options.workspaceSessionId??options.sessionId);
+    const environment={...this.options.env,...await this.options.envForSession?.(options.workspaceSessionId??options.sessionId)};
+    const instructions=environment.PI_COFFEE_INITIAL_MODE==='chat'?undefined:await this.options.instructions?.(options.workspaceSessionId??options.sessionId);
     if(instructions)args.push("--append-system-prompt",instructions);
-    // Last hook preserves the Host environment sentence after Pi Chat removes system prompts.
+    // Final integration hook enforces zero-system Chat; Work retains Host guidance.
     appendExtensionArgs(args, [fileURLToPath(new URL(`./pi-environment-extension.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url))]);
     // Resume from the durable store when the conversation already exists there;
     // only a genuinely new conversation gets a fresh file with our id.
@@ -166,7 +167,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       model: this.options.model,
       env: {
         ...(this.options.agentDir === undefined ? {} : { PI_CODING_AGENT_DIR: this.options.agentDir }),
-        ...buildHostChildEnv({...this.options.env,...await this.options.envForSession?.(options.workspaceSessionId ?? options.sessionId)}),
+        ...buildHostChildEnv(environment),
         PI_COFFEE_CONTEXT_CONTROL: "1",
         PI_COFFEE_ROOT_SESSION: this.options.runtimeIdForSession?.(options.workspaceSessionId ?? options.sessionId) ?? options.sessionId,
       },

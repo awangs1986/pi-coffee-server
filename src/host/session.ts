@@ -19,7 +19,7 @@ export interface SessionSink {
 }
 
 export interface HostSessionOptions {
-  runnerGuidance?:()=>Promise<{revision:string;text?:string}>;
+  runnerGuidance?:(id:string)=>Promise<{revision:string;text?:string}|undefined>;
   id?: string;
   factory: PiSessionFactory;
   eventBufferSize?: number;
@@ -269,7 +269,7 @@ export class HostSession {
   }
 
   private async deliverWithRunnerGuidance(text:string,deliver:(value:string)=>Promise<void>,generation:number){
-    const guidance=!text.trimStart().startsWith('/')?await this.runnerGuidance?.():undefined;
+    const guidance=!text.trimStart().startsWith('/')?await this.runnerGuidance?.(this.id):undefined;
     this.assertDelivery(generation);
     const changed=guidance&&guidance.revision!==this.runnerRevision;
     await deliver(changed&&guidance.text?text+'\n\n'+guidance.text:text);

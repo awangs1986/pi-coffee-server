@@ -29,7 +29,7 @@ used total. Cumulative input/output/cache billing MUST NOT replace these rows.
 
 An observer loads after the payload-changing Harness and reads Pi's public
 `before_provider_request` event. It does not modify the payload, add tools, call
-a model, or alter Chat's minimal-system contract (including the [Host environment sentence](session-environment.md)). The observation is the most recent
+a model, or alter Chat's [zero-system contract](session-environment.md#chat-zero-system-boundary--2026-10-05). The observation is the most recent
 request's model-visible content, after context transformations. System wrappers
 `project_context`, `available_skills`, and `available_agents` establish source
 attribution. Read-result attribution uses actual tool-call IDs/paths, not text
