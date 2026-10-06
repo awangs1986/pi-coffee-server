@@ -165,9 +165,11 @@ The owner selected the configured Windows test computer's Ubuntu WSL environment
 not the production VM. Runner `coffee-wsl-fengge` has the `pi-coffee-ci` label and
 uses `/home/ubuntu/pi-coffee-ci`. The complete listener and its children run in a
 rootless mount/PID/user namespace. Only its private runner/work/home directories,
-read-only system binaries and necessary DNS/CA files are exposed. Windows drives,
+read-only system binaries and necessary DNS/CA files are exposed. The launcher
+and bootstrap directory are read-only; only runner/work and synthetic home are
+writable, preventing a job from replacing the next unsandboxed startup program. Windows drives,
 native Pi/Codex profiles, VM credentials and production workspaces are omitted.
-Chromium libraries are extracted into this CI directory rather than changing
+Python 3 and Chromium libraries are extracted into this CI directory rather than changing
 system security policy. Outbound requests use the existing router proxy; LAN
 Gitea bypasses it. No firewall, sudo policy or global Git login is modified.
 
@@ -177,3 +179,12 @@ is separate from the owner's Coffee OAuth token, which stays on the VM and is
 never copied to CI. Check runner online status and an actual Actions conclusion.
 Windows/WSL shutdown necessarily takes this runner offline. Main is not protected
 by a required-check branch rule unless the owner enables that separate setting.
+
+
+CI uses two test workers rather than the VM default of four: native fixtures own
+additional subprocesses, and the WSL first cold run exposed timeout contention.
+Do not weaken assertions or skip failing files to make CI pass. Session-list tests
+consume broadcasts until the required conversation state arrives; an older queued
+broadcast is not a correlated response to a later list request. Startup runs through
+a Windows logon task with a limited interactive principal and at most three retries;
+it does not change execution policy or require saved Windows credentials.
