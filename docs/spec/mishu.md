@@ -429,7 +429,10 @@ A new source native context cannot read or inherit old briefs, even after setup.
 Mutations serialize within the scoped coordinator, stage a journal copy, and flush
 an atomic private state-file replacement before acknowledging. Disk failure leaves
 the prior journal in memory. Identical operation retries return their original
-result; changed payloads or stale revisions fail. Failed/cancelled UI edits make
+result, including the nested observation and report data captured at admission;
+later native evidence, report commits and Host restarts do not rewrite that receipt.
+Current state remains available through `tasks/get`. Changed payloads or stale
+revisions fail. Failed/cancelled UI edits make
 no mutation. Existing message receipt identity and execution remain unchanged.
 
 Limits per secretary: 200 briefs (including stopped/history), 2,000 accepted write

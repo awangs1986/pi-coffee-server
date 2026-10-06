@@ -1,8 +1,9 @@
 import {randomUUID} from 'node:crypto';
+import {INPUT_QUEUE_POLICY} from './input-queue.js';
 import type {TaskBrief} from './mishu-tasks.js';
 import type {AgentRunEvidence} from './agent-adapter.js';
 
-export const NOTIFICATION_LIMITS={foregroundBurst:3,coalesceMs:250,wakesPerWindow:12,budgetWindowMs:3600000,automaticRecoveries:1,eventVersions:16,evidenceReferences:64,outboxBytes:262144,outstanding:20,recordsPerTask:100,factCharacters:4000,latestReplyCharacters:4000,reportCharacters:16000} as const;
+export const NOTIFICATION_LIMITS={foregroundBurst:INPUT_QUEUE_POLICY.foregroundBurst,coalesceMs:250,wakesPerWindow:12,budgetWindowMs:3600000,automaticRecoveries:1,eventVersions:16,evidenceReferences:64,outboxBytes:262144,outstanding:20,recordsPerTask:100,factCharacters:4000,latestReplyCharacters:4000,reportCharacters:16000} as const;
 export interface ReportEvent {revision:number;state:TaskBrief['observation'];text:string;latestReply?:string;entries:{id:string;revision:string}[]}
 /** Delivery references only. Native transcript owns the report text. */
 export interface ReportRecord {

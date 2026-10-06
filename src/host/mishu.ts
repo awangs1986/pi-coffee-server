@@ -82,7 +82,7 @@ export class MishuCoordinator {
   const reports=tasks.flatMap(t=>t.reports??[]),budget=currentBinding?c.notificationBudget:undefined,remainingWakes=budget&&Date.now()-budget.startedAt<NOTIFICATION_LIMITS.budgetWindowMs?Math.max(0,NOTIFICATION_LIMITS.wakesPerWindow-budget.used):NOTIFICATION_LIMITS.wakesPerWindow;
   const backlog=tasks.filter(t=>t.notification?.automatic&&t.notification.state!=='committed'&&t.workState!=='stopped').length;
   const diagnostic=tasks.find(t=>t.workState!=='stopped'&&t.notificationError)?.notificationError??reports.find(r=>r.retryBlocked&&!['committed','cancelled'].includes(r.state))?.error??c.notificationError??(remainingWakes===0?'本小时自动汇报预算已用完；责任保留，预算恢复后继续。可用 /mishu-tasks 查看事实。':undefined);
-  return {notifications:{enabled:currentBinding&&c.enabled&&c.notifications===true,capacity:20,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。',error:currentBinding?diagnostic??this.notificationFailure:undefined},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:currentBinding?this.observationFailure:undefined}};
+  return {notifications:{enabled:currentBinding&&c.enabled&&c.notifications===true,capacity:NOTIFICATION_LIMITS.outstanding,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。',error:currentBinding?diagnostic??this.notificationFailure:undefined},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:currentBinding?this.observationFailure:undefined}};
  }
  async select(id:string,selected:boolean){return this.change(async()=>{
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
@@ -242,7 +242,7 @@ export class MishuCoordinator {
     if(prior.automatic&&!prior.deliveryAttempted&&['pending','admitted'].includes(prior.state)&&!internal){this.cancelNotificationQueue(id);prior.retryBlocked=false;prior.state='processing';prior.deliveryAttempted=true;await this.save();this.registry!.get(id)!.setReportOrigin();this.reportWindows.delete(id);return {report:prior,content:reportContent(task,prior)};}
     return {report:prior};
    }
-   if((task.reports?.length??0)>=100)throw Error('Report capacity reached');
+   if((task.reports?.length??0)>=NOTIFICATION_LIMITS.recordsPerTask)throw Error('Report capacity reached');
    const report=reportIntent(task);(task.reports??=[]).push(report);
    const previous=c.taskJournal;c.taskJournal=journal;
    try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
@@ -302,7 +302,7 @@ export class MishuCoordinator {
      if(report&&(!report.automatic||!['pending','admitted'].includes(report.state)))continue;
      try{await this.authorize(id,task.targetId,task.binding,'information-only');}catch{continue;}
      if(!report){
-      if(tasks.flatMap(t=>t.reports??[]).filter(r=>['pending','admitted','processing'].includes(r.state)).length>=20||(task.reports?.length??0)>=100){c.notificationError='提醒容量已满，责任仍保留；请查看任务记录。';continue;}
+      if(tasks.flatMap(t=>t.reports??[]).filter(r=>['pending','admitted','processing'].includes(r.state)).length>=NOTIFICATION_LIMITS.outstanding||(task.reports?.length??0)>=NOTIFICATION_LIMITS.recordsPerTask){c.notificationError='提醒容量已满，责任仍保留；请查看任务记录。';continue;}
       try{report=reportIntent(task);}catch{continue;}
       report.automatic=true;report.state='pending';report.notificationGeneration=c.notificationGeneration;(task.reports??=[]).push(report);
      }
