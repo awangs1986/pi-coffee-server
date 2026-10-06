@@ -69,3 +69,27 @@ it('persists scoped sidebar placement and collapse without changing task identit
 
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('keeps last native run boundaries scoped and durable without inferring completion from idle',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-completion-scope-'));let server:HostServer|undefined;
+ try{
+  const stores=new Map<string,Workspaces>();
+  for(const user of ['alice','bob']){const store=new Workspaces(join(root,user,'projects'));stores.set(user,store);await store.createChatConversation('same-id');}
+  await stores.get('alice')!.recordRunStatus('same-id','settled');
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No Agent needed');}};
+  server=new HostServer({port:0,token:'completion-scope',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
+  const get=async(user:string)=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{headers:{authorization:'Bearer completion-scope','x-pi-coffee-user':user}});expect(r.status).toBe(200);return (await r.json()).conversations[0];};
+  expect(await get('alice')).toMatchObject({id:'same-id',lastRunStatus:'settled',runState:'idle'});
+  expect((await get('bob')).lastRunStatus).toBeUndefined();
+  await stores.get('alice')!.markRun('same-id','running');
+  expect((await get('alice')).lastRunStatus).toBe('running');
+  const restored=new Workspaces(join(root,'alice','projects'));expect((await restored.list()).conversations[0]).toMatchObject({lastRunStatus:'interrupted',runState:'interrupted'});
+  await restored.recordRunStatus('same-id','settled');
+  expect((await new Workspaces(restored.root).list()).conversations[0].lastRunStatus).toBe('settled');
+  const c=await stores.get('bob')!.lookup('same-id');
+  await stores.get('bob')!.recordRunStatus('same-id','settled');
+  await stores.get('bob')!.commitContextReset('same-id',{id:'synthetic-reset',expectedNativeId:'same-id'},'reset-binding');
+  expect((await get('bob')).lastRunStatus).toBeUndefined();
+  expect((await get('bob')).cwd).toBe(c!.cwd);
+ }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});
