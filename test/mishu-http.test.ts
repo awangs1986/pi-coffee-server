@@ -16,7 +16,7 @@ import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
-async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>){
+async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>,loseDispatchAck=false){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
  let host:HostServer;
@@ -26,6 +26,7 @@ async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativ
  const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
  const factory=engine||nativePi?new NativeAgentFactory({pi,workspaces,...(engine?{[engine]:command}:{})}):pi;
  if(auditGate&&factory.readRunEvidence){const read=factory.readRunEvidence.bind(factory);factory.readRunEvidence=async(id:string,runId?:string)=>{const evidence=await read(id,runId);await auditGate(id,runId);return evidence;};}
+ if(loseDispatchAck){const create=factory.create.bind(factory);factory.create=async options=>{const session=await create(options),prompt=session.prompt.bind(session);session.prompt=async(text,images,correlation)=>{await prompt(text,images,correlation);if(correlation)throw Error('Synthetic native acceptance acknowledgement lost');};return session;};}
  const other=new Workspaces(join(root,'other'));
  host=new HostServer({port:0,token:'host-test',requireUser:true,factory,workspaces,scopeForUser:user=>({factory,workspaces:user==='owner'?workspaces:other})});hosts.push(host);await host.start();
  const call=(body:unknown,user='owner',token='host-test',path='/api/mishu')=>fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
@@ -462,4 +463,59 @@ it('keeps truncated, missing-final-audit and next-user replies incomplete or unc
  const unknown=await(await req(get)).json();expect(unknown.task).toMatchObject({observation:'uncertain',fact:{text:'Partial evidence'}});
  expect(await(await req(get)).json()).toEqual(unknown);
  await writeFile(nativeFile,original);
+},30000);
+
+it.each(['normal','lost-ack','queued-stop'] as const)('dispatch persists business responsibility and deduplicates changed IDs (%s)',async(mode)=>{
+ let targetCalls=0,sourceCalls=0;let finishSource=()=>{},finishTarget=()=>{};
+ const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const isTarget=JSON.stringify(body.messages).includes('DISPATCH_SYNTHETIC_WORK');
+  const reply=(text:string)=>{if(res.writableEnded||res.destroyed)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:randomUUID(),object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  if(isTarget){targetCalls++;finishTarget=()=>reply('DISPATCH_RESULT');}else{sourceCalls++;finishSource=()=>reply('Secretary done');}
+ });await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true,undefined,mode==='lost-ack'),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=await(await req({...base,operation:'register',operationId:'dispatch-brief',targetId:target.id,binding:contact.binding,purpose:'Run check',scope:'Synthetic isolated task',summary:'Requested',nextStep:'Deliver'})).json();
+ const command={...base,operation:'dispatch',taskId:brief.task.taskId,expectedRevision:1,messageId:'first-model-id',text:'DISPATCH_SYNTHETIC_WORK',authorizationRef:'User explicitly requested the synthetic check'};
+ expect((await req(command)).status).toBe(409);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ let targetSocket:WebSocket|undefined;const targetFrames:any[]=[];
+ if(mode==='queued-stop'){
+  targetSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});targetSocket.on('message',raw=>targetFrames.push(JSON.parse(String(raw))));await once(targetSocket,'open');targetSocket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));await expect.poll(()=>targetFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);targetSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-busy-target',text:'DISPATCH_SYNTHETIC_WORK already running'}));await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
+ }
+ try{if(socket.readyState!==WebSocket.OPEN)await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);socket.send(JSON.stringify({v:1,type:'prompt',requestId:'trusted-user-dispatch',text:'Please perform two independent isolated checks'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(1);
+ const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);expect((await req(command)).status).toBe(409);await rm(blockedWrite,{recursive:true});expect(targetCalls).toBe(mode==='queued-stop'?1:0);
+ const accepted=await req(command);expect(accepted.status,await accepted.clone().text()).toBe(200);const result=await accepted.json();expect(result.assignment).toMatchObject({state:'accepted',taskId:brief.task.taskId});
+ const duplicate=await req({...command,messageId:'model-changed-id'});expect(duplicate.status,await duplicate.clone().text()).toBe(200);expect((await duplicate.json()).assignment.id).toBe(result.assignment.id);
+ await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
+ expect((await req({...command,messageId:'conflict',text:'different scope'})).status).toBe(409);expect(targetCalls).toBe(1);
+ const stored=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));expect(stored.chats[source.id].assignments).toHaveLength(1);expect(stored.chats[source.id].taskJournal.tasks[0].obligation.runId).toBe(result.assignment.requestId);
+ if(mode==='queued-stop'){
+  await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.assignment.state).toBe('queued');
+  const queued=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
+  expect((await req({...base,operation:'stop',operationId:'cancel-queued',taskId:queued.taskId,expectedRevision:queued.revision})).status).toBe(200);
+  finishTarget();await expect.poll(()=>targetFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const stopped=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;expect(stopped).toMatchObject({assignment:{state:'cancelled'},observation:'stopped'});expect(targetCalls).toBe(1);return;
+ }
+ finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');
+ const final=await(await req({...base,operation:'get',taskId:brief.task.taskId})).json();expect(final.task).toMatchObject({fact:{text:'DISPATCH_RESULT'},acceptance:'pending'});expect(final.task.assignment.id).toBe(result.assignment.id);
+ let replayCommand:Record<string,unknown>=command,replayId=result.assignment.id,expectedCalls=1;
+ if(mode==='normal'){
+  const separate=await(await req({...base,operation:'register',operationId:'second-explicit-task',targetId:target.id,binding:contact.binding,purpose:'Second independent check',scope:'Synthetic isolated task',summary:'Requested',nextStep:'Deliver'})).json();
+  const second=await req({...command,taskId:separate.task.taskId,messageId:'distinct-operation'});expect(second.status,await second.clone().text()).toBe(200);expect((await second.json()).assignment.id).not.toBe(result.assignment.id);
+  await expect.poll(()=>targetCalls,{timeout:10000}).toBe(2);finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:separate.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');
+ }
+ finishSource();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+ if(mode==='normal'){
+  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'new-user-repeat',text:'Repeat the first isolated check once more'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(2);
+  const current=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
+  replayCommand={...command,expectedRevision:current.revision,messageId:'legitimate-repeat',retryOf:result.assignment.id};
+  const repeat=await req(replayCommand);expect(repeat.status,await repeat.clone().text()).toBe(200);const repeated=await repeat.json();expect(repeated.assignment.retryOf).toBe(result.assignment.id);replayId=repeated.assignment.id;expect(replayId).not.toBe(result.assignment.id);
+  await expect.poll(()=>targetCalls,{timeout:10000}).toBe(3);finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');finishSource();await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);expectedCalls=3;
+ }
+ socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const restarted=await start(app.root,undefined,true),rt=(await restarted.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const recovered=await restarted.call({...replayCommand,messageId:'after-restart'},'owner',rt,'/api/mishu/runtime');expect(recovered.status,await recovered.clone().text()).toBe(200);expect((await recovered.json()).assignment.id).toBe(replayId);expect(targetCalls).toBe(expectedCalls);
+ }finally{socket.close();targetSocket?.close();finishSource();finishTarget();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
