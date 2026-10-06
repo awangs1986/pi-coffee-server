@@ -508,7 +508,7 @@ export class HostSession {
     let lifecycle = false;
     if (isRecord(safeEvent) && typeof safeEvent.type === "string") {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
-        this.interrupted = true;this.inputs.pause();
+        this.interrupted = true;this.unseenSettle=false;this.inputs.pause();
         this.state = {...this.state,isStreaming:false};
         this.activeRequestId = undefined;
         this.pendingUi.clear();
@@ -521,6 +521,7 @@ export class HostSession {
         return;
       }
       if ((safeEvent.type === "agent_start" || safeEvent.type === "run_started")) {
+        this.unseenSettle=false;
         this.state = { ...this.state, isStreaming: true };
         lifecycle = true;
       }
@@ -601,7 +602,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(private options: { runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { runStatuses?:()=>Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -721,7 +722,11 @@ export class HostSessionRegistry {
         ...(session.attention === undefined ? {} : { attention: session.attention }),
       });
     }
-    return summaries;
+    const statuses=await this.options.runStatuses?.();
+    return summaries.map(item=>{
+      const status=statuses?.get(item.id);
+      return {...item,...(status?{runStatus:status}:{})};
+    });
   }
 
   async stopIdle(id:string):Promise<void> {

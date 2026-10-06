@@ -20,8 +20,8 @@ export function timeGroup(iso) {
 export function attentionOf(session) {
   if (!session) return null;
   if (session.attention === 'waiting') return 'waiting';
-  if (session.attention === 'finished') return 'finished';
   if (session.running) return 'running';
+  if (session.attention === 'finished' && session.runStatus!=='interrupted') return 'finished';
   return null;
 }
 

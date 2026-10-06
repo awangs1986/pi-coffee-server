@@ -358,8 +358,9 @@ Escape dismiss it; reduced-motion mode avoids animation. The previous oversized
 character artwork is no longer displayed. The workbench layout is unchanged.
 
 A running conversation uses a small light-blue (`#7CBAE8`) pixel cat in the sidebar instead of a
-pulsing blue dot. Finished, unread conversations show a static pixel coffee cup;
-opening the conversation clears it under the existing attention rules. Waiting
+pulsing blue dot. Conversations whose last observed native run settled show a static
+pixel coffee cup, including after they have been viewed or the Web reconnects.
+Opening clears only unread attention; it does not clear the completion icon. Waiting
 retains its question mark. An idle row
 has no running cat. Reduced-motion mode shows the cat without animation, and the
 dark theme adds a subtle outline to retain contrast.
@@ -477,3 +478,27 @@ code frames, language labels and per-block Copy. Copy includes only the code,
 with whitespace and shell syntax preserved, excluding fences and surrounding
 explanations. Disposable cached previews remain plain text; long/live content
 retains its existing rendering bounds. No native transcript or prompt is changed.
+
+
+### Durable completion icon — 2026-10-06 (Server #79)
+
+Host stores the last observed native run boundary (`running`, `settled`, or
+`interrupted`) in each registered Conversation and includes `runStatus` in scoped
+session summaries. This status is separate from transient unread `attention`.
+A settled conversation retains its coffee icon after browser/Web reconnection,
+idle native-process retirement, and Host restoration. Viewing it clears unread
+attention and its “pending review” wording, while retaining “completed”.
+
+Waiting and running take display priority. A new admitted run replaces the prior
+completion; an explicit interruption removes it. Host restoration converts a
+previously running boundary to interrupted, never completed. Native settlement
+means execution ended; it does not certify a successful business outcome. Idle,
+new, and historical records without observed lifecycle metadata do not acquire a
+completion icon by inference. Chat context reset and Work engine takeover clear
+the previous binding's status. Existing unread grouping, pinning and chronological
+ordering remain unchanged; no native process or transcript is read to list status.
+
+Acceptance: `test/host-server.test.ts` drives public WS completion, reattachment,
+idle retirement and a fresh Host; `test/sidebar-http.test.ts` verifies scoped
+persistence and reset; `test/local-first-app.test.ts` checks real controller icons
+and priority; `scripts/probe-completion-icon.mjs` verifies Chromium page reload.

@@ -5,7 +5,7 @@ import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
 import {parseGitHubRepository} from './github.js';
-import { parseAgentEngine, type AgentEngine } from "../shared/protocol.js";
+import { parseAgentEngine, type AgentEngine, type SessionSummary } from "../shared/protocol.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID, createHash } from "node:crypto";
@@ -17,7 +17,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { lastActivityAt?:string; contextReset?:{id:string;at:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; contextReset?:{id:string;at:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -92,6 +92,7 @@ export class Workspaces {
   private saveTail: Promise<void> = Promise.resolve();
   private initialized = false;
   private loading?: Promise<void>;
+  private readonly runStatusWrites=new Set<Promise<void>>();
   readonly chatRoot:string;
   private readonly ownerId:string;
   private readonly forge?:CodeForge;
@@ -129,7 +130,7 @@ export class Workspaces {
     let interrupted=false;
     for(const c of this.state.conversations){if(c.fork?.status==='preparing'){c.fork.status='failed';c.fork.error='Host restarted during Fork; retained files and native history require inspection. No automatic retry.';interrupted=true;}if(c.forking?.status==='preparing'){c.forking.status='failed';c.forking.error='Fork interrupted by Host restart';interrupted=true;}}
     for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
-    for(const c of this.state.conversations) if(c.runState==="running") {c.runState="interrupted";interrupted=true;}
+    for(const c of this.state.conversations) if(c.runState==="running" || c.lastRunStatus==="running") {c.runState="interrupted";c.lastRunStatus="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
     if(interrupted)await this.save();
     this.initialized=true;
@@ -454,7 +455,7 @@ export class Workspaces {
     const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
     const old={...c};
     c.takeoverSegments=[...(c.takeoverSegments??[]),{id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
-    c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';
+    c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';delete c.lastRunStatus;
     try{await this.save();}catch(error){
       // Restore the whole record: assigning old fields leaves newly introduced
       // native bindings and history segments behind after a failed first switch.
@@ -465,7 +466,8 @@ export class Workspaces {
     const c=this.conversation(id);
     if(c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi Chat can clear context');
     if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
-    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds};
+    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus};
+    delete c.lastRunStatus;
     c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString()};
     c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),operation.expectedNativeId])];
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
@@ -612,8 +614,25 @@ export class Workspaces {
       catch(error) {c.turnSnapshot={startedAt,error:(error instanceof Error ? error.message : 'Snapshot failed').slice(0,300)};}
     }
     if(runState!=="interrupted")c.lastActivityAt=new Date().toISOString();
-    c.runState=runState;await this.save();
+    c.runState=runState;if(runState!=="idle")c.lastRunStatus=runState;await this.save();
   },()=>this.state.conversations.some(c=>c.id===id) ? this.conversationLock(id) : 'legacy:'+id);}
+  /** Only observed native lifecycle events create a completion marker; idle is not completion. */
+  recordRunStatus(id:string,status:NonNullable<SessionSummary["runStatus"]>):Promise<void> {
+    const work=this.mutate(async()=>{
+      const c=this.state.conversations.find(c=>c.id===id);if(!c)return;
+      c.lastRunStatus=status;c.runState=status==='settled'?'idle':status;
+      if(status!=='interrupted')c.lastActivityAt=new Date().toISOString();
+      await this.save();
+    },()=>this.conversationLock(id));
+    this.runStatusWrites.add(work);
+    void work.then(()=>this.runStatusWrites.delete(work),()=>this.runStatusWrites.delete(work));
+    return work;
+  }
+  /** Compact scoped projection: no native startup, history export or remote Git reads. */
+  async runStatuses():Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>> {
+    await this.load();await Promise.all([...this.runStatusWrites]);await this.saveTail;
+    return new Map(this.state.conversations.filter(c=>c.lastRunStatus).map(c=>[c.id,c.lastRunStatus!]));
+  }
   private recordsTurns(c:Conversation) {
     return c.workspaceKind!=='chat' && TURN_SNAPSHOT_ENGINES.has(c.engine ?? 'pi') && (!c.creationState || c.creationState==='ready') && !c.workspaceRemoved && !c.cleanupStarted;
   }
