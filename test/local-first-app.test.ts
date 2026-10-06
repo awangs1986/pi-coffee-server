@@ -4,8 +4,9 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
+import {ConversationModels} from '../public/conversation-models.js';
 
-type Engine = 'pi' | 'codex' | 'claude';
+type Engine = 'pi' | 'codex' | 'claude' | 'cursor' | 'grok';
 const capabilities = { stop: true, steer: true, followUp: true, tools: true, questions: true };
 const allFrames: any[] = [];
 const listeners: any[] = [];
@@ -27,7 +28,7 @@ afterEach(() => {
   vi.restoreAllMocks(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals();
   history.replaceState(null,'','/');localStorage.clear(); sessionStorage.clear(); vi.resetModules(); allFrames.length = 0;
 });
-async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
+async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(network:{workspaceGate:Promise<void>|null})=>{}) {
   const originalAdd = EventTarget.prototype.addEventListener;
   vi.spyOn(EventTarget.prototype, 'addEventListener').mockImplementation(function (this: EventTarget, type: string, listener: any, options: any) { listeners.push([this, type, listener, options]); originalAdd.call(this, type, listener, options); });
   document.documentElement.innerHTML = readFileSync('public/index.html', 'utf8');
@@ -37,7 +38,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { authGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   class Socket {
@@ -54,8 +55,8 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
     let data: any = {};
     if (url === '/auth/me') {await network.authGate;data = { auth: true, user: network.user };}
     else if (url === '/api/me') data = null;
-    else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude'].map(id => ({ id, available: true })) };
-    else if (url === '/api/workspace') data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };
+    else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude', 'cursor', 'grok'].map(id => ({ id, available: true })) };
+    else if (url === '/api/workspace') {await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
     // Unknown read-only sync is held, never mistaken for a valid empty snapshot.
     else if (String(url).includes('/api/conversations/')) {
       syncReads.push(String(url));
@@ -75,6 +76,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
     return { ok: true, status: 200, json: async () => data };
   }));
   vi.useFakeTimers();
+  beforeBoot(network);
   await import('../public/app.js'); await tick();
   sockets.at(-1)!.receive({ type: 'sessions', sessions: conversations }); await tick();
   let cursor = 0;
@@ -86,7 +88,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1) {
     return socket;
   };
   const emit = (socket: Socket, id: string, event: any) => socket.receive({ type: 'event', sessionId: id, cursor: ++cursor, event });
-  return { sockets, select, emit, engine, network, snapshot, syncStates, syncReads };
+  return { sockets, select, emit, engine, network, snapshot, syncStates, syncReads, conversations };
 }
 function assistantEvent(engine: Engine, text: string, complete = false) {
   if (engine !== 'pi') return complete ? { type: 'message_completed', id: 'live-answer', text } : { type: 'message_delta', id: 'live-answer', delta: text };
@@ -94,6 +96,79 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('restores the model after verified page reload before native attachment replies',async()=>{
+    await setup('codex',2,network=>{
+      network.workspaceGate=new Promise<void>(()=>{});
+      const cache=new ConversationModels();cache.setScope('synthetic-local-first-user');
+      cache.put('a',{current:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'},{engine:'codex',fingerprint:JSON.stringify(['codex',null,null])});
+      history.replaceState(null,'','/conversations/a');
+    });
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-sol');
+    expect(allFrames.some(f=>f.type==='open')).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('#agent-model-row')?.disabled).toBe(true);
+  });
+
+  it.each(['pi','codex','claude','cursor','grok'] as const)('immediately restores the selected %s conversation model while its connection is pending',async engine=>{
+    const app=await setup(engine,2);
+    const model=(id:string)=>({type:'models',models:[{provider:'codex',id,name:id}],current:{provider:'codex',id},thinkingLevel:'medium',thinkingLevels:['medium']});
+    const a=await app.select('a');a.receive(model('gpt-6.1-sol'));await tick();
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-sol');
+    const b=await app.select('b');b.receive(model('gpt-6-luna'));await tick();
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6-luna');
+    app.network.authGate=new Promise<void>(()=>{});
+    choose('a');
+    expect(document.querySelector('#agent-name')?.textContent,'switch must use A’s last model before any auth/socket reply').toBe('gpt-6.1-sol');
+    expect(allFrames.filter(frame=>frame.type==='set_model')).toHaveLength(0);
+  });
+
+  it('keeps a recalled model through native open, rejects old sockets, then corrects it from the selected session',async()=>{
+    const app=await setup('codex',2);
+    const model=(id:string)=>({type:'models',models:[{provider:'codex',id}],current:{provider:'codex',id},thinkingLevel:'high',thinkingLevels:['medium','high'],context:{preset:'maximum'}});
+    const a=await app.select('a');a.receive(model('gpt-6.1-sol'));await tick();
+    const b=await app.select('b');b.receive(model('gpt-6-luna'));await tick();const stale=b.onmessage;
+    let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>{release=resolve;});
+    choose('a');stale({data:JSON.stringify(model('stale-model'))});
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-sol');
+    expect(document.querySelector('#agent-thinking-value')?.textContent).toBe('high');
+    expect(document.querySelector('#agent-context-value')?.textContent).toBe('500K');
+    release();await tick();
+    const ws=app.sockets.at(-1)!;ws.receive({type:'opened',engine:'codex',sessionId:'a',capabilities:{...capabilities,models:true}});await tick();
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-sol');
+    expect(document.querySelector<HTMLButtonElement>('#agent-model-row')?.disabled).toBe(true);
+    ws.receive(model('gpt-6.1-new'));await tick();
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-new');
+    expect(document.querySelector<HTMLButtonElement>('#agent-model-row')?.disabled).toBe(false);
+    expect(allFrames.filter(f=>['set_model','set_thinking','set_context'].includes(f.type))).toHaveLength(0);
+  });
+
+  it('shows an unknown destination instead of carrying the previous model or catalog',async()=>{
+    const app=await setup('codex',2);const ws=await app.select('a');
+    ws.receive({type:'models',models:[{provider:'codex',id:'gpt-6.1-sol'}],current:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'});await tick();
+    app.network.authGate=new Promise<void>(()=>{});choose('c');
+    expect(document.querySelector('#agent-name')?.textContent).toBe('模型加载中');
+    expect(document.querySelector('#agent-model-value')?.textContent).toBe('—');
+    expect(document.querySelector('#agent-menu-btn')?.getAttribute('data-state')).toBeNull();
+  });
+
+  it('invalidates a remembered model when workspace metadata proves a different native binding',async()=>{
+    const app=await setup('codex',2);const ws=await app.select('a');
+    ws.receive({type:'models',models:[],current:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'});await tick();
+    await app.select('b');Object.assign(app.conversations[0],{nativeBinding:{id:'replacement-native'}});
+    await tick(5100);app.network.authGate=new Promise<void>(()=>{});choose('a');
+    expect(document.querySelector('#agent-name')?.textContent).toBe('模型加载中');
+  });
+
+  it('never remembers an unconfirmed model choice or carries it across a cookie-account change',async()=>{
+    const app=await setup('codex',2);const ws=await app.select('a');
+    ws.receive({type:'models',models:[{provider:'codex',id:'gpt-6.1-sol'},{provider:'codex',id:'unconfirmed'}],current:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'});await tick();
+    const select=document.querySelector<HTMLSelectElement>('#model')!;select.value='codex/unconfirmed';select.dispatchEvent(new Event('change'));
+    await app.select('b');choose('a');
+    expect(document.querySelector('#agent-name')?.textContent).toBe('gpt-6.1-sol');
+    app.network.user='different-user';await tick(50);
+    expect(document.querySelector('#agent-name')?.textContent).not.toBe('gpt-6.1-sol');
+    expect(document.querySelector('#agent-model-value')?.textContent).toBe('—');
+  });
+
   it('restores sidebar focus without scrolling back to the busy row on refresh',async()=>{
     const app=await setup('pi',2);await app.select('a');
     const row=document.querySelector<HTMLElement>('#session-list [data-session-id="a"]')!;

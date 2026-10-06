@@ -2,6 +2,7 @@ import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
 import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
 import {ConversationDisplay} from './conversation-display.js';
+import {ConversationModels} from './conversation-models.js';
 import {splitUploadedFilesText as parseUploadedFiles} from './uploaded-files.js';
 const splitUploadedFilesText = text => parseUploadedFiles(text, downloadUrl);
 import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
@@ -136,6 +137,17 @@ let draftContextPreset='272k', contextToApply=null, contextPending=null;
 let searchOpen = false, searchFilter = 'all';
 
 let sessions = [], commands = [], models = null, statsCache = null;
+const conversationModels=new ConversationModels();
+let modelPreview=null;
+const visibleModels=()=>models||modelPreview;
+function restoreModelPreview(){
+  const task=currentTask();
+  modelPreview=activeId&&previewAllowed(activeId)?conversationModels.get(activeId,{engine:task?.engine,fingerprint:previewFingerprint(activeId)}):null;
+}
+function rememberModelPreview(){
+  if(opened&&activeId&&previewAllowed(activeId)&&!modelPending&&!thinkingPending&&!thinkingToApply&&!contextPending&&!contextToApply)
+    conversationModels.put(activeId,models,{engine,fingerprint:previewFingerprint(activeId)});
+}
 let catalogRequest = null, draftModel = null, historyReady = false;
 let modelTarget=null,modelConfirmation=null;
 let draftThinking='medium',draftThinkingExplicit=false,thinkingToApply=null,thinkingPending=null;
@@ -156,6 +168,8 @@ function previewAllowed(id){
   return !task?.archived&&!task?.workspaceRemoved&&!task?.cleanupStarted&&!workspaceState?.legacyArchived?.includes(id);
 }
 function invalidatePreview(id){
+  conversationModels.delete(id);
+  if(id===activeId){models=null;modelPreview=null;renderAgentSettings();}
   void conversationRepository.invalidate(id);
   if(id===activeId){conversationDisplay.invalidate(id);resetThread();}
   recentConversations.delete(previewKey(id));
@@ -163,6 +177,7 @@ function invalidatePreview(id){
   if(id===activeId && previewScroll!==null)resetThread();
 }
 function clearPreviews(){
+  conversationModels.clear();modelPreview=null;models=null;renderAgentSettings();
   clearTimeout(previewTimer);previewTimer=null;recentConversations.clear();return Promise.all([previewStore.clear(),conversationRepository.clear()]);
 }
 function rememberRecentThread(){
@@ -510,11 +525,11 @@ function renderAgentTrigger() {
   if (!ui.agentBtn) return;
   const { task, agent, kind, choiceLocked, modelLocked } = agentMenuState();
   const existing = Boolean(task || activeId || pendingOpenId);
-  const model = models?.current?.id;
+  const display=visibleModels(),model = display?.current?.id;
   ui.agentName.textContent = existing ? (model ? Array.from(model).slice(0, 12).join('') : '模型加载中') : engineName(agent);
   for (const icon of ui.agentBtn.querySelectorAll('svg')) icon.classList.toggle('hidden', existing);
   ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}${existing && model ? `，模型 ${model}` : ''}`);
-  ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', models?.current ? `模型 ${models.current.provider}/${models.current.id}` : '', models?.thinkingLevel ? `思考 ${models.thinkingLevel}` : ''].filter(Boolean).join(' · ');
+  ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', display?.current ? `模型 ${display.current.provider}/${display.current.id}` : '', display?.thinkingLevel ? `思考 ${display.thinkingLevel}` : '', !models&&modelPreview?'上次确认的设置，正在同步':''].filter(Boolean).join(' · ');
   ui.agentBtn.disabled = takeoverBusy() || !connected || (choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');
 }
@@ -527,22 +542,25 @@ function renderAgentSettings() {
   ui.agentRows.engine.disabled = activeId ? !canTakeover() : choiceLocked;
   ui.agentRows.kind.disabled = choiceLocked;
   const current = selectedModelInfo();
-  const source = models?.current?.source || current?.source || 'native';
-  ui.agentValues.source.textContent = models ? sourceLabel(source) : '—';
-  ui.agentValues.model.textContent = models?.current ? models.current.id : '—';
-  ui.agentValues.model.title = models?.current ? `${models.current.provider}/${models.current.id}` : '';
+  const display=visibleModels();
+  if(!models){ui.model.replaceChildren();ui.thinking.replaceChildren();}
+  const source = display?.current?.source || current?.source || 'native';
+  ui.agentValues.source.textContent = display ? sourceLabel(source) : '—';
+  ui.agentValues.model.textContent = display?.current ? display.current.id : '—';
+  ui.agentValues.model.title = display?.current ? `${display.current.provider}/${display.current.id}` : '';
   const levels = models?.thinkingLevels || [];
-  ui.agentRows.thinking.classList.toggle('hidden', levels.length === 0);
-  ui.agentValues.thinking.textContent = thinkingLabel(models?.thinkingLevel || levels[0] || '—');
+  ui.agentRows.thinking.classList.toggle('hidden', levels.length === 0&&!modelPreview?.thinkingLevel);
+  ui.agentValues.thinking.textContent = thinkingLabel(display?.thinkingLevel || levels[0] || '—');
   for (const row of ['source', 'model', 'thinking']) ui.agentRows[row].disabled = modelLocked;
   ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(agent));
   ui.agentRows.context.disabled=takeoverBusy()||streaming||compacting||Boolean(contextPending)||!models?.context;
-  ui.agentValues.context.textContent=(opened?models?.context?.preset:draftContextPreset)==='maximum'?'500K':'272k';
+  ui.agentValues.context.textContent=(activeId?display?.context?.preset:draftContextPreset)==='maximum'?'500K':'272k';
   const note = !models && !opened && !choiceLocked ? (agent === 'claude' ? 'Claude Code 使用 CLI 自己的模型设置。' : '模型在任务创建后可选。')
     : task && !pendingOpenId ? (task.workspaceKind==='project'&&['pi','codex'].includes(task.engine||'pi')?'来源固定；Pi／Codex 可通过交接切换。':'此任务的 Agent 和来源固定。') : '';
   ui.agentNote.textContent = note;
   ui.agentNote.classList.toggle('hidden', !note);
-  if (models) ui.agentBtn.dataset.state = `${source} · ${models.current ? models.current.id : 'no model'} · ${models.thinkingLevel || 'default'}`;
+  if (display) ui.agentBtn.dataset.state = `${source} · ${display.current ? display.current.id : 'no model'} · ${display.thinkingLevel || 'default'}`;
+  else delete ui.agentBtn.dataset.state;
   renderAgentTrigger();
   for (const pane of ['source', 'model', 'thinking', 'context']) renderAgentPane(pane);
 }
@@ -1330,11 +1348,12 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
-    conversationRepository.setScope(currentUser);
+    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = navigation.initial(sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null); }
+    if(!models){restoreModelPreview();if(activeId&&!opened)engine=currentTask()?.engine||modelPreview?.engine||engine;refreshComposer();renderAgentSettings();}
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
     ui.userBtn.disabled = !info.auth;
@@ -1348,12 +1367,13 @@ async function whoAmI(epoch) {
   }
 }
 function revokeCachedIdentity(){
+  conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
-  clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();
+  clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
 window.addEventListener('storage',event=>{
   if(event.key!==CACHE_CLEAR_KEY)return;
@@ -1598,6 +1618,8 @@ function handleFrame(frame, ws) {
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
+      restoreModelPreview();
+      if(modelPreview&&modelPreview.engine!==engine){conversationModels.delete(activeId);modelPreview=null;}
       if(syncedView.active!==activeId){resetThread();selectConversationView(activeId);}
       activeBindingEpoch=frame.syncProtocol===2?frame.bindingEpoch:null;conversationDisplay.protocol(frame);
       queuedRequests.clear();
@@ -1647,6 +1669,7 @@ function handleFrame(frame, ws) {
         if(!confirmed){thinkingToApply=null;restoreQueuedPrompt();toast('模型设置尚未得到确认，请重新选择');}
       }
       models = frame;
+      modelPreview=null;
       if(thinkingToApply && !thinkingPending){
         const wanted=thinkingToApply;thinkingToApply=null;
         if(frame.thinkingLevels?.includes(wanted.level)){
@@ -1654,7 +1677,7 @@ function handleFrame(frame, ws) {
         }else if(wanted.explicit){toast('所选模型不支持该思考强度，请重新选择');restoreQueuedPrompt();}
       }
       if(contextToApply){const wanted=contextToApply;contextToApply=null;if(frame.context&&wanted!==frame.context.preset){contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset:wanted});}else if(wanted==='maximum'&&!frame.context){toast('Host 尚不支持上下文设置，请稍后刷新');restoreQueuedPrompt();}}
-      refreshComposer();
+      rememberModelPreview();refreshComposer();
       renderModels();flushFirstPrompt();
       return;
     case 'command_catalog':
@@ -2828,6 +2851,8 @@ function applySessionSelection(id) {
   clearExtensionUi();
   taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
   activeId = id;
+  models=null;restoreModelPreview();
+  engine=currentTask()?.engine||sessions.find(s=>s.id===id)?.engine||modelPreview?.engine||'pi';capabilities=null;
   if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}
   streaming = false;
   compacting = false;
@@ -2838,6 +2863,7 @@ function applySessionSelection(id) {
   selectConversationView(id);
   showRecentThread(id);
   restoreTextDraft();
+  renderAgentSettings();
   renderProjectContext();
   renderHeader();
   renderSessionList();
@@ -2852,7 +2878,7 @@ function applyNewSession(focus = true) {
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
   taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;
-  engine='pi';capabilities=null;models=null;commands=[];$('#task-engine').value='pi';
+  engine='pi';capabilities=null;models=null;modelPreview=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
   sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);
@@ -2863,6 +2889,7 @@ function applyNewSession(focus = true) {
   lastChangeCardSignature = '';
   resetThread();
   selectConversationView(null);restoreTextDraft();
+  renderAgentSettings();
   renderHero();
   renderProjectContext();
   renderHeader();
@@ -2973,6 +3000,8 @@ async function loadWorkspace() {
     if(previewScroll!==null&&(visiblePreviewFingerprint||previewFingerprint(activeId))&&visiblePreviewFingerprint!==previewFingerprint(activeId))invalidatePreview(activeId);
     for(const task of data.conversations||[])if(task.archived||task.workspaceRemoved||task.cleanupStarted)invalidatePreview(task.id);
     for(const id of data.legacyArchived||[])invalidatePreview(id);
+    for(const task of data.conversations||[])conversationModels.get(task.id,{engine:task.engine||'pi',fingerprint:previewFingerprint(task.id)});
+    if(!models){restoreModelPreview();renderAgentSettings();}
     $('#project-controls').classList.remove('hidden');$('#files-toggle').classList.remove('hidden');
     const select=ui.projectSelect, old=select.value;select.replaceChildren();
     const all=document.createElement("option");all.value="";all.textContent="选择项目 / 全部任务";select.append(all);

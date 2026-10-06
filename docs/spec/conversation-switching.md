@@ -4,6 +4,45 @@ Delivery: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21)
 
 ## Recent conversation previews
 
+### Last-confirmed model display (2026-10-06, Server #68)
+
+The composer immediately shows the selected Conversation's last confirmed model
+ID, provider/source, reasoning level and supported context preset during navigation.
+It never displays the previous Conversation's model while waiting for authentication,
+native attachment or history. A Conversation without remembered metadata shows
+the existing loading/unknown state. The model label keeps its 12-character limit.
+
+`public/conversation-models.js` owns a separate display-only cache keyed by verified
+Web identity and Conversation ID. Memory supplies warm switches synchronously;
+localStorage restores small metadata after identity verification on page reload.
+The versioned cache retains at most 1,000 entries / 256 KiB per identity for 30 days.
+Only whitelisted model metadata and the existing engine/native-binding fingerprint
+are stored. Catalogs, task bodies, credentials and setting request IDs are excluded.
+Malformed, unavailable or quota-limited storage degrades to a miss or memory-only
+cache. This does not change the transcript cache's separate lifetime and limits.
+
+Only authoritative selected-socket model responses populate the cache; pending
+model/reasoning/context changes are not remembered as confirmed. Cached metadata
+does not populate selectable catalogs, enable model controls or issue native
+setting commands. Opening a native session retains the labelled preview until
+the actual model response replaces it. New responses may correct old metadata;
+the preview is not a claim of current native state or restored model context.
+
+Old socket replies cannot update the selected view or its cache. Account changes,
+logout/401, archive/removal and engine/native-binding changes invalidate the
+affected metadata. New-task model selection remains its existing native catalog
+workflow. No Agent process is started merely to read remembered display metadata.
+
+Acceptance: actual app-controller regressions cover all five engine labels,
+A/B/A under blocked auth, missing metadata, post-open correction, delayed replies,
+unconfirmed settings, account and binding changes, and reload with workspace reads
+blocked. `test/conversation-models.test.ts` covers persistence, bounds and failure
+fallback. `scripts/probe-conversation-models.mjs` uses real Chromium and synthetic
+HTTP/WS without a native CLI/model call; it is browser evidence, not production
+model acceptance. Source and activation status belong to [Server #68](https://github.com/awangs1986/pi-coffee-server/issues/68).
+
+### Transcript snapshots
+
 The browser keeps five user-scoped recent display snapshots in page memory and
 IndexedDB. This supersedes the earlier page-only/no-persistence decision in #21.
 Host/native history remains authoritative. Cookies are not used for transcripts.
