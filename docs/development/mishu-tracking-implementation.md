@@ -34,8 +34,8 @@ Server main `74679e9`, including the recent sidebar activity and durable complet
 changes. The plugin merge retains the registration and dispatch input repairs.
 Combined public HTTP/native/queue checks passed 52 tests; the integrated plugin
 check passed 140 tests. The #73 source candidate complete Server check passed
-106 files / 889 tests. Source overrides were used for these checks; the installed
-dependency is still MISHU 0.1.6 and does not contain this candidate implementation.
+106 files / 889 tests. Source overrides were used for these checks; at that stage
+the installed dependency was MISHU 0.1.6 and did not contain this implementation.
 
 The actual configured source model produced durable on-demand reports in the #72
 walk. Later requests returned upstream `model_not_found`; a failed attempt is not
@@ -61,6 +61,7 @@ Native Fork keeps the original secretary usable and the child unselected; accept
 Work takeover cancels the old observation before native conversion. A report of a
 native blocker keeps the task waiting, independent of report-delivery status.
 
-This is still a source candidate. Root release evidence owns immutable artifact,
-fresh-clone/installed Browser validation and final review; no production deployment
-is implied by these source checks.
+The [candidate release record](../reviews/mishu-tracking-candidate.md) records the
+independent immutable package, Server pin and final review closure. Fresh-clone
+and installed Browser validation have separate verdicts there; no production
+deployment is implied by source checks.
