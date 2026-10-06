@@ -28,7 +28,7 @@ feasible test. No source result implies production deployment or user acceptance
   Grok native scoped online observation. All non-Pi passive restart gaps unknown.
 - **U**: #76 storage/history/ordinary-Chat/Fork/takeover/rename/cache cases in B;
   private schema1 migration, rollback fence, nested/future/corrupt/oversize errors,
- 32 MiB valid amplified receipts and compact stop receipts.
+ above16 MiB valid amplified receipts and compact stop receipts.
 - **S**: `test/mishu-startup.test.ts` and `scripts/probe-mishu-startup.mjs` actual
   child `main.js`, no Browser/API/runtime priming, default custom-root and named
   account automatic reports, no target replay, disabled/corrupt isolation,
