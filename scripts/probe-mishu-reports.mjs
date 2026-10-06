@@ -59,7 +59,7 @@ try{
  const tasks=async()=>{const response=await fetch(env.PI_COFFEE_MISHU_URL,{method:'POST',headers:{authorization:'Bearer '+env.PI_COFFEE_MISHU_TOKEN,'content-type':'application/json'},body:JSON.stringify({action:'tasks',version:1,operation:'list'})});if(!response.ok)throw Error('Task read failed');return (await response.json()).tasks;};
  const initial=(await tasks())[0];if(!initial||initial.observation!=='not-started')throw Error('Incorrect admission');
  await page.locator('#prompt').fill('/mishu-tasks');await page.locator('#send').click();await page.locator('#ui-options .ui-option').filter({hasText:'Synthetic build brief'}).click();
- await page.locator('#ui-options .ui-option').filter({hasText:'观察当前 Pi 工作'}).click();await page.locator('#ui-options .ui-option').filter({hasText:'正在观察，等待回信'}).waitFor();
+ await page.locator('#ui-options .ui-option').filter({hasText:'观察当前工作'}).click();await page.locator('#ui-options .ui-option').filter({hasText:'正在观察，等待回信'}).waitFor();
  if((await tasks())[0].observation!=='watching')throw Error('Observation not persisted');await page.screenshot({path:join(root,'watching.png')});await page.locator('#ui-cancel').click();await page.locator('#ui-modal').waitFor({state:'hidden'});
  await page.locator('#prompt').fill('SECRETARY_STILL_AVAILABLE');await page.locator('#send').click();await page.getByText('SECRETARY_CHAT_OK',{exact:false}).first().waitFor({timeout:30000});
  releaseTarget();

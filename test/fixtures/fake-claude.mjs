@@ -12,7 +12,7 @@ if(resume){try{await readFile(path);}catch{process.exit(1);}}
 const send=m=>process.stdout.write(JSON.stringify(m)+'\n');
 createInterface({input:process.stdin}).on('line',async line=>{
  const m=JSON.parse(line);
- if(m.type==='control_response'){send({type:'assistant',uuid:'decision',message:{role:'assistant',content:[{type:'text',text:m.response.response.behavior==='deny'?'permission denied':'permission allowed'}]}});send({type:'result',is_error:false});return;}
+ if(m.type==='control_response'){if(process.env.TRACKING_END_STATUS==='exit')process.exit(0);send({type:'assistant',uuid:'decision',message:{role:'assistant',content:[{type:'text',text:m.response.response.behavior==='deny'?'permission denied':'permission allowed'}]}});send({type:'result',is_error:['failed','interrupted'].includes(process.env.TRACKING_END_STATUS),...(process.env.TRACKING_END_STATUS==='interrupted'?{subtype:'error_during_execution'}:{})});return;}
  if(m.type==='control_request'){
   if(m.request.subtype==='get_context_usage'){send({type:'control_response',response:{subtype:'success',request_id:m.request_id,response:{totalTokens:40,maxTokens:200000,model:'claude-test',categories:[{name:'System prompt',tokens:10,kind:'used'},{name:'Messages',tokens:30,kind:'used'},{name:'Free space',tokens:199960,kind:'free'}]}}});return;}
   if(m.request.subtype==='interrupt')send({type:'result',is_error:true,subtype:'error_during_execution'});
@@ -23,7 +23,8 @@ createInterface({input:process.stdin}).on('line',async line=>{
   if(m.message.content[0].text==='hold')return;
   if(m.message.content[0].text==='background')send({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'child',task_type:'local_bash'}]});
   if(m.message.content[0].text==='finish background')send({type:'system',subtype:'background_tasks_changed',tasks:[]});
-  if(m.message.content[0].text==='ask approval'){send({type:'control_request',request_id:'permission-1',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'/tmp/test'}}});return;}
+  if(m.message.content[0].text==='track approval')send({type:'assistant',message:{id:'native-progress',content:[{type:'text',text:'PARTIAL_NOT_DONE'}]}});
+  if(['ask approval','track approval'].includes(m.message.content[0].text)){send({type:'control_request',request_id:'permission-1',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'/tmp/test'}}});return;}
   await appendFile(path,JSON.stringify({type:'user',uuid:'u1',sessionId:id,message:m.message})+'\n');
   const text=m.message.content[0].text;
   const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');

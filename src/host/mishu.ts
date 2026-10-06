@@ -346,7 +346,7 @@ export class MishuCoordinator {
   const row=async(c:Conversation)=>{
   const s=summaries.find(s=>s.id===c.id),live=this.registry!.get(c.id);
   const evidence=config.enabled&&config.targets.some(t=>t.id===c.id&&t.binding===binding(c))?await this.registry!.readRunEvidence(c.id):undefined;
-  const observation=evidence?{supported:evidence.supported,freshness:evidence.freshness,runId:evidence.runId,state:evidence.state,reason:evidence.reason}:undefined;return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:currentTitle(s,c.takeoverTitle||c.id),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle',observation};
+  const observation=evidence?{dispatchSupported:await this.registry!.supportsDispatchCorrelation(c.id),supported:evidence.supported,freshness:evidence.freshness,runId:evidence.runId,state:evidence.state,reason:evidence.reason,capabilities:evidence.capabilities,identity:evidence.identity,referenceKind:evidence.referenceKind}:undefined;return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:currentTitle(s,c.takeoverTitle||c.id),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle',observation};
   };
   const configuredTargets=config.sourceBinding===binding(source)?config.targets.flatMap(saved=>{const task=eligible.find(c=>c.id===saved.id&&binding(c)===saved.binding);return task?[row(task)]:[];}):[];
   return {conversations:await Promise.all(eligible.filter(c=>activity(c)>=now-72*3600000&&activity(c)<=now)
@@ -432,7 +432,7 @@ export class MishuCoordinator {
    if(['settled','uncertain','cancelled'].includes(state))this.active.delete(targetId);
   }
  });}
- event(targetId:string,event:JsonValue){if(event&&typeof event==='object'&&!Array.isArray(event)&&['message_end','agent_settled','extension_ui_request','run_completed','agent_interrupted','run_interrupted'].includes(String(event.type)))this.observeEvent(targetId);const active=this.active.get(targetId);if(!active||!event||typeof event!=='object'||Array.isArray(event))return;
+ event(targetId:string,event:JsonValue){if(event&&typeof event==='object'&&!Array.isArray(event)&&['message_end','message_completed','agent_settled','extension_ui_request','native_request','run_started','run_completed','agent_interrupted','run_interrupted'].includes(String(event.type)))this.observeEvent(targetId);const active=this.active.get(targetId);if(!active||!event||typeof event!=='object'||Array.isArray(event))return;
   const e=event as Record<string,any>;let text:string|undefined;
   if((e.type==='run_completed'&&e.status==='interrupted')||e.message?.stopReason==='error'){active.receipt.error=clean(String(e.message?.errorMessage??'Target execution was interrupted')).slice(0,500);}
   if(e.type==='message_end'&&e.message?.role==='assistant')text=Array.isArray(e.message.content)?e.message.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):typeof e.message.content==='string'?e.message.content:undefined;

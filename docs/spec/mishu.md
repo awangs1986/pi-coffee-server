@@ -712,3 +712,53 @@ reload. Synthetic model fixtures prove flow and isolation, not model quality.
 Installed artifact, all-account startup and the complete integrated lifecycle
 matrix remain #76 and final acceptance work. Other unmet A29–A35 and M01–M13
 requirements are preserved.
+
+### Native observation capability slice — Server #75 candidate
+
+This source candidate adds online observation of user-started existing work through
+Agent interfaces. It does not grant cross-engine durable dispatch or imply equal
+recovery across engines. Browser `/mishu-tasks` offers **观察当前工作** only when the
+configured exact target exposes current run evidence, and shows the capability
+limits beside the task. Model directory observations carry `capabilities`,
+`identity`, `referenceKind`, and `dispatchSupported` independently.
+
+| Engine | Online identity / evidence | Host restart run recovery | Passive display history | Detached writers | Durable `tasks/dispatch` |
+| --- | --- | --- | --- | --- | --- |
+| Pi | Persisted native run marker and native message IDs | Supported for exact retained native run | Supported | Unknown | Supported |
+| Codex production app-server | Native thread / turn / item IDs observed on the existing connection | Unknown; no unverified rollout terminal parser | Supported where canonical native display IDs are available | Unknown | Unavailable |
+| Claude Code | Explicit Host invocation ID in one connection generation; native message ID or UUID | Unknown | Supported for selected native branch | Unknown | Unavailable |
+| Cursor / Grok ACP | Explicit Host invocation ID and Host live receipt UUID for the captured message | Unknown | Unknown; no passive CLI launch | Unknown | Unavailable |
+
+Codex support is wired in the production `codex-adapter.ts`, not merely the fallback
+adapter. The fallback Codex adapter does not advertise this observation capability.
+ACP positional display IDs are never treated as durable native message identities.
+The Host durably commits captured facts/receipt references as part of the existing
+Task Brief journal. That provides a retained fact, not proof that omitted events
+can be recovered after a lost connection. A fresh Host retains prior facts and
+marks unprovable run outcomes uncertain; it never resends target work.
+
+Connection evidence retains at most 32 runs and 100 completed messages per run,
+with 4000 characters per message. Evicted/missing runs and exceeded evidence
+capacity return uncertainty. Native completion, failure, interruption, process
+loss, blocking question and partial message are distinct. Only exact registered
+run identity can advance a brief. Codex's asynchronous unanswered-question pause
+remains pending; a subsequent different native turn is not adopted implicitly.
+Binding replacement fences an old live adapter even when the new binding was
+separately selected. Native questions remain in the target conversation.
+
+Native facts retain an optional bounded `latestReply`, independently of older
+progress text, so a report can distinguish a new explicit result from an earlier
+plan. It is the latest complete observed message, not a user acceptance claim.
+After `tasks/observe` succeeds, the plugin returns current reminder status and
+explicit guidance to end the foreground turn: Host owns subsequent events, and
+repeated model polling is not the notification mechanism. With reminders off,
+the secretary explains `/mishu-notifications` or later user queries instead of
+promising automatic delivery. This does not force arbitrary model compliance;
+the actual natural-request probe and public-entry regression cover the observed
+loop and its correction.
+
+Legacy `send/inbox` remains available under its existing authorization. Its
+cross-engine messaging support must not be described as durable correlated
+`tasks/dispatch`; that latter capability still requires Pi's persisted correlation.
+See [candidate evidence](../development/mishu-native-tracking-75.md) for separate
+fixture, actual account, browser and source/package status.

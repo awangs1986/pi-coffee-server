@@ -147,5 +147,6 @@ it.each(['cursor','grok'] as const)('does not start %s merely to audit passive b
  const pi={create:forbidden,list:forbidden,delete:forbidden} as unknown as AgentSessionFactory;
  const workspaces={lookup:async()=>({engine,cwd:'/synthetic',nativeBinding:{state:'bound',id:'cursor-native'}}),file:forbidden,dataRoot:forbidden} as unknown as Workspaces;
  const factory=new NativeAgentFactory({pi,workspaces,cursor:{command:'/no-executable-allowed'}});
- expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:`${engine}:cursor-native:original`});expect(forbidden).not.toHaveBeenCalled();
+ expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:`${engine}:cursor-native:original`});
+ expect(await factory.readRunEvidence('task','missing-run')).toMatchObject({supported:false,freshness:'unknown',state:'uncertain',capabilities:{restartRecovery:'unknown',passiveHistory:'unknown',detachedWriters:'unknown'}});expect(forbidden).not.toHaveBeenCalled();
 });
