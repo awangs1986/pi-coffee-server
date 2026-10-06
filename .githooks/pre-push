@@ -1,0 +1,3 @@
+#!/bin/sh
+# Reuse only a receipt bound to this exact source/plan/Node; any failure blocks push.
+exec npm run verify -- --reuse

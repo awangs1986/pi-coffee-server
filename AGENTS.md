@@ -12,6 +12,8 @@ GitHub `awangs1986/pi-coffee-server` owns Browser, Web gateway, Relay, Host and 
 4. Work from current GitHub main in a clean checkout. Preserve other local branches and uncommitted work.
 5. When changing product behavior, update the affected current spec and its documentation index in the same change; preserve unmet acceptance criteria and label dated evidence as historical. Use [the domain model](CONTEXT.md) to distinguish platform identity, task data, native context and actual deployment.
 
+For verification/publication/activation tooling, use [the workflow](docs/development/verification-and-release.md). For sidebar changes, use [its source and lifecycle matrix](docs/agents/sidebar.md).
+
 ## Implementation and release
 
 - Keep native engine details behind Agent interfaces. Web authenticates and forwards; Host owns execution and durable task data.

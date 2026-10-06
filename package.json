@@ -16,7 +16,15 @@
     "probe:owner-access": "npm run build && node scripts/probe-owner-access.mjs",
     "smoke:gitea-workspaces": "npm run build && node scripts/smoke-gitea-workspaces.mjs",
     "start:web": "node dist/src/main.js web",
-    "start:relay": "node dist/src/main.js relay"
+    "start:relay": "node dist/src/main.js relay",
+    "lint": "eslint public scripts eslint.config.mjs",
+    "check:browser": "node scripts/check-browser.mjs",
+    "verify": "node scripts/verify.mjs",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "check:release": "node scripts/verify.mjs --require-review .coffee-verification/review.json",
+    "verify:fresh": "node scripts/verify-fresh.mjs",
+    "test:tools": "vitest run test/developer-verification.test.ts test/developer-lint.test.ts test/developer-publish.test.ts test/developer-release.test.ts test/developer-fresh.test.ts test/release-status-http.test.ts",
+    "test:sidebar": "vitest run test/shell-logic.test.ts test/local-first-app.test.ts test/sidebar-interaction.test.ts test/sidebar-http.test.ts test/native-agents.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.0.2",
@@ -40,7 +48,9 @@
     "@types/ws": "8.18.1",
     "dompurify": "^3.4.14",
     "esbuild": "0.28.2",
+    "eslint": "10.12.0",
     "fake-indexeddb": "6.2.5",
+    "globals": "17.13.0",
     "jsdom": "^30.1.0",
     "marked": "^18.0.11",
     "playwright": "1.63.0",

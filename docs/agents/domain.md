@@ -1,37 +1,15 @@
-# Domain Docs
+# Domain navigation
 
-How engineering skills should consume this repository's domain documentation.
+Read [CONTEXT.md](../../CONTEXT.md) for current domain terms and
+[REPOSITORIES.md](../../REPOSITORIES.md) before choosing source ownership.
+Read the affected current specification through [docs/index.md](../index.md),
+then the relevant ADR. [ADR-0021](../adr/0021-pi-only-source-authority.md) owns the
+current Pi package boundary; earlier source-placement decisions are historical.
 
-## Layout
+This is the Server repository: Browser, Web gateway, Relay, Host and native Agent
+adapters live here. Pi-only implementation lives in the versioned `packages/`
+directories of the Pi repository identified by the repository map. Consult that
+map rather than inferring ownership from an older document's repository name.
 
-This repository uses a single-context layout:
-
-- Root `CONTEXT.md` defines domain vocabulary.
-- `docs/adr/` records architecture decisions.
-
-## Before exploring, read these
-
-- Read [CONTEXT.md](../../CONTEXT.md) before exploring the codebase.
-- Read the [ADRs](../adr/) relevant to the area being changed.
-- Follow [AGENTS.md](../../AGENTS.md) and the [documentation index](../index.md)
-  to the relevant specialist specifications.
-
-If a domain document is missing, proceed silently. Do not flag its absence or
-create an empty placeholder. The `domain-modeling` skill maintains domain docs
-when terminology or decisions are actually resolved.
-
-## Use the glossary's vocabulary
-
-Use the terms defined in `CONTEXT.md` in issue titles, tests, designs, and
-implementation discussions. Avoid synonyms that the glossary explicitly rejects.
-
-If a needed concept is absent, reconsider whether it is invented terminology.
-If it is a real vocabulary gap, note it for `domain-modeling`.
-
-## Flag ADR conflicts
-
-When a proposal contradicts an existing ADR, identify the specific ADR and
-explain why it should be reconsidered. Do not silently override an accepted decision.
-
-Preserve the responsibility boundary between this Agent Runtime repository and
-the independent `awangs/pi-coffee-server` repository.
+Use the domain terms in issue titles, tests and designs. Resolve genuine domain
+or ADR conflicts explicitly; avoid inventing synonyms or empty placeholder docs.
