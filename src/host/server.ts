@@ -74,6 +74,8 @@ export interface HostServerOptions {
    * set this so a misconfigured Web Server cannot open the shared root scope.
    */
   requireUser?: boolean;
+  /** Existing saved coordination scopes; recovery starts only after runtime HTTP listens. */
+  savedMishuScopes?: () => AsyncIterable<string | undefined>;
   sharedSkillOwner?: string;
   eventBufferSize?: number;
   /** Stop idle Pi processes after this long; the conversation stays in Pi's session store. */
@@ -144,6 +146,7 @@ export class HostServer {
   private started = false;
   private closing = false;
   private closePromise?: Promise<void>;
+  private savedScopeRecovery?:Promise<void>;
   private readonly apiOperations = new Set<Promise<void>>();
   private readonly backgroundOperations = new Set<Promise<unknown>>();
   private readonly workspaces?: Workspaces;
@@ -643,6 +646,22 @@ export class HostServer {
       });
     }catch(error){await new Promise<void>(resolve=>this.http.close(()=>resolve()));throw error;}
     this.started = true;
+    if(this.options.savedMishuScopes)this.savedScopeRecovery=this.recoverSavedMishuScopes();
+  }
+
+  private async recoverSavedMishuScopes():Promise<void> {
+    try {
+      for await(const user of this.options.savedMishuScopes!()){
+        if(this.closing)break;
+        if(user!==undefined&&(!this.scopeForUser||normalizeUsername(user)!==user))continue;
+        try {
+          const slot=await this.slotFor(user);
+          // Load one scoped store at a time; model notification work remains
+          // serial per secretary through the existing coordinator scheduler.
+          await slot.mishu?.recoveryReady();
+        }catch{console.warn('[pi-coffee] MISHU saved-scope recovery unavailable; stored state retained, other scopes continue.');}
+      }
+    }catch{console.warn('[pi-coffee] MISHU saved-scope discovery unavailable; stored state retained.');}
   }
 
   address(): HostAddress {
@@ -672,6 +691,9 @@ export class HostServer {
     // A disconnected HTTP client does not cancel its workspace mutation. Wait
     // for its finally block to release the durable lock before main exits.
     await Promise.allSettled([...this.apiOperations]);
+    // Startup discovery may be awaiting a scope constructor. Fence its iterator
+    // before taking the registry snapshot so shutdown also owns that last slot.
+    await this.savedScopeRecovery;
     const slots = await Promise.allSettled([...this.slots.values()]);
     this.slots.clear();
     this.transferTargets.clear();
