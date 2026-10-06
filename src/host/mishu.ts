@@ -1,3 +1,4 @@
+import {taskOperation,type TaskJournal} from './mishu-tasks.js';
 import {createHash,randomBytes} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -7,7 +8,7 @@ import type {JsonValue} from '../shared/protocol.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
 interface Receipt {messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
-interface Config {selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[]}
+interface Config {selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal}
 interface State {version:1;chats:Record<string,Config>}
 const binding=(task:Conversation)=>createHash('sha256').update(JSON.stringify([task.id,task.createdAt,task.cwd,task.engine??'pi',task.nativeBinding?.id??task.nativeBinding?.requestedId??task.id])).digest('hex');
 const clean=(s:string)=>s.replace(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}/g,'[REDACTED]').replace(/\b(?:Bearer|token|password|api[_-]?key)\s*[:= ]\s*[^\s,;]+/gi,'[REDACTED]');
@@ -39,7 +40,7 @@ export class MishuCoordinator {
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
  })());}
- private async save(){await mkdir(this.root,{recursive:true,mode:0o700});const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,JSON.stringify(this.state),{mode:0o600});await rename(temp,file);}
+ private async save(){await mkdir(this.root,{recursive:true,mode:0o700});const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,JSON.stringify(this.state),{mode:0o600,flush:true});await rename(temp,file);}
  private change<T>(fn:()=>Promise<T>):Promise<T>{const next=this.tail.then(async()=>{await this.load();const value=await fn();await this.save();return value;});this.tail=next.catch(()=>undefined);return next;}
  private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
@@ -82,7 +83,20 @@ export class MishuCoordinator {
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='inbox'){await this.tail;return {messages:this.state.chats[id].messages.slice(-50).map(({text:_,fingerprint:__,requestId:___,...m})=>m)};}
   if(input.action==='send')return this.send(id,input);
+  if(input.action==='tasks')return this.tasks(id,input);
   throw Error('Unknown MISHU operation');
+ }
+ private tasks(id:string,input:Record<string,unknown>){
+  const next=this.tail.then(async()=>{
+   await this.load();const source=await this.source(id),config=this.state.chats[id];
+   if(!config?.selected||!config.enabled||config.sourceBinding!==binding(source))throw Error('MISHU authorization changed');
+   // Stage the journal separately: validation or disk failure cannot acknowledge or
+   // retain an uncommitted edit, and receipt objects remain valid for active runs.
+   const previous=config.taskJournal,journal=structuredClone(previous??{tasks:[],operations:[]});
+   const result=await taskOperation(journal,binding(source),input,(targetId,expected)=>this.authorize(id,targetId,expected,'information-only'));
+   if(['list','get'].includes(String(input.operation)))return result;
+   config.taskJournal=journal;try{await this.save();}catch(error){config.taskJournal=previous;throw error;}return result;
+  });this.tail=next.catch(()=>undefined);return next;
  }
  private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
   const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();

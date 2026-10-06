@@ -14,7 +14,7 @@ native permission delegation are added.
 
 | Ticket | Deliverable | Blocked by | Evidence |
 | --- | --- | --- | --- |
-| #69 | Durable task briefs | None | Pending |
+| #69 | Durable task briefs | None | Candidate implemented; public HTTP/WS and plugin/browser evidence, final artifact integration pending |
 | #70 | Observe existing Pi work | #69 | Pending |
 | #71 | Dispatch once with reply responsibility | #70 | Pending |
 | #72 | Durable, restricted report generation | #70 | Pending |
