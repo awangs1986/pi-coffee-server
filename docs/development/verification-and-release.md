@@ -157,3 +157,23 @@ through the existing authenticated forwarding path. `release-manifest.json` is
 public commit metadata; credentials and filesystem paths are never included.
 Legacy releases without recorded identity report `unknown`. These HTTP changes
 require the new backend; a compatible Browser-only rollout cannot activate them.
+
+
+## Selected WSL CI environment (2026-10-06)
+
+The owner selected the configured Windows test computer's Ubuntu WSL environment,
+not the production VM. Runner `coffee-wsl-fengge` has the `pi-coffee-ci` label and
+uses `/home/ubuntu/pi-coffee-ci`. The complete listener and its children run in a
+rootless mount/PID/user namespace. Only its private runner/work/home directories,
+read-only system binaries and necessary DNS/CA files are exposed. Windows drives,
+native Pi/Codex profiles, VM credentials and production workspaces are omitted.
+Chromium libraries are extracted into this CI directory rather than changing
+system security policy. Outbound requests use the existing router proxy; LAN
+Gitea bypasses it. No firewall, sudo policy or global Git login is modified.
+
+Runner registration uses a short-lived repository registration token through
+`ACTIONS_RUNNER_INPUT_TOKEN`; registration inputs are deleted after use. This
+is separate from the owner's Coffee OAuth token, which stays on the VM and is
+never copied to CI. Check runner online status and an actual Actions conclusion.
+Windows/WSL shutdown necessarily takes this runner offline. Main is not protected
+by a required-check branch rule unless the owner enables that separate setting.
