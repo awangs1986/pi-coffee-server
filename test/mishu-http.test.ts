@@ -695,7 +695,7 @@ it('defaults event reminders off and rejects model-side reminder grants',async()
 });
 
 
-it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover','disable-queued'] as const)('automatically reports a late observed Pi reply through trusted queue (%s)',async(mode)=>{
+for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover','disable-queued'] as const)it(`automatically reports a late observed Pi reply through trusted queue (${mode})`,async()=>{
  const requests:any[]=[];let finishTarget=()=>{},finishForeground=()=>{},finishReport=()=>{};let secondStatus:(()=>Promise<any>)|undefined;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);requests.push(body);
@@ -759,7 +759,12 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
   }
   if(mode==='budget'||mode==='queue-full'){
    if(mode==='budget'){await expect.poll(async()=>(await(await req({action:'status'})).json()).notifications.remainingWakes,{timeout:20000}).toBe(0);await expect.poll(()=>requests.length,{timeout:10000}).toBe(14);expect((await secondStatus!()).notifications.remainingWakes).toBe(11);expect((await(await req({action:'status'})).json()).notifications.backlog).toBeGreaterThanOrEqual(1);}
-   else {await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.retryBlocked,{timeout:10000}).toBe(true);const report=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0];expect(report).toMatchObject({state:'pending',recoveries:1,admissionFailures:2});expect(report.deliveryAttempted).not.toBe(true);expect((await(await req({action:'status'})).json()).notifications.error).toContain('预算已耗尽');}
+   else {await expect.poll(async()=>{
+    // Concurrent readers can schedule another Outbox pass while a full queue
+    // rejects admission. They must not open an extra safe-recovery allowance.
+    const reads=await Promise.all(Array.from({length:8},async()=>await(await req({...base,operation:'get',taskId:brief.taskId})).json()));
+    return reads.at(-1).task.reports?.[0]?.retryBlocked;
+   },{timeout:10000}).toBe(true);const report=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0];expect(report).toMatchObject({state:'pending',recoveries:1,admissionFailures:2});expect(report.deliveryAttempted).not.toBe(true);expect((await(await req({action:'status'})).json()).notifications.error).toContain('预算已耗尽');}
    for(const socket of sockets)socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
    const resumed=await start(app.root,undefined,true,true);const rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
    const resumedStatus=await(await resumed.call({action:'status'},'owner',rt,'/api/mishu/runtime')).json();
@@ -795,7 +800,8 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
   expect(requests).toHaveLength(mode==='busy'||mode==='restart-queued'||mode==='queue-recover'?3:2);expect(JSON.stringify(requests.at(-1))).not.toContain('"state":"reply-available"');
   if(mode!=='restart-queued')expect(src.frames.some(f=>f.event?.type==='message_end'&&JSON.stringify(f.event).includes('LATE_AUTOMATIC_FACT'))).toBe(true);
  }finally{for(const s of sockets)s.close();finishTarget();finishForeground();finishReport();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
-},30000);
+// The two capacity fixtures perform 100 separate durable command admissions.
+},mode==='queue-full'||mode==='queue-recover'?60000:30000);
 
 it.each(['source','target'] as const)('filters stale %s task bindings at public report chooser and exact prepare',async(kind)=>{
  const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
