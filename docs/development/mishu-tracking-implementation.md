@@ -15,12 +15,12 @@ native permission delegation are added.
 | Ticket | Deliverable | Blocked by | Evidence |
 | --- | --- | --- | --- |
 | #69 | Durable task briefs | None | Candidate implemented; public HTTP/WS and plugin/browser evidence, final artifact integration pending |
-| #70 | Observe existing Pi work | #69 | Pending |
-| #71 | Dispatch once with reply responsibility | #70 | Pending |
-| #72 | Durable, restricted report generation | #70 | Pending |
-| #73 | Automatic delayed-result reporting | #72 | Pending |
-| #74 | Bounded multi-task scheduling | #73 | Pending |
-| #75 | Native-engine tracking capabilities | #73 | Pending |
+| #70 | Observe existing Pi work | #69 | Candidate implemented; exact native run evidence and actual source-model registration verified |
+| #71 | Dispatch once with reply responsibility | #70 | Candidate implemented; durable Assignment and public native correlation checks; later model rerun unavailable upstream |
+| #72 | Durable, restricted report generation | #70 | Candidate implemented; actual source-model native report commit and unique refreshed output verified |
+| #73 | Automatic delayed-result reporting | #72 | Candidate implemented; deterministic native/browser delayed report and busy-source mobile stop verified |
+| #74 | Bounded multi-task scheduling | #73 | In progress |
+| #75 | Native-engine tracking capabilities | #73 | In progress |
 | #76 | Upgrade recovery and integrated acceptance | #71, #74, #75 | Pending |
 
 Tests cross the existing authenticated Host HTTP/WS and browser-controller
@@ -28,6 +28,26 @@ Interfaces, with real synthetic browser/native flows for acceptance. Each slice
 owns its revocation, failure and restart checks; later integration does not defer
 those guarantees. Model replies alone do not prove completion.
 
-This draft records intended work, not implementation or production activation.
-Source publication, immutable plugin artifacts, fresh-clone checks, review and
-actual deployment evidence must be recorded separately as they become available.
+## Integration evidence through #73
+
+Server candidate `d0c2852` and independent plugin candidate `e8ca1a3` preserve
+Server main `74679e9`, including the recent sidebar activity and durable completion
+changes. The plugin merge retains the registration and dispatch input repairs.
+Combined public HTTP/native/queue checks passed 52 tests; the integrated plugin
+check passed 140 tests. The #73 source candidate complete Server check passed
+106 files / 889 tests. Source overrides were used for these checks; the installed
+dependency is still MISHU 0.1.6 and does not contain this candidate implementation.
+
+The actual configured source model produced durable on-demand reports in the #72
+walk. Later requests returned upstream `model_not_found`; a failed attempt is not
+automatic-report acceptance. Deterministic native/browser evidence remains
+separate from actual model evidence.
+
+The #73 restart tests initialize an account scope before reconciliation. #76 must
+still establish unattended discovery of already-authorized persisted scopes at
+actual Host startup, without a browser connection or API request. Scope recovery
+alone does not establish this requirement.
+
+This is a candidate PR, not production activation. Immutable artifact installation,
+fresh-clone checks, complete acceptance mapping and final review remain pending.
+The complete M01–M13 target includes later slices outside parent #64.
