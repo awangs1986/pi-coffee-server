@@ -727,7 +727,29 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
    const otherContact=(await req2({action:'directory'})).configuredTargets[0],otherTask=(await req2({...base,operation:'register',operationId:'separate-secretary',targetId:target.id,binding:otherContact.binding,purpose:'Late synthetic task',scope:'Second secretary',summary:'Independent',nextStep:'Review'})).task;
    await req2({...base,operation:'observe',operationId:'separate-watch',taskId:otherTask.taskId,expectedRevision:1,runId:contact.observation.runId});secondStatus=()=>req2({action:'status'});
   }
-  if(mode==='queue-full'||mode==='queue-recover'){for(let n=0;n<100;n++)src.ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId:'fill-'+n,text:'pending '+n}));await expect.poll(()=>src.frames.filter(f=>f.type==='queue_state').at(-1)?.items.length,{timeout:10000}).toBe(100);}
+  if(mode==='queue-full'||mode==='queue-recover'){
+   // Fill the real durable queue one acknowledged command at a time. A single
+   // deadline for 100 fsync-backed admissions measures runner disk speed instead
+   // of the report's backpressure behavior. ACK precedes the public queue row.
+   for(let n=0;n<100;n++){
+    const requestId='fill-'+n;
+    const admitted=new Promise<void>((resolve,reject)=>{
+     const timer=setTimeout(()=>finish(Error('Queue admission timed out: '+requestId)),10000);
+     const receive=(raw:unknown)=>{
+      const frame=JSON.parse(String(raw));
+      if(frame.type==='error'&&frame.requestId===requestId)finish(Error(JSON.stringify(frame)));
+      if(frame.type==='queue_state'&&frame.items.some((row:any)=>row.requestId===requestId))finish();
+     };
+     function finish(error?:Error){clearTimeout(timer);src.ws.off('message',receive);if(error)reject(error);else resolve();}
+     src.ws.on('message',receive);
+    });
+    src.ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId,text:'pending '+n}));
+    await admitted;
+    expect(src.frames.some(f=>f.type==='ack'&&f.operation==='follow_up'&&f.requestId===requestId)).toBe(true);
+    expect(src.frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(n+1);
+   }
+   expect(requests).toHaveLength(2);
+  }
   finishTarget();await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].observation;},{timeout:10000}).toBe('reply-available');
   if(mode==='queue-recover'){
    await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.admissionFailures,{timeout:10000}).toBe(1);
