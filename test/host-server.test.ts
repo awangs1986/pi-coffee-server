@@ -220,12 +220,13 @@ class FrameQueue {
     });
   }
 
-  nextSessions(): Promise<Extract<ServerFrame, { type: "sessions" }>> {
-    const frame = this.sessionFrames.shift();
-    if (frame) return Promise.resolve(frame as Extract<ServerFrame, { type: "sessions" }>);
-    return new Promise((resolve) => this.sessionWaiters.push((f) => resolve(f as Extract<ServerFrame, { type: "sessions" }>)));
-  }
-}
+  async nextSessions(predicate:(frame:Extract<ServerFrame,{type:"sessions"}>)=>boolean=()=>true): Promise<Extract<ServerFrame, { type: "sessions" }>> {
+    // A prior unsolicited broadcast is not the fresh state the caller requested.
+    for (;;) {
+      const frame = this.sessionFrames.shift() ?? await new Promise<ServerFrame>((resolve) => this.sessionWaiters.push(resolve));
+      if(frame.type==='sessions'&&predicate(frame))return frame;
+    }
+  }}
 
 async function connect(port: number): Promise<WebSocket> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/host`);
@@ -635,19 +636,19 @@ describe("Host WebSocket seam", () => {
       socket.send(encodeFrame({v:1,type:'prompt',requestId:'complete-1',text:'synthetic completion'}));
       for(let i=0;i<5;i++)await frames.next();
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
       socket.close();await once(socket,'close');
       await waitFor(()=>factory.sessions.get(c.id)!.stopped);
       socket=await connect(server!.address().port);frames=new FrameQueue(socket);
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
       socket.send(encodeFrame({v:1,type:'open',sessionId:c.id}));await frames.next();await frames.next();
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled'});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled'});
       socket.close();await once(socket,'close');await server!.close();
       await start(new Workspaces(workspaceRoot));socket=await connect(server!.address().port);frames=new FrameQueue(socket);
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
     }finally{socket?.close();await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
