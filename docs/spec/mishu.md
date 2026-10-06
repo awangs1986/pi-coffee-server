@@ -412,3 +412,42 @@ or legacy test count does not complete a stage. Read-only S1/S2 can ship while n
 enhanced execution remains disabled; execution extensions must pass S3 first.
 The historical gap audit remains historical evidence, with this target SPEC as
 its implementation roadmap; do not erase missing requirements from that audit.
+
+## Candidate task briefs (#69, not a production activation)
+
+The candidate adds `tasks` to the capability-authenticated runtime Interface.
+`version: 1` and `operation` are mandatory. `register` takes a stable `operationId`,
+exact configured `targetId`/`binding`, and `purpose`, `scope`, `summary`, `nextStep`.
+`list` accepts `offset`/`limit`; `get` takes `taskId`; `update` takes `taskId`,
+`operationId`, `expectedRevision` and changed text fields; `stop` takes the same
+identity/revision fields. Unknown fields, including claimed source/user ownership
+or acceptance, are rejected. Host derives secretary/account ownership.
+
+Host creates independent task IDs even for identical titles. Every read/mutation
+rechecks current source and contact bindings; lists exclude revoked contacts.
+A new source native context cannot read or inherit old briefs, even after setup.
+Mutations serialize within the scoped coordinator, stage a journal copy, and flush
+an atomic private state-file replacement before acknowledging. Disk failure leaves
+the prior journal in memory. Identical operation retries return their original
+result; changed payloads or stale revisions fail. Failed/cancelled UI edits make
+no mutation. Existing message receipt identity and execution remain unchanged.
+
+Limits per secretary: 200 briefs (including stopped/history), 2,000 accepted write
+operations, default page 20 and maximum 50; purpose 500, scope 2,000, summary 4,000,
+next step 1,000 characters. Capacity exhaustion is explicit, with no history or
+idempotency-key eviction. Brief data are Host task data, not native transcript.
+
+Users can ask the selected enabled secretary to record/view/correct a brief, or
+open `/mishu-tasks` to browse, correct a field and stop a record through native UI
+on desktop/mobile. Cancel/Escape does not save. Long native dialog titles scroll within a bounded
+viewport area so detail text cannot hide correction/cancel buttons. The browser displays **已记录，尚未
+开始观察**; no observation switch is offered. Work state is recorded/stopped and
+acceptance remains separately pending; models cannot claim user acceptance.
+Stopping a record preserves history and never terminates the target task.
+
+This slice does not implement event observation, reply obligations, report wakes,
+or automatic reporting. #70–#76 and A29–A35 remain unmet outside this slice.
+Evidence: public HTTP/WS tests in `mishu-http`, plugin public extension/HTTP tests,
+and `scripts/probe-mishu-tasks.mjs` (real Browser/Web/Host/native Pi, deterministic
+model). An editable plugin root is source evidence only; the integrated candidate
+must repeat the probe with its immutable installed artifact.

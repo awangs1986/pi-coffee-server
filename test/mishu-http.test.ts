@@ -302,3 +302,56 @@ it('offers the plugin a loopback-only capability endpoint when the Host binds an
  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({selected:true,enabled:false});
  const forbidden=await fetch(new URL('/api/workspace',runtime.env.PI_COFFEE_MISHU_URL),{headers:{authorization:'Bearer host-test'}});expect(forbidden.status).toBe(404);
 });
+
+it('records task briefs only after durable admission, rejects conflicting retries and preserves revisions after restart',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const env=(await app.host.mishuRuntime('owner',source.id)).env;
+ const req=(body:unknown)=>app.call(body,'other',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const save={action:'tasks',version:1,operation:'register',operationId:'brief-register',targetId:target.id,binding:contact.binding,purpose:'Verify the synthetic build',scope:'Read-only synthetic fixture',summary:'Waiting for evidence',nextStep:'Inspect build results'};
+ const response=await req(save);expect(response.status,await response.clone().text()).toBe(200);
+ const initial=await response.json();expect(initial).toMatchObject({version:1,task:{revision:1,observation:'not-started',workState:'recorded',acceptance:'pending',purpose:save.purpose}});
+ expect(await(await req(save)).json()).toEqual(initial);
+ expect((await req({...save,purpose:'different'})).status).toBe(409);
+ const update={action:'tasks',version:1,operation:'update',operationId:'brief-update',taskId:initial.task.taskId,expectedRevision:1,summary:'Corrected synthetic scope'};
+ expect((await req({...update,acceptance:'accepted'})).status).toBe(409);
+ expect((await req({...save,operationId:'forged',sourceId:'another'})).status).toBe(409);
+ const failedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(failedWrite);
+ expect((await req({...update,operationId:'disk-failed'})).status).toBe(409);await rm(failedWrite,{recursive:true});
+ expect(await(await req({action:'tasks',version:1,operation:'get',taskId:initial.task.taskId})).json()).toMatchObject({task:{revision:1,summary:'Waiting for evidence'}});
+ const raced=await Promise.all([req(update),req({...update,operationId:'race'})]);expect(raced.map(r=>r.status).sort()).toEqual([200,409]);
+ expect((await req({...update,operationId:'stale'})).status).toBe(409);
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const resumed=await start(app.root),token=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const read=(body:unknown)=>resumed.call(body,'owner',token,'/api/mishu/runtime');
+ const list=await(await read({action:'tasks',version:1,operation:'list',limit:1})).json();
+ expect(list.tasks).toEqual([expect.objectContaining({taskId:initial.task.taskId,revision:2,summary:'Corrected synthetic scope'})]);
+ expect((await read({...update,operationId:'oversize',expectedRevision:2,summary:'x'.repeat(4001)})).status).toBe(409);
+ const stop={action:'tasks',version:1,operation:'stop',operationId:'stop-record',taskId:initial.task.taskId,expectedRevision:2};
+ expect(await(await read(stop)).json()).toMatchObject({task:{revision:3,workState:'stopped',acceptance:'pending'}});
+ expect(await(await read(stop)).json()).toMatchObject({task:{revision:3}});
+ expect((await resumed.workspaces.lookup(target.id))?.archived).not.toBe(true);
+ expect((await read({...update,operationId:'after-stop',expectedRevision:3})).status).toBe(409);
+},30000);
+
+it('isolates brief references between secretaries and rejects stale contacts and source context resets',async()=>{
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),second=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const piHome=join(app.root,'pi-home');await mkdir(piHome,{recursive:true});await writeFile(join(piHome,'models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const native=SessionManager.create(source.cwd,join(app.root,'sessions'),{id:source.id});native.appendMessage({role:'user',content:'Synthetic brief context',timestamp:Date.now()});
+ for(const chat of [source,second]){await app.call({action:'select',id:chat.id,selected:true});await setupThroughChat(app,chat.id,target.id,false);}
+ const request=async(chat:string,body:unknown)=>(app.call(body,'owner',(await app.host.mishuRuntime('owner',chat)).env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime'));
+ const contact=(await(await request(source.id,{action:'directory'})).json()).configuredTargets[0];
+ const input={action:'tasks',version:1,operation:'register',operationId:'owned',targetId:target.id,binding:contact.binding,purpose:'Same title',scope:'Synthetic',summary:'No evidence',nextStep:'Inspect'};
+ const first=await(await request(source.id,input)).json();
+ expect((await request(second.id,{action:'tasks',version:1,operation:'get',taskId:first.task.taskId})).status).toBe(409);
+ const independent=await(await request(second.id,input)).json();expect(independent.task.taskId).not.toBe(first.task.taskId);
+ expect((await app.call({action:'status',id:source.id},'other')).status).toBe(409);
+ expect((await request(source.id,{...input,operationId:'invalid-target',targetId:second.id})).status).toBe(409);
+ const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
+ const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);
+ expect((await request(source.id,{action:'tasks',version:1,operation:'list'})).status).toBe(409);
+ await setupThroughChat(app,source.id,target.id,false);
+ expect(await(await request(source.id,{action:'tasks',version:1,operation:'list'})).json()).toMatchObject({tasks:[]});
+ expect((await request(source.id,{action:'tasks',version:1,operation:'get',taskId:first.task.taskId})).status).toBe(409);
+},30000);
