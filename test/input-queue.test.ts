@@ -33,3 +33,19 @@ it('does not resurrect pending validation after Stop clears the queue',async()=>
  let finish!:()=>void;const queue=new InputQueue({busy:()=>true,validate:()=>new Promise<void>(resolve=>{finish=resolve;}),deliver:async()=>{},changed:()=>{}});
  const adding=queue.add('late');queue.clear();finish();await expect(adding).rejects.toThrow('stopped');expect(queue.items).toEqual([]);
 });
+
+it('serves at most three queued foreground inputs before a notification and never runs two writers',async()=>{
+ let busy=true;const order:string[]=[];
+ const queue=new InputQueue({busy:()=>busy,validate:async()=>{},deliver:async text=>{order.push(text);busy=true;},changed:()=>{}});
+ queue.addInternal('report',async()=>{order.push('report');busy=true;},async()=>{});
+ for(let n=1;n<=5;n++)await queue.add('user-'+n);
+ for(let n=0;n<6;n++){busy=false;queue.wake();await tick();await tick();}
+ expect(order).toEqual(['user-1','user-2','user-3','report','user-4','user-5']);
+});
+it('keeps failed foreground input for inspection without starving an independent pending report',async()=>{
+ let busy=true;const delivered:string[]=[];
+ const queue=new InputQueue({busy:()=>busy,validate:async()=>{},deliver:async()=>{throw Error('Uncertain user delivery');},changed:()=>{}});
+ await queue.add('uncertain foreground');busy=false;queue.wake();await tick();await tick();
+ queue.addInternal('safe notification',async()=>{delivered.push('notification');},async()=>{});await tick();await tick();
+ expect(delivered).toEqual(['notification']);expect(queue.items).toMatchObject([{text:'uncertain foreground',status:'failed'}]);
+});

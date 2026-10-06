@@ -6,6 +6,7 @@ type Input=QueueItem&{images?:ImageInput[];requestId?:string;internal?:()=>Promi
 export class InputQueue {
  private rows:Input[]=[];
  private sending=false;
+ private foregroundBurst=0;
  private scheduled=false;
  private stopped=false;
  private generation=0;
@@ -54,12 +55,16 @@ export class InputQueue {
  wake(){
   if(this.scheduled||this.stopped)return;this.scheduled=true;
   setImmediate(()=>{this.scheduled=false;
-   if(this.stopped||this.sending||this.options.busy()||this.rows[0]?.status!=='pending')return;
-   void this.deliver(this.rows[0],false).catch(()=>undefined);
+   if(this.stopped||this.sending||this.options.busy())return;
+   const foreground=this.rows.find(row=>!row.internal),notification=this.rows.find(row=>row.internal&&row.status==='pending');
+   const row=notification&&(this.foregroundBurst>=3||!foreground||foreground.status==='failed')?notification:foreground;
+   if(!row||row.status!=='pending')return;
+   void this.deliver(row,false).catch(()=>undefined);
   });
  }
  private async deliver(row:Input,promote:boolean){
   const generation=this.generation;
+  this.foregroundBurst=row.internal?0:this.foregroundBurst+1;
   this.sending=true;row.status='sending';row.revision++;this.options.changed();
   try{
    this.inFlight=row.internal?row.internal():row.requestId===undefined?this.options.deliver(row.text,row.images,promote):this.options.deliver(row.text,row.images,promote,row.requestId);
