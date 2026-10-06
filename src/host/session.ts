@@ -103,7 +103,7 @@ export class HostSession {
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
       deliver:async(text,images,promote,queuedRequestId)=>{
         const generation=this.deliveryGeneration;
-        if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+        if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
         if(promote&&this.state.isStreaming){
           try {
             if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
@@ -220,6 +220,10 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
+  private reportOrigin=false;
+  /** Host-controlled run classification; never populated from model fields. */
+  setReportOrigin(){if(!this.activeRequestId)throw Error('Report requires reserved command');this.reportOrigin=true;}
+  get isReportRun(){return this.reportOrigin;}
   private contextChanging=false;
   private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get isTransitioning():boolean {return this.contextChanging||this.compacting;}
@@ -281,7 +285,7 @@ export class HostSession {
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
   async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[],requestId?:string,accepted=false): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.compacting || this.contextChanging) throw new SessionBusyError();
+    if (this.compacting || this.contextChanging || this.reportOrigin && mode === "steer") throw new SessionBusyError();
     const generation=this.deliveryGeneration;
     if(requestId&&!accepted)await this.onCommand?.(this.id,requestId,"accepted",mode);
     try {
@@ -297,7 +301,7 @@ export class HostSession {
 
   get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
-    if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+    if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
     const command=action.action==='cancel'?this.inputs.items.find(item=>item.id===action.id)?.requestId:undefined;
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
@@ -510,7 +514,7 @@ export class HostSession {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
         this.interrupted = true;this.unseenSettle=false;this.inputs.pause();
         this.state = {...this.state,isStreaming:false};
-        this.activeRequestId = undefined;
+        this.activeRequestId = undefined;this.reportOrigin=false;
         this.pendingUi.clear();
         // A reopened browser must not replay the dead run's agent_start/deltas
         // as though it were still streaming; durable history remains authoritative.
@@ -527,7 +531,7 @@ export class HostSession {
       }
       if ((safeEvent.type === "agent_settled" || safeEvent.type === "run_completed")) {
         this.state = { ...this.state, isStreaming: false };
-        this.activeRequestId = undefined;
+        this.activeRequestId = undefined;this.reportOrigin=false;
         settled = true;
         lifecycle = true;
         // Whatever dialogs were open have been answered or timed out by now.

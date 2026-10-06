@@ -1,3 +1,5 @@
+import {DatabaseSync} from 'node:sqlite';
+import {reportIntent,reportContent,verifiedReport} from './mishu-reports.js';
 import {taskOperation,type TaskJournal,type TaskBrief} from './mishu-tasks.js';
 import {createHash,randomBytes} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
@@ -24,6 +26,7 @@ const currentTitle=(summary:{name?:string;preview?:string}|undefined,fallback:st
 export class MishuCoordinator {
  private state:State={version:1,chats:{}};
  private loaded?:Promise<void>;
+ private writer?:DatabaseSync;
  private tail:Promise<unknown>=Promise.resolve();
  private tokens=new Map<string,string>();
  private active=new Map<string,{source:string;receipt:Receipt}>();
@@ -31,6 +34,9 @@ export class MishuCoordinator {
  private setupWindows=new Map<string,string>();
  beginSetup(id:string,requestId:string){this.setupWindows.set(id,requestId);}
  endSetup(id:string,requestId:string){if(this.setupWindows.get(id)===requestId)this.setupWindows.delete(id);}
+ private reportWindows=new Map<string,string>();
+ beginReport(id:string,requestId:string){this.reportWindows.set(id,requestId);}
+ endReport(id:string,requestId:string){if(this.reportWindows.get(id)===requestId)this.reportWindows.delete(id);}
  private deliveries=new Set<Promise<void>>();
  private closing=false;
  constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>){ }
@@ -43,6 +49,9 @@ export class MishuCoordinator {
   }});this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
  }
  private async load(){await (this.loaded??= (async()=>{
+  await mkdir(this.root,{recursive:true,mode:0o700});
+  const writer=new DatabaseSync(join(this.root,'writer.sqlite'));
+  try{writer.exec('BEGIN EXCLUSIVE');this.writer=writer;}catch{writer.close();throw Error('Another Host owns MISHU coordination; no state was read or changed');}
   try{const state=JSON.parse(await readFile(join(this.root,'state.json'),'utf8'));if(state.version!==1||!state.chats||Array.isArray(state.chats))throw Error('Invalid MISHU state');this.state=state;
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
@@ -74,7 +83,9 @@ export class MishuCoordinator {
  accepts(token:string){return this.tokens.has(token);}
  async runtime(token:string,input:Record<string,unknown>){const id=this.tokens.get(token);if(!id)throw Error('Invalid MISHU capability');
   const status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
-  if(input.action==='status')return status;
+  if(input.action==='status')return {...status,origin:this.registry?.get(id)?.isReportRun?'task-report':'user-intent'};
+  if(this.registry?.get(id)?.isReportRun)throw Error('Report runs cannot invoke coordination or capability-changing operations');
+  if(input.action==='report')return this.report(id,input);
   if(input.action==='directory')return this.directory(id);
   if(input.action==='setup')return this.change(async()=>{
    if(!this.setupWindows.has(id))throw Error('Setup requires a direct user /mishu-setup command');
@@ -98,6 +109,7 @@ export class MishuCoordinator {
   if(!c.taskJournal)return;
   c.taskJournal=structuredClone(c.taskJournal);
   for(const task of c.taskJournal.tasks){if(!task.obligation||task.obligation.state==='cancelled'||retained.has(task.targetId))continue;
+   for(const report of task.reports??[])if(report.state!=='committed')report.state='cancelled';
    task.obligation.state='cancelled';task.obligation.generation++;task.observation='stopped';task.revision++;task.updatedAt=new Date().toISOString();task.notification=undefined;
   }
  }
@@ -129,8 +141,46 @@ export class MishuCoordinator {
   task.revision++;task.updatedAt=new Date().toISOString();
   task.notification={id:'task-'+task.taskId,revision:task.revision,state:'pending'};
  }
+ private async reconcileReports(id:string,task:TaskBrief){
+  for(const report of task.reports??[]){
+   if(report.state==='committed'||report.state==='cancelled')continue;
+   if(task.workState==='stopped'||!task.obligation||task.obligation.generation!==report.generation||task.sourceBinding!==report.sourceBinding||task.notification?.revision!==report.notificationRevision){report.state='cancelled';continue;}
+   // message_end precedes persistence and extension continuation decisions. Only
+   // audit a locally settled run, or a stopped process during passive recovery.
+   if(this.registry?.get(id)?.isReportRun)continue;
+   const evidence=await this.registry!.readRunEvidence(id,report.processingId);
+   if(verifiedReport(report,evidence)){
+    await this.authorize(id,task.targetId,task.binding,'information-only');
+    report.state='committed';report.nativeBinding=evidence.binding;report.outputs=evidence.entries!.map(({id,revision})=>({id,revision}));report.error=undefined;
+    task.notification={...task.notification!,state:'committed',reportId:report.id};
+   }else if(!this.registry?.get(id)?.isReportRun){report.state='uncertain';report.error='Native report output cannot be proven. No report was regenerated; inspect the native conversation.';}
+  }
+ }
+ private report(id:string,input:Record<string,unknown>){
+  return this.change(async()=>{
+   if(!this.reportWindows.has(id))throw Error('Reporting requires a direct user /mishu-report command');
+   const source=await this.source(id),c=this.state.chats[id];
+   if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source))throw Error('MISHU report authorization unavailable');
+   const journal=structuredClone(c.taskJournal??{tasks:[],operations:[]});
+   await this.refreshTasks(id,journal);
+   if(input.operation==='list'){c.taskJournal=journal;return {tasks:journal.tasks.filter(t=>t.notification&&t.fact&&t.workState!=='stopped').map(t=>({taskId:t.taskId,purpose:t.purpose,targetTitle:c.targets.find(target=>target.id===t.targetId)?.title??'已选对话'}))};}
+   if(input.operation!=='prepare'||typeof input.taskId!=='string')throw Error('Invalid report request');
+   const task=journal.tasks.find(t=>t.taskId===input.taskId);if(!task)throw Error('Task unavailable');
+   await this.authorize(id,task.targetId,task.binding,'information-only');
+   const prior=task.reports?.find(r=>r.notificationRevision===task.notification?.revision&&r.notificationId===task.notification?.id);
+   if(prior){c.taskJournal=journal;return {report:prior};}
+   if((task.reports?.length??0)>=100)throw Error('Report capacity reached');
+   const report=reportIntent(task);(task.reports??=[]).push(report);
+   const previous=c.taskJournal;c.taskJournal=journal;
+   try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
+   // Reservation and classification precede any native custom input. The direct
+   // command window is single-use, and model tool requests cannot establish it.
+   this.registry!.get(id)!.setReportOrigin();this.reportWindows.delete(id);
+   return {report,content:reportContent(task)};
+  });
+ }
  private async refreshTasks(id:string,journal:TaskJournal){
-  for(const task of journal.tasks){try{await this.auditTask(id,task);}catch{/* Revoked contacts consume no events and expose no new facts. */}}
+  for(const task of journal.tasks){try{await this.auditTask(id,task);await this.reconcileReports(id,task);}catch{/* Revoked contacts consume no events and expose no new facts. */}}
  }
  private observationFailure?:string;
  private observationPending=new Set<string>();
@@ -140,9 +190,9 @@ export class MishuCoordinator {
   const work=this.tail.then(async()=>{
    await this.load();
    for(const [id,c] of Object.entries(this.state.chats)){
-    if(!c.selected||!c.enabled||!c.taskJournal?.tasks.some(t=>t.targetId===targetId&&t.obligation&&t.workState!=='stopped'))continue;
+    if(!c.selected||!c.enabled||!c.taskJournal?.tasks.some(t=>(t.targetId===targetId||id===targetId&&t.reports?.length)&&t.obligation&&t.workState!=='stopped'))continue;
     const previous=c.taskJournal,journal=structuredClone(previous);
-    for(const task of journal.tasks.filter(t=>t.targetId===targetId)){try{await this.auditTask(id,task);}catch{/* Authorization failure is not target execution failure. */}}
+    for(const task of journal.tasks.filter(t=>t.targetId===targetId||id===targetId&&t.reports?.length)){try{await this.auditTask(id,task);await this.reconcileReports(id,task);}catch{/* Authorization failure is not target execution failure. */}}
     c.taskJournal=journal;try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
    }
   });this.tail=work.catch(()=>{this.observationFailure='Observation persistence failed; last confirmed facts retained. Open task details to retry a passive audit.';});void work.finally(()=>{this.observationPending.delete(targetId);if(this.observationDirty.delete(targetId))this.observeEvent(targetId);}).catch(()=>undefined);
@@ -222,5 +272,5 @@ export class MishuCoordinator {
   if((e.type==='message_completed'||e.type==='message_end'&&e.message?.role==='assistant')&&typeof e.text==='string')text=e.text;
   if(text){const prior=active.receipt.result??'',value=clean(prior+(prior?'\n':'')+text);active.receipt.result=value.slice(0,4000);active.receipt.truncated=value.length>4000;}
  }
- async close(){this.closing=true;this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;}
+ async close(){this.closing=true;this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;this.writer?.close();this.writer=undefined;}
 }
