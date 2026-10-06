@@ -60,7 +60,7 @@ export interface AgentModels {
 
 export interface AgentSession {
   backgroundState?(): Promise<{known:boolean;active:number}>;
-  prompt(text: string, images?: ImageInput[]): Promise<void>;
+  prompt(text: string, images?: ImageInput[], correlation?:{runId:string}): Promise<void>;
   /** Interrupt a running turn after its current tool calls. */
   steer(text: string, images?: ImageInput[]): Promise<void>;
   /** Queue a message for after the current run finishes. */
@@ -93,6 +93,8 @@ export interface AgentRunEvidence {
 }
 
 export interface AgentSessionFactory {
+  /** True only when prompt correlation is persisted and passively recoverable. */
+  supportsDispatchCorrelation?(sessionId:string):Promise<boolean>;
  /** Passive exact native run audit; never starts a runtime or replays work. */
  readRunEvidence?(sessionId:string,runId?:string):Promise<AgentRunEvidence>;
   forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
