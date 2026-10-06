@@ -41,5 +41,5 @@ try{
  await git('push','--porcelain','--force-with-lease=refs/heads/'+branch+':'+expected,remote,head+':refs/heads/'+branch);
  if((await git('ls-remote',remote,'refs/heads/'+branch)).split(/\s+/)[0]!==head)throw Error('Verify remote identity before retrying');
  console.log(JSON.stringify({published:true,commit:head,tree:(await sourceIdentity(repo)).tree,branch}));
-}catch(error){console.error(JSON.stringify({error:error.publicationCode||(/workflow/.test(error.stderr??'')?'workflow_authorization_required':'publication_refused')}));process.exitCode=1;}
+}catch(error){console.error(JSON.stringify({error:error.publicationCode||(/workflow/.test((error.stderr??'')+(error.stdout??''))?'workflow_authorization_required':'publication_refused')}));process.exitCode=1;}
 finally{if(privateRoot)await rm(privateRoot,{recursive:true,force:true});}
