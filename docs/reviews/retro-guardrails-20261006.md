@@ -39,3 +39,17 @@ directories. Its actual Actions run and source publication receipts belong in
 Source publication is distinct from CI success, fresh-clone acceptance, staging,
 browser activation and backend activation. No Web/Host interruption is included.
 The authenticated release HTTP API requires a later approved backend deployment.
+
+## WSL calibration
+
+The first actual Actions run reached all 879 tests and correctly failed (871
+passed, eight failed). Missing Python and a Chromium XInput library were added to
+the private CI bootstrap. Serial CI execution removed cold native-subprocess contention. The watchdog
+fixture now uses its active Python executable rather than a system-only shebang.
+An isolated WSL run also reproduced the completion-test frame-order assumption:
+an unsolicited pre-prompt session list was buffered before the explicit list
+request. The reader now waits for the required conversation state, preserving
+all retirement/restart assertions and existing timeout failures. No tests are
+skipped and no timeouts are extended. The initially writable launcher mount was
+corrected to read-only, with writable mounts limited to runner and synthetic home;
+actual listener mount probes and the final workflow are recorded in Issue #81.
