@@ -86,7 +86,15 @@ export interface AgentSession {
   stop(): Promise<void>;
 }
 
+export interface AgentRunEvidence {
+ supported:boolean;freshness:'current'|'unknown';runId?:string;binding?:string;watermark?:string;
+ state:'running'|'reply-available'|'incomplete'|'uncertain';
+ entries?:{id:string;revision:string;text:string}[];reason?:string;
+}
+
 export interface AgentSessionFactory {
+ /** Passive exact native run audit; never starts a runtime or replays work. */
+ readRunEvidence?(sessionId:string,runId?:string):Promise<AgentRunEvidence>;
   forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
