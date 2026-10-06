@@ -34,7 +34,7 @@ import {
   noteNode, relativeTime, toolCard, toolResultDetails, toolResultText, updateActivity, updateAssistant, userBubble,
 
 } from './render.js';
-import { sidebarGroups, sidebarGroupMembers, attentionOf, createSidebarOrder, orderSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
+import { sidebarGroups, sidebarGroupMembers, attentionOf, conversationActivityAt, createSidebarOrder, orderRecentSessions, formatReset, isTerminalSession, sessionGroups, usageBadge } from './sidebar.js';
 
 
 const ACTIVE_KEY_BASE = 'pi-coffee.active.v2';
@@ -860,8 +860,8 @@ function renderSessionListContent() {
     known=known.filter(s=> {const c=workspaceState.conversations.find(c=>c.id===s.id);return Boolean(c?.archived || workspaceState.legacyArchived?.includes(s.id))===showArchived;});
   }
   // Workspace creation survives native session replacement, resume and refresh.
-  const taskCreatedAt=new Map((workspaceState?.conversations||[]).map(task=>[task.id,task.createdAt]));
-  known=known.map(session=>({...session,createdAt:taskCreatedAt.get(session.id)||session.createdAt}));
+  const tasksById=new Map((workspaceState?.conversations||[]).map(task=>[task.id,task]));
+  known=known.map(session=>{const task=tasksById.get(session.id);return {...session,createdAt:task?.createdAt||session.createdAt,lastActivityAt:task?.lastActivityAt||session.lastActivityAt};});
   known=sidebarOrder.snapshot(known);
   if (known.length === 0 && (!grouped || !groups.length)) {
     ui.sessionList.appendChild(el('li', 'empty-list', '还没有对话'));
@@ -878,7 +878,7 @@ function renderSessionListContent() {
       const ids=new Set(pins);known=known.filter(session=>!ids.has(session.id));
     }
   }
-  if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known,{byCreatedAt:true}); return; }
+  if (!workspaceState || !grouped) { appendSessionGroups(ui.sessionList,known,{byActivity:true}); return; }
   const assigned=new Map(groups.map(p=>[p.id,[]]));
   const ungrouped=[];
   for(const session of known){
@@ -900,7 +900,7 @@ function renderSessionListContent() {
     else if(running)button.append(el('span','project-group-status',running+' 运行中'));
     button.addEventListener('click',()=>saveSidebar({action:'sidebar_collapse',projectId:project.id,collapsed:!folded}));
     const list=el('ul','project-group-list');list.hidden=folded;list.setAttribute('aria-label',project.name+' 对话');
-    for(const session of orderSessions(items))list.append(sessionRow(session));
+    for(const session of orderRecentSessions(items))list.append(sessionRow(session));
     const header=el('div','project-group-header');
     const more=el('button','project-group-more','⋯');more.type='button';more.title='分组操作';more.setAttribute('aria-label',project.name+'分组操作');
     more.addEventListener('click',event=>{event.stopPropagation();openGroupMenu(project,more);});
@@ -908,7 +908,7 @@ function renderSessionListContent() {
   }
   const outside=el('li','ungrouped-conversations');outside.dataset.sidebarUngrouped='';
   outside.append(el('div','side-label','未分组'));
-  const list=el('ul','project-group-list');appendSessionGroups(list,ungrouped);
+  const list=el('ul','project-group-list');appendSessionGroups(list,ungrouped,{byActivity:true});
   if(!ungrouped.length)list.append(el('li','sidebar-drop-hint','拖到这里移出分组'));
   outside.append(list);sidebarDropTarget(outside,null);ui.sessionList.append(outside);
 }
@@ -989,7 +989,7 @@ function sessionRow(session) {
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='preparing')main.append(el('span','interrupted-badge','Fork 准备中'));
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.fork?.status==='failed')main.append(el('span','interrupted-badge','Fork 未完成 · 副本已保留'));
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.runState==='interrupted')main.append(el('span','interrupted-badge','上次运行中断 · 未自动续跑'));
-  const metaParts = [relativeTime(session.updatedAt), session.messageCount ? session.messageCount + ' 条' : ''];
+  const metaParts = [relativeTime(conversationActivityAt(session)), session.messageCount ? session.messageCount + ' 条' : ''];
   if (attention === 'waiting') metaParts.unshift('等你回答');
   else if (attention === 'finished') metaParts.unshift('已完成，待查看');
   else if (attention === 'running') metaParts.unshift('运行中');
@@ -1351,7 +1351,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1608,7 +1608,7 @@ function handleFrame(frame, ws) {
   if(activeBindingEpoch&&frame.bindingEpoch&&frame.bindingEpoch!==activeBindingEpoch&&!['opened','history','sync_changed'].includes(frame.type))return;
   switch (frame.type) {
     case 'sessions':
-      if(activeId)void loadWorkspace();
+      void loadWorkspace();
       sessions = Array.isArray(frame.sessions) ? frame.sessions : [];
       renderSessionList();
       renderHeader();

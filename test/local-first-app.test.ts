@@ -28,7 +28,7 @@ afterEach(() => {
   vi.restoreAllMocks(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals();
   history.replaceState(null,'','/');localStorage.clear(); sessionStorage.clear(); vi.resetModules(); allFrames.length = 0;
 });
-async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(network:{workspaceGate:Promise<void>|null})=>{}) {
+async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(network:{workspaceGate:Promise<void>|null;showGroups:boolean})=>{}) {
   const originalAdd = EventTarget.prototype.addEventListener;
   vi.spyOn(EventTarget.prototype, 'addEventListener').mockImplementation(function (this: EventTarget, type: string, listener: any, options: any) { listeners.push([this, type, listener, options]); originalAdd.call(this, type, listener, options); });
   document.documentElement.innerHTML = readFileSync('public/index.html', 'utf8');
@@ -38,7 +38,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   class Socket {
@@ -56,7 +56,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
     if (url === '/auth/me') {await network.authGate;data = { auth: true, user: network.user };}
     else if (url === '/api/me') data = null;
     else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude', 'cursor', 'grok'].map(id => ({ id, available: true })) };
-    else if (url === '/api/workspace') {await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
+    else if (url === '/api/workspace') {await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
     // Unknown read-only sync is held, never mistaken for a valid empty snapshot.
     else if (String(url).includes('/api/conversations/')) {
       syncReads.push(String(url));
@@ -96,6 +96,22 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it.each([false,true])('places an older task with today’s conversation under Today in grouped=%s',async grouped=>{
+    const app=await setup('codex',2,network=>{network.showGroups=grouped;});
+    vi.setSystemTime(new Date('2026-10-06T12:00:00Z'));
+    Object.assign(app.conversations[0],{createdAt:'2026-10-04T13:24:27Z',lastActivityAt:'2026-10-06T11:04:02Z'});
+    Object.assign(app.conversations[1],{createdAt:'2026-10-05T10:00:00Z',lastActivityAt:'2026-10-05T11:00:00Z'});
+    Object.assign(app.conversations[2],{createdAt:'2026-10-03T00:00:00Z'});
+    const native=app.conversations.map(c=>({...c,lastActivityAt:undefined,updatedAt:c.createdAt,running:c.id==='a'}));
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:native});await tick();
+    const ids=()=>[...document.querySelectorAll('#session-list [data-session-id]')].map(n=>n.getAttribute('data-session-id'));
+    expect(ids()).toEqual(['a','b','c']);
+    expect(document.querySelector('[data-session-id="a"]')?.previousElementSibling?.textContent).toBe('今天');
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:native.map(c=>({...c,updatedAt:c.id==='c'?c.updatedAt:'2026-10-06T12:01:00Z',attention:c.id==='b'?'waiting':undefined}))});await tick();
+    expect(ids()).toEqual(['a','b','c']);
+    expect(document.querySelector('[data-session-id="b"]')?.previousElementSibling?.textContent).toBe('昨天');
+  });
+
   it('restores the completed coffee icon from Host status without unread attention after reload',async()=>{
     const app=await setup('codex',2);
     const rows=app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled'}:{})}));
@@ -541,6 +557,8 @@ it('rechecks identity before attaching after a cookie-account change without a l
  // discover the new login; no storage logout notification is sent.
  app.network.hang=true;const count=app.sockets.length;choose('b');await tick(50);expect(app.sockets.length).toBe(count);
  release();await tick(100);expect(app.sockets.length).toBeGreaterThan(count);expect(prompt().value).toBe('');expect(thread().textContent).not.toContain('SYNC-a');
+ // Only fresh account-B metadata may repopulate the cleared sidebar.
+ app.sockets.at(-1)!.receive({type:'sessions',sessions:app.conversations});await tick(50);
  choose('a');await tick(100);expect(prompt().value).not.toContain('ACCOUNT-A-UNSENT');
 });
 
@@ -551,4 +569,24 @@ it('collapses finished live tool activity when the Agent resumes dialogue',async
  app.emit(ws,'a',{type:'tool_update',id:'fold-tool',name:'bash',result:'done',status:'completed'});
  app.emit(ws,'a',assistantEvent('codex','Here is the answer',true));await tick();
  expect(thread().textContent).toContain('Here is the answer');expect(group.open).toBe(false);
+});
+
+it('refreshes workspace conversation activity even while the new-conversation composer is selected',async()=>{
+ const app=await setup('codex',2);vi.mocked(fetch).mockClear();
+ app.sockets.at(-1)!.receive({type:'sessions',sessions:app.conversations});await tick();
+ expect(vi.mocked(fetch).mock.calls.some(([url,init])=>url==='/api/workspace'&&!init?.body)).toBe(true);
+ expect(allFrames.some(frame=>frame.type==='open')).toBe(false);
+});
+it('clears previous-account sidebar metadata immediately while the next workspace response is delayed',async()=>{
+ const app=await setup('codex',2);await app.select('a');await tick(500);
+ expect(document.querySelector('[data-session-id="c"]')?.textContent).toContain('Conversation c');
+ let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>{release=resolve;});
+ app.network.user='account-b';app.network.workspaceGate=new Promise<void>(()=>{});app.network.hang=true;
+ choose('b');await tick(30);
+ document.querySelector('[data-session-id="c"] .more')!.dispatchEvent(new Event('pointerdown',{bubbles:true}));
+ document.querySelector<HTMLButtonElement>('[data-session-id="c"] .more')!.click();
+ release();await tick(100);
+ expect(document.querySelector('[data-session-id="a"]')).toBeNull();
+ expect(document.querySelector('[data-session-id="c"]')).toBeNull();
+ expect(document.querySelector('#session-list')?.textContent).not.toContain('Conversation');
 });
