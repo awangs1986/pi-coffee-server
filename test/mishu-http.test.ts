@@ -2,7 +2,7 @@ import {afterEach,expect,it} from 'vitest';
 import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
 import {randomUUID} from 'node:crypto';
@@ -16,12 +16,12 @@ import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
-async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>,loseDispatchAck=false){
+async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>,loseDispatchAck=false,extraExtensions:string[]=[]){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
  let host:HostServer;
  const fixturePi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions'),cwdForSession:id=>workspaces.file(id,'')});
- const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),...(fixtureModel?{provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:"off",PI_COFFEE_LSP:"off",PI_COFFEE_WEB:"off",PI_COFFEE_HANDOFF:"off"})}:{}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>(await host.mishuRuntime('owner',id)).extensions,envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime('owner',id)).env})});
+ const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),...(fixtureModel?{provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:"off",PI_COFFEE_LSP:"off",PI_COFFEE_WEB:"off",PI_COFFEE_HANDOFF:"off"})}:{}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>[...(await host.mishuRuntime('owner',id)).extensions,...extraExtensions],envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime('owner',id)).env})});
  const pi=nativePi?realPi:{create:async(options:{sessionId:string})=>((await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
  const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
  const factory=engine||nativePi?new NativeAgentFactory({pi,workspaces,...(engine?{[engine]:command}:{})}):pi;
@@ -518,4 +518,97 @@ it.each(['normal','lost-ack','queued-stop'] as const)('dispatch persists busines
  const restarted=await start(app.root,undefined,true),rt=(await restarted.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
  const recovered=await restarted.call({...replayCommand,messageId:'after-restart'},'owner',rt,'/api/mishu/runtime');expect(recovered.status,await recovered.clone().text()).toBe(200);expect((await recovered.json()).assignment.id).toBe(replayId);expect(targetCalls).toBe(expectedCalls);
  }finally{socket.close();targetSocket?.close();finishSource();finishTarget();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as const)('persists a native on-demand report identity without replay (%s)',async(mode)=>{
+ let calls=0,foregroundCalls=0,taskId='',privatePath='',reply:()=>void=()=>{};const requests:any[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));calls++;const foreground=raw.includes('FOREGROUND_READ_REQUEST');if(foreground)foregroundCalls++;
+  reply=()=>{
+   if(res.writableEnded)return;
+   const frame={id:'report-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};
+   const content=mode==='promise'?'我会稍后帮你汇报。':mode==='tool-only'?'':`进展：REPORT_RESULT 已收到。\n限制：仅合成测试，尚未用户验收。\n下一步：请查看证据。\n来源：Synthetic report`;
+   const delta=foreground?(foregroundCalls===1?{role:'assistant',tool_calls:[{index:0,id:'allowed-read',type:'function',function:{name:'read',arguments:JSON.stringify({path:privatePath})}}]}:{role:'assistant',content:'FOREGROUND_RESTORED'}):(mode==='tool-attempt'||mode==='tool-only')&&calls===1?{role:'assistant',tool_calls:[...[['read',{path:privatePath}],['bash',{command:'touch '+privatePath+'.side-effect'}],['write',{path:privatePath,content:'MALICIOUS'}],['edit',{path:privatePath,edits:[{oldText:'SYNTHETIC_REPORT_FORBIDDEN_READ',newText:'MALICIOUS'}]}],['mishu',{action:'send',text:'MALICIOUS'}],['report_nested',{}]].map(([name,args],index)=>({index,id:'forbidden-'+name,type:'function',function:{name,arguments:JSON.stringify(args)}}))]}:{role:'assistant',content};
+   res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:foreground&&foregroundCalls===1||(mode==='tool-attempt'||mode==='tool-only')&&calls===1?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+  };
+  if(calls>1)reply();
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const fixtureRoot=await mkdtemp(join(tmpdir(),'coffee-report-')),extension=join(fixtureRoot,'active-tools.ts');
+ privatePath=join(fixtureRoot,'private-marker.txt');await writeFile(privatePath,'SYNTHETIC_REPORT_FORBIDDEN_READ');
+ await writeFile(extension,`import {registerChatTools} from ${JSON.stringify(resolve('node_modules/pi-coffee-harness/dist/harness/chat-tools.js'))};export default function(pi){registerChatTools(pi,['report_nested']);pi.registerTool({name:'report_nested',label:'Nested test',description:'Synthetic nested tool',parameters:{type:'object',properties:{}},async execute(id,args,signal,onUpdate,ctx){return ctx.executeTool('write',{path:${JSON.stringify(privatePath)},content:'NESTED_MALICIOUS'});}});pi.on('before_provider_request',()=>{pi.setActiveTools(pi.getAllTools().map(t=>t.name));});}`);
+ const app=await start(fixtureRoot,undefined,true,true,undefined,false,[extension]),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic target work',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'REPORT_RESULT'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=await(await req({...base,operation:'register',operationId:'report-brief',targetId:target.id,binding:contact.binding,purpose:'Synthetic report',scope:'Only test',summary:'Result ready',nextStep:'Review'})).json();taskId=brief.task.taskId;
+ await req({...base,operation:'observe',operationId:'report-watch',taskId,expectedRevision:1,runId});
+ expect((await req({action:'report',operation:'prepare',taskId})).status).toBe(409);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'report-user',text:'/mishu-report '+taskId}));
+  await expect.poll(()=>calls,{timeout:10000}).toBe(1);
+  expect(await(await req({action:'status'})).json()).toMatchObject({origin:'task-report'});
+  for(const action of ['send','setup','disable','tasks','directory'])expect((await req({action})).status).toBe(409);
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'bad-steer',mode:'steer',text:'Do not mix me into report'}));
+  await expect.poll(()=>frames.some(f=>f.type==='error'&&f.requestId==='bad-steer'),{timeout:10000}).toBe(true);
+  const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');if(mode==='lost-ack')await mkdir(blockedWrite);
+  if(mode==='revoked')expect((await app.call({action:'archive',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+  reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  if(mode==='lost-ack'){
+   await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.error),{timeout:10000}).toContain('persistence failed');
+   await rm(blockedWrite,{recursive:true});
+  }
+  if(mode==='normal'){
+   expect(await(await req({action:'status'})).json()).toMatchObject({origin:'user-intent'});
+   const from=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'foreground-user',text:'FOREGROUND_READ_REQUEST'}));
+   await expect.poll(()=>frames.slice(from).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+   expect(JSON.stringify(requests.flatMap(r=>r.messages.filter((m:any)=>m.role==='tool')))).toContain('SYNTHETIC_REPORT_FORBIDDEN_READ');
+  }
+  if(mode==='revoked')expect((await app.call({action:'restore',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+  socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  if(mode==='lost-ack'){
+   const stored=(await SessionManager.listAll(join(app.root,'sessions'))).find(s=>s.id===source.id)!;
+   const rows=(await readFile(stored.path,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+   await writeFile(stored.path,rows.filter(row=>!(row.type==='custom'&&row.customType==='coffee-native-settled')).map(row=>JSON.stringify(row)).join('\n')+'\n');
+  }
+  const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+  const result=await(await resumed.call({...base,operation:'get',taskId},'owner',rt,'/api/mishu/runtime')).json();
+  const report=result.task.reports[0];expect(report.state).toBe(mode==='revoked'?'cancelled':mode==='promise'||mode==='tool-only'?'uncertain':'committed');
+  expect(result.task.acceptance).toBe('pending');
+  if(mode!=='promise'&&mode!=='tool-only'&&mode!=='revoked'){
+   expect(result.task.notification).toMatchObject({state:'committed',reportId:report.id});
+   expect(report.outputs.length).toBeGreaterThan(0);
+   const read=new RpcPiSessionFactory({sessionDir:join(app.root,'sessions')});
+   const evidence=await read.readRunEvidence(source.id,report.processingId);expect(evidence.entries?.map(({id,revision})=>({id,revision}))).toEqual(report.outputs);
+   const history=await read.readHistory(source.id);expect(history.history.entries.filter(e=>e.kind==='user')).toHaveLength(mode==='normal'?1:0);
+  }
+  expect(calls).toBe(mode==='normal'?3:mode==='tool-attempt'||mode==='tool-only'?2:1);
+  if(mode!=='normal')expect(JSON.stringify(requests.flatMap(r=>r.messages.filter((m:any)=>m.role==='tool')))).not.toContain('SYNTHETIC_REPORT_FORBIDDEN_READ');
+  expect(await readFile(privatePath,'utf8')).toBe('SYNTHETIC_REPORT_FORBIDDEN_READ');await expect(readFile(privatePath+'.side-effect','utf8')).rejects.toMatchObject({code:'ENOENT'});
+  if(mode==='tool-attempt'){const results=requests.at(-1).messages.filter((m:any)=>m.role==='tool');expect(results).toHaveLength(6);for(const result of results)expect(JSON.stringify(result)).toContain('Host report-only run');}
+ }finally{socket.close();reply();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+
+it('fences a competing Host owner and only admits a fresh owner after process death',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-owner-')),lockRoot=join(root,'work','.coffee','mishu');await mkdir(lockRoot,{recursive:true});
+ const owner=spawn(process.execPath,['--input-type=module','-e',"import {DatabaseSync} from 'node:sqlite'; const db=new DatabaseSync(process.argv[1]);db.exec('BEGIN EXCLUSIVE');console.log('locked');process.stdin.resume();",join(lockRoot,'writer.sqlite')],{stdio:['pipe','pipe','pipe']});
+ await once(owner.stdout,'data');
+ const app=await start(root),source=await app.workspaces.createChatConversation();
+ try{
+  expect((await app.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+  owner.kill('SIGKILL');await once(owner,'exit');
+  // The stale failed owner cannot acquire a new generation or overwrite a successor.
+  expect((await app.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+  await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  const fresh=await start(root);expect((await fresh.call({action:'select',id:source.id,selected:true})).status).toBe(200);
+ }finally{owner.kill('SIGKILL');}
 },30000);
