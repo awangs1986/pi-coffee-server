@@ -44,7 +44,8 @@ The authenticated release HTTP API requires a later approved backend deployment.
 
 The first actual Actions run reached all 879 tests and correctly failed (871
 passed, eight failed). Missing Python and a Chromium XInput library were added to
-the private CI bootstrap. Two workers removed cold native-subprocess contention.
+the private CI bootstrap. Serial CI execution removed cold native-subprocess contention. The watchdog
+fixture now uses its active Python executable rather than a system-only shebang.
 An isolated WSL run also reproduced the completion-test frame-order assumption:
 an unsolicited pre-prompt session list was buffered before the explicit list
 request. The reader now waits for the required conversation state, preserving

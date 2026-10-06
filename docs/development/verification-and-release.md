@@ -181,7 +181,7 @@ Windows/WSL shutdown necessarily takes this runner offline. Main is not protecte
 by a required-check branch rule unless the owner enables that separate setting.
 
 
-CI uses two test workers rather than the VM default of four: native fixtures own
+CI uses one test worker rather than the VM default of four: native fixtures own
 additional subprocesses, and the WSL first cold run exposed timeout contention.
 Do not weaken assertions or skip failing files to make CI pass. Session-list tests
 consume broadcasts until the required conversation state arrives; an older queued

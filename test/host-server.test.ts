@@ -220,6 +220,8 @@ class FrameQueue {
     });
   }
 
+  discardSessions():void { this.sessionFrames.length=0; }
+
   async nextSessions(predicate:(frame:Extract<ServerFrame,{type:"sessions"}>)=>boolean=()=>true): Promise<Extract<ServerFrame, { type: "sessions" }>> {
     // A prior unsolicited broadcast is not the fresh state the caller requested.
     for (;;) {
@@ -643,6 +645,7 @@ describe("Host WebSocket seam", () => {
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
       expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
       socket.send(encodeFrame({v:1,type:'open',sessionId:c.id}));await frames.next();await frames.next();
+      frames.discardSessions();
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
       expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled'});
       socket.close();await once(socket,'close');await server!.close();
