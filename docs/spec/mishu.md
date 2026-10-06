@@ -762,3 +762,39 @@ cross-engine messaging support must not be described as durable correlated
 `tasks/dispatch`; that latter capability still requires Pi's persisted correlation.
 See [candidate evidence](../development/mishu-native-tracking-75.md) for separate
 fixture, actual account, browser and source/package status.
+
+### Unattended scoped startup recovery — Server #76 candidate
+
+The real Host entry point discovers already-existing MISHU stores after both Host
+transport and the private runtime listener are ready. It uses the configured
+default project root and normalized direct user directories under `WORKDIR`,
+including their `projects/.coffee/mishu/state.json`. Browser reconnect, a status
+request, a user prompt and `mishuRuntime` priming are not prerequisites. Discovery
+only supplies candidates: the coordinator still validates the complete saved
+format, current source/target bindings, selection, setup and explicit reminder
+authority before passive reconciliation or a report admission. It does not start
+target CLIs for passive reads, replay target prompts, or grant authority from a
+folder name. Disabled, stopped or revoked responsibilities cannot wake a source.
+
+Discovery checks at most 4,096 direct directory entries and initializes at most
+256 saved scopes, loading one store at a time. Only canonical usernames and real
+(non-symlink) directory/file paths qualify. Oversized state files use the same
+512 MiB ceiling as coordinator loading; the same ceiling also bounds total
+candidate file bytes admitted during one startup scan. Capacity, unavailable stores and recovery
+failures produce static Host-local diagnostics without account names or private
+content; unchanged stores beyond the scan budget remain recoverable by explicit
+authenticated access. This limit is not a claim of unattended coverage for more
+than 256 existing scopes: an operator must resolve the capacity diagnostic before
+claiming all-account recovery. One rejected store does not suppress another
+scope's recovery. A default root overlapping a named-user layout is diagnosed
+and excluded from unattended recovery until the operator resolves the ambiguous
+account identity. Shutdown fences discovery before closing its last created slot.
+
+`scripts/probe-mishu-startup.mjs` runs actual `main.js` against isolated synthetic
+stores. Public menu/setup/reminder and native model-tool flows first persist two
+queued reports. After process restart it makes no HTTP/WS/runtime call until both
+source reports arrive, then checks native output references, no target replay,
+default/custom-root and user isolation, disabled/corrupt stores, invalid and
+symlink paths, oversized state and bounded discovery. Synthetic provider evidence
+is source-candidate acceptance; installed-artifact and production evidence remain
+separate.
