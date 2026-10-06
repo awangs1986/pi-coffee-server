@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Recent-conversation sidebar order: [current contract](spec/arena-navigation.md#recent-conversation-order-2026-10-06-server-80-supersedes-54), [evidence](reviews/sidebar-activity-20261006.md), [Server #80](https://github.com/awangs1986/pi-coffee-server/issues/80). Dates and order use last conversation activity; this supersedes creation-time ordering.
+
 - Durable completed-task coffee icon: [navigation contract](spec/arena-navigation.md#durable-completion-icon--2026-10-06-server-79), [evidence](reviews/completion-icon-20261006.md), [Server #79](https://github.com/awangs1986/pi-coffee-server/issues/79). Native settlement is separate from unread attention and business acceptance.
 
 - Immediate per-Conversation model display: [contract](spec/conversation-switching.md#last-confirmed-model-display-2026-10-06-server-68), [Server #68](https://github.com/awangs1986/pi-coffee-server/issues/68). Cached metadata is display-only; native settings remain authoritative.
