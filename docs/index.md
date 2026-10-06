@@ -145,3 +145,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [MISHU candidate task briefs](spec/mishu.md#candidate-task-briefs-69-not-a-production-activation): versioned scoped registration, correction and stop; explicit existing Pi observation is described below.
 
 - [MISHU candidate existing Pi observation](spec/mishu.md#candidate-existing-pi-run-observation-70-not-a-production-activation): durable exact-run reply responsibility, passive restart reconciliation and native task-browser inspection; automatic reports remain pending.
+
+- MISHU candidate durable dispatch: [current contract](spec/mishu.md#candidate-durable-dispatch-71-not-a-production-activation); Task Brief/Assignment admission and exact native result correlation. Production activation is separate.

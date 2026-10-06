@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 
 /** Durable coordination data, never native execution history or user acceptance. */
 export interface TaskBrief {
+ assignment?:import('./mishu-dispatch.js').Assignment;
  taskId:string;sourceBinding:string;targetId:string;binding:string;revision:number;
  purpose:string;scope:string;summary:string;nextStep:string;
  workState:'recorded'|'stopped';observation:'not-started'|'watching'|'reply-available'|'incomplete'|'uncertain'|'waiting'|'stopped';acceptance:'pending';

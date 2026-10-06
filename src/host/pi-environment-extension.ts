@@ -1,4 +1,4 @@
-import {randomUUID} from "node:crypto";
+import {createHash,randomUUID} from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HOST_ENVIRONMENT_INSTRUCTION as instruction } from "./session-instructions.js";
 
@@ -55,9 +55,16 @@ export function withHostEnvironment(payload: unknown, api?: string): unknown {
 }
 
 export default function hostEnvironment(pi: ExtensionAPI): void {
-  let runId:string|undefined;
-  pi.on("before_agent_start",(_event,ctx)=>{
-    runId=randomUUID();
+  let runId:string|undefined,nextDispatch:{id:string;hash:string}|undefined;
+  pi.registerCommand("coffee-dispatch-control",{description:"Host private dispatch correlation",handler:async(args,ctx)=>{
+    const [token,id,hash,...extra]=args.trim().split(/\s+/);
+    if(!process.env.PI_COFFEE_DISPATCH_CONTROL||token!==process.env.PI_COFFEE_DISPATCH_CONTROL)throw Error('Invalid Host dispatch control');
+    if(id==='clear'&&!hash&&!extra.length){nextDispatch=undefined;return;}
+    if(extra.length||!/^mishu-dispatch-[A-Za-z0-9-]+$/.test(id??"")||!/^([a-f0-9]{64})$/.test(hash??'')||!ctx.isIdle())throw Error("Invalid Host dispatch correlation");
+    nextDispatch={id,hash};
+  }});
+  pi.on("before_agent_start",(event,ctx)=>{
+    runId=nextDispatch?.hash===createHash('sha256').update(event.prompt).digest('hex')?nextDispatch.id:randomUUID();nextDispatch=undefined;
     try{pi.appendEntry('coffee-native-run',{version:1,runId,baselineId:ctx.sessionManager.getLeafId()});}catch{runId=undefined;}
   });
   pi.on("agent_settled",()=>{

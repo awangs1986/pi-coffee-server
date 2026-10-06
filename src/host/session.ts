@@ -104,6 +104,7 @@ export class HostSession {
       deliver:async(text,images,promote,queuedRequestId)=>{
         const generation=this.deliveryGeneration;
         if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+        if(promote&&queuedRequestId?.startsWith("mishu-dispatch-"))throw Error("Tracked assignments must remain serial; inspect their task record instead of promoting them");
         if(promote&&this.state.isStreaming){
           try {
             if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
@@ -256,7 +257,7 @@ export class HostSession {
     const generation=this.deliveryGeneration;
     try {
       await this.onCommand?.(this.id,requestId,"delivering");this.assertDelivery(generation);this.runCommands.add(requestId);
-      await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images),generation);
+      await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images,requestId.startsWith("mishu-dispatch-")?{runId:requestId}:undefined),generation);
     } catch (error) {
       if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
       const cancelled=error instanceof DeliveryCancelledError;
@@ -298,7 +299,9 @@ export class HostSession {
   get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
     if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
-    const command=action.action==='cancel'?this.inputs.items.find(item=>item.id===action.id)?.requestId:undefined;
+    const queued=this.inputs.items.find(item=>item.id===action.id);
+    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited or promoted; stop the task and inspect its original dispatch');
+    const command=action.action==='cancel'?queued?.requestId:undefined;
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
   async abort(): Promise<void> {
@@ -602,6 +605,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
+  async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
   async readRunEvidence(id:string,runId?:string){return await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
   constructor(private options: { runStatuses?:()=>Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
