@@ -503,3 +503,41 @@ late native reply and ordinary secretary chat while the target waits; its model
 is deterministic and its workspace synthetic. Immutable installed-candidate and
 production evidence remain separate release requirements. A29 and the observation
 part of A34 are covered for Pi; preserve all other unmet A29–A35 requirements.
+
+## Candidate durable dispatch (#71, not a production activation)
+
+`tasks/dispatch` version 1 accepts a saved Task Brief, its admission-phase
+`expectedRevision`, bounded `text`, `authorizationRef` and a transport `messageId`.
+The Host derives the source native user-run identity; callers cannot provide it.
+A new dispatch requires a live foreground Pi user run and enabled instruction
+capability. The direct task instruction remains authorization; no additional
+confirmation phrase is required. Interpreting whether a natural-language request
+is an instruction remains the plugin/model responsibility, not a claimed complete
+M10 proof of user intent. Queries, discussion and target results grant no new work.
+
+Host persists the Assignment and exact-run Reply Obligation before target admission.
+The business key is source binding/native user run + Task Brief + accepted phase;
+changing messageId returns the same Assignment even after the current brief's
+revision advances. Conflicting content/scope is rejected. Distinct explicit work
+uses distinct briefs. Later legitimate repeated work needs a new user input,
+current brief revision, `retryOf`, and proof that the original native result ended
+(or was cancelled before execution). An uncertain original is never replayed.
+
+The existing serial input queue remains a delivery adapter. Assigned queue rows
+cannot be edited or promoted into unrelated running work; cancellation is allowed.
+Stop, contact removal, disable and binding changes fence undelivered assignments.
+Native acceptance/transport ACK loss becomes uncertain; neither a model retry nor
+Host restart replays delivery. The Pi adapter privately seeds the exact hidden run
+marker before prompt delivery. Matching persisted native evidence resolves the
+obligation; new dispatch rejects engines without an explicit verified correlation capability;
+legacy sends and existing observations retain their documented boundaries. Delivered/settled is not user acceptance or proof of business
+success. `/mishu-tasks` shows accepted, queued, executing/waiting, cancelled or
+uncertain dispatch and the existing observed native facts.
+
+The legacy `send` message bridge and manual `inbox` remain compatible, including
+information-only notifications. Legacy messageId deduplication is **not** A33
+business intent deduplication. The candidate plugin directs durable task work to
+`tasks/dispatch`; it does not claim legacy sends gained a persistent task mandate.
+Evidence: public HTTP/WS disk failure, changed-ID, lost-native-ACK, restart and
+queued-stop tests; native Pi Browser probe `probe-mishu-dispatch` using synthetic
+content. Source candidates and immutable installation/production remain distinct.
