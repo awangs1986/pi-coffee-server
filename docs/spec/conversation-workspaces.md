@@ -2,7 +2,7 @@
 
 # 任务、Conversation 与 VM 本地工作目录
 
-> Native-engine extension (2026-09-23): the shared Workspace, file ownership and Gitea contracts remain in force. Codex/Claude Code Session bindings and writer-state adapters are planned in the [native-engine SPEC](./native-agent-engines.md); Pi-specific startup, mode, history and cleanup descriptions below are the current implementation, not automatic rules for the new engines.
+> Current native-engine boundary (reviewed 2026-10-06): shared Workspace and file ownership apply to all five Work engines. Native bindings and lifecycle behavior are implemented behind Host Adapters; verified limits are in [native engines](native-agent-engines.md), [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md). The directory tree below describes the retained pre-bundle layout; [task storage](task-storage.md) governs configured new-task bundles.
 
 状态：owner 已确认（2026-09-22）；Agent/Server 已实现本合同，验收记录见 [联合证据](../reviews/conversation-workspaces-20260922.md)与 Agent #46 / Server #3。此规格定义行为，具体检查与部署结果以工单证据为准。
 
@@ -12,11 +12,11 @@
 
 - **一个任务 = 一个 Conversation = 一个所属 VM 中的本地 Workspace 根目录**。Task 是面向用户的名称，Conversation 是 Host 中的对应对象；不再增加 Task 聚合多个 Conversation 的层级。同一 VM 可以有多个任务，每个任务使用不同目录和稳定 Conversation ID。
 - Pi 进程重启、重连或恢复不会产生新任务。内部 subagent 是任务内执行单元，不在任务列表中另造 Conversation/Workspace；其输出归属父任务。Pi 原生历史仍可保存在 VM 的 Session store，通过 ID 关联任务，不要求为了目录统一而搬移原生历史。
-- **运行模式**只有 `chat` / `work`，决定系统提示词和工具集合。
+- **产品模式**只有 `chat` / `work`；Pi Harness 模式决定 Pi 的提示词和工具集合，不把它转换为其他原生引擎的模式。
 - **Workspace 类型**只有 `chat` / `project`，决定 cwd 的来源和生命周期。它在 Conversation 创建时确定，不随运行模式切换而改变。
 - **Chat Workspace** 是无 Repository 的普通目录；**Project Workspace** 是 [GW-06](./gitea-workspaces.md) 定义的独立 Gitea Checkout。
 
-默认创建 Chat Conversation 时分配 Chat Workspace；新建 Work 任务时选择 Gitea Project 和远端起始分支（默认展示仓库默认分支），确认后由 Host 自动 clone 并分配 Project Workspace。运行模式切换只改变模型行为：Chat Workspace 切到 Work 后仍在原 Chat cwd 中工作，不获得 Git 同步语义；Project Workspace 切到 Chat 后仍保留原 Checkout。需要开发 Gitea 项目时必须显式新建/接续 Project Workspace，不能把 Chat 目录静默变成 Checkout，也不能覆盖其中的文件。
+默认创建 Pi Chat 时分配 Chat Workspace；新建 Work 时选择 Gitea/GitHub Project 和远端起始分支，确认后由 Host 自动 clone 并分配 Project Workspace。Web 不允许把 Chat 升级为 Work，也不通过模型或 Agent 选择改变 Workspace 类型。需要开发项目时显式新建/接续 Work；已确认的 Pi/Codex takeover 只改变原生绑定，保留原 cwd。普通 Chat 的零系统提示词边界见 [session-environment](session-environment.md#chat-zero-system-boundary--2026-10-05)。
 
 ## 2. 目录合同
 
@@ -93,7 +93,7 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 | 模型/搜索外发 | 每轮只发送明确引用的附件和完成任务所需内容；不自动枚举其他 Conversation；搜索工具不隐式附带本地文件 | 用户要求分析文件或 Agent 为完成任务显式读取后，相关内容可能进入模型上下文；UI 必须让附件选择可见 |
 | 旧全局目录 | 迁移只按已验证 Session/Conversation ID 关联；复制/校验/切换成功后才改变元数据；无法证明归属的文件留在只读 legacy/quarantine 区 | 不能根据文件名、时间或内容猜测归属，也不能把全局 research/subagent 目录批量塞给最近一个 Chat |
 
-该模型防止产品和服务的意外跨 Conversation 泄露，不改变“每个用户一台可信 VM、VM owner 拥有最高权限”的既定安全边界。
+该模型防止产品和服务意外跨 Conversation 访问；当前按 [ADR-0020](../adr/0020-unified-github-authority.md) 使用一个物理 owner 和系统登录，通过 Web 身份与目录分区，不宣称 OS 隔离。独立 Host 路由仍可配置；旧双 VM 演练记录保留为历史证据。
 
 ## 5. 生命周期
 
@@ -132,7 +132,7 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 
 Agent #60 / Server #4 supersedes engine-independent Chat creation. New Chat
 Tasks default to Pi and reject Codex/Claude at the Host HTTP creation boundary
-before persisting a workspace. Work supports all three engines with a Gitea
+before persisting a workspace. Work supports the five Host-advertised engines with a Gitea/GitHub
 Project and independent Checkout. Engine bindings remain fixed except for explicit [Work Pi/Codex takeover](agent-takeover.md); it preserves the same workspace. Native local
 tasks created before this correction remain accessible; their identity, files
 and history are not migrated or relabeled by this change.

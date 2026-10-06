@@ -22,9 +22,9 @@ can pass through this gateway unchanged. For separate running services, deployme
 3. deploy Server;
 4. remove old Host behavior only after every deployed Server has moved forward.
 
-## Planned workspace transition
+## Independent checkout workflow
 
-[ADR-0012](./adr/0012-owner-privileges-and-gitea-checkouts.md) keeps Checkout/Git/Gitea code API operations in Host. Server displays Host-provided synchronization and PR state; OAuth credentials are not VM Git credentials. The current UI forwards the additive status/checkpoint/PR/migration actions and no longer exposes old local merge actions. Deployment compatibility and migration evidence remain T4 acceptance work.
+[ADR-0012](./adr/0012-owner-privileges-and-gitea-checkouts.md) keeps Checkout/Git/Gitea code API operations in Host. Web displays Host-provided synchronization and PR state; platform login is distinct from Git credentials. Status/checkpoint/PR actions use independent clones rather than platform worktrees. T0–T4 completion is recorded in [the implementation evidence](reviews/t0-t4-implementation-20260921.md); it is historical deployment evidence, not a reason to repeat VM migration. Current configured layout follows [task storage](spec/task-storage.md).
 
 
 ## Conversation directories (2026-09-22)
@@ -49,7 +49,7 @@ The [Browser Shell companion](./spec/native-agent-browser.md) preserves the exis
 
 The Host owns the additive `nativeProtocol: 1` contract on the existing `v: 1`
 envelope. The Browser sends this flag in `open`; legacy Hosts remain Pi-compatible.
-Task creation passes `engine` (`pi`, `codex`, `claude`) and preserves it on retries.
+Task creation passes `engine` (`pi`, `codex`, `claude`, `cursor`, `grok`) and preserves it on retries.
 Only the Host binds native IDs. `opened.engine` and `opened.capabilities` determine
 which controls appear. A missing native capability means unavailable.
 
@@ -71,5 +71,6 @@ for field definitions, recovery and the version-pinned capability matrix.
 `POST /api/skills` uses the fixed authenticated Host route and origin checks.
 See [Browser contract](spec/skill-management.md) and the linked canonical Host
 contract for scoped `list`, `detail`, `install`, `update`, `enable`, `disable`
-and idle `reload` actions. Gateway stores no Skill files, repository credentials
+and idle `reload` actions. Machine-level mutations are restricted to the configured
+VM owner; project scope belongs to one owned Work checkout. Gateway stores no Skill files, repository credentials
 or enabled-state registry. A legacy Host's 404 is shown as unavailable.

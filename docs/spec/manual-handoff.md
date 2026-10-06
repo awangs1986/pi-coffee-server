@@ -30,14 +30,22 @@ native compaction under the Handoff label.
 
 ## Package and integration contract
 
+Current source and consumed versions come from [REPOSITORIES.md](../../REPOSITORIES.md)
+and Server `package.json`/`package-lock.json`. At the reviewed Server baseline
+`5073c97`, Host consumes independent Harness 0.3.2, LSP 0.4.6 and
+context-handoff 0.2.0-experimental.5 artifacts via public package interfaces.
+The following initial version records remain historical integration evidence;
+they are not instructions to restore the old aggregate or downgrade plugins.
+
 - Handoff **0.2.0-experimental.1**, commit `ce7a6d07b215473da3b2703d9c2a6b83dbb5e162`.
   `/handoff version` reads the installed manifest; committed Handoff details record
   `pluginVersion` and `trigger`. Immutable tag `v0.2.0-experimental.1`.
 - Harness **0.1.2**, commit `d068251dc1b4de59c4178eb04e0d4a0fcc117187`, keeps installed
   recovery tools available in both Chat and Work. Neither Harness nor LSP implements Handoff.
-- Server composes these pinned packages with the existing Pi aggregate. Only its
-  legacy context-fold hook and Harness entry are replaced; read-only context usage,
-  official web access, subagents and LSP integration remain.
+- Server loads independent package roots through `src/host/pi-extensions.ts`.
+  Native Pi owns extension discovery; the historical aggregate/context-fold hook
+  is no longer the current runtime composition. Official web/subagent packages
+  remain upstream dependencies. Acceptance includes `test/pi-package-integration.test.ts`.
 - `PI_COFFEE_EXTENSIONS=off` and explicit extension lists remain authoritative.
   `PI_COFFEE_HANDOFF=off` omits Handoff. Legacy `PI_COFFEE_CONTEXT_FOLD=off` also
   omits the replaced default hook. Missing Handoff fails visibly; no fallback.

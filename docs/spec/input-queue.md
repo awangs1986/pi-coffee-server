@@ -2,10 +2,12 @@
 
 Delivery: [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
 
-While Pi or Codex is running, Web follow-up instructions remain in a Host-owned
+While a supported Agent is running, Web follow-up instructions remain in a Host-owned
 queue until their turn. Every row has a stable random ID, revision, text and
 private image payload. Native adapters still own prompts, tools, transcripts and
-steering. Claude currently does not advertise follow-up/steering support.
+steering. Pi and Codex support native steering. Claude, Cursor and Grok support
+Host follow-ups without immediate native steering; the latter contracts are
+[Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md).
 
 - **Cancel** removes only the selected pending instruction. It does not abort the
   active run, change other entries or delete already-uploaded task attachments.
@@ -17,6 +19,10 @@ steering. Claude currently does not advertise follow-up/steering support.
   running, or a normal prompt if the turn has just ended. It never aborts the
   current task. Pi consumes steering at its next native opportunity; Codex uses
   native turn/steer. This does not promise instantaneous interruption of a tool.
+
+For an engine without native steering, pending rows still permit edit/cancel but
+do not advertise Insert now. Unsupported actions fail rather than silently being
+converted into a different delivery mode.
 
 Rows become immutable once sending starts. Concurrent tabs and double clicks
 cannot send the same queued row twice. A failed or uncertain delivery is retained

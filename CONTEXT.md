@@ -1,135 +1,124 @@
-> Source authority and repository placement: superseded where conflicting by [ADR-0020](docs/adr/0020-unified-github-authority.md). GitHub pi-coffee-server owns Web and Host.
+# PI Coffee domain model
 
-# PI Coffee
+Reviewed against Server main `5073c97`, 2026-10-06. The owner confirmed the
+[project refocus](docs/reviews/spec-freshness-20261006.md). Start with
+[REPOSITORIES.md](REPOSITORIES.md) for source ownership; use the linked feature
+contracts for defaults, limits and acceptance. Picode/V5 is historical.
 
-PI Coffee is the small, independent web product line for talking to the original Pi coding agent. It is the experimental MVP track; the existing Picode V5 repository remains a frozen reference and is not a source of work for this track.
+## Participants and ownership
 
-## Participants
+**Browser User**: an authenticated PI Coffee Web identity. Gitea supplies platform
+identity; GitHub repository authorizations and native model login are separate.
+Web identities partition application records and directories, not Linux privileges.
 
-**Browser User**:
-The internal person who writes prompts and reads Pi replies in a browser.
-_Avoid_: operator, tenant
+**Browser Shell**: the interface for selecting conversations, editing drafts,
+reading history and issuing supported controls. It owns disposable, bounded
+display caches. A cached view does not prove current native history or prompt
+delivery. See [conversation switching](docs/spec/conversation-switching.md).
 
-**Pi Agent**:
-The unmodified upstream coding agent that reasons, calls tools, and writes its native session transcript.
-_Avoid_: V5 agent, Coffee agent
+**Web Server**: the browser-facing process that authenticates, selects an
+administrator-configured Host route and forwards scoped HTTP/WebSocket requests.
+It serves assets but does not own native execution or durable transcript bodies.
 
-**Host**:
-The long-lived process in the User VM that owns Pi Agent sessions and continues them when a browser disconnects.
-_Avoid_: worker, sandbox, VM manager
+**Host**: the long-lived Linux process that owns scoped Conversation registries,
+native Agent execution, task files, input queues and the derived display index.
+Browser detachment does not stop a run. Host shutdown can interrupt execution;
+uncertain commands are not automatically replayed.
 
-**Web Server**:
-The browser-facing process that serves the PI Coffee page and relays conversation frames to a Host.
-_Avoid_: Pi UI process, Pi runtime
+**User VM**: the owner-managed Linux execution machine. The current deployment
+has one physical owner and one OS login, with separate Web identities and task
+directories. This is the operating interpretation in [ADR-0020](docs/adr/0020-unified-github-authority.md),
+not an OS sandbox between Agents. Independent Host routing remains supported;
+the older dedicated-VM deployments are historical evidence.
 
-**Control Plane**:
-The coordination role around the Web Server that authenticates users, selects a fixed User VM, relays model traffic, and records only bounded routing/usage metadata.
-_Avoid_: execution host, transcript server
+**Agent Engine**: Pi, Codex CLI, Claude Code, Cursor or Grok Build, selected from
+Host-confirmed availability. Native tools, provider login, session storage and
+automatic context management remain engine-owned. Adapter availability does not
+prove real-account acceptance or equal capabilities across engines. See the
+[native contract](docs/spec/native-agent-engines.md),
+[Cursor/Claude limits](docs/spec/cursor-claude.md) and [Grok limits](docs/spec/grok-build.md).
 
-**User VM**:
-The owner-managed virtual machine in which the Host, every internal user's Pi sessions, context, and files live. Since ADR-0010 there is one shared User VM logged in to the one enterprise model account; each Browser User has their own folders inside it. Since ADR-0011 the Host can drive either Pi or Codex CLI (`codex app-server`) behind the same session seam; `PI_COFFEE_AGENT` picks one.
-_Avoid_: sandbox, VM worker, per-user VM
+**Agent Adapter**: the Host implementation of the common Agent interface using
+the selected CLI's supported native transport. Pi uses RPC, Codex uses app-server,
+Claude uses stream-json, and Cursor/Grok use ACP over local stdio. Pi Harness,
+LSP and Handoff policy remain Pi-only.
 
-**Browser Shell**:
-The single browser tab that presents one user's collection of Tasks and Sessions.
-_Avoid_: browser session, web worker
+## Task, execution and history
 
-**Task**:
-A user-level unit of work that may contain one or more Pi Sessions and a worktree/inbox in the User VM.
-_Avoid_: HTTP request, prompt
+**Task / Conversation**: one user-facing unit with one stable Conversation ID
+and one registered local Workspace. Model changes and reconnects preserve that
+identity. [Work takeover](docs/spec/agent-takeover.md) may replace the active native
+binding while retaining prior history segments. A [Fork](docs/spec/conversation-fork.md)
+creates a different Conversation and independent directory.
 
-**Native Transcript**:
-The session history written and read by the original Pi Agent in the User VM.
-_Avoid_: Control Plane log, browser cache
+**Chat**: the default new Conversation, Pi-only, without a repository. Ordinary
+Chat has zero system instructions and no automatic project, Host or runner
+guidance, including after context reset. Explicit user requests and explicitly
+selected MISHU context are separate. See [the zero-system boundary](docs/spec/session-environment.md#chat-zero-system-boundary--2026-10-05).
 
-**Model Context**:
-The messages and agent state that Pi uses to continue a Session.
-_Avoid_: Browser projection, usage record
+**Work**: a project Conversation with an independent Git clone. Engine selection
+is stable except for the confirmed Pi/Codex takeover operation. Chat cannot
+upgrade to Work. Model selection within an engine does not switch engines.
 
-**Session**:
-One Pi conversation owned by a Host. A Session remains alive independently of any Browser User connection until it is explicitly stopped or the Host shuts down.
-_Avoid_: tab, request
+**Workspace / Checkout**: the registered execution cwd. A configured task bundle
+keeps the checkout, attachments, artifacts and display export in separate
+subdirectories. Host preserves existing registered paths. Platform code uses
+ordinary independent clones rather than Git worktrees. See [task storage](docs/spec/task-storage.md).
 
-**Subagent**:
-A focused child Pi Session launched by the optional `pi-subagents` extension for a bounded delegated task. Its transcript and artifacts remain in the owning User VM.
-_Avoid_: worker, remote agent
+**Native Session / Binding**: an engine-owned session identity associated with a
+Conversation. It need not equal the Conversation ID. Native history is the source
+for context recovery; Coffee display/export JSON is not a native restore file.
 
-**Subagent Extension**:
-The locked upstream `pi-subagents` Module plus PI Coffee's small resource Adapter. It is loaded by the Host but its `subagent` and `bg_wait` tools are opt-in through Harness `search_tools`.
-_Avoid_: V5 orchestration, Control Plane worker
+**Run**: one admitted unit of native execution. Receipt, foreground completion,
+background writer state and business acceptance are distinct observations.
 
-## Conversation stream
+**Display Index**: the Host's rebuildable SQLite projection for bounded history
+reads and change notifications. Its revision and native-source freshness are
+different facts. Unknown freshness cannot replace good history with an empty view.
 
-**Frame**:
-One versioned JSON message exchanged between the Browser User, Web Server, and Host.
-_Avoid_: packet, event (when referring to commands)
+**Model Context**: the current input actually used by the engine. Context capacity,
+usage estimates and cumulative billing counters are distinct. Supported native
+measurements determine what Web can display; missing categories remain unavailable.
+See [context usage](docs/spec/context-usage.md).
 
-**Event**:
-A Pi-originated observation, such as a text delta or settled marker, carried in a server Frame.
-_Avoid_: response (a response may also be an acknowledgement or error)
+## Extensions and remote assistance
 
-**Cursor**:
-The monotonically increasing position assigned to an Event within a Session.
-_Avoid_: message id, offset (for the session position)
+**Skill**: a native SKILL.md package managed through Web and installed/executed
+on Host. Project scope means one Work checkout; machine scope is shared native
+configuration restricted to the configured VM owner. Installing does not prove
+loading or invocation. See [Skill management](docs/spec/skill-management.md).
 
-**Replay**:
-Sending buffered Events after a Browser User reconnects with a prior Cursor.
-_Avoid_: retry, duplicate delivery
+**Pi Plugin**: an independently versioned package consumed from an immutable
+artifact. Harness, LSP and Handoff have canonical directories in `pi-coffee`;
+official web/subagent packages remain upstream. Native upstream activation and
+readiness rules determine optional-tool availability.
 
-**Bridge**:
-The Web Server module that validates browser Frames and forwards them to a Host connection without owning Pi state.
-_Avoid_: proxy (when discussing session ownership)
+**MISHU**: an explicitly selected Pi Chat secretary with exact, authorized
+Conversation contacts. Its independent plugin and Host coordinator currently
+provide scoped message/receipt handling. Persistent event-driven tracking and
+automatic delayed-result reporting remain [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64),
+not completed by the 0.1.6 authorization repair. See [MISHU](docs/spec/mishu.md).
 
-**LLM Relay**:
-The transparent Control Plane route from a Host model request to the configured CPA endpoint, including JSON and SSE streams.
-_Avoid_: model server, second agent
+**Test Runner**: the account-configured Windows SSH computer and its WSL, known
+to Work through one pointer to external configuration. **SSHME** is instead
+explicit, Conversation-scoped assistance on the Web user's Windows/Linux/macOS
+computer. Neither feature activates the other. See [runners](docs/spec/test-runners.md)
+and [SSHME](docs/spec/sshme.md).
 
-**CPA Endpoint**:
-The existing OpenAI-compatible upstream relay used for Chat Completions, Responses, model listing, and response compaction.
-_Avoid_: provider implementation
+## Transport and operations
 
-**Routing Index**:
-The minimal Control Plane record that maps an authenticated user to a fixed User VM and opaque transport identifiers. With one shared User VM this is the `PI_COFFEE_ALLOWED_USERS` list plus the login name forwarded to the Host.
-_Avoid_: user database, transcript index
+**Frame / Event / Cursor**: the versioned transport message, native observation,
+and bounded replay position defined by [the protocol](docs/protocol.md). A cursor
+is not the durable display revision or a delivery acknowledgement.
 
-**Usage Metadata**:
-Bounded accounting information such as token counts, timing, and status that does not contain prompt or tool-output正文.
-_Avoid_: conversation log
+**Bridge**: a scoped Web-to-Host transport connection. Closing it detaches a
+viewer rather than cancelling the native task. **File Grant**: authorization for
+specific task files; a displayed absolute path is not download authority.
 
-**Task Inbox**:
-The User VM location where files uploaded for a Task are retained.
-_Avoid_: Control Plane upload store, temporary web directory
+**Relay**: optional forwarding for explicitly configured model API/search traffic.
+Native engine login is not migrated into it.
 
-**Image Message**:
-An original image retained in the User VM and presented to Pi either as model-supported image content or as a User VM reference.
-_Avoid_: thumbnail, screenshot cache
-
-**Deployment Skill**:
-The idempotent installation and enrollment procedure for the Agent Host on a User VM.
-_Avoid_: VM manager, installer daemon
-
-**Enrollment Token**:
-A one-time value used to register an Agent Host before it receives a revocable Host identity.
-_Avoid_: LLM key, user password
-
-**Host Identity**:
-The revocable transport identity by which the Control Plane addresses one Agent Host.
-_Avoid_: VM owner, API key
-
-## Release vocabulary
-
-**MVP**:
-The first PI Coffee release: original Pi Agent, Host, Web Server, text prompts, streamed text, and reconnect continuity.
-_Avoid_: V5 slice, production release
-
-**Frozen V5 baseline**:
-The existing latest Gitea version of Picode, kept unchanged while PI Coffee proves its MVP.
-_Avoid_: legacy V5, source branch
-
-**Execution Seam**:
-The User VM isolation point at which Pi may use the owner's normal shell and file rights.
-_Avoid_: in-process sandbox, permission gate
-
-**Worktree**:
-A repository directory assigned to a Task for organizing changes; it is not a security control.
-_Avoid_: sandbox, permission scope
+**Watchdog**: the bounded per-machine service health monitor. It recovers actual
+service failures with cooldown and a persistent circuit breaker, independently
+of MISHU's planned task tracking. A browser disconnect alone is not proof of a
+Host/Web crash. See [watchdog](docs/deployment/watchdog.md).
