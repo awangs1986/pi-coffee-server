@@ -13,7 +13,7 @@ export interface TaskBrief {
 
  createdAt:string;updatedAt:string;
 }
-export interface TaskJournal {tasks:TaskBrief[];operations:{id:string;fingerprint:string;task:TaskBrief}[]}
+export interface TaskJournal {tasks:TaskBrief[];operations:{id:string;fingerprint:string;task?:TaskBrief;stoppedTaskId?:string}[]}
 export const TASK_LIMITS={tasks:200,operations:2000,reservedStops:200,page:50,purpose:500,scope:2000,summary:4000,nextStep:1000} as const;
 const id=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const fields=['purpose','scope','summary','nextStep'] as const;
@@ -39,7 +39,7 @@ export async function taskOperation(journal:TaskJournal,sourceBinding:string,inp
  const targetId=operation==='register'?input.targetId:task!.targetId,expected=operation==='register'?input.binding:task!.binding;
  if(!id(targetId)||typeof expected!=='string'||!expected)throw Error('Exact configured target and binding required');
  await authorize(targetId,expected);
- if(prior){if(prior.fingerprint!==fingerprint)throw Error('operationId already belongs to different content');return {version:1,task:prior.task};}
+ if(prior){if(prior.fingerprint!==fingerprint)throw Error('operationId already belongs to different content');return {version:1,task:prior.task??current.find(t=>t.taskId===prior.stoppedTaskId)};}
  if(journal.operations.length>=TASK_LIMITS.operations&&operation!=='stop')throw Error('Task operation capacity reached');
  for(const key of fields)if(input[key]!==undefined&&(typeof input[key]!=='string'||!(input[key] as string).trim()||(input[key] as string).length>TASK_LIMITS[key]))throw Error(`Invalid ${key}; maximum ${TASK_LIMITS[key]} characters`);
  let result:TaskBrief;
@@ -56,6 +56,6 @@ export async function taskOperation(journal:TaskJournal,sourceBinding:string,inp
   if(operation==='observe'){if(!id(input.runId)||!observe)throw Error('Exact native runId and observation capability required');await observe(result,input.runId);}else if(operation==='stop'){result.workState='stopped';if(result.obligation){result.observation='stopped';result.notification=undefined;result.obligation={...result.obligation,state:'cancelled',generation:result.obligation.generation+1};}}else for(const key of fields)if(input[key]!==undefined)result[key]=String(input[key]);
   journal.tasks[journal.tasks.indexOf(task!)]=result;
  }
- journal.operations.push({id:input.operationId,fingerprint,task:{...result}});
+ journal.operations.push(operation==='stop'?{id:input.operationId,fingerprint,stoppedTaskId:result.taskId}:{id:input.operationId,fingerprint,task:{...result}});
  return {version:1,task:result};
 }

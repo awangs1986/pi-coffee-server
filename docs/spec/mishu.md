@@ -762,3 +762,49 @@ cross-engine messaging support must not be described as durable correlated
 `tasks/dispatch`; that latter capability still requires Pi's persisted correlation.
 See [candidate evidence](../development/mishu-native-tracking-75.md) for separate
 fixture, actual account, browser and source/package status.
+
+### Upgrade and explicit historical-note recovery (#76 candidate)
+
+The tracking candidate writes coordination envelope `version: 2`. On a validated
+version1 read it preserves the exact old bytes as private
+`state.v1.<sha256>.json` before the first version2 replacement. Current grants,
+Task Briefs, Assignments, Outbox states, budgets and native report references stay
+in the scoped Host store; no execution is replayed by migration. In-flight
+admission without proof remains uncertain. Version1-only binaries reject the
+version2 envelope; rollback keeps the new file in place and disables MISHU until
+a compatible Host is restored. **Never restore an old backup as live authority.**
+The ordinary release procedure must stop the old Host before a schema upgrade;
+pre-tracking binaries do not participate in the newer lifetime writer lock.
+
+Nested records and resource-specific bounds are checked before accepting a store.
+Corrupt, future-schema, unsafe-file and capacity failures retain original bytes,
+write only a private, static `diagnostic.json`, and reject MISHU operations.
+Ordinary Pi Chat can still start without the optional plugin; it retains zero
+system context. Diagnostics contain no source text, parser snippets or credentials.
+A rejected mutation restores the last successfully committed in-memory checkpoint,
+including grant changes; a committed cancellation is not undone by its subsequent
+rejection response.
+
+The previous resource limits are not a state-file limit: operation receipts may
+copy large task snapshots. Ordinary saves stop at480 MiB;32 MiB is reserved for
+revocation, and loading stops at512 MiB before reading the file. A larger valid
+store is diagnosed and retained, never truncated, silently migrated or purged.
+Terminal stop receipts reference the retained, immutable stopped task instead of
+copying its report snapshots, so stopping at ordinary receipt capacity remains
+possible. These are serialized UTF-8 byte bounds, separate from field-character
+and pending-event limits. This protocol tests process-crash recovery and atomic
+file replacement; it does not claim power-loss durability for an unsynced directory.
+
+Direct `/mishu-history` opens a bounded human chooser in the current selected
+Pi Chat even when a source reset has invalidated setup. Only this secretary's
+prior source-bound brief text can be inspected; explicit confirmation copies
+purpose, scope, summary, next step, source/time provenance into a new current-source
+**note**, capped at200 retained notes. Cancel does not save. Repeated restoration
+of the same historical revision is idempotent. Notes do not contain target IDs,
+active bindings, Assignment, obligation, notification, report admission or grants.
+They can be viewed again through the command; they are not automatically injected
+into model context or treated as current progress. Fresh setup and a new explicit
+instruction are required for new follow-up. Another secretary/account cannot
+restore these references; Fork creates a separate secretary with no inherited
+authority. Source-reset status masks old contacts, instruction permission and
+reminder consent. The broader M05 transparent-memory roadmap remains open.
