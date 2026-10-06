@@ -9,15 +9,15 @@ No production service or user task was changed.
 
 | Identity | Value |
 | --- | --- |
-| Version | `0.2.0-tracking.1` |
-| Plugin commit | `22b6d6640b77d030797ad717cd76a77cdc342504` |
-| Release | [v0.2.0-tracking.1](http://gitea/awangs/pi-coffee-mishu/releases/tag/v0.2.0-tracking.1) |
-| Artifact SHA256 | `08ee19d53faa80f4758d615fbf3d1d57d47d84e0a64d52758d2ab08ab49082bd` |
+| Version | `0.2.0-tracking.2` |
+| Plugin commit | `6e6d267687fc5a3615c4933a5b6af55f1c3b4f42` |
+| Release | [v0.2.0-tracking.2](http://gitea/awangs/pi-coffee-mishu/releases/tag/v0.2.0-tracking.2) |
+| Artifact SHA256 | `f3b497be9e9c7ab678b6bb6927345ad7a6cb0170608bf446295d35b829f3bb42` |
 | Consumption | Exact release URL and SHA512 integrity in Server package/lockfile |
 
 The release tag resolves to the stated commit. A fresh download through the
 canonical release URL matched the local pack SHA256. All 44 archive files matched
-that Git commit byte for byte. The versioned plugin check passed 144 tests.
+that Git commit byte for byte. The versioned plugin check passed 149 tests.
 Installing the candidate changed only the MISHU dependency; no other runtime
 package version changed and no new install hook was introduced.
 
@@ -90,20 +90,45 @@ After repair, five cases cover final-only, commentary then final, failed,
 interrupted and process-loss outcomes, including a visible final-message/terminal
 gap. This is local regression proof; installed actual Browser rerun is still required.
 
-## Final candidate gates
+## Existing-task input repair
 
-| Gate | Verdict |
+A subsequent real installed Codex walk failed before observing the target: the
+source supplied correct task/run/revision/operation identity plus matching redundant
+target routing. The strict Host rejected that noncanonical body, and the source
+truthfully reported that tracking had not begun. This failed walk did not exercise
+the final-answer repair and is not counted as passing acceptance.
+
+Tracking.2 normalizes get/observe/update/stop/dispatch inputs only after a fresh
+scoped saved-task lookup and unique current configured-contact proof. Only matching
+redundant routing fields are removed. Unknown, empty, stale or conflicting fields
+reject; operation/run IDs and revisions are never generated or rewritten. Host
+schema and authorization remain unchanged, and report-origin rejection precedes
+lookup. Plugin and actual native Pi/public Host regression tests failed before the
+repair and passed afterward. Focused Spec and Security reviews found no new issue.
+
+## Verification provenance
+
+Source and package evidence is distinct from final operational acceptance:
+
+| Evidence | Result and scope |
 | --- | --- |
-| Source complete check | PASS: 107 files / 936 tests after final-answer ordering repair |
-| Versioned independent plugin check | PASS: 144 tests |
-| Artifact identity and source bytes | PASS |
-| Patched dependency clean install, all/runtime audit | PASS: zero known advisories at the final patch check |
-| Installed SDK compatibility and integration/build | PASS: actual consumer resolution, 24 tests, build/vendor generation |
-| Installed-artifact complete Server check | PASS: private clean install, 107 files / 936 tests; immutable plugin, no source override |
-| Fresh GitHub clone check | Pending |
-| Installed actual Pi→Pi Browser flow | Pending |
-| Installed actual Pi→Codex Browser flow | Pending |
-| Production activation | Not performed; outside this implementation PR |
+| Earlier installed Server check | 107 files / 936 tests at `e382965`, tracking.1; historical |
+| Versioned tracking.2 plugin check | 149 checks passed |
+| Tracking.2 artifact/source identity | 44 archive files match the tagged commit |
+| Observe normalization regressions | 149 plugin checks and 88 scoped Server tests passed |
+| Earlier actual Pi→Pi Browser walk | Passed with tracking.1; historical, not tracking.2 acceptance |
+| Earlier actual Pi→Codex Browser walks | Failed; repairs and exact failure boundaries recorded above |
+| Final source/installed/fresh-clone and actual Browser gates | Exact candidate receipts and outcomes recorded in PR #78 and Issue #64/#76 |
+| Production activation | Outside this implementation PR |
+
+Latest main `17e85f6` is merged with normal ancestry, retaining #81 publication
+checks, release identity and dependency updates. Final publication follows the
+[review-bound verification workflow](../development/verification-and-release.md):
+commit reviewed source, record review, run the canonical release check, publish the
+exact feature SHA, independently verify its fresh clone, then run installed actual
+Pi→Pi and Pi→Codex Browser acceptance. Operational receipts stay outside source so
+the checked source fingerprint is not invalidated by recording its own outcome.
+PR readiness requires those gates; source mapping alone is not acceptance.
 
 Actual model limits remain explicit: configured Meta source returned 404 in later
 attempts; successful isolated source samples used `eidolon/gpt-5.6-sol` without
