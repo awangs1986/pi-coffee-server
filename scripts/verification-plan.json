@@ -1,0 +1,1 @@
+{"steps":[{"name":"check","argv":["$NODE","scripts/check.mjs"]}]}

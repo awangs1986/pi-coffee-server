@@ -159,6 +159,7 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
+    releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,
     requireUser: envFlag("PI_COFFEE_REQUIRE_USER"),
@@ -209,6 +210,7 @@ async function run(selectedRole: Role): Promise<void> {
   const githubOAuthSecret=process.env.PI_COFFEE_GITHUB_CLIENT_SECRET?.trim();
   if(wantWeb&&Boolean(githubOAuthClient)!==Boolean(githubOAuthSecret))throw new Error('Configure both GitHub OAuth client ID and secret');
   const web = !wantWeb ? undefined : new WebServer({
+    releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     ...(githubOAuthClient&&githubOAuthSecret?{githubOAuth:{clientId:githubOAuthClient,clientSecret:githubOAuthSecret,publicUrl:envString('PI_COFFEE_PUBLIC_URL','')}}:{}),
     host: envString("PI_COFFEE_WEB_BIND", "127.0.0.1"),
     port: envNumber("PI_COFFEE_WEB_PORT", 3000),

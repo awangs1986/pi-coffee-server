@@ -1,4 +1,5 @@
 import {MishuStateError} from './mishu-state.js';
+import {readReleaseCommit} from '../shared/release.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
 import {MishuCoordinator} from './mishu.js';
 import {createRequire} from 'node:module';
@@ -57,6 +58,7 @@ export interface UserScope {
 }
 
 export interface HostServerOptions {
+  releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
   port?: number;
@@ -281,6 +283,7 @@ export class HostServer {
       return;
     }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
+    if(req.url === '/api/release' && req.method === 'GET') {json(res,200,{hostBackendCommit:await readReleaseCommit(this.options.releaseDir??process.cwd())});return;}
     if(req.url === '/api/runtime' && req.method === 'GET') {
       json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
     }

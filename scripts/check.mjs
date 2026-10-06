@@ -10,12 +10,14 @@ let child;
 const stop=signal=>{if(child?.pid){try{process.kill(process.platform==='win32'?child.pid:-child.pid,signal);}catch{}}};
 const interrupt=signal=>{stop(signal);};
 process.on('SIGINT',interrupt);process.on('SIGTERM',interrupt);
-const run=args=>new Promise((resolve,reject)=>{
- child=spawn(process.execPath,args,{stdio:'inherit',detached:process.platform!=='win32',env:{...process.env,TMPDIR:root,TMP:root,TEMP:root}});
+const run=(args,program=process.execPath)=>new Promise((resolve,reject)=>{
+ child=spawn(program,args,{stdio:'inherit',detached:process.platform!=='win32',env:{...process.env,TMPDIR:root,TMP:root,TEMP:root}});
  child.on('error',reject);child.on('exit',(code)=>{stop('SIGKILL');child=undefined;resolve(code??1);});
 });
 try {
- let code=await run([process.env.npm_execpath,'run','build']);
+ let code=await run(['node_modules/eslint/bin/eslint.js','public','scripts','eslint.config.mjs']);
+ if(!code)code=await run(['run','build'],'npm');
  if(!code)code=await run(['node_modules/vitest/vitest.mjs','run']);
+ if(!code)code=await run(['scripts/check-browser.mjs']);
  process.exitCode=code;
 } finally {stop('SIGKILL');await rm(root,{recursive:true,force:true});}
