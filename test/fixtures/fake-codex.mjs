@@ -3,6 +3,11 @@ import './github-env-probe.mjs';
 import { createInterface } from 'node:readline';
 import { readFile, writeFile } from 'node:fs/promises';
 if(process.argv.includes('--version')) { console.log(process.env.FIXTURE_VERSION || 'codex-cli 0.154.0'); process.exit(0); }
+if(process.argv.includes('login') && process.argv.includes('status')) {
+ if(process.env.FIXTURE_AUTH_STATUS_ERROR)process.exit(2);
+ if(process.env.FIXTURE_AUTH_MISSING || process.env.FIXTURE_NO_OPENAI_AUTH){console.error('Not logged in');process.exit(1);}
+ console.error('Logged in using ChatGPT');process.exit(0);
+}
 const file=process.cwd()+'/.fake-native-thread.json';
 let thread; let approvalTurn;
 const send=m=>process.stdout.write(JSON.stringify(m)+'\n');
@@ -14,7 +19,7 @@ createInterface({input:process.stdin}).on('line',async line=>{
  const ok=result=>send({id:m.id,result});
  switch(m.method){
  case 'initialize':ok({userAgent:'fixture'});break;
- case 'account/read':ok({account:process.env.FIXTURE_AUTH_MISSING?null:{type:'chatgpt'},requiresOpenaiAuth:true});break;
+ case 'account/read':if(process.env.FIXTURE_ACCOUNT_UNAVAILABLE)break;ok({account:process.env.FIXTURE_AUTH_MISSING || process.env.FIXTURE_NO_OPENAI_AUTH?null:{type:'chatgpt'},requiresOpenaiAuth:!process.env.FIXTURE_NO_OPENAI_AUTH});break;
  case 'model/list':ok({data:[{id:'fixture',model:'fixture',isDefault:true,supportedReasoningEfforts:[]}]});break;
  case 'thread/start':thread={id:'native-fixed',turns:[],status:{type:'idle'},model:'fixture'};await writeFile(file,JSON.stringify(thread));ok({thread});break;
  case 'thread/resume':try{thread=JSON.parse(await readFile(file,'utf8'));ok({thread});}catch{send({id:m.id,error:{code:-32000,message:'Native session missing'}});}break;

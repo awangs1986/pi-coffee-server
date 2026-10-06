@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Codex local readiness: [contract](spec/native-agent-engines.md#codex-local-readiness-correction--2026-10-06-server-82), [diagnosis and evidence](reviews/codex-readiness-20261006.md), [Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82). Local configured-login status is distinct from slow account metadata and provider acceptance; source verification is distinct from production activation.
+
 - Developer guardrails and release tools: [workflow and CLI contract](development/verification-and-release.md), [sidebar navigation/reviewer matrix](agents/sidebar.md), [Server #81](https://github.com/awangs1986/pi-coffee-server/issues/81), [acceptance and review](reviews/retro-guardrails-20261006.md). Source checks, publication, staging and activation remain distinct.
 
 - Recent-conversation sidebar order: [current contract](spec/arena-navigation.md#recent-conversation-order-2026-10-06-server-80-supersedes-54), [evidence](reviews/sidebar-activity-20261006.md), [Server #80](https://github.com/awangs1986/pi-coffee-server/issues/80). Dates and order use last conversation activity; this supersedes creation-time ordering.

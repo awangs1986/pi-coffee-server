@@ -41,7 +41,13 @@ Deploy the compatible Host before the Server. `GET /api/engines` reports exactly
 Pi, Codex and Claude Code, their installation/version and local authentication readiness, and an explicit
 reason for disabled engines. This uses local version and native authentication status checks, not an
 API billing call or a guarantee that a provider will accept the next request.
-Codex uses `account/read` with refresh disabled; Claude uses `auth status --json`. Only configured/required/unknown is exposed, never account details. Native authentication is evaluated by the native engine. Expired credentials
+Codex first uses native `login status` for local configured-login readiness. If
+the native command reports no login (exit 1), `account/read` with refresh disabled
+retains compatibility with custom providers that require no OpenAI login. Command
+faults/timeouts remain unknown; account metadata hydration is not required when
+the local login is configured. Claude uses `auth status --json`. Only
+configured/required/unknown is exposed, never command output or account details.
+Native authentication is evaluated by the native engine. Expired credentials
 must be repaired using that engine on the VM; preserve the Task binding.
 
 ## Verified transports

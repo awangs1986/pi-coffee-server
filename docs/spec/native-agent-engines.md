@@ -135,6 +135,26 @@ Run the documented repository checks from a fresh clone before implementation ac
 - Automatically adding Pi's LSP integration to other engines, forcing MCP, or requiring additional externally reachable engine services.
 - Replacing the current layout, adding platform worktrees/local merge orchestration, or adding VM/container lifecycle management.
 - Complete parity with every native terminal feature, a complete history-cache redesign, or unrelated frontend backlog features.
+
+## Codex local readiness correction — 2026-10-06, Server #82
+
+Codex readiness checks its supported native `login status` command before reading
+account metadata. Exit 0 means locally configured credentials, not guaranteed
+upstream acceptance or an unexpired subscription. Exit 1 permits the existing
+`account/read` check (refresh disabled) so an authentication-free custom provider
+can remain available without an OpenAI login. Other status-command failures and
+timeouts remain unknown and unavailable. Neither output nor account details are
+returned to the Browser or logged.
+
+A delayed `account/read` must not disable an otherwise configured Codex login or
+prevent opening its conversation and reading models. Native provider failures
+remain authoritative during execution. This change does not retry/replay prompts,
+edit credentials, change supported versions or extend request deadlines.
+
+Acceptance: authenticated HTTP engine discovery plus WS open/model reads with
+unavailable account metadata; missing login rejection; authentication-free provider
+compatibility; status-command failure remaining unknown. See
+[Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82).
 - Claiming legal approval from open-source availability, a third-party UI example, or the user's ownership of an account alone.
 
 ## Further Notes
