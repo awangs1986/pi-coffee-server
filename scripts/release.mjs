@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+// Per-machine local staging. Browser activation is separate; never restarts a unit.
+import {readFile,mkdir,writeFile,rename,readdir,cp,rm,chmod,lstat} from 'node:fs/promises';
+import {resolve,join,dirname} from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {randomUUID} from 'node:crypto';
+import {sourceIdentity} from './lib/source-identity.mjs';
+import {artifacts,optionalArtifacts,sha256} from './lib/artifacts.mjs';
+const exec=promisify(execFile);
+const args=process.argv.slice(2),command=args[0],take=name=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
+const load=async file=>JSON.parse(await readFile(file,'utf8'));
+async function save(file,value){await mkdir(dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID();await writeFile(temp,JSON.stringify(value,null,2)+'\n',{mode:0o600});await rename(temp,file);}
+try{
+ const config=await load(resolve(take('--config')));
+ for(const key of ['releaseRoot','stateDir','activePublic'])if(typeof config[key]!=='string'||!config[key].startsWith('/'))throw Error('Absolute release paths required');
+ const root=resolve(config.releaseRoot),state=resolve(config.stateDir);
+ await mkdir(root,{recursive:true,mode:0o755});await mkdir(state,{recursive:true,mode:0o700});
+ if(command==='status'){
+  let active=null;try{active=await load(join(state,'current.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  const staged=[];for(const name of (await readdir(root)).sort())if(/^[a-f0-9]{40}-(browser|web|host)$/.test(name)){const item=await load(join(root,name,'release.json'));if(item.sourceCommit!==active?.sourceCommit||item.role!==active?.role)staged.push({sourceCommit:item.sourceCommit,role:item.role,state:'staged'});}
+  console.log(JSON.stringify({active,staged}));
+ }else if(command==='activate-browser'){
+  const commit=take('--commit');if(!/^[a-f0-9]{40}$/.test(commit))throw Error('Invalid release');
+  const directory=join(root,commit+'-browser'),manifest=await load(join(directory,'release.json'));
+  const files=await artifacts(join(directory,'public'));if(manifest.sourceCommit!==commit||JSON.stringify(files)!==JSON.stringify(manifest.assets))throw Error('Staged bytes changed');
+  if(!config.expectedAssets||!Object.keys(config.expectedAssets).length)throw Error('Provide the expected active asset hashes');
+  const publicRoot=resolve(config.activePublic);
+  for(const [name,hash] of Object.entries(config.expectedAssets)){if(name.startsWith('/')||name.split('/').some(s=>s==='..'||s==='.')||!/^[a-f0-9]{64}$/.test(hash))throw Error('Invalid baseline');if(sha256(await readFile(join(publicRoot,name)))!==hash)throw Error('Active deployment changed');}
+  const healthUrl=new URL(config.healthUrl),baseUrl=new URL(config.assetBaseUrl);if(!['http:','https:'].includes(healthUrl.protocol)||healthUrl.username||healthUrl.password||baseUrl.origin!==healthUrl.origin)throw Error('Invalid local probe URLs');
+  const health=async()=>{const r=await fetch(healthUrl,{redirect:'error',signal:AbortSignal.timeout(10000)});const body=await r.json();if(!r.ok||!body.ok||body.role!=='web')throw Error('Web health failed');};
+  const service=async()=>{if(!config.unit)return null;if(!/^[a-zA-Z0-9_.@-]+\.service$/.test(config.unit))throw Error('Invalid unit');return (await exec('systemctl',[...(config.userUnit?['--user']:[]),'show',config.unit,'-p','MainPID','-p','WorkingDirectory'])).stdout;};
+  await health();const before=await service(),lock=join(state,'activation.lock');await mkdir(lock);
+  let backup,mutated=false;const backedUp=[];
+  try{
+   backup=join(state,'operations',randomUUID(),'before');await mkdir(backup,{recursive:true,mode:0o700});
+   const names=Object.keys(files).filter(n=>!['app.js','index.html','release-manifest.json'].includes(n)).sort();for(const name of ['app.js','index.html'])if(files[name])names.push(name);
+   for(const name of [...names,'release-manifest.json']){try{const meta=await lstat(join(publicRoot,name));if(!meta.isFile())throw Error('Non-regular active asset');await mkdir(dirname(join(backup,name)),{recursive:true});await cp(join(publicRoot,name),join(backup,name));backedUp.push(name);}catch(error){if(error.code!=='ENOENT')throw error;}}
+   mutated=true;
+   for(const name of names){const target=join(publicRoot,name);await mkdir(dirname(target),{recursive:true});const temp=target+'.'+randomUUID();await cp(join(directory,'public',name),temp);await chmod(temp,0o644);await rename(temp,target);}
+   const identity={sourceCommit:commit,backendCommit:config.backendCommit||'unknown',hostCommit:config.hostCommit||'unknown'};
+   await save(join(publicRoot,'release-manifest.json'),identity);await chmod(join(publicRoot,'release-manifest.json'),0o644);
+   for(const [name,hash] of Object.entries(files)){const url=new URL(name.split('/').map(encodeURIComponent).join('/'),baseUrl.href.endsWith('/')?baseUrl:new URL(baseUrl.href+'/'));const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok||sha256(Buffer.from(await response.arrayBuffer()))!==hash)throw Error('Served assets differ');}
+   await health();if(await service()!==before)throw Error('Service changed during activation');
+   const active={state:'active',role:'browser',...identity,backup,serviceRestarted:false};await save(join(state,'current.json'),active);console.log(JSON.stringify(active));
+  }catch(error){
+   if(mutated){for(const name of backedUp){const target=join(publicRoot,name),temp=target+'.'+randomUUID();await cp(join(backup,name),temp);await rename(temp,target);}if(!backedUp.includes('release-manifest.json'))await rm(join(publicRoot,'release-manifest.json'),{force:true});await save(join(dirname(backup),'result.json'),{state:'rolled-back',sourceCommit:commit});}
+   throw error;
+  }finally{await rm(lock,{recursive:true,force:true});}
+ }else if(command==='stage'){
+  const source=resolve(take('--source')||'.'),identity=await sourceIdentity(source),commit=take('--commit'),role=take('--role')||'browser';
+  if(!/^[a-f0-9]{40}$/.test(commit)||identity.commit!==commit||!['browser','web','host'].includes(role))throw Error('Choose the checked source commit');
+  if((await exec('/usr/bin/git',['status','--porcelain'],{cwd:source})).stdout.trim())throw Error('Commit the exact source before staging');
+  const verification=await load(resolve(take('--verification')));if(verification.status!=='passed'||verification.sourceFingerprint!==identity.sourceFingerprint||JSON.stringify(verification.artifacts)!==JSON.stringify(await optionalArtifacts(join(source,'dist'))))throw Error('Verification is stale or unsuccessful');
+  const directory=join(root,commit+'-'+role),publicRoot=join(source,'dist/public'),assets=await artifacts(publicRoot);
+  const manifest={formatVersion:1,sourceCommit:commit,sourceTree:identity.tree,role,state:'staged',assets};
+  let existing;try{existing=await load(join(directory,'release.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
+  if(existing){if(JSON.stringify(existing)!==JSON.stringify(manifest))throw Error('Immutable release differs');}
+  else{
+   const pending=directory+'.'+randomUUID();await mkdir(pending,{mode:0o755});
+   try{await cp(publicRoot,join(pending,'public'),{recursive:true});if(role!=='browser'){for(const file of ['dist','node_modules','package.json','package-lock.json'])await cp(join(source,file),join(pending,file),{recursive:true,verbatimSymlinks:true});}await save(join(pending,'release.json'),manifest);await rename(pending,directory);}catch(error){await rm(pending,{recursive:true,force:true});throw error;}
+  }
+  console.log(JSON.stringify({state:'staged',sourceCommit:commit,role}));
+ }else throw Error('Unknown release action');
+}catch{console.error('Release refused: inspect configuration, checked source and immutable artifacts. No service was restarted.');process.exitCode=1;}

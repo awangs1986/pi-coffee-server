@@ -1,3 +1,4 @@
+import {readReleaseCommit,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER } from "../shared/identity.js";
@@ -23,6 +24,7 @@ export interface TlsMaterial {
 }
 
 export interface WebServerOptions {
+  releaseDir?:string;
   githubOAuth?:GitHubOAuthOptions;
   host?: string;
   port?: number;
@@ -51,6 +53,7 @@ export class WebServer {
   private readonly hostUrl: string;
   private readonly hostToken?: string;
   private readonly publicDir: string;
+  private readonly releaseDir:string;
   private readonly http: HttpServer;
   private readonly wsServer: WebSocketServer;
   private readonly bridges = new Set<BrowserBridge>();
@@ -75,6 +78,7 @@ export class WebServer {
     this.port = options.port ?? 3000;
     this.hostUrl = options.hostUrl;
     this.hostToken = options.hostToken;
+    this.releaseDir=options.releaseDir??process.cwd();
     this.publicDir = options.publicDir ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../public");
     this.secure = options.tls !== undefined;
     const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response);
@@ -219,6 +223,15 @@ export class WebServer {
         json(response,upstream.status,{...await upstream.json(),userScope});
       }catch{json(response,502,{error:'sync_unavailable'});}
       return;
+    }
+    if(path === '/api/release') {
+      try {
+        const session=await this.identity?.authorize(request);if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
+        if(request.method!=='GET'){json(response,405,{error:'Method not allowed'});return;}
+        const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
+        const upstream=await this.hostApi(route,'/api/release','GET');const body=upstream.ok?await upstream.json():{};
+        json(response,200,{webBackendCommit:await readReleaseCommit(this.releaseDir),frontendCommit:await readReleaseCommit(this.publicDir,'release-manifest.json'),hostBackendCommit:releaseCommit(body.hostBackendCommit)});
+      }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
     if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
