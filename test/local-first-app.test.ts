@@ -96,6 +96,19 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
 }
 
 describe('actual app local-first live output', () => {
+  it('restores the completed coffee icon from Host status without unread attention after reload',async()=>{
+    const app=await setup('codex',2);
+    const rows=app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled'}:{})}));
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:rows});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    expect(document.querySelector('[data-session-id="a"]')?.textContent).toContain('已完成');
+    expect(document.querySelector('[data-session-id="a"]')?.textContent).not.toContain('待查看');
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:rows.map(c=>({...c,running:c.id==='a',attention:'finished'}))});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:rows.map(c=>({...c,runStatus:'interrupted'}))});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
   it('restores the model after verified page reload before native attachment replies',async()=>{
     await setup('codex',2,network=>{
       network.workspaceGate=new Promise<void>(()=>{});
