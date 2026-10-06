@@ -56,6 +56,7 @@ export async function taskOperation(journal:TaskJournal,sourceBinding:string,inp
   if(operation==='observe'){if(!id(input.runId)||!observe)throw Error('Exact native runId and observation capability required');await observe(result,input.runId);}else if(operation==='stop'){result.workState='stopped';if(result.obligation){result.observation='stopped';result.notification=undefined;result.obligation={...result.obligation,state:'cancelled',generation:result.obligation.generation+1};}}else for(const key of fields)if(input[key]!==undefined)result[key]=String(input[key]);
   journal.tasks[journal.tasks.indexOf(task!)]=result;
  }
- journal.operations.push(operation==='stop'?{id:input.operationId,fingerprint,stoppedTaskId:result.taskId}:{id:input.operationId,fingerprint,task:{...result}});
+ // Ordinary retries return the admission snapshot even as nested live evidence advances.
+ journal.operations.push(operation==='stop'?{id:input.operationId,fingerprint,stoppedTaskId:result.taskId}:{id:input.operationId,fingerprint,task:structuredClone(result)});
  return {version:1,task:result};
 }

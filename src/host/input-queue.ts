@@ -1,5 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {ImageInput, QueueAction, QueueItem} from '../shared/protocol.js';
+/** Generic queue fairness policy; notification consumers advertise this same bound. */
+export const INPUT_QUEUE_POLICY={foregroundBurst:3} as const;
 type Input=QueueItem&{images?:ImageInput[];requestId?:string;internal?:()=>Promise<void>;cancel?:()=>Promise<void>};
 
 /** Pending Web inputs stay here until one native delivery owns them. */
@@ -57,7 +59,7 @@ export class InputQueue {
   setImmediate(()=>{this.scheduled=false;
    if(this.stopped||this.sending||this.options.busy())return;
    const foreground=this.rows.find(row=>!row.internal),notification=this.rows.find(row=>row.internal&&row.status==='pending');
-   const row=notification&&(this.foregroundBurst>=3||!foreground||foreground.status==='failed')?notification:foreground;
+   const row=notification&&(this.foregroundBurst>=INPUT_QUEUE_POLICY.foregroundBurst||!foreground||foreground.status==='failed')?notification:foreground;
    if(!row||row.status!=='pending')return;
    void this.deliver(row,false).catch(()=>undefined);
   });

@@ -367,8 +367,8 @@ it.each(['normal','race','commit-failure'])('observes direct native Pi work with
  const racing=mode==='race';
  let calls=0,reply:()=>void=()=>{},registrationGate:(()=>Promise<void>)|undefined;
  const provider=createServer(async(req,res)=>{
-  let raw='';for await(const part of req)raw+=part;expect(raw).not.toContain('coffee-native-run');expect(raw).not.toContain('baselineId');calls++;
-  reply=()=>{if(res.writableEnded)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:'observation-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:'LATE_NATIVE_RESULT'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  let raw='';for await(const part of req)raw+=part;expect(raw).not.toContain('coffee-native-run');expect(raw).not.toContain('baselineId');calls++;const report=raw.includes('<task-facts>');
+  reply=()=>{if(res.writableEnded)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:'observation-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:report?'进展：LATE_NATIVE_RESULT。\n限制：待用户验收。\n下一步：查看证据。\n来源：Track synthetic run':'LATE_NATIVE_RESULT'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
  });
  await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
  const app=await start(undefined,undefined,true,true,async()=>{const gate=registrationGate;registrationGate=undefined;await gate?.();}),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
@@ -390,13 +390,19 @@ it.each(['normal','race','commit-failure'])('observes direct native Pi work with
  const base={action:'tasks',version:1};
  const registered=await(await req({...base,operation:'register',operationId:'observe-brief',targetId:target.id,binding:contact.binding,purpose:'Track synthetic run',scope:'Only this run',summary:'Await result',nextStep:'Read reply'})).json();
  const watch={...base,operation:'observe',operationId:'observe-run',taskId:registered.task.taskId,expectedRevision:1,runId};
+ let correction:Record<string,unknown>|undefined,corrected:any;
+ const assertOriginalReceipts=async(request:(body:unknown)=>Promise<Response>)=>{expect(await(await request(watch)).json()).toEqual(admitted);if(correction)expect(await(await request(correction)).json()).toEqual(corrected);};
  const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);
  expect((await req(watch)).status).toBe(409);await rm(blockedWrite,{recursive:true});
  expect((await(await req({...base,operation:'get',taskId:registered.task.taskId})).json()).task.obligation).toBeUndefined();
  if(racing)registrationGate=async()=>{reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);};
  const response=await req(watch);expect(response.status,await response.clone().text()).toBe(200);
  const admitted=await response.json();expect(admitted.task.obligation.runId).toBe(runId);if(!racing)expect(admitted.task.observation).toBe('watching');
- if(mode==='normal'){socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'rename-tracked',sessionId:target.id,name:'Renamed tracked target'}));await expect.poll(()=>frames.some(f=>f.type==='ack'&&f.requestId==='rename-tracked'),{timeout:10000}).toBe(true);expect((await(await req({action:'status'})).json()).targets[0]).toMatchObject({id:target.id,title:'Renamed tracked target',binding:contact.binding});}
+ if(mode==='normal'){
+  correction={...base,operation:'update',operationId:'correct-watching-task',taskId:registered.task.taskId,expectedRevision:admitted.task.revision,summary:'Still awaiting exact target reply'};
+  const edited=await req(correction);expect(edited.status).toBe(200);corrected=await edited.json();
+  await assertOriginalReceipts(req);
+  socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'rename-tracked',sessionId:target.id,name:'Renamed tracked target'}));await expect.poll(()=>frames.some(f=>f.type==='ack'&&f.requestId==='rename-tracked'),{timeout:10000}).toBe(true);expect((await(await req({action:'status'})).json()).targets[0]).toMatchObject({id:target.id,title:'Renamed tracked target',binding:contact.binding});}
  if(mode==='commit-failure')await mkdir(blockedWrite);
  socket.close();reply();
  const get={...base,operation:'get',taskId:registered.task.taskId};
@@ -412,16 +418,31 @@ it.each(['normal','race','commit-failure'])('observes direct native Pi work with
  await expect.poll(async()=>((await(await req(get)).json()).task.observation),{timeout:10000}).toBe('reply-available');
  const result=await(await req(get)).json();expect(result.task).toMatchObject({observation:'reply-available',obligation:{state:'reply-available'},fact:{text:'LATE_NATIVE_RESULT'},acceptance:'pending'});
  expect(await(await req(get)).json()).toEqual(result);expect(calls).toBe(1);
+ if(mode==='normal'){expect(result.task.revision).toBeGreaterThan(corrected.task.revision);await assertOriginalReceipts(req);}
  const nextSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),nextFrames:any[]=[];
  nextSocket.on('message',raw=>nextFrames.push(JSON.parse(String(raw))));await once(nextSocket,'open');nextSocket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));
  await expect.poll(()=>nextFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
  nextSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'unrelated-user-work',text:'Unrelated next work'}));await expect.poll(()=>calls,{timeout:10000}).toBe(2);reply();
  await expect.poll(()=>nextFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);nextSocket.close();
  expect(await(await req(get)).json()).toEqual(result);
+ if(mode==='normal'){
+  const reportSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),reportFrames:any[]=[];
+  reportSocket.on('message',raw=>reportFrames.push(JSON.parse(String(raw))));
+  try{
+   await once(reportSocket,'open');reportSocket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));
+   await expect.poll(()=>reportFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+   reportSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'receipt-report',text:'/mishu-report '+registered.task.taskId}));
+   await expect.poll(()=>calls,{timeout:10000}).toBe(3);reply();
+   await expect.poll(async()=>(await(await req(get)).json()).task.reports?.[0]?.state,{timeout:10000}).toBe('committed');
+   await assertOriginalReceipts(req);
+  }finally{reportSocket.close();}
+ }
+ const beforeRestart=await(await req(get)).json();
  await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
  await rm(join(app.workspaces.root,'.coffee','conversation-index'),{recursive:true,force:true});
   const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
- expect(await(await resumed.call(get,'owner',rt,'/api/mishu/runtime')).json()).toEqual(result);expect(calls).toBe(2);
+ expect(await(await resumed.call(get,'owner',rt,'/api/mishu/runtime')).json()).toEqual(beforeRestart);expect(calls).toBe(mode==='normal'?3:2);
+ if(mode==='normal')await assertOriginalReceipts(body=>resumed.call(body,'owner',rt,'/api/mishu/runtime'));
  }finally{socket.close();reply();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
 
