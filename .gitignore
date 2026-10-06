@@ -13,3 +13,7 @@ public/vendor/
 
 # Python watchdog test/import artifacts
 __pycache__/
+
+# Local verification and release receipts
+.coffee-verification/
+.coffee-release/

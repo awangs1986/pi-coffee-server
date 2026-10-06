@@ -1,9 +1,9 @@
 # Triage Labels
 
 Engineering skills refer to five canonical triage roles. Map each role to the
-following label in this repository's Gitea issue tracker.
+following label in the current tracker selected by [issue navigation](issue-tracker.md).
 
-| Canonical role | Gitea label | Meaning |
+| Canonical role | Label | Meaning |
 | --- | --- | --- |
 | `needs-triage` | `needs-triage` | A maintainer needs to evaluate the issue. |
 | `needs-info` | `needs-info` | Waiting for additional information from the reporter. |

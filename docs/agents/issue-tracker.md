@@ -1,46 +1,22 @@
-> Source authority and repository placement: superseded where conflicting by [ADR-0020](../adr/0020-unified-github-authority.md). GitHub pi-coffee-server owns Web and Host.
+# Issue navigation
 
-# Issue tracker: Gitea
+Use [REPOSITORIES.md](../../REPOSITORIES.md) to choose the repository and
+[docs/index.md](../index.md) to locate the affected current contract and Issue.
+GitHub main is the source authority; the same-named Gitea main mirrors its exact
+commit. Source mirroring does not implicitly mirror issue discussions.
 
-The authoritative issue tracker for this repository is
-[`awangs/pi-coffee`](http://gitea:3000/awangs/pi-coffee/issues).
-Issue titles, bodies, comments, status, and dependencies there are authoritative.
+For current Server work, use
+[GitHub awangs1986/pi-coffee-server Issues](https://github.com/awangs1986/pi-coffee-server/issues).
+Pi-only package work uses
+[GitHub awangs1986/pi-coffee Issues](https://github.com/awangs1986/pi-coffee/issues).
+The repository map records the owner's independently maintained MISHU exception.
 
-Use the Gitea API v1 to read, create, and update issues, comments, and labels.
-The repository API base is `http://gitea:3000/api/v1/repos/awangs/pi-coffee`.
-Authenticate using credentials supplied by the execution environment; never put
-credentials in repository files, issues, or logs. GitHub is a later publication
-destination, not a parallel issue queue.
+Read the affected Issue and comments before implementation. Record scope,
+requirements, source commit, failures and acceptance evidence there. Link
+cross-repository work explicitly. Use existing labels by name; see
+[triage roles](triage-labels.md). Keep credentials and user transcripts out of
+Issues, comments and source. A source push is distinct from production activation.
 
-## Working conventions
-
-- Before working, read the relevant issue, including comments, labels, and dependencies.
-- Read [BACKLOG.md](../../BACKLOG.md). [Issue #1](http://gitea:3000/awangs/pi-coffee/issues/1)
-  is the project map; [Issue #13](http://gitea:3000/awangs/pi-coffee/issues/13)
-  indexes the historical discussion and backlog. `D-*` and phase IDs are stable
-  cross-document identifiers; Gitea issue numbers identify execution tickets.
-- When a skill says to publish a task or specification to the issue tracker,
-  create a Gitea issue in this repository.
-- When a skill says to fetch the relevant ticket, read the Gitea issue and its comments.
-- Link parent and child issues in both directions. Record dependencies explicitly
-  as `Blocked by: #<number>`; use absolute repository URLs for cross-repository dependencies.
-- Resolve existing labels by name using [triage-labels.md](./triage-labels.md).
-  Create missing labels as needed, avoid duplicates, and preserve unrelated labels.
-- Use map order or numeric ticket prefixes to order work when labels are unavailable.
-- Before closing a completed issue, record the implementation commit, check commands,
-  and acceptance evidence. A fresh clone must be able to run the documented check or probe.
-- If Gitea is unavailable, report pending synchronization; do not create a separate
-  authoritative local backlog.
-
-## Repository boundaries
-
-Agent Runtime issues belong to `awangs/pi-coffee`. Browser, identity, routing,
-and Relay issues belong to `awangs/pi-coffee-server`. Track cross-repository work
-with separate, mutually linked issues.
-
-Picode V5 remains a frozen reference. Do not copy PI Coffee tickets into V5 or
-treat its issue list as a PI Coffee queue.
-
-## Pull requests as a triage surface
-
-**PRs as a request surface: no.**
+Older Gitea Issues and `D-*` decisions in [BACKLOG.md](../../BACKLOG.md) are historical
+references. Preserve their links and provenance; do not create new Server work in
+the Pi repository merely because an old template points there. Picode/V5 is frozen.
