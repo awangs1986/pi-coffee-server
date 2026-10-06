@@ -5,6 +5,7 @@ import http.server
 import importlib.util
 import io
 import json
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -38,7 +39,7 @@ class WatchdogTest(unittest.TestCase):
                      'Result':'success', 'MainPID':'999', 'NRestarts':'0'}
         self.write_unit()
         self.controller = self.root/'systemctl'
-        self.controller.write_text('''#!/usr/bin/python3
+        self.controller.write_text(f'''#!{sys.executable}
 import json, sys
 from pathlib import Path
 root=Path(__file__).parent
