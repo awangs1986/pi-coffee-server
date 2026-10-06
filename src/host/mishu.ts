@@ -11,7 +11,7 @@ import type {JsonValue} from '../shared/protocol.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
 interface Receipt {messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
-interface Config {selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
+interface Config {notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
 interface State {version:1;chats:Record<string,Config>}
 const binding=(task:Conversation)=>createHash('sha256').update(JSON.stringify([task.id,task.createdAt,task.cwd,task.engine??'pi',task.nativeBinding?.id??task.nativeBinding?.requestedId??task.id])).digest('hex');
 const clean=(s:string)=>s.replace(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}/g,'[REDACTED]').replace(/\b(?:Bearer|token|password|api[_-]?key)\s*[:= ]\s*[^\s,;]+/gi,'[REDACTED]');
@@ -35,6 +35,9 @@ export class MishuCoordinator {
  private setupWindows=new Map<string,string>();
  beginSetup(id:string,requestId:string){this.setupWindows.set(id,requestId);}
  endSetup(id:string,requestId:string){if(this.setupWindows.get(id)===requestId)this.setupWindows.delete(id);}
+ private notificationSetupWindows=new Map<string,string>();
+ beginNotifications(id:string,requestId:string){this.notificationSetupWindows.set(id,requestId);}
+ endNotifications(id:string,requestId:string){if(this.notificationSetupWindows.get(id)===requestId)this.notificationSetupWindows.delete(id);}
  private reportWindows=new Map<string,string>();
  beginReport(id:string,requestId:string){this.reportWindows.set(id,requestId);}
  endReport(id:string,requestId:string){if(this.reportWindows.get(id)===requestId)this.reportWindows.delete(id);}
@@ -47,26 +50,26 @@ export class MishuCoordinator {
    if(!c.selected||!c.enabled||!c.taskJournal)continue;
    const previous=c.taskJournal,journal=structuredClone(previous);await this.refreshTasks(id,journal);
    c.taskJournal=journal;try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
-  }});this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
+  }});void recovery.then(()=>this.scheduleNotifications()).catch(()=>undefined);this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
  }
  private async load(){await (this.loaded??= (async()=>{
   await mkdir(this.root,{recursive:true,mode:0o700});
   const writer=new DatabaseSync(join(this.root,'writer.sqlite'));
   try{writer.exec('BEGIN EXCLUSIVE');this.writer=writer;}catch{writer.close();throw Error('Another Host owns MISHU coordination; no state was read or changed');}
   try{const state=JSON.parse(await readFile(join(this.root,'state.json'),'utf8'));if(state.version!==1||!state.chats||Array.isArray(state.chats))throw Error('Invalid MISHU state');this.state=state;
-   for(const c of Object.values(this.state.chats)){for(const a of c.assignments??[])if(!['settled','cancelled','uncertain'].includes(a.state)){a.state='uncertain';a.error='Host restarted; no execution replay. Inspect native evidence.';}for(const task of c.taskJournal?.tasks??[]){const a=c.assignments?.find(a=>a.id===task.assignment?.id);if(a)task.assignment={...a};}}
+   for(const c of Object.values(this.state.chats)){for(const task of c.taskJournal?.tasks??[])for(const r of task.reports??[])if(r.automatic&&r.deliveryAttempted&&['pending','admitted'].includes(r.state)){r.state='uncertain';r.error='Host restarted during notification admission; no automatic replay.';}for(const a of c.assignments??[])if(!['settled','cancelled','uncertain'].includes(a.state)){a.state='uncertain';a.error='Host restarted; no execution replay. Inspect native evidence.';}for(const task of c.taskJournal?.tasks??[]){const a=c.assignments?.find(a=>a.id===task.assignment?.id);if(a)task.assignment={...a};}}
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
  })());}
  private async save(){await mkdir(this.root,{recursive:true,mode:0o700});const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,JSON.stringify(this.state),{mode:0o600,flush:true});await rename(temp,file);}
- private change<T>(fn:()=>Promise<T>):Promise<T>{const next=this.tail.then(async()=>{await this.load();const value=await fn();await this.save();return value;});this.tail=next.catch(()=>undefined);return next;}
+ private change<T>(fn:()=>Promise<T>,schedule=true):Promise<T>{const next=this.tail.then(async()=>{await this.load();const value=await fn();await this.save();return value;});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
  private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
   const summaries=c.targets.length?await this.registry!.list():[];
   const targets=c.targets.map(target=>({...target,title:currentTitle(summaries.find(s=>s.id===target.id),target.title)}));
   const tasks=c.sourceBinding===binding(task)?c.taskJournal?.tasks??[]:[];
-  return {selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:c.allowInstructions,targets,tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:this.observationFailure}};
+  return {notifications:{enabled:c.notifications===true,capacity:20,maxAttempts:1,error:this.notificationFailure},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:c.allowInstructions,targets,tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:this.observationFailure}};
  }
  async select(id:string,selected:boolean){return this.change(async()=>{
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
@@ -74,7 +77,7 @@ export class MishuCoordinator {
   const c=this.config(id,task),live=this.registry?.get(id);if(live){const background=await live.backgroundState();if(!background.known||background.active>0)throw Error('Wait for this Chat background tasks to finish before changing MISHU');}
   await this.registry?.stopIdle(id);
   for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
-  this.cancelObservations(c);c.selected=selected;c.enabled=false;c.allowInstructions=false;c.targets=[];c.sourceBinding=binding(task);this.state.chats[id]=c;
+  this.cancelObservations(c);c.selected=selected;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;c.enabled=false;c.allowInstructions=false;c.targets=[];c.sourceBinding=binding(task);this.state.chats[id]=c;
   return {selected:c.selected,enabled:false,allowInstructions:false,targets:[]};
   }finally{this.locks.delete(id);}
  });}
@@ -86,8 +89,19 @@ export class MishuCoordinator {
  async runtime(token:string,input:Record<string,unknown>){const id=this.tokens.get(token);if(!id)throw Error('Invalid MISHU capability');
   const status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
   if(input.action==='status')return {...status,origin:this.registry?.get(id)?.isReportRun?'task-report':'user-intent'};
+  if(input.action==='report'&&this.notificationWindows.has(id))return this.report(id,input);
   if(this.registry?.get(id)?.isReportRun)throw Error('Report runs cannot invoke coordination or capability-changing operations');
   if(input.action==='report')return this.report(id,input);
+  if(input.action==='notifications')return this.change(async()=>{
+   if(!this.notificationSetupWindows.has(id)||typeof input.enabled!=='boolean')throw Error('Reminders require the direct user /mishu-notifications command');
+   const source=await this.source(id),c=this.state.chats[id];
+   if(!c?.enabled||c.sourceBinding!==binding(source))throw Error('Run /mishu-setup first');
+   this.notificationSetupWindows.delete(id);const previous=structuredClone(c);c.notifications=input.enabled;c.notificationGeneration=(c.notificationGeneration??0)+1;
+   // Enabling starts at this boundary; it never replays old accumulated results.
+   for(const task of c.taskJournal?.tasks??[]){if(task.notification)task.notification.automatic=false;for(const r of task.reports??[])if(r.automatic&&!['committed','uncertain'].includes(r.state))r.state='cancelled';}
+   try{await this.save();}catch(error){this.state.chats[id]=previous;throw error;}
+   this.cancelNotificationQueue(id);return {enabled:c.notifications};
+  });
   if(input.action==='directory')return this.directory(id);
   if(input.action==='setup')return this.change(async()=>{
    if(!this.setupWindows.has(id))throw Error('Setup requires a direct user /mishu-setup command');
@@ -97,10 +111,10 @@ export class MishuCoordinator {
    const directory=await this.directory(id),rows=[...directory.conversations,...directory.configuredTargets];
    const targets=input.targets.map(value=>{if(!value||typeof value!=='object')throw Error('Invalid target');const v=value as Record<string,unknown>;const row=rows.find(r=>r.id===v.id&&r.binding===v.binding);if(!row)throw Error('Target binding changed; run setup again');return {id:row.id,binding:row.binding,title:row.title,engine:row.engine};});
    if(new Set(targets.map(t=>t.id)).size!==targets.length)throw Error('Duplicate target');
-   this.setupWindows.delete(id);this.cancelObservations(c,new Set(targets.filter(t=>c.targets.some(old=>old.id===t.id&&old.binding===t.binding)).map(t=>t.id)));c.targets=targets;c.enabled=true;c.allowInstructions=input.allowInstructions;c.sourceBinding=binding(task);this.state.chats[id]=c;
+   this.setupWindows.delete(id);if(c.sourceBinding!==binding(task)){c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}this.cancelObservations(c,new Set(targets.filter(t=>c.targets.some(old=>old.id===t.id&&old.binding===t.binding)).map(t=>t.id)));c.targets=targets;c.enabled=true;c.allowInstructions=input.allowInstructions;c.sourceBinding=binding(task);this.state.chats[id]=c;
    return {selected:true,enabled:true,allowInstructions:c.allowInstructions,targets};
   });
-  if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.enabled=false;}return {enabled:false};});
+  if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};});
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='inbox'){await this.tail;return {messages:this.state.chats[id].messages.slice(-50).map(({text:_,fingerprint:__,requestId:___,...m})=>m)};}
   if(input.action==='send')return this.send(id,input);
@@ -109,6 +123,8 @@ export class MishuCoordinator {
   throw Error('Unknown MISHU operation');
  }
  private cancelQueued(c:Config,task:TaskBrief){
+  for(const report of task.reports??[])if(report.state!=='committed'){report.state='cancelled';for(const [id,queued] of this.notificationQueued)if(queued.reportId===report.id)this.cancelNotificationQueue(id);}
+
   const assignment=c.assignments?.find(a=>a.id===task.assignment?.id);if(assignment&&['accepted','queued'].includes(assignment.state)){assignment.state='cancelled';assignment.error='Task access revoked before delivery';task.assignment={...assignment};const receipt=c.messages.find(m=>m.requestId===assignment.requestId);if(receipt){receipt.state='cancelled';receipt.error=assignment.error;}}
  }
  private cancelObservations(c:Config,retained=new Set<string>()){
@@ -148,12 +164,15 @@ export class MishuCoordinator {
   task.observationError=state==='uncertain'?'Exact run outcome is unproven; last facts retained. No work was replayed.':state==='waiting'?'Target needs native user input. Open the target conversation; MISHU cannot answer it.':undefined;
   if(proven&&evidence.entries?.length)task.fact={text:clean(evidence.entries.map(e=>e.text).join('\n')).slice(0,4000),entries:evidence.entries.map(({id,revision})=>({id,revision}))};
   task.revision++;task.updatedAt=new Date().toISOString();
-  task.notification={id:'task-'+task.taskId,revision:task.revision,state:'pending'};
+  task.notification={id:'task-'+task.taskId,revision:task.revision,state:'pending',automatic:this.state.chats[id].notifications===true&&['reply-available','incomplete','waiting','uncertain'].includes(state)};
  }
  private async reconcileReports(id:string,task:TaskBrief){
   for(const report of task.reports??[]){
    if(report.state==='committed'||report.state==='cancelled')continue;
+   if(report.automatic&&(!this.state.chats[id].notifications||report.notificationGeneration!==this.state.chats[id].notificationGeneration)){report.state='cancelled';continue;}
    if(task.workState==='stopped'||!task.obligation||task.obligation.generation!==report.generation||task.sourceBinding!==report.sourceBinding||task.notification?.revision!==report.notificationRevision){report.state='cancelled';continue;}
+   if(report.sourceBinding!==binding(await this.source(id))){report.state='cancelled';continue;}
+   if(report.state==='pending'||report.state==='admitted')continue;
    // message_end precedes persistence and extension continuation decisions. Only
    // audit a locally settled run, or a stopped process during passive recovery.
    if(this.registry?.get(id)?.isReportRun)continue;
@@ -167,17 +186,26 @@ export class MishuCoordinator {
  }
  private report(id:string,input:Record<string,unknown>){
   return this.change(async()=>{
-   if(!this.reportWindows.has(id))throw Error('Reporting requires a direct user /mishu-report command');
+   if(!this.reportWindows.has(id))throw Error('Reporting requires a direct user /mishu-report command or trusted notification admission');
    const source=await this.source(id),c=this.state.chats[id];
+   const internal=this.notificationWindows.get(id);
+   if(internal&&(input.operation!=='prepare'||!c?.taskJournal?.tasks.some(t=>t.taskId===input.taskId&&t.reports?.some(r=>r.id===internal))))throw Error('Notification admission is bound to one exact report');
    if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source))throw Error('MISHU report authorization unavailable');
    const journal=structuredClone(c.taskJournal??{tasks:[],operations:[]});
    await this.refreshTasks(id,journal);
-   if(input.operation==='list'){c.taskJournal=journal;return {tasks:journal.tasks.filter(t=>t.notification&&t.fact&&t.workState!=='stopped').map(t=>({taskId:t.taskId,purpose:t.purpose,targetTitle:c.targets.find(target=>target.id===t.targetId)?.title??'已选对话'}))};}
+   if(input.operation==='list'){c.taskJournal=journal;const tasks=[];for(const t of journal.tasks){if(t.sourceBinding!==binding(source)||!t.notification||!t.fact||t.workState==='stopped')continue;try{await this.authorize(id,t.targetId,t.binding,'information-only');tasks.push({taskId:t.taskId,purpose:t.purpose,targetTitle:c.targets.find(target=>target.id===t.targetId)?.title??'已选对话'});}catch{/* Stale task is not reportable. */}}return {tasks};}
    if(input.operation!=='prepare'||typeof input.taskId!=='string')throw Error('Invalid report request');
-   const task=journal.tasks.find(t=>t.taskId===input.taskId);if(!task)throw Error('Task unavailable');
+   const task=journal.tasks.find(t=>t.taskId===input.taskId);if(!task||task.sourceBinding!==binding(source))throw Error('Task unavailable');
    await this.authorize(id,task.targetId,task.binding,'information-only');
    const prior=task.reports?.find(r=>r.notificationRevision===task.notification?.revision&&r.notificationId===task.notification?.id);
-   if(prior){c.taskJournal=journal;return {report:prior};}
+   if(prior){
+    c.taskJournal=journal;
+    const internal=this.notificationWindows.get(id);
+    if(internal===prior.id&&prior.state==='admitted'&&prior.automatic&&c.notifications&&prior.notificationGeneration===c.notificationGeneration){
+     prior.state='processing';await this.save();this.registry!.get(id)!.setReportOrigin();this.reportWindows.delete(id);this.notificationWindows.delete(id);return {report:prior,content:reportContent(task)};
+    }
+    return {report:prior};
+   }
    if((task.reports?.length??0)>=100)throw Error('Report capacity reached');
    const report=reportIntent(task);(task.reports??=[]).push(report);
    const previous=c.taskJournal;c.taskJournal=journal;
@@ -204,7 +232,72 @@ export class MishuCoordinator {
     for(const task of journal.tasks.filter(t=>t.targetId===targetId||id===targetId&&t.reports?.length)){try{await this.auditTask(id,task);await this.reconcileReports(id,task);}catch{/* Authorization failure is not target execution failure. */}}
     c.taskJournal=journal;try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
    }
-  });this.tail=work.catch(()=>{this.observationFailure='Observation persistence failed; last confirmed facts retained. Open task details to retry a passive audit.';});void work.finally(()=>{this.observationPending.delete(targetId);if(this.observationDirty.delete(targetId))this.observeEvent(targetId);}).catch(()=>undefined);
+  });this.tail=work.catch(()=>{this.observationFailure='Observation persistence failed; last confirmed facts retained. Open task details to retry a passive audit.';});void work.finally(()=>{this.observationPending.delete(targetId);this.scheduleNotifications();if(this.observationDirty.delete(targetId))this.observeEvent(targetId);}).catch(()=>undefined);
+ }
+ private notificationWindows=new Map<string,string>();
+ private notificationQueued=new Map<string,{row?:string;reportId:string;requestId:string}>();
+ private notificationScheduled=false;
+ private notificationFailure?:string;
+ private cancelNotificationQueue(id:string){const entry=this.notificationQueued.get(id);if(entry?.row)this.registry?.get(id)?.cancelNotification(entry.row,entry.requestId);this.notificationQueued.delete(id);this.notificationWindows.delete(id);}
+ private scheduleNotifications(){
+  if(this.closing||this.notificationScheduled)return;this.notificationScheduled=true;
+  setImmediate(()=>{this.notificationScheduled=false;if(this.closing)return;const work=this.pumpNotifications().catch(()=>{this.notificationFailure='提醒持久化失败，责任仍保留；请查看任务记录。';});this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);});
+ }
+ private async pumpNotifications(){
+  // Serialized state owns the durable Outbox. The existing memory queue is only
+  // a delivery Adapter. One queued report per secretary; FIFO gives foreground
+  // inputs ahead of an admitted report their turn without unbounded promotion.
+  const ready:{id:string;reportId:string;requestId:string;taskId:string;title:string}[]=[];
+  try{await this.change(async()=>{
+   for(const [id,c] of Object.entries(this.state.chats)){
+    if(!c.selected||!c.enabled||!c.notifications||this.notificationQueued.has(id)||this.registry?.get(id)?.isReportRun)continue;
+    const tasks=c.taskJournal?.tasks??[];
+    if(tasks.some(t=>t.reports?.some(r=>r.state==='processing')))continue;
+    for(const task of tasks){
+     if(!task.notification?.automatic||task.notification.state==='committed'||task.workState==='stopped'||task.obligation?.state==='cancelled')continue;
+     let report=task.reports?.find(r=>r.notificationRevision===task.notification?.revision&&r.notificationId===task.notification?.id);
+     if(report&&(!report.automatic||!['pending','admitted'].includes(report.state)))continue;
+     try{await this.authorize(id,task.targetId,task.binding,'information-only');}catch{continue;}
+     if(!report){
+      if(tasks.flatMap(t=>t.reports??[]).filter(r=>['pending','admitted','processing'].includes(r.state)).length>=20||(task.reports?.length??0)>=100){this.notificationFailure='提醒容量已满，责任仍保留；请查看任务记录。';continue;}
+      try{report=reportIntent(task);}catch{continue;}
+      report.automatic=true;report.state='pending';report.notificationGeneration=c.notificationGeneration;(task.reports??=[]).push(report);
+     }
+     const requestId='notification-'+report.id+'-'+randomBytes(6).toString('hex');this.notificationQueued.set(id,{reportId:report.id,requestId});ready.push({id,reportId:report.id,requestId,taskId:task.taskId,title:task.purpose});break;
+    }
+   }
+  },false);}catch(error){for(const entry of ready)this.notificationQueued.delete(entry.id);throw error;}
+  for(const entry of ready){
+   try{
+    const session=await this.registry!.connect(entry.id);
+    await this.change(async()=>{const {report}=await this.notificationAdmission(entry.id,entry.reportId);report.state='admitted';});
+    await session.acceptCommand(entry.requestId,'follow_up');
+    const row=session.enqueueNotification(entry.title,async()=>{
+     const requestId=entry.requestId;
+     try{
+      await this.change(async()=>{const {report}=await this.notificationAdmission(entry.id,entry.reportId);report.deliveryAttempted=true;this.notificationWindows.set(entry.id,entry.reportId);this.beginReport(entry.id,requestId);});
+      await session.preparePrompt(requestId,true);session.setReportOrigin();
+      // Native private command is consumed by the final extension, never exposed
+      // as an editable public queue item or appended as a user message.
+      await session.prompt(requestId,'/mishu-report '+entry.taskId);
+     }catch{
+      await this.change(async()=>{const c=this.state.chats[entry.id],r=c?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===entry.reportId);if(r&&!['committed','cancelled'].includes(r.state)){r.state='uncertain';r.error='Notification delivery cannot be proven; no automatic retry.';}});
+     }finally{this.endReport(entry.id,requestId);this.notificationWindows.delete(entry.id);this.notificationQueued.delete(entry.id);this.scheduleNotifications();}
+    },async()=>{
+     await this.tail;const task=this.state.chats[entry.id]?.taskJournal?.tasks.find(t=>t.taskId===entry.taskId);if(!task)return;
+     await this.tasks(entry.id,{action:'tasks',version:1,operation:'stop',operationId:'stop-'+randomBytes(16).toString('hex'),taskId:task.taskId,expectedRevision:task.revision});
+    });
+    const queued=this.notificationQueued.get(entry.id);if(queued)queued.row=row;else session.cancelNotification(row);
+   }catch{
+    this.notificationQueued.delete(entry.id);
+    await this.change(async()=>{const c=this.state.chats[entry.id],r=c?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===entry.reportId);if(r&&!['committed','cancelled'].includes(r.state)){r.state='uncertain';r.error='Notification queue admission failed; inspect the task, no automatic retry.';}});
+   }
+  }
+ }
+ private async notificationAdmission(id:string,reportId:string){
+  const c=this.state.chats[id],task=c?.taskJournal?.tasks.find(t=>t.reports?.some(r=>r.id===reportId)),report=task?.reports?.find(r=>r.id===reportId);
+  if(!c?.notifications||!task||!report||!['pending','admitted'].includes(report.state)||task.workState==='stopped'||task.obligation?.state==='cancelled'||report.notificationGeneration!==c.notificationGeneration||report.generation!==task.obligation?.generation||report.notificationRevision!==task.notification?.revision){if(report)report.state='cancelled';throw Error('Notification was revoked');}
+  const source=await this.source(id);if(task.sourceBinding!==binding(source)||report.sourceBinding!==task.sourceBinding)throw Error('Task source changed');await this.authorize(id,task.targetId,task.binding,'information-only');return {task,report};
  }
  private tasks(id:string,input:Record<string,unknown>){
   const next=this.tail.then(async()=>{
@@ -217,7 +310,7 @@ export class MishuCoordinator {
    const result=await taskOperation(journal,binding(source),input,(targetId,expected)=>this.authorize(id,targetId,expected,'information-only',['list','get'].includes(String(input.operation))),(task,runId)=>this.auditTask(id,task,runId));
    if(input.operation==='stop'){const stopped=journal.tasks.find(t=>t.taskId===input.taskId);if(stopped)this.cancelQueued(config,stopped);}
    config.taskJournal=journal;try{await this.save();this.observationFailure=undefined;}catch(error){config.taskJournal=previous;throw error;}return result;
-  });this.tail=next.catch(()=>undefined);return next;
+  });this.tail=next.catch(()=>undefined);void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;
  }
  private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
   const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();
@@ -318,5 +411,5 @@ export class MishuCoordinator {
   if((e.type==='message_completed'||e.type==='message_end'&&e.message?.role==='assistant')&&typeof e.text==='string')text=e.text;
   if(text){const prior=active.receipt.result??'',value=clean(prior+(prior?'\n':'')+text);active.receipt.result=value.slice(0,4000);active.receipt.truncated=value.length>4000;}
  }
- async close(){this.closing=true;this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;this.writer?.close();this.writer=undefined;}
+ async close(){this.closing=true;for(const id of this.notificationQueued.keys())this.cancelNotificationQueue(id);this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;this.writer?.close();this.writer=undefined;}
 }

@@ -594,3 +594,51 @@ caller denial; restored foreground tools; revoked target; competing owner proces
 chooser, desktop/mobile reload and repeated command without duplicate generation.
 Immutable package/fresh-clone/integrated release evidence remains the parent PR's
 responsibility. Existing pending A29–A35 and all broader target criteria remain.
+
+## Candidate automatic event reports (#73; not a production activation)
+
+After explicit `/mishu-notifications` selection and confirmation, newly observed
+results from already registered exact Pi runs can wake the same secretary after
+its current turn ends. The default is off. Cancellation changes nothing; enabling
+does not replay old facts. Disabling reminders cancels unfinished automatic
+reports while retaining task records and target execution. `/mishu-tasks` still
+reads late facts when reminders are off. Selection/setup and event consent are
+separate, per-source-binding capabilities.
+
+Host owns the durable Outbox as automatic ReportRecords: pending → admitted →
+processing → committed, or cancelled/uncertain. One notification per secretary
+is placed on the existing FIFO input queue at a time; foreground input retains
+its position. A private callback owns the exact report admission and command;
+Browser sees only a human title with a stop-following action, never editable native command text,
+a processing nonce or capability. Notifications cannot be edited, promoted or steered. Cancelling the queued row is an authenticated user stop-following action; it does not stop target execution.
+The native report retains #72's hidden custom input, all-tools denial, exact
+native output evidence and atomic notification/report commit. It grants no new
+execution authority and cannot mix with foreground instruction origin.
+
+A persisted delivery-attempt fence precedes the native call. Queue acceptance is
+not completion. A restart may requeue only a pending/admitted report proven never
+to have attempted native delivery; that receives a new transport command receipt
+while keeping the same report and processing identities. Ambiguous admission
+stays uncertain, without another model request. Lost report ACK reconciles the
+same native output. No target execution is replayed. Source/contact binding,
+source permission generation, obligation generation and notification revision
+are checked at admission, delivery, processing and commit. Stop, contact removal,
+archive and clear cancel pending delivery and later ACK; already streamed native
+text remains scoped historical output, not a successful notification.
+
+Baseline bounds: 20 outstanding reports per secretary, 100 report records per
+Task Brief, one automatic native delivery attempt per report, one queued
+notification per secretary, and existing input queue limits (100 rows/512 KiB
+text/16 MiB attachments). Capacity/persistence failures are visible in status and
+retain the obligation. There is no polling wake, infinite retry or retry with a
+new processing identity. FIFO prevents a series of reports from overtaking user
+input. Multi-task coalescing, richer fair scheduling and per-engine observation
+are later slices, not claimed by this candidate.
+
+Candidate verification crosses public HTTP/WS and actual Browser/Web/Host/native
+Pi: default off and model-side grant denial; late result with no second prompt;
+foreground-busy queue; queued revocation; never-delivered restart; ambiguous
+admission without replay; native output written before lost Host ACK; mobile
+explicit enable/stop and desktop/mobile reconnect with one visible report.
+Fixtures are synthetic. Production activation, immutable package pin, real-model
+quality and complete integrated lifecycle acceptance remain separate evidence.

@@ -144,8 +144,10 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 
 - [MISHU candidate task briefs](spec/mishu.md#candidate-task-briefs-69-not-a-production-activation): versioned scoped registration, correction and stop; explicit existing Pi observation is described below.
 
-- [MISHU candidate existing Pi observation](spec/mishu.md#candidate-existing-pi-run-observation-70-not-a-production-activation): durable exact-run reply responsibility, passive restart reconciliation and native task-browser inspection; automatic reports remain pending.
+- [MISHU candidate existing Pi observation](spec/mishu.md#candidate-existing-pi-run-observation-70-not-a-production-activation): durable exact-run reply responsibility, passive restart reconciliation and native task-browser inspection; automatic event reports are the #73 candidate below.
 
 - MISHU candidate durable dispatch: [current contract](spec/mishu.md#candidate-durable-dispatch-71-not-a-production-activation); Task Brief/Assignment admission and exact native result correlation. Production activation is separate.
 
-- [MISHU candidate on-demand native reports](spec/mishu.md#candidate-on-demand-native-reports-72-not-a-production-activation): trusted restricted native summary, durable output references and lost-ACK reconciliation; automatic notifications remain pending.
+- [MISHU candidate on-demand native reports](spec/mishu.md#candidate-on-demand-native-reports-72-not-a-production-activation): trusted restricted native summary, durable output references and lost-ACK reconciliation; automatic event delivery is the #73 candidate below.
+
+- [MISHU candidate automatic event reports](spec/mishu.md#candidate-automatic-event-reports-73-not-a-production-activation): explicit default-off reminders, durable Outbox, trusted FIFO native report delivery, generation fences and bounded recovery.

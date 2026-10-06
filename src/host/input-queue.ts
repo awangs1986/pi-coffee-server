@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {ImageInput, QueueAction, QueueItem} from '../shared/protocol.js';
-type Input=QueueItem&{images?:ImageInput[];requestId?:string};
+type Input=QueueItem&{images?:ImageInput[];requestId?:string;internal?:()=>Promise<void>;cancel?:()=>Promise<void>};
 
 /** Pending Web inputs stay here until one native delivery owns them. */
 export class InputQueue {
@@ -11,7 +11,7 @@ export class InputQueue {
  private generation=0;
  private inFlight?:Promise<void>;
  constructor(private readonly options:{busy:()=>boolean;validate:(text:string)=>Promise<void>;deliver:(text:string,images:ImageInput[]|undefined,promote:boolean,requestId?:string)=>Promise<void>;changed:()=>void}){}
- get items():QueueItem[]{return this.rows.map(({images,...item})=>({...item}));}
+ get items():QueueItem[]{return this.rows.map(({images,internal,cancel,...item})=>({...item}));}
  get active(){return this.sending;}
  async add(text:string,images?:ImageInput[],requestId?:string){
   const generation=this.generation;await this.options.validate(text);
@@ -21,6 +21,12 @@ export class InputQueue {
   this.rows.push({id:randomUUID(),requestId,revision:1,text,status:'pending',imageCount:images?.length??0,...(images?{images:structuredClone(images)}:{})});
   this.options.changed();this.wake();
  }
+ addInternal(text:string,deliver:()=>Promise<void>,cancel:()=>Promise<void>){
+  if(this.stopped||this.rows.length>=100)throw Error('Queue unavailable');this.checkSize(text);
+  const row:Input={id:randomUUID(),revision:1,text,status:'pending',imageCount:0,readOnly:true,internal:deliver,cancel};
+  this.rows.push(row);this.options.changed();this.wake();return row.id;
+ }
+ cancelInternal(id:string){const row=this.rows.find(r=>r.id===id&&r.internal);if(row&&row.status!=='sending'){this.rows=this.rows.filter(r=>r!==row);this.options.changed();this.wake();return true;}return false;}
  private checkSize(text:string,images?:ImageInput[],except?:Input){
   const rows=this.rows.filter(row=>row!==except);
   if(Buffer.byteLength(text)+rows.reduce((n,row)=>n+Buffer.byteLength(row.text),0)>512*1024)throw Error('队列文字过多，请先处理已有指令');
@@ -33,6 +39,7 @@ export class InputQueue {
  }
  async change(action:QueueAction){
   let row=this.find(action.id,action.revision);
+  if(row.internal){if(action.action!=='cancel')throw Error('通知不能编辑或插话；请停止跟进');await row.cancel?.();this.cancelInternal(row.id);return;}
   if(action.action==='edit'){
    if(!action.text?.trim())throw Error('指令不能为空');
    await this.options.validate(action.text);row=this.find(action.id,action.revision);
@@ -55,7 +62,7 @@ export class InputQueue {
   const generation=this.generation;
   this.sending=true;row.status='sending';row.revision++;this.options.changed();
   try{
-   this.inFlight=row.requestId===undefined?this.options.deliver(row.text,row.images,promote):this.options.deliver(row.text,row.images,promote,row.requestId);
+   this.inFlight=row.internal?row.internal():row.requestId===undefined?this.options.deliver(row.text,row.images,promote):this.options.deliver(row.text,row.images,promote,row.requestId);
    await this.inFlight;
    this.rows=this.rows.filter(item=>item!==row);
   }catch(error){
