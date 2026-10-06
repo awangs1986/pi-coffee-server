@@ -1,3 +1,4 @@
+import {runLifecycle} from '../shared/run-lifecycle.js';
 import {MishuCoordinator} from './mishu.js';
 import {createRequire} from 'node:module';
 import {dirname} from 'node:path';
@@ -557,7 +558,11 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks):undefined;
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{index?.event(id,event);mishu?.event(id,event);},onCommand:async(id,requestId,state,mode)=>{await mishu?.command(id,requestId,state,mode);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
+      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+        index?.event(id,event);mishu?.event(id,event);
+        const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
+        if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
+      },onCommand:async(id,requestId,state,mode)=>{await mishu?.command(id,requestId,state,mode);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);
       const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {

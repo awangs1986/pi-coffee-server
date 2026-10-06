@@ -623,6 +623,34 @@ describe("Host WebSocket seam", () => {
     other.close();
   });
 
+  it('retains completed run status through browser reattachment, idle retirement and Host restart',async()=>{
+    const root=mkdtempSync(join(tmpdir(),'coffee-completion-'));
+    const factory=new FakeFactory();const workspaceRoot=join(root,'projects');
+    const ws=new Workspaces(workspaceRoot);const c=await ws.createChatConversation('completion');
+    const start=async(workspaces:Workspaces)=>{server=new HostServer({port:0,host:'127.0.0.1',factory,workspaces,idleTimeoutMs:25});await server.start();};
+    let socket:WebSocket|undefined;
+    try {
+      await start(ws);socket=await connect(server!.address().port);let frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:'open',sessionId:c.id}));await frames.next();await frames.next();
+      socket.send(encodeFrame({v:1,type:'prompt',requestId:'complete-1',text:'synthetic completion'}));
+      for(let i=0;i<5;i++)await frames.next();
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));
+      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      socket.close();await once(socket,'close');
+      await waitFor(()=>factory.sessions.get(c.id)!.stopped);
+      socket=await connect(server!.address().port);frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));
+      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      socket.send(encodeFrame({v:1,type:'open',sessionId:c.id}));await frames.next();await frames.next();
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));
+      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled'});
+      socket.close();await once(socket,'close');await server!.close();
+      await start(new Workspaces(workspaceRoot));socket=await connect(server!.address().port);frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:'list_sessions'}));
+      expect((await frames.nextSessions()).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+    }finally{socket?.close();await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
   it("watches a turn that another process is driving and settles the browser once it ends (P3 take-over)", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory, externalPollMs: 20 });

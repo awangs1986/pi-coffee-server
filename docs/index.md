@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Durable completed-task coffee icon: [navigation contract](spec/arena-navigation.md#durable-completion-icon--2026-10-06-server-79), [evidence](reviews/completion-icon-20261006.md), [Server #79](https://github.com/awangs1986/pi-coffee-server/issues/79). Native settlement is separate from unread attention and business acceptance.
+
 - Immediate per-Conversation model display: [contract](spec/conversation-switching.md#last-confirmed-model-display-2026-10-06-server-68), [Server #68](https://github.com/awangs1986/pi-coffee-server/issues/68). Cached metadata is display-only; native settings remain authoritative.
 
 - Current project terms and boundaries: [CONTEXT.md](../CONTEXT.md); [2026-10-06 freshness audit](reviews/spec-freshness-20261006.md), [Server #66](https://github.com/awangs1986/pi-coffee-server/issues/66). Ordinary Chat is zero-system; five Work engines retain distinct capabilities; MISHU persistent follow-up remains #64.

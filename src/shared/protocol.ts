@@ -52,6 +52,8 @@ export interface SessionSummary {
   preview: string;
   running: boolean;
   queued?:number;
+  /** Last observed native run boundary, independent of unread attention. */
+  runStatus?: "running" | "settled" | "interrupted";
   /**
    * Why this conversation wants the user's eyes: an agent dialog is waiting
    * for an answer, or a run finished while no browser was attached. Absent
