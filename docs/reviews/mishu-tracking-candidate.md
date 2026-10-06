@@ -67,16 +67,39 @@ synthetic static-header transport. No provider account or network was used by th
 probe. Build/typecheck/vendor generation and four public integration/rendering
 files (24 tests) passed; final fresh-clone complete checks remain separate below.
 
+## Codex final-answer ordering repair
+
+The first installed-artifact Pi→Codex probe admitted two automatic report runs for
+one final reply: a complete `final_answer` arrived before the separate native turn
+completion, so it was first reported as ongoing progress and then as terminal.
+That actual probe failed uniqueness; it is retained as historical failure evidence.
+It proved one committed output plus a second admitted run, not two completed outputs.
+
+The production Codex Agent boundary now retains explicit final-answer evidence
+until the exact terminal/lost-connection outcome. Browser text remains immediate,
+commentary progress remains reportable, and failed/interrupted/lost runs retain
+final facts with incomplete/uncertain status. Unknown phases and asynchronous user
+questions keep their existing live handling. The 250ms coalescing interval, report
+budgets, immutable report snapshots and grant checks are unchanged.
+
+A public HTTP/WS scenario using the production Codex adapter and a deterministic
+protocol fixture reproduced two reports instead of one in 2.6 seconds, twice.
+The fixture's `agentMessage.phase` field was checked against the pinned 0.159.1
+CLI's offline JSON schema and the real synthetic rollout's final-answer phase.
+After repair, five cases cover final-only, commentary then final, failed,
+interrupted and process-loss outcomes, including a visible final-message/terminal
+gap. This is local regression proof; installed actual Browser rerun is still required.
+
 ## Final candidate gates
 
 | Gate | Verdict |
 | --- | --- |
-| Source complete check | PASS: 107 files / 931 tests after review fixes |
+| Source complete check | PASS: 107 files / 936 tests after final-answer ordering repair |
 | Versioned independent plugin check | PASS: 144 tests |
 | Artifact identity and source bytes | PASS |
 | Patched dependency clean install, all/runtime audit | PASS: zero known advisories at the final patch check |
 | Installed SDK compatibility and integration/build | PASS: actual consumer resolution, 24 tests, build/vendor generation |
-| Installed-artifact complete Server check | Pending |
+| Installed-artifact complete Server check | PASS: private clean install, 107 files / 936 tests; immutable plugin, no source override |
 | Fresh GitHub clone check | Pending |
 | Installed actual Pi→Pi Browser flow | Pending |
 | Installed actual Pi→Codex Browser flow | Pending |
