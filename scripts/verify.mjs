@@ -4,7 +4,7 @@ import {readFile,mkdir,writeFile,rename} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {optionalArtifacts} from './lib/artifacts.mjs';
+import {optionalArtifacts,dependencyArtifacts,sha256} from './lib/artifacts.mjs';
 import {sourceIdentity} from './lib/source-identity.mjs';
 const args=process.argv.slice(2),take=name=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
 async function save(file,value){await mkdir(dirname(file),{recursive:true,mode:0o700});const tmp=file+'.'+randomUUID();await writeFile(tmp,JSON.stringify(value,null,2)+'\n',{mode:0o600});await rename(tmp,file);}
@@ -15,9 +15,9 @@ try {
  for(const step of plan.steps)if(!/^[a-z][a-z0-9-]{0,63}$/.test(step.name)||!Array.isArray(step.argv)||!step.argv.length||step.argv.some(v=>typeof v!=='string'||v.includes('\0')))throw Error('Invalid verification command');
  const identity=await sourceIdentity(repo),result={version:1,...identity,planSha256:createHash('sha256').update(raw).digest('hex'),node:process.version,status:'running',steps:[]};
  const reviewFile=take('--require-review');
- if(reviewFile){const review=JSON.parse(await readFile(resolve(reviewFile),'utf8'));if(review.status!=='passed'||review.sourceFingerprint!==identity.sourceFingerprint)throw Error('Review does not match current source');}
+ if(reviewFile){const reviewBytes=await readFile(resolve(reviewFile)),review=JSON.parse(reviewBytes);if(review.status!=='passed'||review.sourceFingerprint!==identity.sourceFingerprint)throw Error('Review does not match current source');result.reviewSha256=sha256(reviewBytes);}
  let cached;try{cached=JSON.parse(await readFile(receipt,'utf8'));}catch{}
- if(args.includes('--reuse')&&cached?.status==='passed'&&cached.sourceFingerprint===identity.sourceFingerprint&&cached.planSha256===result.planSha256&&cached.node===process.version&&JSON.stringify(cached.artifacts)===JSON.stringify(await optionalArtifacts(resolve(repo,'dist')))&&cached.steps?.length===plan.steps.length&&cached.steps.every((step,i)=>step.name===plan.steps[i].name&&step.exitCode===0)){console.log('VERIFY reused '+identity.tree);process.exit(0);}
+ if(args.includes('--reuse')&&cached?.status==='passed'&&cached.sourceFingerprint===identity.sourceFingerprint&&cached.planSha256===result.planSha256&&cached.node===process.version&&(!reviewFile||cached.reviewSha256===result.reviewSha256)&&JSON.stringify(cached.artifacts)===JSON.stringify(await optionalArtifacts(resolve(repo,'dist')))&&JSON.stringify(cached.dependencies)===JSON.stringify(await dependencyArtifacts(resolve(repo,'node_modules')))&&cached.steps?.length===plan.steps.length&&cached.steps.every((step,i)=>step.name===plan.steps[i].name&&step.exitCode===0)){console.log('VERIFY reused '+identity.tree);process.exit(0);}
  for(const step of plan.steps){
   console.log('VERIFY '+step.name);
   const argv=step.argv.map(value=>value==='$NODE'?process.execPath:value);
@@ -25,5 +25,5 @@ try {
   result.steps.push({name:step.name,exitCode});
   if(exitCode){result.status='failed';await save(receipt,result);process.exitCode=exitCode;break;}
  }
- if(result.status==='running'){if((await sourceIdentity(repo)).sourceFingerprint!==identity.sourceFingerprint)throw Error('Source changed during verification');result.status='passed';result.artifacts=await optionalArtifacts(resolve(repo,'dist'));await save(receipt,result);}
+ if(result.status==='running'){if((await sourceIdentity(repo)).sourceFingerprint!==identity.sourceFingerprint)throw Error('Source changed during verification');result.status='passed';result.artifacts=await optionalArtifacts(resolve(repo,'dist'));result.dependencies=await dependencyArtifacts(resolve(repo,'node_modules'));await save(receipt,result);}
 } catch {console.error('Verification failed: invalid plan, source or receipt.');process.exitCode=1;}

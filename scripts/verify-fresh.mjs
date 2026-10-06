@@ -15,7 +15,7 @@ try{
  if(!fixture)await exec('npm',['ci'],{cwd:repo,env,maxBuffer:16*1024*1024,timeout:600000});
  const plan=fixture?take('--plan'):join(repo,'scripts/verification-plan.json');if(!plan)throw Error('Fixture plan required');
  await exec(process.execPath,[fixture?resolve('scripts/verify.mjs'):join(repo,'scripts/verify.mjs'),'--repo',repo,'--plan',plan,'--receipt',join(root,'receipt.json')],{env,maxBuffer:32*1024*1024,timeout:600000});
- const stage=take('--stage-config');if(stage)await exec(process.execPath,[fixture?resolve('scripts/release.mjs'):join(repo,'scripts/release.mjs'),'stage','--source',repo,'--commit',commit,'--verification',join(root,'receipt.json'),'--config',resolve(stage),'--role',take('--role')||'browser'],{env,maxBuffer:8*1024*1024,timeout:600000});
+ const stage=take('--stage-config');if(stage)await exec(process.execPath,[fixture?resolve('scripts/release.mjs'):join(repo,'scripts/release.mjs'),'stage',...(fixture?['--fixture']:[]),'--source',repo,'--commit',commit,'--verification',join(root,'receipt.json'),'--config',resolve(stage),'--role',take('--role')||'browser'],{env,maxBuffer:8*1024*1024,timeout:600000});
  const value={...JSON.parse(await readFile(join(root,'receipt.json'),'utf8')),freshClone:true};if(value.commit!==commit||value.status!=='passed')throw Error('Fresh verification failed');
  await mkdir(dirname(receipt),{recursive:true,mode:0o700});const temp=receipt+'.'+randomUUID();await writeFile(temp,JSON.stringify(value,null,2)+'\n',{mode:0o600});await rename(temp,receipt);console.log(JSON.stringify({freshClone:true,commit,status:'passed'}));
 }catch{console.error('Fresh-clone verification failed; source is not approved for release.');process.exitCode=1;}

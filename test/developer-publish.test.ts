@@ -53,3 +53,14 @@ it('refuses publication without source-bound verification and review receipts',a
   const result=spawnSync(process.execPath,[resolve('scripts/publish.mjs'),'--repo',repo,'--expected',expected,'--fixture'],{encoding:'utf8'});expect(result.status).toBe(1);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+it('refuses a final check performed before the accepted review',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-publish-order-'));
+ try{
+  const repo=join(root,'repo'),forge=join(root,'forge.git');await mkdir(repo);const git=(...a:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test',...a],{cwd:repo,encoding:'utf8'}).trim();
+  git('init','-q','-b','main');await writeFile(join(repo,'file'),'fixture');git('add','.');git('commit','-qm','source');const expected=git('rev-parse','HEAD');git('init','--bare','-q',forge);git('remote','add','origin',forge);git('push','-q','origin','main');
+  const flags=await approval(repo),receipt=flags[1];
+  execFileSync(process.execPath,[resolve('scripts/verify.mjs'),'--repo',repo,'--plan',join(repo,'.git','verification','plan.json'),'--receipt',receipt]);
+  const run=spawnSync(process.execPath,[resolve('scripts/publish.mjs'),'--repo',repo,'--expected',expected,'--fixture',...flags],{encoding:'utf8'});expect(run.status).toBe(1);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

@@ -18,7 +18,8 @@ Browser activation and backend activation are separate outcomes.
    ```
 
    The review command records an explicit verdict and evidence hash. It does not
-   conduct a review. The final gate checks the reviewed source fingerprint.
+   conduct a review. The final gate checks the reviewed source fingerprint and binds its result to the
+   exact review receipt. A check performed before that review cannot authorize publication.
 4. Publish the checked commit, then independently verify a fresh clone of that
    exact published SHA. Keep the existing fresh-clone acceptance requirement.
 5. Stage the verified release and activate only its compatible Browser assets.
@@ -32,7 +33,8 @@ Playwright browser with `npx playwright install chromium`, or set
 
 `npm run verify -- --reuse` runs the same plan and writes a private receipt under
 `.coffee-verification/`. Reuse requires unchanged source content, plan, Node
-version, successful steps and compiled artifact hashes. Changes invalidate it.
+version, successful steps, compiled artifact hashes and dependency closure hashes
+(including executable modes and internal relative symlinks). Changes invalidate it.
 Receipts contain hashes and command labels, not environment values or command
 arguments. Verification plans are trusted local executable configuration; never
 accept a plan uploaded by a Web user. Alternative targeted plans use
@@ -93,8 +95,8 @@ node scripts/publish.mjs --repo . --remote origin --branch main \
 The selected account must exist; missing/revoked authorization never falls back to
 another account, global gh login, .netrc, SSH agent or global credential helpers.
 GitHub requires an HTTPS remote, with legacy local headers/credential overrides
-and URL rewrites rejected. Source, review, artifacts and the canonical plan must
-match. The expected remote SHA is checked before a push and enforced by a native
+and URL rewrites rejected. Source, review, artifacts, Node version and the canonical plan must
+match; the final verification must name that exact accepted review. The expected remote SHA is checked before a push and enforced by a native
 lease. The apparent `--force-with-lease` Git flag is used only after proving the
 expected commit is an ancestor of the checked HEAD; non-fast-forward history is
 never admitted. Source identity and the remote SHA are verified again. An ambiguous
@@ -134,15 +136,18 @@ node scripts/release.mjs activate-browser --commit <published-SHA> \
 ```
 
 Staging is immutable and does not change active files. It validates source and
-post-check artifact hashes. Browser activation locks the operation, checks health
-and baseline, backs up replaced files, publishes dependencies before entrypoints,
+post-check artifact hashes and the canonical plan/Node version. Browser activation
+locks before its initial baseline and health probes, rechecks the baseline immediately
+before replacement, backs up replaced files, publishes dependencies before entrypoints,
 checks HTTP-served byte hashes and verifies unchanged service identity. A failed
 probe restores backed-up entry assets. Backups and operation evidence are retained;
 new inert support files are retained rather than deleting user/older assets.
 No command restarts a service. `status` separates active and staged identities.
 
 `stage --role host` or `--role web` also copies the checked runtime/dependencies
-into an immutable candidate. Service activation is deliberately separate: inspect
+into an immutable candidate. Dependency bytes, executable modes and contained
+relative symlink targets are checked before and after copying; existing candidates
+are also checked for mutation. Service activation is deliberately separate: inspect
 all task/queue/workspace activity, obtain the approved maintenance window, pause
 the watchdog and follow [the unified runbook](../deployment/unified-release.md).
 Do not mistake a staged candidate or a healthy old process for a deployed backend.
