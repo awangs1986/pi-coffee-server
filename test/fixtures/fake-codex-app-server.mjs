@@ -4,6 +4,11 @@ import { join } from "node:path";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
 
+if(process.argv.includes('login') && process.argv.includes('status')) {
+  console.error('Logged in using ChatGPT');
+  process.exit(0);
+}
+
 // Stand-in for `codex app-server` (JSON-RPC over stdio, no "jsonrpc" field).
 // Threads persist in $CODEX_HOME/fake-threads.json so a second process can
 // list and resume them, like Codex's rollout files. A turn runs one command,
