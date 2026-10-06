@@ -311,9 +311,10 @@ export class MishuCoordinator {
    }
   },false);}catch(error){for(const entry of ready)this.notificationQueued.delete(entry.id);throw error;}
   for(const entry of ready){
+   const ownsClaim=()=>{const current=this.notificationQueued.get(entry.id);return current?.reportId===entry.reportId&&current.requestId===entry.requestId;};
    try{
     const session=await this.registry!.connect(entry.id);
-    await this.change(async()=>{const {report}=await this.notificationAdmission(entry.id,entry.reportId);report.state='admitted';});
+    await this.change(async()=>{if(!ownsClaim())throw Error('Notification admission was superseded');const {report}=await this.notificationAdmission(entry.id,entry.reportId);report.state='admitted';});
     await session.acceptCommand(entry.requestId,'follow_up');
     const row=session.enqueueNotification(entry.title,async()=>{
      const requestId=entry.requestId;
@@ -330,10 +331,12 @@ export class MishuCoordinator {
      await this.tail;const task=this.state.chats[entry.id]?.taskJournal?.tasks.find(t=>t.taskId===entry.taskId);if(!task)return;
      await this.tasks(entry.id,{action:'tasks',version:1,operation:'stop',operationId:'stop-'+randomBytes(16).toString('hex'),taskId:task.taskId,expectedRevision:task.revision});
     });
-    const queued=this.notificationQueued.get(entry.id);if(queued)queued.row=row;else session.cancelNotification(row);
+    const queued=this.notificationQueued.get(entry.id);if(queued&&ownsClaim())queued.row=row;else session.cancelNotification(row);
    }catch{
-    this.notificationQueued.delete(entry.id);
-    await this.change(async()=>{const c=this.state.chats[entry.id],r=c?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===entry.reportId);if(r&&!['committed','cancelled'].includes(r.state)){if(!r.deliveryAttempted){r.state='pending';r.admissionFailures=(r.admissionFailures??0)+1;r.recoveries=Math.min(1,r.admissionFailures);r.retryBlocked=r.admissionFailures>NOTIFICATION_LIMITS.automaticRecoveries;r.retryAt=Date.now()+1000;r.error=r.retryBlocked?'安全入队恢复预算已耗尽；责任保留，请先处理前台队列，再显式 /mishu-report。':'尚未投递；允许一次安全入队恢复。';if(!r.retryBlocked)this.scheduleNotificationAt(Date.now()+1000);}else{r.state='uncertain';r.error='Notification queue admission failed; inspect the task, no automatic retry.';}}});
+    // Keep the admission claim until its failure/backoff is durably saved.
+    // Concurrent task reads can schedule another pump while this write waits.
+    await this.change(async()=>{if(!ownsClaim())return;const c=this.state.chats[entry.id],r=c?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===entry.reportId);if(r&&!['committed','cancelled'].includes(r.state)){if(!r.deliveryAttempted){r.state='pending';r.admissionFailures=(r.admissionFailures??0)+1;r.recoveries=Math.min(1,r.admissionFailures);r.retryBlocked=r.admissionFailures>NOTIFICATION_LIMITS.automaticRecoveries;r.retryAt=Date.now()+1000;r.error=r.retryBlocked?'安全入队恢复预算已耗尽；责任保留，请先处理前台队列，再显式 /mishu-report。':'尚未投递；允许一次安全入队恢复。';if(!r.retryBlocked)this.scheduleNotificationAt(Date.now()+1000);}else{r.state='uncertain';r.error='Notification queue admission failed; inspect the task, no automatic retry.';}}});
+    if(ownsClaim())this.notificationQueued.delete(entry.id);
    }
   }
  }

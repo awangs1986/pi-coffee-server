@@ -696,7 +696,15 @@ context size. Monetary cost cannot be guaranteed without provider accounting.
 A budget-window timer may resume already-admitted report work; it does not poll or
 contact targets. Disabled reminders and uncertain delivery never create a retry
 loop. Queue admission failure consumes only the single notification recovery; it
-never authorizes retrying target execution. An ambiguous native admission or model
+never authorizes retrying target execution. The in-flight admission claim remains
+held until the rejection, backoff and recovery budget are durably saved. Concurrent
+task reads or event wakes cannot claim the same report in that transition or
+consume an additional recovery. The claim is identified by both report ID and
+request ID; a superseded pre-queue admission attempt cannot mutate or release
+a replacement claim.
+If saving the rejection fails, automatic admission stays blocked with a visible
+persistence diagnostic; explicit manual report recovery or revocation clears the
+claim, while restart recovers only durable state. An ambiguous native admission or model
 failure stays uncertain and requires native-history inspection.
 
 `/mishu` shows backlog, uncertain reports, remaining wakes, saturation and recovery
