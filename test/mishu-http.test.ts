@@ -396,6 +396,7 @@ it.each(['normal','race','commit-failure'])('observes direct native Pi work with
  if(racing)registrationGate=async()=>{reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);};
  const response=await req(watch);expect(response.status,await response.clone().text()).toBe(200);
  const admitted=await response.json();expect(admitted.task.obligation.runId).toBe(runId);if(!racing)expect(admitted.task.observation).toBe('watching');
+ if(mode==='normal'){socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'rename-tracked',sessionId:target.id,name:'Renamed tracked target'}));await expect.poll(()=>frames.some(f=>f.type==='ack'&&f.requestId==='rename-tracked'),{timeout:10000}).toBe(true);expect((await(await req({action:'status'})).json()).targets[0]).toMatchObject({id:target.id,title:'Renamed tracked target',binding:contact.binding});}
  if(mode==='commit-failure')await mkdir(blockedWrite);
  socket.close();reply();
  const get={...base,operation:'get',taskId:registered.task.taskId};
@@ -593,6 +594,7 @@ it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as 
    const rows=(await readFile(stored.path,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
    await writeFile(stored.path,rows.filter(row=>!(row.type==='custom'&&row.customType==='coffee-native-settled')).map(row=>JSON.stringify(row)).join('\n')+'\n');
   }
+  await rm(join(app.workspaces.root,'.coffee','conversation-index'),{recursive:true,force:true});
   const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
   const result=await(await resumed.call({...base,operation:'get',taskId},'owner',rt,'/api/mishu/runtime')).json();
   const report=result.task.reports[0];expect(report.state).toBe(mode==='revoked'?'cancelled':mode==='promise'||mode==='tool-only'?'uncertain':'committed');
@@ -638,7 +640,7 @@ it('defaults event reminders off and rejects model-side reminder grants',async()
 });
 
 
-it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover'] as const)('automatically reports a late observed Pi reply through trusted queue (%s)',async(mode)=>{
+it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover','disable-queued'] as const)('automatically reports a late observed Pi reply through trusted queue (%s)',async(mode)=>{
  const requests:any[]=[];let finishTarget=()=>{},finishForeground=()=>{},finishReport=()=>{};let secondStatus:(()=>Promise<any>)|undefined;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);requests.push(body);
@@ -663,7 +665,7 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
   const brief=(await(await req({...base,operation:'register',operationId:'late',targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;
   const watched=(await(await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:brief.revision,runId:contact.observation.runId})).json()).task;
   if(mode==='budget')for(let n=0;n<12;n++){const another=(await(await req({...base,operation:'register',operationId:'budget-'+n,targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;await req({...base,operation:'observe',operationId:'budget-watch-'+n,taskId:another.taskId,expectedRevision:1,runId:contact.observation.runId});}
-  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='queue-full'||mode==='queue-recover'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FOREGROUND_BUSY'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);}
+  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='queue-full'||mode==='queue-recover'||mode==='disable-queued'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FOREGROUND_BUSY'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);}
   if(mode==='budget'){
    const second=await app.workspaces.createChatConversation();await app.call({action:'select',id:second.id,selected:true});await setupThroughChat(app,second.id,target.id,true);const channel=await open(second.id),rt=(await app.host.mishuRuntime('owner',second.id)).env.PI_COFFEE_MISHU_TOKEN,req2=async(body:unknown)=>await(await app.call(body,'owner',rt,'/api/mishu/runtime')).json();
    channel.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=>(await req2({action:'status'})).notifications.enabled).toBe(true);
@@ -688,9 +690,10 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
    await new Promise(r=>setTimeout(r,1200));expect(requests).toHaveLength(mode==='budget'?14:2);return;
   }
   if(mode==='disabled'){expect(requests).toHaveLength(1);const task=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task;expect(task.fact.text).toContain('LATE_AUTOMATIC_FACT');expect(task.reports).toBeUndefined();return;}
-  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'){
+  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='disable-queued'){
    await expect.poll(()=>src.frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly&&q.text==='MISHU 汇报：Late synthetic task')),{timeout:10000}).toBe(true);expect(requests).toHaveLength(2);
    const row=src.frames.filter(f=>f.type==='queue_state').at(-1).items[0];expect(JSON.stringify(row)).not.toContain('processingId');expect(row.text).not.toContain('/mishu-report');
+   if(mode==='disable-queued'){expect((await req({action:'disable'})).status).toBe(200);finishForeground();await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);await setupThroughChat(app,source.id,target.id,true);expect((await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.obligation.state).toBe('cancelled');await new Promise(r=>setTimeout(r,300));expect(requests).toHaveLength(2);return;}
    if(mode==='revoked'){src.ws.send(JSON.stringify({v:1,type:'queue_action',requestId:'stop-notification',id:row.id,revision:row.revision,action:'cancel'}));await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.workState,{timeout:10000}).toBe('stopped');}
    if(mode==='restart-queued'||mode==='restart-uncertain'){
     for(const s of sockets)s.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
@@ -875,8 +878,9 @@ it('restores explicitly selected historical notes after source reset without con
  const req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
  const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
  const brief=(await(await req({action:'tasks',version:1,operation:'register',operationId:'history-original',targetId:target.id,binding:contact.binding,purpose:'Historical note',scope:'Synthetic old scope',summary:'Old facts only',nextStep:'Review afresh'})).json()).task;
+ const forkId=randomUUID();const fork=await app.call({action:'fork',id:source.id,targetId:forkId,mode:'native'},'owner','host-test','/api/workspace');expect(fork.status,await fork.clone().text()).toBe(202);await expect.poll(async()=>(await app.workspaces.lookup(forkId))?.fork?.status,{timeout:10000}).toBe('completed');expect(await(await app.call({action:'status',id:forkId})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false,targets:[],notifications:{enabled:false}});
  const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
- expect((await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace')).status).toBe(200);
+ const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);
  env=(await app.host.mishuRuntime('owner',source.id)).env;
  expect((await req({action:'history',version:1,operation:'list'})).status).toBe(409);
  async function chooser(restore:boolean){
@@ -919,3 +923,18 @@ it('diagnoses oversized persisted state before allocating it and never turns a f
  const app=await start(),source=await app.workspaces.createChatConversation();const directory=join(app.workspaces.root,'.coffee','mishu');await mkdir(directory,{recursive:true});const file=join(directory,'state.json');await writeFile(file,'{}');await truncate(file,512*1024*1024+1);expect((await app.call({action:'status',id:source.id})).status).toBe(409);expect(JSON.parse(await readFile(join(directory,'diagnostic.json'),'utf8')).code).toBe('storage-capacity');expect((await stat(file)).size).toBe(512*1024*1024+1);
  const healthy=await start(),chat=await healthy.workspaces.createChatConversation();await healthy.call({action:'status',id:chat.id});const blocked=join(healthy.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blocked);expect((await healthy.call({action:'select',id:chat.id,selected:true})).status).toBe(409);expect(await(await healthy.call({action:'status',id:chat.id})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false});
 });
+
+it('revokes the old observation at accepted Work takeover before preparation can restore or replace a binding',async()=>{
+ const app=await start(undefined,'codex',true,true,undefined,false,[],true),source=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile),run=(args:string[])=>git('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:seed});await run(['init','-b','main']);await writeFile(join(seed,'note.txt'),'base');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('takeover-fixture',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'pi');
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Original synthetic Pi task',timestamp:Date.now()});native.appendMessage({role:'assistant',content:[{type:'text',text:'Original Pi reply'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);const env=(await app.host.mishuRuntime('owner',source.id)).env,req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const brief=(await(await req({action:'tasks',version:1,operation:'register',operationId:'takeover-old',targetId:target.id,binding:contact.binding,purpose:'Original Pi work',scope:'Only original run',summary:'Reply exists',nextStep:'Review'})).json()).task;
+ const watch=await req({action:'tasks',version:1,operation:'observe',operationId:'takeover-watch',taskId:brief.taskId,expectedRevision:1,runId});expect(watch.status,await watch.clone().text()).toBe(200);
+ const takeover=await app.call({action:'takeover',id:target.id,engine:'codex',expectedEngine:'pi',acceptDrift:true},'owner','host-test','/api/workspace');expect(takeover.status,await takeover.clone().text()).toBe(202);
+ const saved=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8')).chats[source.id].taskJournal.tasks[0];expect(saved.obligation.state).toBe('cancelled');expect(saved.notification).toBeUndefined();expect(saved.fact.text).toBe('Original Pi reply');
+ // Source Chat itself is not eligible for a Work takeover.
+ expect((await app.call({action:'takeover',id:source.id,engine:'codex',expectedEngine:'pi',acceptDrift:true},'owner','host-test','/api/workspace')).status).toBe(409);
+},30000);

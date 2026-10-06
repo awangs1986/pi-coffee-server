@@ -10,9 +10,11 @@
 
 - MISHU task authorization without repeated confirmation: [contract](spec/mishu.md#bounded-autonomy-and-authorization-continuity-016), [evidence](reviews/mishu-autonomy-20261006.md), [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65).
 
+- MISHU integrated tracking acceptance: [44 stories and A29–A35](development/mishu-tracking-acceptance-76.md), source candidate #76; immutable installation and production are separate gates.
+
 - MISHU upgrade/history recovery candidate: [current contract](spec/mishu.md#upgrade-and-explicit-historical-note-recovery-76-candidate), Server #76. Versioned private migration, fail-closed diagnostics and explicit note-only recovery; package/production acceptance remains separate.
 
-- MISHU durable tracking design: [Host closure contracts and A29–A35](spec/mishu.md#durable-coordination-loop-contract-2026-10-06-planned), [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64). Pending implementation: durable event ingestion, trusted notification runs, report commit/recovery and business-operation idempotency.
+- MISHU durable tracking design: [Host closure contracts and A29–A35](spec/mishu.md#durable-coordination-loop-contract-2026-10-06-planned), [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64). The review candidate implements durable event ingestion, trusted notification runs, report commit/recovery and business-operation idempotency; the linked acceptance map separates source evidence from package/release gates.
 
 - MISHU complete-secretary target: [Host resource contracts and staged acceptance](spec/mishu.md#complete-secretary-target-and-implementation-status-2026-10-05), [canonical plugin SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/8b2b2ca87a3eee8cbe9ef3cf6781f5d57fda3353/docs/coffee-secretary-spec.md). Planned capabilities remain distinct from current-request messaging; the lockfile and deployment evidence identify the consumed and running versions.
 

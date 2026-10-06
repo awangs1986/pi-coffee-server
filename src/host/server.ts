@@ -421,6 +421,7 @@ export class HostServer {
         const listing=(await slot.registry.list()).find(s=>s.id===id);
         const title=listing?.name||listing?.preview;
         const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
+        await slot.mishu?.revokeConversation(id);
         await ws.beginTakeover(id,operation);
         // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
         const takeover = session.takeover(operation).then(async()=>{

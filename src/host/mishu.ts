@@ -19,7 +19,7 @@ const binding=(task:Conversation)=>createHash('sha256').update(JSON.stringify([t
 const clean=(s:string)=>s.replace(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}/g,'[REDACTED]').replace(/\b(?:Bearer|token|password|api[_-]?key)\s*[:= ]\s*[^\s,;]+/gi,'[REDACTED]');
 const validId=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const contactable=(c:Conversation)=>(c.engine??'pi')==='pi'||Boolean(c.nativeBinding?.id);
-const visible=(c:Conversation)=>!c.archived&&!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready')&&!c.takeover&&!c.forking;
+const visible=(c:Conversation)=>!c.archived&&!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready')&&c.takeover?.status!=='preparing'&&c.forking?.status!=='preparing';
 const currentTitle=(summary:{name?:string;preview?:string}|undefined,fallback:string)=>{
  const raw=summary?.name||summary?.preview||fallback,cut=raw.indexOf('[已上传到工作目录的文件]');
  return ((cut>0?raw.slice(0,cut).trim():raw)||fallback).slice(0,120);
@@ -58,18 +58,19 @@ export class MishuCoordinator {
   }});void recovery.then(()=>this.scheduleNotifications()).catch(()=>undefined);this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
  }
  async recoveryReady(){await this.tail;await this.load();}
+ private persistedBytes=0;
  private transactionCheckpoint?:State;
  private migration?:{bytes:Buffer;name:string};
  private async load(){await (this.loaded??= (async()=>{
   await mkdir(this.root,{recursive:true,mode:0o700});
   const writer=new DatabaseSync(join(this.root,'writer.sqlite'));
   try{writer.exec('BEGIN EXCLUSIVE');this.writer=writer;}catch{writer.close();throw Error('Another Host owns MISHU coordination; no state was read or changed');}
-  try{const loaded=await readMishuState(this.root);this.state={version:2,chats:loaded.state.chats as Record<string,Config>};if(loaded.backupName)this.migration={bytes:loaded.bytes,name:loaded.backupName};
+  try{const loaded=await readMishuState(this.root);this.persistedBytes=loaded.bytes.length;this.state={version:2,chats:loaded.state.chats as Record<string,Config>};if(loaded.backupName)this.migration={bytes:loaded.bytes,name:loaded.backupName};
    for(const c of Object.values(this.state.chats)){for(const task of c.taskJournal?.tasks??[])for(const r of task.reports??[])if(r.automatic&&r.deliveryAttempted&&['pending','admitted'].includes(r.state)){r.state='uncertain';r.error='Host restarted during notification admission; no automatic replay.';}for(const a of c.assignments??[])if(!['settled','cancelled','uncertain'].includes(a.state)){a.state='uncertain';a.error='Host restarted; no execution replay. Inspect native evidence.';}for(const task of c.taskJournal?.tasks??[]){const a=c.assignments?.find(a=>a.id===task.assignment?.id);if(a)task.assignment={...a};}}
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
- private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>MAX_MISHU_STATE_BYTES-(revocation?0:32*1024*1024))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);}
+ private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);}
  private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
  private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
@@ -81,7 +82,7 @@ export class MishuCoordinator {
   const reports=tasks.flatMap(t=>t.reports??[]),budget=currentBinding?c.notificationBudget:undefined,remainingWakes=budget&&Date.now()-budget.startedAt<NOTIFICATION_LIMITS.budgetWindowMs?Math.max(0,NOTIFICATION_LIMITS.wakesPerWindow-budget.used):NOTIFICATION_LIMITS.wakesPerWindow;
   const backlog=tasks.filter(t=>t.notification?.automatic&&t.notification.state!=='committed'&&t.workState!=='stopped').length;
   const diagnostic=tasks.find(t=>t.workState!=='stopped'&&t.notificationError)?.notificationError??reports.find(r=>r.retryBlocked&&!['committed','cancelled'].includes(r.state))?.error??c.notificationError??(remainingWakes===0?'本小时自动汇报预算已用完；责任保留，预算恢复后继续。可用 /mishu-tasks 查看事实。':undefined);
-  return {notifications:{enabled:currentBinding&&c.enabled&&c.notifications===true,capacity:20,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。',error:diagnostic??this.notificationFailure},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:this.observationFailure}};
+  return {notifications:{enabled:currentBinding&&c.enabled&&c.notifications===true,capacity:20,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。',error:currentBinding?diagnostic??this.notificationFailure:undefined},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:currentBinding?this.observationFailure:undefined}};
  }
  async select(id:string,selected:boolean){return this.change(async()=>{
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
@@ -111,9 +112,9 @@ export class MishuCoordinator {
    this.notificationSetupWindows.delete(id);const previous=structuredClone(c);c.notifications=input.enabled;c.notificationGeneration=(c.notificationGeneration??0)+1;
    // Enabling starts at this boundary; it never replays old accumulated results.
    for(const task of c.taskJournal?.tasks??[]){if(task.notification)task.notification.automatic=false;for(const r of task.reports??[])if(r.automatic&&!['committed','uncertain'].includes(r.state))r.state='cancelled';}
-   try{await this.save();}catch(error){this.state.chats[id]=previous;throw error;}
+   try{await this.save(input.enabled===false);}catch(error){this.state.chats[id]=previous;throw error;}
    this.cancelNotificationQueue(id);return {enabled:c.notifications};
-  });
+  },true,input.enabled===false);
   if(input.action==='history')return this.change(async()=>{
    if(!this.historyWindows.has(id))throw Error('History requires the direct user /mishu-history command');
    const source=await this.source(id),c=this.state.chats[id];if(!c?.selected)throw Error('MISHU is not selected');

@@ -98,7 +98,7 @@ try{
  await page.getByText('上下文已清空',{exact:false}).first().waitFor({timeout:10000});
  for(const width of [1360,390]){
   await page.setViewportSize({width,height:800});await page.locator('#prompt').fill('/mishu-history');await page.locator('#send').click();
-  await page.locator('#ui-options .ui-option').filter({hasText:'历史简报：Synthetic build brief'}).click();await page.locator('#ui-modal').filter({hasText:'不恢复联系人'}).waitFor();
+  await page.locator('#ui-options .ui-option').filter({hasText:'历史简报：Synthetic build brief'}).click();await page.locator('#ui-title').filter({hasText:'恢复这份历史笔记？'}).waitFor();await page.locator('.login-coffee').waitFor({state:'hidden'});
   await page.screenshot({path:join(root,'history-confirm-'+width+'.png')});
   if(width===1360)await page.locator('#ui-cancel').click();else await page.locator('#ui-ok').click();
   await page.locator('#ui-modal').waitFor({state:'hidden'});
@@ -109,7 +109,7 @@ try{
  if(restored?.length!==1||restored[0].summary!=='Waiting for build evidence.'||restored[0].obligation||restored[0].targetId)throw Error('History restored task authority or wrong text');
  const current=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer synthetic-host-only','x-pi-coffee-user':'owner','content-type':'application/json'},body:JSON.stringify({action:'status',id:source.id})}).then(r=>r.json());
  if(current.enabled||current.allowInstructions||current.notifications.enabled||current.targets.length)throw Error('Source reset/recovery revived permissions');
- await page.reload();await page.locator('#prompt').fill('/mishu-history');await page.locator('#send').click();await page.locator('#ui-options .ui-option').filter({hasText:'已恢复笔记：Synthetic build brief'}).click();await page.locator('#ui-title').filter({hasText:'这是历史事实'}).waitFor();await page.screenshot({path:join(root,'restored-history-390.png')});await page.locator('#ui-cancel').click();
+ await page.reload();await page.locator('#prompt').fill('/mishu-history');await page.locator('#send').click();await page.locator('#ui-options .ui-option').filter({hasText:'已恢复笔记：Synthetic build brief'}).click();await page.locator('#ui-title').filter({hasText:'这是历史事实'}).waitFor();await page.locator('.login-coffee').waitFor({state:'hidden'});await page.screenshot({path:join(root,'restored-history-390.png')});await page.locator('#ui-cancel').click();
  if(reportRequests!==1)throw Error('Report generation repeated');
  if(targetRequests!==1)throw Error('Observation replayed target execution');
  if(errors.length)throw Error('Browser/model errors: '+errors.join('; '));

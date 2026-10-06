@@ -9,8 +9,7 @@ Baseline: Server `3ff1661632bc9bbb746a6f6d8418ca63bdd18246`; independent plugin
 Implement the accepted event-driven tracking slice of the
 [MISHU contract](../spec/mishu.md), including canonical SPEC §10.1–10.7 and
 A29–A35. Follow the dependency graph; preserve current native execution, ordinary
-Chat, existing MISHU authorization, and per-user scope. No timers, new agents or
-native permission delegation are added.
+Chat, existing MISHU authorization, and per-user scope. No target polling, new agents or native permission delegation are added. Bounded timers only deliver already authorized reminders or resume persisted admission budgets.
 
 | Ticket | Deliverable | Blocked by | Evidence |
 | --- | --- | --- | --- |
@@ -19,16 +18,16 @@ native permission delegation are added.
 | #71 | Dispatch once with reply responsibility | #70 | Candidate implemented; durable Assignment and public native correlation checks; later model rerun unavailable upstream |
 | #72 | Durable, restricted report generation | #70 | Candidate implemented; actual source-model native report commit and unique refreshed output verified |
 | #73 | Automatic delayed-result reporting | #72 | Candidate implemented; deterministic native/browser delayed report and busy-source mobile stop verified |
-| #74 | Bounded multi-task scheduling | #73 | In progress |
-| #75 | Native-engine tracking capabilities | #73 | In progress |
-| #76 | Upgrade recovery and integrated acceptance | #71, #74, #75 | Pending |
+| #74 | Bounded multi-task scheduling | #73 | Candidate implemented; coalescing/fairness/budget and Browser evidence |
+| #75 | Native-engine tracking capabilities | #73 | Candidate implemented; actual Codex/Grok plus explicit account/recovery limits |
+| #76 | Upgrade recovery and integrated acceptance | #71, #74, #75 | Candidate implemented; [integrated acceptance](mishu-tracking-acceptance-76.md), final immutable gates separate |
 
 Tests cross the existing authenticated Host HTTP/WS and browser-controller
 Interfaces, with real synthetic browser/native flows for acceptance. Each slice
 owns its revocation, failure and restart checks; later integration does not defer
 those guarantees. Model replies alone do not prove completion.
 
-## Integration evidence through #73
+## Historical integration evidence through #73
 
 Server candidate `d0c2852` and independent plugin candidate `e8ca1a3` preserve
 Server main `74679e9`, including the recent sidebar activity and durable completion
@@ -51,3 +50,17 @@ alone does not establish this requirement.
 This is a candidate PR, not production activation. Immutable artifact installation,
 fresh-clone checks, complete acceptance mapping and final review remain pending.
 The complete M01–M13 target includes later slices outside parent #64.
+
+## Integrated #76 source candidate
+
+The [44-story/A29–A35 matrix](mishu-tracking-acceptance-76.md) supersedes the
+intermediate pending statuses above. Actual main discovers persisted scopes without
+Browser/API priming. Schema2 preserves private migration backups and safely refuses
+unsupported rollback reads. Explicit historical-note restoration copies no rights.
+Native Fork keeps the original secretary usable and the child unselected; accepted
+Work takeover cancels the old observation before native conversion. A report of a
+native blocker keeps the task waiting, independent of report-delivery status.
+
+This is still a source candidate. Root release evidence owns immutable artifact,
+fresh-clone/installed Browser validation and final review; no production deployment
+is implied by these source checks.
