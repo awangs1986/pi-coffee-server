@@ -1,6 +1,6 @@
 # PI Coffee documentation map
 
-- MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, installed validation and production activation are recorded separately.
+- MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 
 - Recent-conversation sidebar order: [current contract](spec/arena-navigation.md#recent-conversation-order-2026-10-06-server-80-supersedes-54), [evidence](reviews/sidebar-activity-20261006.md), [Server #80](https://github.com/awangs1986/pi-coffee-server/issues/80). Dates and order use last conversation activity; this supersedes creation-time ordering.
 

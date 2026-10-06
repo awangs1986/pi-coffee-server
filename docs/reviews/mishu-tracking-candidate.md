@@ -41,12 +41,31 @@ zero outstanding Spec findings. Release gates below remain separate.
 
 ## Security
 
-No block, fix-before-ship or note finding in the pinned source review. Checks
-followed runtime capabilities through scoped task/report/dispatch authorization,
-actual native report tool denial, direct-user history restoration, state ownership
-and migration, and bounded startup discovery. Secrets, input validation, scoped
-data access and dependencies were examined. The runtime dependency audit reported
-zero known vulnerabilities; final artifact installation is checked separately.
+The pinned source review found no authentication, scope, secret, input-validation
+or state-ownership finding. The earlier zero-advisory dependency result is
+historical: final installed-package audits then identified
+[GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) in
+`@modelcontextprotocol/sdk@1.27.1` and development-only
+[GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) in
+`source-map-js@1.2.1`.
+
+The SDK OAuth credential path was not reachable through the inspected Baizhi/Z.ai
+clients: they use fixed endpoints, static authorization headers and no SDK OAuth
+provider. This is an affected dependency finding, not evidence of a production
+credential leak. A scoped override now resolves `pi-web-access@0.35.0` to SDK
+`1.31.0`, retaining the same web-access version and existing fast-uri/undici
+overrides. The vulnerable nested SDK and its redundant Hono server dependency are
+removed; the already-installed SDK `1.31.0` becomes their shared runtime dependency.
+The source-map lock advances only to `1.2.2`, within both css-tree/PostCSS consumers'
+existing `^1.2.1` ranges. MISHU's immutable artifact and other package versions are
+unchanged by this repair.
+
+A private clean `npm ci` with the revised lock passed both complete and runtime
+`npm audit`: zero known advisories at this check. Resolving the actual SDK from
+pi-web-access passed connect, listTools, callTool, session DELETE and close with
+synthetic static-header transport. No provider account or network was used by that
+probe. Build/typecheck/vendor generation and four public integration/rendering
+files (24 tests) passed; final fresh-clone complete checks remain separate below.
 
 ## Final candidate gates
 
@@ -55,6 +74,8 @@ zero known vulnerabilities; final artifact installation is checked separately.
 | Source complete check | PASS: 107 files / 931 tests after review fixes |
 | Versioned independent plugin check | PASS: 144 tests |
 | Artifact identity and source bytes | PASS |
+| Patched dependency clean install, all/runtime audit | PASS: zero known advisories at the final patch check |
+| Installed SDK compatibility and integration/build | PASS: actual consumer resolution, 24 tests, build/vendor generation |
 | Installed-artifact complete Server check | Pending |
 | Fresh GitHub clone check | Pending |
 | Installed actual Pi→Pi Browser flow | Pending |
