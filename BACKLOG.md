@@ -533,3 +533,10 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
 
 
 - [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65): interpret direct task instructions and same-scope follow-ups as existing authorization, avoiding repeated confirmation or information-only downgrades. Preserve setup/native permissions and clarify genuinely unresolved risk. See [evidence](docs/reviews/mishu-autonomy-20261006.md). Persistent background task follow-up remains planned in #64.
+
+- 2026-10-06: [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64)
+  design review incorporated into [the Host contract](docs/spec/mishu.md#durable-coordination-loop-contract-2026-10-06-planned)
+  and canonical MISHU SPEC §10.1–10.7. A29–A35 refine durable task admission,
+  event handoff, Outbox ownership, trusted reporting-only runs, native report
+  commit, business idempotency and revocation races. Documentation only; all
+  persistent-tracking implementation and real browser acceptance remain pending.

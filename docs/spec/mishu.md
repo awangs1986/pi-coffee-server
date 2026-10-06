@@ -211,12 +211,12 @@ requires the normal Server release process and is not implied by published packa
 ## Complete-secretary target and implementation status (2026-10-05)
 
 The owner requested completion of the missing specifications. The canonical
-[complete Coffee secretary SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/ebb5464353d9547839f2d411e629bbad2b13cfec/docs/coffee-secretary-spec.md) belongs to the independent
-plugin repository. Its M01–M13 requirements, S0–S6 stages and A01–A28 acceptance
+[complete Coffee secretary SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/8b2b2ca87a3eee8cbe9ef3cf6781f5d57fda3353/docs/coffee-secretary-spec.md) belongs to the independent
+plugin repository. Its M01–M13 requirements, S0–S6 stages and A01–A35 acceptance
 cases cover the original secretary experience: task briefs, correlated reply
 obligations, durable memory, recoverable notifications, instruction ordering,
 bounded helpers, stronger authorization and human-readable follow-through.
-This is a target contract, not a claim that these capabilities exist in 0.1.5.
+This is a target contract, not a claim that these capabilities exist in 0.1.6.
 The earlier sections describe the implemented v1 contract; their exclusions of
 background supervision and new helpers remain the installed default.
 
@@ -294,6 +294,104 @@ bounded continuation-read capability is available.
   explicit owner enablement. This is a future capability gate, not a claim that
   current free-form authorizationRef already satisfies the old P0-S requirement.
 
+### Durable coordination loop contract (2026-10-06; planned)
+
+Tracking: [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64),
+[accepted design review](https://github.com/awangs1986/pi-coffee-server/issues/64#issuecomment-6004677083).
+The canonical plugin SPEC §10.1–10.7 defines the normative contracts below.
+Reviewed source: Server `f7ad4cb78d8c54f1c7a284f8a67afe725c2b9924` (runtime
+unchanged from `5073c97`), plugin `ebb5464353d9547839f2d411e629bbad2b13cfec`
+(0.1.6). All new behavior in this section remains **unimplemented**.
+
+Deepen the existing scoped MishuCoordinator Module. Its public Interface lets
+callers register/coordinate, inspect, correct a brief and stop responsibility;
+the Implementation owns task/run association, reply obligations, Outbox and
+report recovery. Resource names above do not imply separate CRUD operations for
+the model to orchestrate. Reuse the Agent Seam and native Adapters; no second
+execution framework or subagent is required. Expose capabilities only after
+versioned operation schemas and acceptance evidence exist.
+
+1. **Admission and business identity.** Persist responsibility before returning
+   accepted. Registering an existing run does not send it a prompt. Host binds a
+   stable operation/Assignment to trusted user-input identity, task phase, exact
+   scope and target. Retries reuse that operation; new model-generated message IDs
+   cannot duplicate an accepted dispatch. Distinct later user instructions remain
+   valid even when their text matches. Conflicting content/revisions are rejected;
+   an explicitly authorized re-execution records retryOf.
+2. **Durable event ingestion.** Correlate scope, task, binding generation,
+   run/request and native event/message identity plus revision. Include work
+   started directly by the user; do not require a MISHU request prefix or claim
+   all future turns. Establish a buffered subscription plus watermarked snapshot
+   (or equivalent gap-free protocol), reconcile overlap, and persist the recovery
+   starting point before acknowledging registration. Evidence, responsibility
+   changes and Outbox commit atomically before advancing the durable watermark.
+   A best-effort event callback or in-memory socket cursor cannot prove this.
+   Reconcile pre-commit loss from supported native history; otherwise show an
+   observation gap/uncertain without starting a CLI or replaying execution.
+3. **Persistent Outbox, existing queue.** InputQueue is a memory delivery Adapter,
+   not the owner of durable notifications. Distinguish pending, admitted,
+   processing, report-committed, cancelled, failed and uncertain. Queue/native
+   admission cannot close responsibility. Coalesce bounded progress within one
+   task/generation while preserving evidence and covered revisions; never mutate
+   an in-flight notification. Keep one native writer and explicit bounded fairness
+   with foreground input. Publish capacities, retention, coalescing/wakeup budgets
+   and visible backpressure before enablement; preserve unfinished responsibility.
+   Automatic recovery is at most once per failed event, durable across restart,
+   and only with proved non-admission or idempotent receipt. It never retries target
+   execution or blindly retries uncertain notification delivery.
+4. **Trusted run origin.** Host establishes user-intent or task-notification origin
+   bound to input/notification identity, task, bindings, permission revision and
+   worker generation. Enforce it at every reachable tool/execution admission,
+   not only in prompt text. Notification runs may read scoped task facts, update
+   factual summaries and report; they cannot setup, expand contacts, investigate
+   files, modify code, dispatch work, retry target execution or answer native
+   questions. Chat-wide allowInstructions does not grant background execution.
+   Foreground grants persist within scope without repeated confirmation; subsequent
+   user runs are independently admitted and cannot share a mixed authority context.
+5. **Native report commit.** Persist a ReportRecord with stable report/notification
+   IDs, covered event revisions, secretary generation, native processing identity
+   and durable output reference. Save processing intent before wakeup. Only verified
+   persisted native summary output can atomically commit ReportRecord and Outbox
+   completion; tool activity, admission and promises are insufficient. Reconcile
+   “native output written, ACK lost” using the same native identity, without another
+   model wake. If unprovable, retain uncertain rather than gamble on repetition.
+   User-visible output already published before acknowledgment is included in this
+   reconciliation. Prove the Pi Adapter's persisted output mapping and once-only
+   presentation before exposing the capability. ReportRecord is a delivery ledger,
+   not another authoritative transcript; [ADR-0024](../adr/0024-durable-display-index.md)
+   still applies. Browser text deduplication or the disposable display index alone
+   is insufficient. Report commit, user reading and user acceptance remain distinct.
+6. **Revocation and ownership order.** CAS current permission/record revisions and
+   fence worker generation at ingestion, queue admission, delivery and report
+   commit/ACK. Persist a definite order between stop/revocation and report commit.
+   Revocation first prevents later delivery/commit; report first retains the
+   historical fact and stops future notifications. Already delivered native work
+   cannot be represented as never sent; late output cannot revive responsibility
+   or complete an invalid generation. Stopping tracking does not abort target work.
+
+Current gaps are evidenced by `src/host/mishu.ts` (MISHU-prefixed requests and
+in-memory active receipts), `src/host/session.ts` (best-effort event callback),
+`src/host/input-queue.ts` (memory delivery), and `src/host/native/factory.ts`
+(Cursor/Grok passive history unknown). Plugin `src/coffee.ts` waits within the
+current request; it has no persistent notification worker. This revision changes
+specifications only and does not satisfy any of the following future acceptance.
+
+| Additional acceptance | Existing requirement refined | Observable proof |
+| --- | --- | --- |
+| A29 | M02/M03/M04; Issue stories 4, 19 | Directly started target work and registration-race results correlate; unrelated later turns do not |
+| A30 | M03/M05/M12; stories 13, 20–23 | After the secretary turn ends, a delayed result produces one real webpage summary without another user prompt; normal chat remains usable |
+| A31 | M04/M05; stories 24–27 | Crash after native report persistence/lost ACK and browser reconnect do not duplicate; unknown remains uncertain; display-cache deletion loses no responsibility |
+| A32 | M01/M05; story 40 | Malicious notifications cannot execute through any available tool, even with Chat execution enabled; the next user run retains its own authority |
+| A33 | M04/M06; stories 24, 26 | Changing messageId after acceptance cannot replay an operation; legitimate later repeated instructions work |
+| A34 | M01/M04/M05/M12; stories 32–35, 42 | Stop/revocation races and stale workers cannot publish or acknowledge improperly; target work continues |
+| A35 | M03/M05/M12; stories 28–29, 39, 41 | Bounded fair queueing, overflow/retry diagnostics and native recovery limits without lost obligations or unbounded wakeups |
+
+These refine A06–A11 and A23–A27. Verify through the same HTTP/WS Interface used
+by callers plus actual browser flows. At least Pi secretary → real Pi and Codex
+targets need delayed-result evidence; other engines receive explicit PASS/FAIL/
+UNAVAILABLE results. This scope does not introduce timers, new helper creation,
+central native permission answers or the complete M10 enhanced-execution protocol.
+
 ### Requirement coverage and delivery order
 
 | Canonical IDs | Remaining deliverable | Stage | Acceptance |
@@ -305,7 +403,8 @@ bounded continuation-read capability is available.
 | M10, M11, M06 | Independent authorization evidence, receiver attestation, structured handoffs and instruction ordering | S3 | A12–A13, A19–A21 |
 | M05, M12 | Recoverable Outbox, explicit low-noise notification/follow-up and diagnostics | S4 | A10–A11, A23–A26 |
 | M07, M13 | Optional bounded helpers and native approval summaries/navigation | S5 | A14–A15, A22 |
-| All | One lifecycle owner, migration/rollback and five-engine compatibility evidence | S6 | A01–A28 |
+| M02–M05, M12 | Durable admission/events/Outbox/report commit and trusted notification origin for #64 | S1 + event-only S4 | A29–A35 plus existing related cases |
+| All | One lifecycle owner, migration/rollback and five-engine compatibility evidence | S6 | A01–A35 |
 
 Each stage must name its actual shipped operations, current configuration defaults,
 public-seam tests and real synthetic user-flow evidence. A successful model reply
