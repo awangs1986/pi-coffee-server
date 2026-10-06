@@ -363,6 +363,40 @@ it('isolates brief references between secretaries and rejects stale contacts and
 },30000);
 
 
+it('native MISHU observes an existing run with redundant matching target identities while Host stays strict',async()=>{
+ let args:Record<string,unknown>={},calls=0;const requests:any[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));calls++;
+  const frame={id:'observe-input',object:'chat.completion.chunk',created:1,model:'fixture'};
+  const delta=calls===1?{role:'assistant',tool_calls:[{index:0,id:'observe-existing',type:'function',function:{name:'mishu',arguments:JSON.stringify(args)}}]}:{role:'assistant',content:'OBSERVE_FIXTURE_DONE'};
+  res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:calls===1?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Existing synthetic run',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'EXACT_EXISTING_REPLY'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=(await(await req({...base,operation:'register',operationId:'existing-brief',targetId:target.id,binding:contact.binding,purpose:'Observe existing task',scope:'Only existing run',summary:'Await native facts',nextStep:'Report'})).json()).task;
+ args={action:'tasks',operation:'observe',operationId:'stable-observation',taskId:brief.taskId,runId,expectedRevision:1,targetId:target.id,binding:contact.binding};
+ // The Host rejects redundant routing directly; only the plugin may verify and normalize it.
+ expect((await req({...args,version:1})).status).toBe(409);
+ const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:'user-observe',text:'Observe the existing authorized task without sending target instructions.'}));
+  await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const result=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task;
+  expect(result).toMatchObject({taskId:brief.taskId,targetId:target.id,binding:contact.binding,obligation:{runId},observation:'reply-available',fact:{text:'EXACT_EXISTING_REPLY'},acceptance:'pending'});
+  expect(JSON.stringify(requests.at(-1).messages.filter((m:any)=>m.role==='tool'))).toContain('观察已经登记');expect(calls).toBe(2);
+  const {targetId:_target,binding:_binding,...canonical}=args;
+  expect((await(await req({...canonical,version:1})).json()).task).toEqual(result);
+ }finally{ws.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},15000);
+
 it.each(['normal','race','commit-failure'])('observes direct native Pi work without replay (%s)',async(mode)=>{
  const racing=mode==='race';
  let calls=0,reply:()=>void=()=>{},registrationGate:(()=>Promise<void>)|undefined;
