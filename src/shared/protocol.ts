@@ -154,7 +154,7 @@ export interface RateLimits {
  */
 export type PromptMode = "prompt" | "steer" | "follow_up";
 
-export interface QueueItem {id:string;requestId?:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
+export interface QueueItem {readOnly?:boolean;id:string;requestId?:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
 export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote";text?:string;}
 
 export type AckOperation =

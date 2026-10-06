@@ -221,6 +221,9 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
+  /** Internal callback stays outside public queue rows and cannot be edited/steered. */
+  enqueueNotification(title:string,deliver:()=>Promise<void>,cancel:()=>Promise<void>){return this.inputs.addInternal('MISHU 汇报：'+title,deliver,cancel);}
+  cancelNotification(id:string,requestId?:string){if(this.inputs.cancelInternal(id)&&requestId)void this.onCommand?.(this.id,requestId,'cancelled').catch(()=>undefined);}
   private reportOrigin=false;
   /** Host-controlled run classification; never populated from model fields. */
   setReportOrigin(){if(!this.activeRequestId)throw Error('Report requires reserved command');this.reportOrigin=true;}
