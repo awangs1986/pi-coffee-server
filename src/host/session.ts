@@ -54,6 +54,7 @@ export interface SessionOpenResult {
  * recreated later without losing the conversation.
  */
 export class HostSession {
+  readRunEvidence(runId?:string){return this.pi?.readRunEvidence?.(runId);}
   readonly id: string;
   private readonly inputs:InputQueue;
   private readonly runnerGuidance?:HostSessionOptions['runnerGuidance'];
@@ -613,7 +614,7 @@ export class HostSessionRegistry {
   private readonly externalPollMs?: number;
 
   async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
-  async readRunEvidence(id:string,runId?:string){return await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
+  async readRunEvidence(id:string,runId?:string){return await this.sessions.get(id)?.readRunEvidence(runId)??await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
   constructor(private options: { runStatuses?:()=>Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;

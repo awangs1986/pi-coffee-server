@@ -1,3 +1,4 @@
+import {LiveRunEvidence} from './live-run-evidence.js';
 import {assertNativePrompt,nativeCommandAllowed} from './commands.js';
 import {randomUUID} from 'node:crypto';
 import type {AgentHistory,AgentModels,AgentSession} from '../agent-adapter.js';
@@ -21,6 +22,9 @@ export function acpAuthentication(engine:AcpEngine,initialized:any,command:Nativ
 
 /** Engines own authentication, tools and durable sessions; ACP is a local stdio transport. */
 export class AcpSession implements AgentSession {
+  private readonly tracking:LiveRunEvidence;
+  private trackingRun?:string;
+  readRunEvidence(runId?:string){return this.tracking.read(runId);}
   private process:NativeProcess;
   private listeners=new Set<(event:unknown)=>void>();
   private questions=new NativeQuestions(event=>this.emit(event));
@@ -36,6 +40,7 @@ export class AcpSession implements AgentSession {
   private modelOption?:string;
   private commands:CommandInfo[]=[];
   constructor(private engine:AcpEngine,private command:NativeCommand,private cwd:string,private binding:NativeBinding|undefined,private save:(binding:NativeBinding)=>Promise<void>,private settings=new NativeSettingsStore(),private instructions?:string){
+    this.tracking=new LiveRunEvidence(engine,()=>this.nativeId);
     this.process=new NativeProcess(command,acpArguments(engine),cwd,true);
     this.nativeId=binding?.id;
     this.process.onMessage=m=>this.handle(m);
@@ -67,7 +72,7 @@ export class AcpSession implements AgentSession {
     const option=(value.configOptions??[]).find((o:any)=>o.category==='model'||o.id==='model');
     if(option){this.modelOption=option.id;this.model=option.currentValue;this.models=(option.options??[]).flatMap((o:any)=>o.options??[o]).map((o:any)=>({modelId:o.value,name:o.name}));}
   }
-  private emit(event:unknown){if(!this.loading)for(const listener of this.listeners)listener(event);}
+  private emit(event:unknown){if(this.loading)return;const e=event as {type?:string;text?:string;status?:string};if(e.type==='message_completed')this.tracking.message(this.trackingRun,'host-live:'+randomUUID(),e.text??'');if(e.type==='run_completed')this.tracking.finish(this.trackingRun,e.status??'unknown');if(e.type==='run_interrupted')this.tracking.lost();for(const listener of this.listeners)listener(event);}
   private answer(id:string|number,result:unknown){this.process.send({id,result});}
   private async handle(m:any){
     const p=m.params??{};
@@ -111,11 +116,11 @@ export class AcpSession implements AgentSession {
     assertNativePrompt(text);
     if(this.engine==='grok'&&images?.length)throw new Error('Grok does not advertise inline image support');
     if(this.streaming||this.stopped)throw new Error('Native ACP session is unavailable or busy');
-    this.streaming=true;this.emit({type:'run_started',runId:randomUUID()});
+    this.streaming=true;this.trackingRun=randomUUID();this.tracking.start(this.trackingRun);this.emit({type:'run_started',runId:this.trackingRun});
     const user:HistoryEntry={kind:'user',id:`${this.engine}:${this.nativeId}:${this.entries.length}`,text,...(images?.length?{imageCount:images.length}:{})};this.entries.push(user);this.emit({type:'sync_entity',entry:user});
     // ACP replies only when the turn ends. Keep Stop/questions responsive, with no arbitrary turn timeout.
     void this.process.call('session/prompt',{sessionId:this.nativeId,prompt:[{type:'text',text},...(this.entries.length===1&&this.instructions?[{type:'text',text:'[PI Coffee Host environment]\n'+this.instructions}]:[]),...(images??[]).map(i=>({type:'image',data:i.data,mimeType:i.mimeType}))]},0).then(async result=>{
-      await this.process.drain();this.completeMessage();this.streaming=false;this.requests.clear();this.questions.clear();this.emit({type:'run_completed',status:result.stopReason==='cancelled'?'interrupted':'completed'});
+      await this.process.drain();this.completeMessage();this.streaming=false;this.requests.clear();this.questions.clear();this.emit({type:'run_completed',status:result.stopReason==='cancelled'?'interrupted':result.stopReason==='end_turn'?'completed':'unknown'});
     },()=>{this.streaming=false;this.requests.clear();this.questions.clear();this.emit({type:'run_interrupted'});});
   }
   async getHistory():Promise<AgentHistory>{await this.process.drain();return {entries:structuredClone(this.entries),leafId:this.entries.at(-1)?.id??null};}

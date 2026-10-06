@@ -103,6 +103,7 @@ async function runTurn(thread, input, options) {
     const answer=await new Promise(resolve=>{pendingServerRequests.set(id,resolve);send({id,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId,questions:[{id:'color',question:'Choose a color',options:[{label:'Blue',description:'A blue result'}]}]}});});
     questionAnswer=' '+(answer.answers?.color?.answers?.[0] ?? 'MISSING');
   }
+  if(text==='run synthetic read')notify('item/completed',{threadId:thread.id,turnId,item:{type:'agentMessage',id:'native-progress-'+turnId,text:'PARTIAL_NOT_DONE'}});
   if (text.startsWith("run ")) {
     const command = text.slice(4);
     const item = { type: "commandExecution", id: uid("item"), pluginId: null, scriptPath: null, command, cwd: thread.cwd, processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null };
@@ -111,6 +112,7 @@ async function runTurn(thread, input, options) {
     if ((settings.get(thread.id)?.approvalPolicy ?? "never") !== "never") {
       const decision = await askApproval(thread.id, turnId, item.id, command);
       approved = decision === "accept" || decision === "acceptForSession";
+      if(process.env.TRACKING_END_STATUS==='exit')process.exit(0);
     }
     if (approved) {
       notify("item/commandExecution/outputDelta", { threadId: thread.id, turnId, itemId: item.id, delta: "ran: " });
@@ -151,7 +153,7 @@ async function runTurn(thread, input, options) {
   turn.items.push(message);
   notify("item/completed", { item: message, threadId: thread.id, turnId, completedAtMs: Date.now() });
   notify("thread/tokenUsage/updated", { threadId: thread.id, turnId, tokenUsage: { total: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, modelContextWindow: 1000 } });
-  turn.status = "completed";
+  turn.status = ["failed","interrupted"].includes(process.env.TRACKING_END_STATUS)?process.env.TRACKING_END_STATUS:"completed";
   turn.completedAt = now();
   active.delete(thread.id);
   save();
