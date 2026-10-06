@@ -1005,7 +1005,15 @@ it('restores explicitly selected historical notes after source reset without con
  const req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
  const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
  const brief=(await(await req({action:'tasks',version:1,operation:'register',operationId:'history-original',targetId:target.id,binding:contact.binding,purpose:'Historical note',scope:'Synthetic old scope',summary:'Old facts only',nextStep:'Review afresh'})).json()).task;
- const forkId=randomUUID();const fork=await app.call({action:'fork',id:source.id,targetId:forkId,mode:'native'},'owner','host-test','/api/workspace');expect(fork.status,await fork.clone().text()).toBe(202);await expect.poll(async()=>(await app.workspaces.lookup(forkId))?.fork?.status,{timeout:10000}).toBe('completed');expect(await(await app.call({action:'status',id:forkId})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false,targets:[],notifications:{enabled:false}});
+ const forkId=randomUUID();const fork=await app.call({action:'fork',id:source.id,targetId:forkId,mode:'native'},'owner','host-test','/api/workspace');expect(fork.status,await fork.clone().text()).toBe(202);
+ // Observe committed Fork completion through the public workspace listing.
+ // Internal lookup can see the mutation before its save and lifecycle unlock.
+ await expect.poll(async()=>{
+  const listing=await fetch(`http://127.0.0.1:${app.host.address().port}/api/workspace`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
+  expect(listing.status,await listing.clone().text()).toBe(200);
+  return (await listing.json()).conversations.find((row:any)=>row.id===forkId)?.fork?.status;
+ },{timeout:10000}).toBe('completed');
+ expect(await(await app.call({action:'status',id:forkId})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false,targets:[],notifications:{enabled:false}});
  const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
  const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);
  env=(await app.host.mishuRuntime('owner',source.id)).env;
