@@ -41,3 +41,14 @@ it('requires a matching review receipt before executing release verification',as
   expect(result.status).toBe(1);await expect(access(marker)).rejects.toThrow();
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+it('reuses a reviewed final check through the unqualified pre-push command without losing its review binding',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-review-reuse-'));
+ try{
+  const repo=join(root,'repo');await mkdir(repo);spawnSync('git',['init','-q'],{cwd:repo});await writeFile(join(repo,'source.txt'),'fixture');spawnSync('git',['add','.'],{cwd:repo});spawnSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','fixture'],{cwd:repo});
+  const plan=join(root,'plan.json'),receipt=join(root,'receipt.json'),review=join(root,'review.json'),evidence=join(root,'notes');await writeFile(evidence,'Reviewed fixture');await writeFile(plan,JSON.stringify({steps:[{name:'check',argv:[process.execPath,'-e','process.exit(0)']}]}));
+  expect(spawnSync(process.execPath,[resolve('scripts/review-receipt.mjs'),'--repo',repo,'--verdict','passed','--evidence',evidence,'--output',review]).status).toBe(0);
+  const flags=[resolve('scripts/verify.mjs'),'--repo',repo,'--plan',plan,'--receipt',receipt];expect(spawnSync(process.execPath,[...flags,'--require-review',review]).status).toBe(0);
+  const before=await readFile(receipt,'utf8');expect(spawnSync(process.execPath,[...flags,'--reuse']).status).toBe(0);expect(await readFile(receipt,'utf8')).toBe(before);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
