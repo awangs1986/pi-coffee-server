@@ -602,6 +602,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
+  async readRunEvidence(id:string,runId?:string){return await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
   constructor(private options: { runStatuses?:()=>Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;

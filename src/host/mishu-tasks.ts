@@ -4,15 +4,19 @@ import {createHash,randomUUID} from 'node:crypto';
 export interface TaskBrief {
  taskId:string;sourceBinding:string;targetId:string;binding:string;revision:number;
  purpose:string;scope:string;summary:string;nextStep:string;
- workState:'recorded'|'stopped';observation:'not-started';acceptance:'pending';
+ workState:'recorded'|'stopped';observation:'not-started'|'watching'|'reply-available'|'incomplete'|'uncertain'|'waiting'|'stopped';acceptance:'pending';
+ obligation?:{runId:string;nativeBinding:string;watermark:string;state:'pending'|'reply-available'|'incomplete'|'uncertain'|'cancelled';generation:number};
+ fact?:{text:string;entries:{id:string;revision:string}[]};
+ notification?:{id:string;revision:number;state:'pending'};observationError?:string;
+
  createdAt:string;updatedAt:string;
 }
 export interface TaskJournal {tasks:TaskBrief[];operations:{id:string;fingerprint:string;task:TaskBrief}[]}
 export const TASK_LIMITS={tasks:200,operations:2000,page:50,purpose:500,scope:2000,summary:4000,nextStep:1000} as const;
 const id=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const fields=['purpose','scope','summary','nextStep'] as const;
-const keys:Record<string,string[]>={register:['operationId','targetId','binding',...fields],update:['operationId','taskId','expectedRevision',...fields],stop:['operationId','taskId','expectedRevision'],list:['offset','limit'],get:['taskId']};
-export async function taskOperation(journal:TaskJournal,sourceBinding:string,input:Record<string,unknown>,authorize:(targetId:string,binding:string)=>Promise<unknown>){
+const keys:Record<string,string[]>={register:['operationId','targetId','binding',...fields],update:['operationId','taskId','expectedRevision',...fields],observe:['operationId','taskId','expectedRevision','runId'],stop:['operationId','taskId','expectedRevision'],list:['offset','limit'],get:['taskId']};
+export async function taskOperation(journal:TaskJournal,sourceBinding:string,input:Record<string,unknown>,authorize:(targetId:string,binding:string)=>Promise<unknown>,observe?:(task:TaskBrief,runId:string)=>Promise<void>){
  const operation=String(input.operation),allowed=keys[operation];
  if(input.version!==1||!allowed||Object.keys(input).some(k=>!['action','version','operation',...allowed].includes(k)))throw Error('Unsupported task interface version, operation or field');
  const current=journal.tasks.filter(t=>t.sourceBinding===sourceBinding);
@@ -47,7 +51,7 @@ export async function taskOperation(journal:TaskJournal,sourceBinding:string,inp
   if(task!.workState==='stopped')throw Error('Task record is stopped');
   if(operation==='update'&&!fields.some(k=>input[k]!==undefined))throw Error('No task correction supplied');
   result={...task!,revision:task!.revision+1,updatedAt:now};
-  if(operation==='stop')result.workState='stopped';else for(const key of fields)if(input[key]!==undefined)result[key]=String(input[key]);
+  if(operation==='observe'){if(!id(input.runId)||!observe)throw Error('Exact native runId and observation capability required');await observe(result,input.runId);}else if(operation==='stop'){result.workState='stopped';if(result.obligation){result.observation='stopped';result.notification=undefined;result.obligation={...result.obligation,state:'cancelled',generation:result.obligation.generation+1};}}else for(const key of fields)if(input[key]!==undefined)result[key]=String(input[key]);
   journal.tasks[journal.tasks.indexOf(task!)]=result;
  }
  journal.operations.push({id:input.operationId,fingerprint,task:{...result}});

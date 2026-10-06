@@ -441,13 +441,65 @@ Users can ask the selected enabled secretary to record/view/correct a brief, or
 open `/mishu-tasks` to browse, correct a field and stop a record through native UI
 on desktop/mobile. Cancel/Escape does not save. Long native dialog titles scroll within a bounded
 viewport area so detail text cannot hide correction/cancel buttons. The browser displays **已记录，尚未
-开始观察**; no observation switch is offered. Work state is recorded/stopped and
+开始观察** until explicitly opting into the #70 observation capability below. Work state is recorded/stopped and
 acceptance remains separately pending; models cannot claim user acceptance.
 Stopping a record preserves history and never terminates the target task.
 
-This slice does not implement event observation, reply obligations, report wakes,
-or automatic reporting. #70–#76 and A29–A35 remain unmet outside this slice.
+The #69 slice alone did not implement observation. #70 below adds existing Pi run
+observation and reply obligations; #71–#76 reporting/dispatch/multi-engine requirements remain pending.
 Evidence: public HTTP/WS tests in `mishu-http`, plugin public extension/HTTP tests,
 and `scripts/probe-mishu-tasks.mjs` (real Browser/Web/Host/native Pi, deterministic
 model). An editable plugin root is source evidence only; the integrated candidate
 must repeat the probe with its immutable installed artifact.
+
+
+## Candidate existing Pi run observation (#70, not a production activation)
+
+An explicitly enabled secretary can observe one existing configured Pi native run
+through `tasks`, version 1, operation `observe`: taskId, stable operationId,
+expectedRevision and exact runId are required. The configured directory exposes
+bounded observation capability/run metadata, without other conversation content.
+No target prompt is sent. A missing/uninstrumented run or unsupported engine
+rejects admission; future work in the same conversation is never adopted.
+
+The engine-neutral Agent Interface supplies passive `readRunEvidence` audits.
+Pi's final Host extension appends hidden custom native run UUID/baseline markers
+before the run's first user message and a settled audit after native output append.
+The marker baseline is the previous native leaf, **not** the current user entry.
+The selected run owns its first subsequent native user entry and following output,
+ending before a second user boundary or next run marker. Exact native binding,
+entry IDs/content revisions and a stable range watermark determine evidence.
+Hidden markers never enter model context; ordinary Chat retains zero-system.
+`message_end` triggers a passive audit but is never a persistence acknowledgment.
+Missing terminal audit, invalid/changed history, absent live process, model errors,
+length-limited output and tool-only output remain incomplete/uncertain with last
+facts. A normal native text reply is reply-available, not business/user acceptance.
+
+Admission and event work share one scoped serial writer. The Host subscription
+exists before registration; an event arriving during native snapshot/save is
+retained by a coalesced dirty flag and trailing audit. Responsibility, watermark,
+latest bounded facts and pending notification revision are flushed atomically
+before success. Native delta streams are not copied as a second execution ledger.
+Host restart first reconciles recorded exact ranges passively, never spawning a
+CLI or replaying an instruction. Failed event writes retain the prior journal and
+expose diagnostic status; an explicit detail read retries only the native audit.
+
+`/mishu-tasks` supports explicit observation and later viewing of waiting replies,
+latest facts, incomplete or uncertain evidence and the exact responsible target.
+Waiting native questions show a user-action notice; only the target handles them.
+`status.tracking` reports committed waiting/reply/uncertain counts without a fresh
+native audit. The secretary stays usable while target work runs. No automatic
+model wake, report commit, recurring prompt or new-agent creation exists here.
+
+Stopping, deselection, disable, contact removal, archive or source context reset
+fences observation generations through the same writer. Restoring/re-enabling
+does not revive cancelled observations. These actions do not abort target work.
+Exact scope/binding authorization is checked before and after native reads.
+Current source-candidate tests: direct native Pi HTTP/WS, registration/settlement
+race, browser disconnect, event commit failure plus restart, duplicate audits,
+unrelated later user input, partial native evidence and revocation. Real browser
+probe `scripts/probe-mishu-observation.mjs` exercises desktop/mobile inspection,
+late native reply and ordinary secretary chat while the target waits; its model
+is deterministic and its workspace synthetic. Immutable installed-candidate and
+production evidence remain separate release requirements. A29 and the observation
+part of A34 are covered for Pi; preserve all other unmet A29–A35 requirements.

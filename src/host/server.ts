@@ -356,6 +356,7 @@ export class HostServer {
         const history=await session.getHistory();
         if(!history.entries.length){json(res,200,task);return;}
         const listing=(await slot.registry.list()).find(row=>row.id===id);
+        await slot.mishu?.revokeConversation(id);
         await session.clearContext({id:input.operationId,expectedNativeId:input.expectedNativeId,title:listing?.name||listing?.preview||'Chat'});
         const changed=await ws.lookup(id),source=await slot.factory.readHistory?.(id);
         await slot.index?.reconcile(id,[],{binding:source?.binding??`pi:${changed!.nativeBinding!.id}:original`,sourceGeneration:source?.sourceGeneration,sourceFreshness:'current',checkedAt:new Date().toISOString()});
@@ -514,6 +515,7 @@ export class HostServer {
         case "pull_request": result=await ws.openPullRequest(input.id,input.title);break;
         case "archive":
         case "restore": {
+          if(input.action==="archive")await slot.mishu?.revokeConversation(input.id);
           if(await ws.lookup(input.id)) result=await ws.archive(input.id,input.action==="archive",false);
           else {
             if(!(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");

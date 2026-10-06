@@ -238,6 +238,34 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     } catch { return unknownHistory(binding); }
   }
 
+  async readRunEvidence(sessionId:string,runId?:string):Promise<import('./agent-adapter.js').AgentRunEvidence> {
+    const unknown={supported:true,freshness:'unknown' as const,state:'uncertain' as const,runId,reason:'Native run evidence unavailable; no execution replay'};
+    try{
+      const found=(await this.listWithPaths()).filter(s=>s.id===sessionId);if(found.length!==1)return unknown;
+      const source=await readStableSource(found[0].path),rows=await parseSourceLines(source.text);
+      if(rows[0]?.type!=='session'||rows[0].id!==sessionId||![2,3].includes(rows[0].version))return unknown;
+      const byId=new Map(rows.slice(1).map(e=>[e.id,e]));if(byId.size!==rows.length-1)return unknown;
+      const branch:Record<string,any>[]=[],seen=new Set<string>();let leaf=rows.at(-1);
+      while(leaf?.id){if(seen.has(leaf.id))return unknown;seen.add(leaf.id);branch.unshift(leaf);if(leaf.parentId&&!byId.has(leaf.parentId))return unknown;leaf=byId.get(leaf.parentId);}
+      const markers=branch.filter(e=>e.type==='custom'&&e.customType==='coffee-native-run'&&e.data?.version===1);
+      const marker=runId?markers.find(e=>e.data.runId===runId):markers.at(-1);
+      if(marker&&markers.filter(e=>e.data.runId===marker.data.runId).length!==1)return unknown;
+      if(!marker||typeof marker.data.runId!=='string'||marker.parentId!==marker.data.baselineId||(marker.data.baselineId!==null&&!byId.has(marker.data.baselineId)))return {...unknown,reason:'This run has no provable native correlation marker'};
+      const start=branch.indexOf(marker),range=[];let settled=false,inputSeen=false;
+      for(const e of branch.slice(start+1)){
+        if(e.type==='custom'&&e.customType==='coffee-native-run')break;
+        if(e.type==='message'&&e.message?.role==='user'){if(inputSeen)break;inputSeen=true;continue;}
+        if(e.type==='custom'&&e.customType==='coffee-native-settled'&&e.data?.runId===marker.data.runId){settled=true;break;}
+        range.push(e);
+      }
+      if(!inputSeen)return unknown;
+      const messages=range.filter(e=>e.type==='message'&&e.message?.role==='assistant');
+      const entries=messages.map(e=>({id:e.id,revision:sourceHash(JSON.stringify(e.message)),text:Array.isArray(e.message.content)?e.message.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):''})).filter(e=>e.text);
+      const final=messages.at(-1)?.message;
+      return {supported:true,freshness:'current',runId:marker.data.runId,binding:`pi:${sessionId}:${source.identity}`,watermark:sourceHash(JSON.stringify([marker.id,entries,settled])),state:settled?(final?.stopReason==='stop'&&entries.length?'reply-available':'incomplete'):'running',entries};
+    }catch{return unknown;}
+  }
+
   async delete(sessionId: string): Promise<boolean> {
     const existing = (await this.listWithPaths()).find((session) => session.id === sessionId);
     if (existing === undefined) return false;

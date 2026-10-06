@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HOST_ENVIRONMENT_INSTRUCTION as instruction } from "./session-instructions.js";
 
@@ -54,6 +55,14 @@ export function withHostEnvironment(payload: unknown, api?: string): unknown {
 }
 
 export default function hostEnvironment(pi: ExtensionAPI): void {
+  let runId:string|undefined;
+  pi.on("before_agent_start",(_event,ctx)=>{
+    runId=randomUUID();
+    try{pi.appendEntry('coffee-native-run',{version:1,runId,baselineId:ctx.sessionManager.getLeafId()});}catch{runId=undefined;}
+  });
+  pi.on("agent_settled",()=>{
+    if(runId){try{pi.appendEntry('coffee-native-settled',{version:1,runId});}catch{/* Missing audit remains uncertain; observation never interrupts native work. */}runId=undefined;}
+  });
   pi.on("before_agent_start", event => ({
     systemPrompt: process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? '' : contains(event.systemPrompt) ? event.systemPrompt : append(event.systemPrompt),
   }));

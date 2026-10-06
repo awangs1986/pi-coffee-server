@@ -93,6 +93,16 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
   async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
   private async codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}),()=>this.options.workspaces.runtimeEnvironment(id));this.codexFactories.set(generation,factory);}return factory;}
+  async readRunEvidence(sessionId:string,runId?:string):Promise<import('../agent-adapter.js').AgentRunEvidence>{
+    const task=await this.options.workspaces.lookup(sessionId);
+    const unknown={supported:false,freshness:'unknown' as const,state:'uncertain' as const,runId,reason:'Engine has no verified passive run evidence capability'};
+    if(!task||(task.engine??'pi')!=='pi'||task.cleanupStarted||task.workspaceRemoved)return unknown;
+    const nativeId=task.nativeBinding?.id??sessionId,identity=JSON.stringify(task.nativeBinding);
+    const result=await this.options.pi.readRunEvidence?.(nativeId,runId)??unknown;
+    const after=await this.options.workspaces.lookup(sessionId);
+    if(!after||JSON.stringify(after.nativeBinding)!==identity||(after.engine??'pi')!=='pi')return {...unknown,supported:true};
+    return result;
+  }
   async readHistory(sessionId: string): Promise<AgentHistoryRead> {
     const task = await this.options.workspaces.lookup(sessionId);
     if (!task) {
