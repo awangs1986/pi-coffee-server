@@ -55,6 +55,17 @@ export function createSidebarOrder() {
   };
 }
 
+/** A durable conversation time wins over native file/telemetry timestamps. */
+export function conversationActivityAt(session) {
+  for(const value of [session?.lastActivityAt,session?.sidebarOrderAt,session?.updatedAt,session?.createdAt])
+    if(typeof value==='string'&&Number.isFinite(Date.parse(value)))return value;
+  return undefined;
+}
+export function orderRecentSessions(list) {
+  const time=session=>{const t=Date.parse(conversationActivityAt(session));return Number.isFinite(t)?t:Number.NEGATIVE_INFINITY;};
+  return list.slice().sort((a,b)=>time(b)-time(a)||String(a.id).localeCompare(String(b.id)));
+}
+
 export function orderSessions(list) {
   return list.slice().sort((a, b) => {
     const r = rankOf(a) - rankOf(b);
@@ -74,7 +85,7 @@ export function isTerminalSession(session) {
  * Terminal sessions are listed last regardless of age: they are somebody
  * else's work until you take them over.
  */
-export function sessionGroups(list, {byCreatedAt=false}={}) {
+export function sessionGroups(list, {byCreatedAt=false,byActivity=false}={}) {
   const groups = [];
   const push = (label, session) => {
     const last = groups[groups.length - 1];
@@ -82,11 +93,12 @@ export function sessionGroups(list, {byCreatedAt=false}={}) {
     else groups.push({ label, sessions: [session] });
   };
   const created=value=>{const time=Date.parse(value);return Number.isFinite(time)?time:Number.NEGATIVE_INFINITY;};
-  const order=byCreatedAt ? rows=>rows.slice().sort((a,b)=>created(b.createdAt)-created(a.createdAt)||String(a.id).localeCompare(String(b.id))) : orderSessions;
+  const order=byActivity ? orderRecentSessions : byCreatedAt ? rows=>rows.slice().sort((a,b)=>created(b.createdAt)-created(a.createdAt)||String(a.id).localeCompare(String(b.id))) : orderSessions;
   const ours = order(list.filter((s) => !isTerminalSession(s)));
   for (const session of ours) {
     const a = attentionOf(session);
-    if(byCreatedAt)push(timeGroup(session.createdAt),session);
+    if(byActivity)push(timeGroup(conversationActivityAt(session)),session);
+    else if(byCreatedAt)push(timeGroup(session.createdAt),session);
     else if (a === 'waiting' || a === 'finished') push('需要你', session);
     else if (a === 'running') push('运行中', session);
     else push(timeGroup(session.updatedAt), session);

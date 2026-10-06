@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // Pure browser-shell logic (no DOM) shared by public/app.js; tested at the module seam.
-import { attentionOf, createSidebarOrder, orderSessions, sessionGroups, usageBadge, formatReset } from "../public/sidebar.js";
+import { attentionOf, createSidebarOrder, orderSessions, sessionGroups, orderRecentSessions, conversationActivityAt, usageBadge, formatReset } from "../public/sidebar.js";
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -103,4 +103,33 @@ it('uses stable IDs for tied or missing creation dates without activity fallback
  ],{byCreatedAt:true});
  expect(result.flatMap(g=>g.sessions.map(s=>s.id))).toEqual(['a','z','missing-a','missing-z']);
  expect(result.at(-1)?.label).toBe('更早');
+});
+
+
+it('uses recent conversation time for both buckets and order rather than creation or telemetry',()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-10-06T12:00:00Z'));
+ try{
+  const rows=[
+   {id:'fresh-talk',createdAt:'2026-10-04T00:00:00Z',lastActivityAt:'2026-10-06T11:00:00Z',updatedAt:'2026-10-04T00:00:00Z',running:true},
+   {id:'newer-project',createdAt:'2026-10-05T00:00:00Z',lastActivityAt:'2026-10-05T11:00:00Z',updatedAt:'2026-10-06T12:00:00Z',attention:'waiting'},
+  ];
+  expect(sessionGroups(rows,{byActivity:true}).map(g=>[g.label,g.sessions.map(s=>s.id)])).toEqual([
+   ['今天',['fresh-talk']],['昨天',['newer-project']],
+  ]);
+ }finally{vi.useRealTimers();}
+});
+
+it('uses valid native activity fallbacks, absolute timestamp ties and stable legacy streaming time',()=>{
+ expect(conversationActivityAt({lastActivityAt:'invalid',updatedAt:'1970-01-01T00:00:00Z'})).toBe('1970-01-01T00:00:00Z');
+ expect(conversationActivityAt({updatedAt:'invalid',createdAt:'2026-10-04T00:00:00Z'})).toBe('2026-10-04T00:00:00Z');
+ expect(orderRecentSessions([
+  {id:'z',lastActivityAt:'2026-10-06T10:00:00Z'},
+  {id:'a',lastActivityAt:'2026-10-06T12:00:00+02:00'},
+  {id:'epoch',updatedAt:'1970-01-01T00:00:00Z'},
+  {id:'missing-z'},{id:'missing-a',updatedAt:'invalid'},
+ ]).map(s=>s.id)).toEqual(['a','z','epoch','missing-a','missing-z']);
+ const stable=createSidebarOrder(),a={id:'a',running:true,updatedAt:'2026-10-06T10:00:00Z'},b={id:'b',running:true,updatedAt:'2026-10-06T11:00:00Z'};
+ stable.snapshot([a,b]);
+ expect(orderRecentSessions(stable.snapshot([{...a,updatedAt:'2026-10-06T12:00:00Z'},b])).map(s=>s.id)).toEqual(['b','a']);
+ expect(orderRecentSessions(stable.snapshot([{...a,lastActivityAt:'2026-10-06T12:00:00Z'},b])).map(s=>s.id)).toEqual(['a','b']);
 });

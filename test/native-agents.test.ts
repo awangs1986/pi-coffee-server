@@ -1326,23 +1326,23 @@ it('replaces the running cat with pixel coffee only for a finished conversation'
  show({running:false});expect(document.querySelector('[data-session-id="status-task"] .finished-coffee')).toBeNull();
 });
 
-it('keeps flat sidebar creation order and date buckets when attention and activity change',async()=>{
+it('orders flat sidebar by durable conversation activity while attention and telemetry remain inert',async()=>{
  const app=await setup();const today=new Date();today.setHours(12,0,0,0);const yesterday=new Date(today);yesterday.setDate(yesterday.getDate()-1);
- app.conversations.push({id:'older',createdAt:yesterday.toISOString(),workspaceKind:'chat'},{id:'first-today',createdAt:new Date(today.getTime()-1000).toISOString(),workspaceKind:'chat'},{id:'newest',createdAt:today.toISOString(),workspaceKind:'chat'});
+ app.conversations.push({id:'older',createdAt:yesterday.toISOString(),lastActivityAt:today.toISOString(),workspaceKind:'chat'},{id:'first-today',createdAt:new Date(today.getTime()-1000).toISOString(),lastActivityAt:new Date(today.getTime()-1000).toISOString(),workspaceKind:'chat'},{id:'newest',createdAt:today.toISOString(),lastActivityAt:yesterday.toISOString(),workspaceKind:'chat'});
  document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(30);
  const ws=app.sockets.at(-1),ids=()=>[...document.querySelectorAll<HTMLElement>('#session-list .session-item')].map(e=>e.dataset.sessionId);
  const rows=[{id:'newest',updatedAt:yesterday.toISOString()},{id:'older',updatedAt:today.toISOString(),running:true},{id:'first-today',updatedAt:today.toISOString(),attention:'waiting'}];
  ws.receive({type:'sessions',sessions:rows});await vi.advanceTimersByTimeAsync(20);
- expect(ids()).toEqual(['newest','first-today','older']);
+ expect(ids()).toEqual(['older','first-today','newest']);
  expect([...document.querySelectorAll('#session-list > .side-label')].map(e=>e.textContent)).toEqual(['今天','昨天']);
  ws.receive({type:'sessions',sessions:rows.reverse().map(r=>({...r,running:!r.running,attention:r.id==='older'?'finished':undefined,updatedAt:new Date().toISOString()}))});await vi.advanceTimersByTimeAsync(20);
- expect(ids()).toEqual(['newest','first-today','older']);
+ expect(ids()).toEqual(['older','first-today','newest']);
  expect(document.querySelector('[data-session-id="older"] .finished-coffee')).not.toBeNull();
  // A metadata-only workspace task has a real creation time even before native attachment.
  app.conversations.push({id:'just-created',createdAt:new Date(today.getTime()+1000).toISOString(),workspaceKind:'chat'});
  document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
  document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);
- expect(ids()).toEqual(['just-created','newest','first-today','older']);
+ expect(ids()).toEqual(['just-created','older','first-today','newest']);
 });
 
 it('pins outside project groups and restores membership when unpinned',async()=>{

@@ -376,15 +376,12 @@ Pointer cancellation, drag completion and window blur release the deferral.
 Selecting another task preserves the old task's execution and immediately shows
 available cached content independently of a new network/history response.
 
-In grouped mode, concurrent active conversations keep their relative order while their attention
-category is unchanged. The view captures an ordering timestamp on entry into each
-active category; streaming output, tool events and polling can update visible
-metadata without changing that ordering key. A new conversation or an actual
-attention-category change may change placement; idle conversations retain the
-usual recent-activity ordering. Equal timestamps use the conversation ID as a
-stable tie-breaker. This is disposable view state, reset on identity changes and
-pruned when tasks leave the displayed list; it does not change task timestamps,
-project membership, execution or persisted group preferences.
+Conversation ordering uses the recent-conversation contract below in both grouped
+and ungrouped views. Durable conversation activity can promote a conversation;
+streaming/tool timestamps and attention changes alone cannot override that time.
+For legacy active summaries without durable activity, the disposable ordering
+snapshot freezes the native timestamp while the attention category is unchanged.
+It resets on identity changes and is pruned when tasks leave the displayed list.
 
 ### Sidebar group lifecycle (2026-10-04, Server #50)
 
@@ -425,17 +422,35 @@ display: native records, model context, retrieval, pagination and error data rem
 intact. Long outputs remain bounded and load additional content on demand.
 
 
-### Fixed ungrouped order (2026-10-04, Server #54)
+### Recent-conversation order (2026-10-06, Server #80; supersedes #54)
 
-When “显示分组” is disabled, conversations are ordered by creation time, newest
-first. Today/Yesterday/older date buckets also use creation time. Running,
-waiting, finished and new-message activity update icons and metadata in place;
-they never promote a conversation or move it into an attention section. A new
-conversation enters at its creation position. Workspace creation time takes
-precedence over native-session creation time, so resume/takeover cannot reorder
-a task. Equal timestamps use the stable ID; missing/invalid creation dates sort
-last in the older bucket by ID, without falling back to last activity. The
-separate native terminal section and grouped-mode ordering remain unchanged.
+The owner now requires latest conversation first, replacing the former creation-time
+ordering. Date buckets (Today/Yesterday/Recent 7 days/older), descending ordering,
+and row relative-time metadata use the same effective conversation timestamp.
+Use valid workspace `lastActivityAt` first; for legacy summaries fall back to the
+stable active ordering timestamp, valid native `updatedAt`, then `createdAt`.
+Compare absolute timestamps, with stable Conversation IDs for ties. Unknown dates
+sort last under the older bucket.
+
+With Show groups disabled, all ordinary conversations follow date buckets; waiting,
+running and finished are icon/status changes, without separate priority sections.
+With groups enabled, each project/custom group uses the same descending conversation
+time; its ungrouped conversations use the same date buckets. Existing pins retain
+their separate section and manual order, and native terminal sessions retain their
+separate section. Group membership and collapsed preferences are unchanged.
+
+A new real conversation activity can legitimately move a task. Streaming output,
+tool events, polling, model/history loading, rename and merely opening a task do
+not replace durable `lastActivityAt`. This preserves busy-task stability while
+allowing a task created days ago and used today to appear under Today. Session-list
+updates refresh scoped workspace activity even on the new-conversation page,
+without opening an Agent. On an authenticated identity change, clear the previous
+workspace/session sidebar snapshots before awaiting new-account metadata; stale
+responses cannot restore them.
+
+Acceptance: actual app controller in grouped/ungrouped modes, timestamp fallback,
+offset ties and legacy streaming tests; Chromium `scripts/probe-sidebar-activity.mjs`
+and busy-scroll `scripts/probe-sidebar-scroll.mjs`.
 
 ### Pins and Chat context reset (2026-10-04, Server #55)
 
@@ -495,8 +510,8 @@ previously running boundary to interrupted, never completed. Native settlement
 means execution ended; it does not certify a successful business outcome. Idle,
 new, and historical records without observed lifecycle metadata do not acquire a
 completion icon by inference. Chat context reset and Work engine takeover clear
-the previous binding's status. Existing unread grouping, pinning and chronological
-ordering remain unchanged; no native process or transcript is read to list status.
+the previous binding's status. Completion icons do not change the current recent-
+conversation ordering or pinning; no native process or transcript is read to list status.
 
 Acceptance: `test/host-server.test.ts` drives public WS completion, reattachment,
 idle retirement and a fresh Host; `test/sidebar-http.test.ts` verifies scoped
