@@ -106,6 +106,29 @@ schema and authorization remain unchanged, and report-origin rejection precedes
 lookup. Plugin and actual native Pi/public Host regression tests failed before the
 repair and passed afterward. Focused Spec and Security reviews found no new issue.
 
+## Admission retry ordering repair
+
+The configured WSL CI found that the queue-capacity fixture assumed 100 durable
+admissions would finish within one fixed wait. The fixture now waits for each
+exact request acknowledgement and its queue row before asserting capacity; the
+100-item limit and backpressure assertions remain unchanged.
+
+Slower admissions and concurrent public task reads also exposed an intermittent
+product race: releasing the in-flight admission claim before persisting rejection
+and backoff allowed an extra admission failure beyond the one-recovery budget.
+The claim now stays held through the durable failure transition, with exact
+report/request ownership checks before mutation, row attachment and release.
+A failed save retains the claim and a diagnostic until explicit recovery; it
+cannot silently authorize another automatic attempt. This changes admission
+failure ordering, not target execution authority or the report's immutable facts.
+The public regression retains exact retry-count, no-delivery and restart checks;
+focused revocation/recovery/lost-ack tests and Spec/Security review accompany it.
+
+Real installed Pi→Pi and Pi→Codex walks passed on the preceding `2e6990d`
+candidate. The Codex walk used the existing router proxy only in the isolated Pi
+child after two direct source-model connection timeouts; production configuration
+was unchanged. Final operational evidence identifies the tested commit explicitly.
+
 ## Verification provenance
 
 Source and package evidence is distinct from final operational acceptance:
