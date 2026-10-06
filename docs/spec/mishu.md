@@ -786,7 +786,7 @@ including grant changes; a committed cancellation is not undone by its subsequen
 rejection response.
 
 The previous resource limits are not a state-file limit: operation receipts may
-copy large task snapshots. Ordinary saves stop at480 MiB;32 MiB is reserved for
+copy large task snapshots. Ordinary state growth stops at480 MiB; once revocation uses its reserve, reads and non-growing saves remain possible.32 MiB is reserved for
 revocation, and loading stops at512 MiB before reading the file. A larger valid
 store is diagnosed and retained, never truncated, silently migrated or purged.
 Terminal stop receipts reference the retained, immutable stopped task instead of
@@ -844,3 +844,12 @@ default/custom-root and user isolation, disabled/corrupt stores, invalid and
 symlink paths, oversized state and bounded discovery. Synthetic provider evidence
 is source-candidate acceptance; installed-artifact and production evidence remain
 separate.
+
+The #76 lifecycle matrix also fixes two integration seams: a completed/failed Fork
+preparation record no longer hides the original secretary or target from MISHU;
+only an active preparation blocks access. The newly forked Chat is unselected.
+Accepted Work takeover durably cancels old observation/queued report responsibility
+before starting native conversion, including when that conversion later fails.
+Fresh setup does not revive the cancelled obligation. Task headlines preserve
+waiting/incomplete/uncertain work state independently of committed report delivery;
+a delivered native-question report is not a completed target or user acceptance.
