@@ -541,3 +541,56 @@ business intent deduplication. The candidate plugin directs durable task work to
 Evidence: public HTTP/WS disk failure, changed-ID, lost-native-ACK, restart and
 queued-stop tests; native Pi Browser probe `probe-mishu-dispatch` using synthetic
 content. Source candidates and immutable installation/production remain distinct.
+
+## Candidate on-demand native reports (#72; not a production activation)
+
+A directly entered `/mishu-report` opens a task-title chooser; an exact task ID is
+accepted for integration callers. It summarizes already persisted bounded facts
+in the same native Pi Chat using a hidden custom input, never a synthetic user
+message. Ordinary conversational summaries do not claim durable report delivery.
+No automatic wakeup, retry timer or new target execution is introduced.
+
+Before native input, the scoped Host saves a ReportRecord with stable report and
+notification/revision identities, source binding, obligation generation and native
+processing UUID. The final platform extension records a native marker with that
+UUID, then starts native summary processing. The report asks for progress, limits,
+next step and a human source title. Internal task IDs are not required in visible
+summary text. The ledger stores native output IDs/hashes, not another transcript.
+
+All report tool calls, including built-ins, extension tools and callers of nested
+tools, are denied by Pi's actual `tool_call` gate. Host runtime action admission
+also denies setup, dispatch, send, disable and task mutations during that run.
+Declaration filtering alone is not the boundary. User steering and queue promotion
+cannot mix into a report; follow-up user input waits separately. A subsequent real
+user turn restores ordinary capabilities. Plugin report identity carries no
+foreground execution invitation or empty-action continuation.
+
+Neither `message_end` nor queue acceptance commits a report. After local settle,
+or during passive recovery after the native process has stopped, the Adapter
+verifies the exact marker, hidden custom input and native assistant range. Only
+successful, nonempty bounded output containing the required report sections and
+source title commits the ReportRecord and notification atomically. This validates
+correlation and the report envelope, not model truthfulness. Tool-only output,
+plain promises, errors and unprovable ranges stay uncertain without regeneration.
+A persisted assistant with a lost final audit/Host ACK is reconciled from that same
+native output; no second provider request is made.
+
+The state owner holds a kernel-backed SQLite exclusive transaction for its
+lifetime. Another Host fails closed before reading or mutating that coordination
+state; process death releases ownership. All state changes remain under the
+scoped serialized writer and atomic flushed JSON replacement. This is process
+crash recovery, not a claim of native-file fsync or power-loss atomicity.
+
+Stop/removal/archive/reset cancels unfinished reports and prevents stale ACK.
+Already admitted native text may have streamed before revocation or ACK; it remains
+scoped native historical output, never evidence of completed notification, user
+read or acceptance. Existing output cannot be retracted. Automatic worker leases,
+notification delivery and multi-engine task observation remain later slices.
+
+Acceptance uses synthetic native Pi over Host HTTP/WS and real Browser/Web/Host:
+report marker/output mapping; assistant write without final audit or Host ACK;
+no replay after restart; promise/tool-only uncertain; malicious built-in and nested
+caller denial; restored foreground tools; revoked target; competing owner process;
+chooser, desktop/mobile reload and repeated command without duplicate generation.
+Immutable package/fresh-clone/integrated release evidence remains the parent PR's
+responsibility. Existing pending A29–A35 and all broader target criteria remain.

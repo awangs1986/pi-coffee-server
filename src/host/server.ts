@@ -1148,6 +1148,7 @@ class HostSocket implements SessionSink {
     setImmediate(() => {
       const setup=frame.text.trim()==='/mishu-setup';
       if(setup)this.mishu?.beginSetup(session.id,frame.requestId);
+      if(/^\/mishu-report(?:\s|$)/.test(frame.text.trim()))this.mishu?.beginReport(session.id,frame.requestId);
       void session.prompt(frame.requestId, frame.text, frame.images).catch((error) => {
         this.send({
           v: 1,
@@ -1156,7 +1157,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      }).finally(()=>this.mishu?.endSetup(session.id,frame.requestId));
+      }).finally(()=>{this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);});
     });
   }
 
