@@ -153,3 +153,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [MISHU candidate automatic event reports](spec/mishu.md#candidate-automatic-event-reports-73-not-a-production-activation): explicit default-off reminders, durable Outbox, trusted FIFO native report delivery, generation fences and bounded recovery.
 
 - MISHU bounded multi-task reporting source candidate: [limits, fairness and diagnostics](spec/mishu.md#bounded-multi-task-reporting-candidate--server-74-2026-10-06), [Server #74](https://github.com/awangs1986/pi-coffee-server/issues/74). Synthetic HTTP/WS and native Browser evidence is separate from installed-artifact/production acceptance.
+
+- MISHU native observation candidate: [capability matrix](spec/mishu.md#native-observation-capability-slice--server-75-candidate), [bounded fixture/native account and Browser evidence](development/mishu-native-tracking-75.md), [Server #75](https://github.com/awangs1986/pi-coffee-server/issues/75). Online run evidence is distinct from passive recovery and durable dispatch; no production activation claim.

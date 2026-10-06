@@ -59,6 +59,8 @@ export interface AgentModels {
 }
 
 export interface AgentSession {
+  /** Reads already observed live evidence without starting or querying a native runtime. */
+  readRunEvidence?(runId?:string):AgentRunEvidence|Promise<AgentRunEvidence>;
   backgroundState?(): Promise<{known:boolean;active:number}>;
   prompt(text: string, images?: ImageInput[], correlation?:{runId:string}): Promise<void>;
   /** Interrupt a running turn after its current tool calls. */
@@ -87,6 +89,8 @@ export interface AgentSession {
 }
 
 export interface AgentRunEvidence {
+ capabilities?:{online:'supported'|'unavailable';restartRecovery:'supported'|'unknown';passiveHistory:'supported'|'unknown';detachedWriters:'supported'|'unknown'};
+ identity?:'native-run'|'host-invocation';referenceKind?:'native-message'|'host-live-receipt';
  supported:boolean;freshness:'current'|'unknown';runId?:string;binding?:string;watermark?:string;
  state:'running'|'reply-available'|'incomplete'|'uncertain';
  entries?:{id:string;revision:string;text:string}[];reason?:string;
