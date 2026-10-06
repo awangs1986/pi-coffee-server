@@ -1,8 +1,10 @@
 # PI Coffee documentation map
 
+- Current project terms and boundaries: [CONTEXT.md](../CONTEXT.md); [2026-10-06 freshness audit](reviews/spec-freshness-20261006.md), [Server #66](https://github.com/awangs1986/pi-coffee-server/issues/66). Ordinary Chat is zero-system; five Work engines retain distinct capabilities; MISHU persistent follow-up remains #64.
+
 - MISHU task authorization without repeated confirmation: [contract](spec/mishu.md#bounded-autonomy-and-authorization-continuity-016), [evidence](reviews/mishu-autonomy-20261006.md), [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65).
 
-- MISHU complete-secretary target: [Host resource contracts and staged acceptance](spec/mishu.md#complete-secretary-target-and-implementation-status-2026-10-05), [canonical plugin SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/ebb5464353d9547839f2d411e629bbad2b13cfec/docs/coffee-secretary-spec.md). Planned capabilities are distinct from the deployed 0.1.5 message bridge.
+- MISHU complete-secretary target: [Host resource contracts and staged acceptance](spec/mishu.md#complete-secretary-target-and-implementation-status-2026-10-05), [canonical plugin SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/ebb5464353d9547839f2d411e629bbad2b13cfec/docs/coffee-secretary-spec.md). Planned capabilities remain distinct from current-request messaging; the lockfile and deployment evidence identify the consumed and running versions.
 
 - MISHU communication repair and legacy SPEC gaps: [audit](reviews/mishu-spec-gap-20261005.md), [Firstmate source research](research/firstmate-mishu-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
@@ -19,17 +21,17 @@ Start with [the repository map](../REPOSITORIES.md) before choosing a source dir
 
 ## Current authority
 
-[ADR-0021](adr/0021-pi-only-source-authority.md) assigns Pi-only implementation to [pi-coffee](https://github.com/awangs1986/pi-coffee). This repository retains the latest Host, Web, Relay and native Agent adapters and consumes a pinned Pi package. Each GitHub main is authoritative for its scope and has an identical Gitea mirror. ADR-0020 remains historical for the earlier unification.
+[ADR-0021](adr/0021-pi-only-source-authority.md) assigns Pi-only implementation to [pi-coffee](https://github.com/awangs1986/pi-coffee). This repository retains Host, Web, Relay and native Agent adapters and consumes immutable, independently versioned Pi package artifacts. MISHU remains an explicitly approved independent Gitea plugin repository. Each GitHub main is authoritative for its scope and has an identical Gitea mirror. ADR-0020 still defines the one-owner/shared-Host interpretation and GitHub-first publication; its former Pi-source placement is historical.
 
 ## Read by task
 
 - Source reconciliation or release: [comparison and acceptance](reviews/repository-unification-20260927.md), [AGENTS.md](../AGENTS.md), [BACKLOG.md](../BACKLOG.md).
 - Product workbench: [Arena navigation](spec/arena-navigation.md), [Context Usage](spec/context-usage.md), [task directories](spec/conversation-workspaces.md), [upgrade-safe task bundles](spec/task-storage.md), [Skills](spec/skill-management.md).
 - Existing Gitea repository picker: [contract](spec/gitea-workspaces.md#existing-gitea-repository-selection-2026-09-30), [Server #5](https://github.com/awangs1986/pi-coffee-server/issues/5).
-- Code forges: [Gitea workspaces](spec/gitea-workspaces.md) and [GitHub repositories as Work Projects](adr/0022-github-work-projects.md).
+- Code forges: [Gitea workspaces](spec/gitea-workspaces.md) [GitHub projects](adr/0022-github-work-projects.md), and [current per-user GitHub authorization](spec/github-accounts.md), which supersedes shared-token policy.
 - Diff panel: [@pierre/diffs renderer, per-file loading and line comments](adr/0023-pierre-diff-renderer.md); layout and behavior in [Arena navigation](spec/arena-navigation.md#diff).
-- Agent integration: [native engines](spec/native-agent-engines.md), [native browser](spec/native-agent-browser.md), [shared Host](adr/0010-one-shared-user-vm-with-gitea-identity-and-per-user-folders.md), [Codex adapter](adr/0011-agent-seam-admits-codex-app-server.md).
-- Pi-only tools: [Chat/Work prompts](spec/harness-prompt.md), [work tools](spec/work-tools.md), [LSP CLI](spec/lsp-middle-layer.md). Pi customization does not change native Codex or Claude tools.
+- Agent integration: [native engines](spec/native-agent-engines.md), [native browser](spec/native-agent-browser.md), [one-owner Host boundary](../CONTEXT.md), [historical shared-Host decision](adr/0010-one-shared-user-vm-with-gitea-identity-and-per-user-folders.md), [Cursor/Claude](spec/cursor-claude.md), [Grok](spec/grok-build.md), [Codex adapter](adr/0011-agent-seam-admits-codex-app-server.md).
+- Pi-only tools: [Chat/Work prompts](spec/harness-prompt.md), [work tools](spec/work-tools.md), [LSP CLI](spec/lsp-middle-layer.md). Pi customization does not change other native engines' tools.
 - Runtime boundaries: [wire protocol](protocol.md), [Host interface](host-interface.md), [invariants tests cite by id](INVARIANTS.md).
 - Deployment: [unified release runbook](deployment/unified-release.md). Historical environment-specific evidence remains under `docs/deployment/evidence/`.
 - Startup recovery: [emergency mode](deployment/unified-release.md#emergency-startup), optional Pi plugin degradation without changing native accounts or replaying prompts; [Server #41](https://github.com/awangs1986/pi-coffee-server/issues/41).

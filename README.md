@@ -6,7 +6,7 @@
 [中文说明](#中文说明) · [English guide](#english-guide) · [部署配置 / Deployment configuration](#deployment-configuration) · [文档索引 / Documentation](docs/index.md) · [插件仓库 / Plugins](https://github.com/awangs1986/pi-coffee)
 
 PI Coffee Server owns the Browser, Web gateway, Host, optional Relay and native
-Pi / Codex CLI / Claude Code adapters. Independently versioned Pi plugins live in
+Pi / Codex CLI / Claude Code / Cursor / Grok Build adapters. Independently versioned Pi plugins live in
 [`pi-coffee/packages`](https://github.com/awangs1986/pi-coffee/tree/main/packages).
 GitHub is the source authority; Gitea mirrors the same commits. See
 [REPOSITORIES.md](REPOSITORIES.md) for ownership and release boundaries.
@@ -20,12 +20,12 @@ PI Coffee 让你在浏览器里管理对话和项目，由 Linux 主机或 VM �
 不等于停止正在执行的任务。
 
 它提供统一的操作界面，同时保留各个 Agent 的原生登录、会话 ID、工具和上下文。
-Pi 的 Harness、LSP 和交接插件不会注入 Codex 或 Claude Code。
+Pi 的 Harness、LSP 和交接插件不会注入其他原生引擎。
 
 | 使用场景 | 当前行为 |
 | --- | --- |
-| Chat | 新对话默认使用 Pi Chat；也有独立目录，可保存附件和资料 |
-| Work | 创建时选择 Pi、Codex 或 Claude Code，选择 Gitea/GitHub 项目与起始分支 |
+| Chat | 新对话默认使用 Pi Chat；普通 Chat 零系统提示词，有独立目录，可保存附件和资料 |
+| Work | 按 Host 就绪状态选择 Pi、Codex、Claude Code、Cursor 或 Grok Build，以及 Gitea/GitHub 项目与起始分支 |
 | 项目目录 | 每个任务独立 clone；同一仓库的两个任务不会共用一个工作目录 |
 | 对话导航 | 独立 URL、项目/自定义分组、新建与删除空分组、搜索、草稿恢复、前进后退和近期历史缓存 |
 | 开发操作 | 文件浏览、Diff、本轮修改摘要、Checkpoint、同步和 PR 操作 |
@@ -34,10 +34,13 @@ Pi 的 Harness、LSP 和交接插件不会注入 Codex 或 Claude Code。
 | Skills | 从左上角菜单管理，按 Agent 和作用域安装到 Host 的原生目录 |
 | Fork | 创建新任务和独立目录；原生 Fork 与实验性 Handoff 的可用性按 Agent 显示 |
 | Agent 交接 | 闲置的 Work 可显式进行 Pi ↔ Codex 交接；Chat 不升级；交接可能丢失信息或发生漂移 |
-| 远程协助 | 测试服务器配置与显式 `/sshme` 是两个不同用途，后者用于协助处理用户本机问题 |
+| 远程协助 | Work 的测试服务器配置与显式 `/sshme` 是两个不同用途，普通 Chat 不会自动获得测试服务器提示 |
+| MISHU | 当前 Pi Chat 显式选择秘书并设置联系人；支持当前请求中的传信与回执，持久跟进及迟到回信自动汇报仍待实现 |
 
 不是所有 Agent 都有相同能力。界面按照当前 Adapter 的实际能力显示选项；
 缺少 CLI、版本不支持或原生登录未就绪时，应显示原因，而不是偷偷切换 Agent。
+五种适配入口不等于五种引擎都通过真实账号验收；[Cursor/Claude](docs/spec/cursor-claude.md)、
+[Grok](docs/spec/grok-build.md) 和 [MISHU](docs/spec/mishu.md) 各自记录能力和待办边界。
 
 ### 2. 工作原理
 
@@ -49,9 +52,13 @@ flowchart LR
     Host --> Pi["Native Pi"]
     Host --> Codex["Codex app-server"]
     Host --> Claude["Claude Code CLI"]
+    Host --> Cursor["Cursor ACP"]
+    Host --> Grok["Grok Build ACP"]
     Pi --> Models["Configured model providers"]
     Codex --> Models
     Claude --> Models
+    Cursor --> Models
+    Grok --> Models
     Host <--> Storage["Task folders + native stores + display index"]
     Host <--> Forge["Gitea / GitHub repositories"]
     Host --> Transfer["Scoped file transfer"]
@@ -61,7 +68,7 @@ flowchart LR
 - **Browser**：负责界面、输入草稿和有容量限制的显示缓存。缓存不负责恢复模型上下文。
 - **Web**：负责 Gitea 登录、路由、授权校验和请求转发；不作为聊天正文的持久化数据库。
 - **Host**：运行在拥有项目目录和原生账号的机器上，管理任务、执行进程、文件、队列和历史索引。
-- **Agent Adapter**：Pi 使用原生 RPC，Codex 使用 `codex app-server`，Claude Code 使用其原生 JSON 流接口。Agent 原生记录是恢复上下文的依据。
+- **Agent Adapter**：Pi 使用原生 RPC，Codex 使用 `codex app-server`，Claude Code 使用其原生 JSON 流接口，Cursor/Grok 使用本地 stdio ACP。Agent 原生记录是恢复上下文的依据。
 - **显示同步**：Host 的 SQLite 索引是可重建的历史投影；浏览器通过分页、版本号和变更读取更新界面。
 - **Relay（可选）**：为明确配置的模型 API 或搜索请求提供转发；原生 Codex/Claude 接入不要求经过 Pi 的 Relay。
 
@@ -209,12 +216,12 @@ selecting another conversation does not cancel a running task.
 
 The interface is shared, while each engine retains its native login, session IDs,
 tools and model context. Pi-specific Harness, LSP and Handoff packages are not
-injected into Codex or Claude Code.
+injected into the other native engines.
 
 | Capability | Current behavior |
 | --- | --- |
-| Chat | Defaults to Pi Chat, with its own directory for attachments and other task data |
-| Work | Select Pi, Codex or Claude, a Gitea/GitHub repository and a starting branch |
+| Chat | Defaults to Pi Chat; ordinary Chat has zero system instructions and its own directory for task data |
+| Work | Select a Host-ready Pi, Codex, Claude Code, Cursor or Grok Build, a Gitea/GitHub repository and a starting branch |
 | Checkouts | One independent clone per task; conversations do not share a writable checkout |
 | Navigation | Canonical conversation URLs, project/custom groups, creation and empty-only group deletion, search, drafts, Back/Forward and bounded recent-history caches |
 | Development | File browsing, Diff, latest-turn edits, Checkpoint, synchronization and PR operations |
@@ -223,11 +230,14 @@ injected into Codex or Claude Code.
 | Skills | Managed in the logo menu, installed into the selected engine's native roots on Host |
 | Fork | Creates a new conversation and independent directory; native and experimental Handoff modes depend on the engine |
 | Takeover | Idle Work tasks can explicitly switch Pi ↔ Codex through experimental handoff; Chat cannot upgrade |
-| Remote assistance | Configured test runners and explicitly invoked `/sshme` serve different purposes |
+| Remote assistance | Work-only test-runner guidance and explicitly invoked `/sshme` serve different purposes |
+| MISHU | Explicitly selected Pi Chat secretary with configured contacts; current-request messaging is implemented, persistent tracking and automatic delayed-result reporting remain planned |
 
 Engine capabilities are intentionally not identical. Missing executables,
 unsupported versions and unavailable native authentication produce visible
-reasons, not an automatic switch to another engine.
+reasons, not an automatic switch to another engine. Five adapters do not prove
+real-account acceptance for all five engines. See [Cursor/Claude](docs/spec/cursor-claude.md),
+[Grok](docs/spec/grok-build.md) and [MISHU](docs/spec/mishu.md) for verified limits and planned work.
 
 ### 2. Architecture and conversation lifecycle
 
@@ -236,7 +246,7 @@ The architecture diagram above shows the main data flow:
 - **Browser** owns presentation, drafts and disposable bounded caches.
 - **Web** owns login, authenticated routing and forwarding, not durable transcript storage.
 - **Host** owns tasks, native processes, files, queues, scoped accounts and the derived display index.
-- **Agent adapters** use native Pi RPC, Codex's `app-server` and Claude Code's JSON stream interface. Native transcripts remain authoritative for resuming model context.
+- **Agent adapters** use native Pi RPC, Codex's `app-server` and Claude Code's JSON stream interface, and local stdio ACP for Cursor/Grok. Native transcripts remain authoritative for resuming model context.
 - **Display synchronization** uses a rebuildable SQLite index, bounded pages, revisions and changes. Browser caches are not native session recovery files.
 - **Optional Relay** forwards explicitly configured model-API/search traffic. Native Codex/Claude integration does not require Pi's Relay.
 
@@ -404,6 +414,8 @@ PI_COFFEE_TRANSFER_PORT=53317
 # PI_COFFEE_CODEX_HOME=/home/coffee/.codex
 # PI_COFFEE_CODEX_EFFORT=medium
 # PI_COFFEE_CLAUDE_COMMAND=/home/coffee/.local/bin/claude
+# PI_COFFEE_CURSOR_COMMAND=/home/coffee/.local/bin/agent
+# PI_COFFEE_GROK_COMMAND=/home/coffee/.local/bin/grok
 
 # Only this authenticated scope may manage machine-wide Skills.
 # 仅此身份可管理机器级 Skills；其他身份使用允许的项目作用域。

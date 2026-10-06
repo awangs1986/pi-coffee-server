@@ -15,7 +15,7 @@ inspector. The page preserves the current conversation, connection and unsent dr
 It offers native Agent and scope selectors, inventory, plain-text SKILL.md inspection,
 Git installation, update, enable/disable, refresh and explicit idle-task reload.
 
-Each installation explicitly selects Pi, Codex or Claude Code; the same source is
+Each installation explicitly selects Pi, Codex, Claude Code, Cursor or Grok Build; the same source is
 not silently installed for other engines. Files remain native SKILL.md packages;
 no Skill body is globally appended to the platform system prompt. Agent-specific
 instructions remain the package author's and user's responsibility. Pi custom LSP
@@ -28,14 +28,24 @@ is displayed as a read-only bundled Pi Skill, not injected into native engines.
 | Pi | configured Pi agent directory / `skills`, default `~/.pi/agent/skills` | `.pi/skills` |
 | Codex | `~/.agents/skills` | `.agents/skills` |
 | Claude Code | configured Claude directory / `skills`, default `~/.claude/skills` | `.claude/skills` |
+| Cursor | `~/.cursor/skills` | `.cursor/skills` |
+| Grok Build | `~/.grok/skills` | `.grok/skills` |
+
+Cursor/Grok mappings supplement the initial three-engine implementation; see
+[Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md). Native compatibility
+discovery may also find shared `.agents`/`.claude` roots; this manager does not
+silently remove those sources. Machine-level mutations require the configured
+`PI_COFFEE_SKILL_OWNER`; other Web identities use their owned Work project scope.
 
 Project means the selected active Work Conversation's independent checkout, not
 all clones of a registered Project. The Task's currently active Agent must match; takeover does not copy Skills across engines. Its copied
 Skill files are ordinary project changes that can be reviewed, checkpointed and
 published through Gitea. Other clones receive them only through normal Git flows.
-Chat uses user-level Skills; Pi Chat excludes Work prompts and the Skill catalog while retaining the
-[Host environment sentence](session-environment.md); explicit `/skill:name` invocation is available without adding a Skill catalog
-to its system prompt.
+Chat uses user-level Skills. Ordinary Pi Chat has [zero system instructions](session-environment.md#chat-zero-system-boundary--2026-10-05),
+including no Host-environment sentence, project guidance, test-runner pointer or
+automatic Skill catalog. Explicit `/skill:name` invocation remains available
+as a user request. An explicitly selected MISHU role is a separate opt-in context;
+it does not enable coordination by itself.
 
 The inventory covers these selected native roots and explicitly configured Pi
 bundles. It is not an exhaustive catalog of every plugin, administrator root,
@@ -232,7 +242,9 @@ cwd, including project Skills. Changing or disabling a Skill in Web invalidates
 the picker; Codex refreshes discovery without restarting the task. A disabled
 Skill is no longer added as explicit input; already-read history is retained.
 Native metadata/discovery errors are shown rather than an invented empty list.
-Claude completion remains unsupported in this change.
+Claude completion was outside this initial change. Current native Claude command
+and Skill completion is defined by [Cursor/Claude](cursor-claude.md); Cursor and
+Grok expose only their verified native command catalogs.
 
 Reference: [official App Server Skills and explicit Skill input](https://developers.openai.com/codex/app-server/).
 Verified native release: Codex CLI 0.159.1.
