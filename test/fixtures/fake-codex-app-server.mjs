@@ -132,6 +132,10 @@ async function runTurn(thread, input, options) {
     notify("turn/diff/updated", { threadId: thread.id, turnId, diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n` });
   }
 
+  if(text==='run delayed final tracking with progress'){
+    notify('item/completed',{threadId:thread.id,turnId,item:{type:'agentMessage',id:'progress-'+turnId,text:'PROGRESS_ONE_OF_THREE',phase:'commentary'}});
+    await new Promise(resolve=>setTimeout(resolve,800));
+  }
   await new Promise((resolve) => setTimeout(resolve, 20));
   if(text==='ask async failure'){
     turn.status='failed';turn.error={message:'fixture failure during question pause'};
@@ -145,7 +149,7 @@ async function runTurn(thread, input, options) {
     return;
   }
   const reply = text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
-  const message = { type: "agentMessage", id: uid("item"), text: reply, phase: null, memoryCitation: null, delivery: null, questions: null };
+  const message = { type: "agentMessage", id: uid("item"), text: reply, phase: text.startsWith('run delayed final tracking')?'final_answer':null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
   notify("item/agentMessage/delta", { threadId: thread.id, turnId, itemId: message.id, delta: reply.slice(0, half) });
@@ -153,6 +157,10 @@ async function runTurn(thread, input, options) {
   turn.items.push(message);
   notify("item/completed", { item: message, threadId: thread.id, turnId, completedAtMs: Date.now() });
   notify("thread/tokenUsage/updated", { threadId: thread.id, turnId, tokenUsage: { total: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, modelContextWindow: 1000 } });
+  if(text.startsWith('run delayed final tracking')){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    if(process.env.TRACKING_END_STATUS==='lost-final')process.exit(0);
+  }
   turn.status = ["failed","interrupted"].includes(process.env.TRACKING_END_STATUS)?process.env.TRACKING_END_STATUS:"completed";
   turn.completedAt = now();
   active.delete(thread.id);

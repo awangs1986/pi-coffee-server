@@ -888,7 +888,9 @@ class CodexSession implements PiSession {
         return;
       case "item/completed":
         const completed=params.item as Obj|undefined;
-        if(completed?.type==='agentMessage'&&typeof params.turnId==='string'&&typeof completed.id==='string'&&typeof completed.text==='string')this.tracking.message(params.turnId,completed.id,completed.text);
+        // Explicit terminal answers wait for turn outcome in tracking only.
+        // Unknown phases and asynchronous user questions retain live compatibility.
+        if(completed?.type==='agentMessage'&&typeof params.turnId==='string'&&typeof completed.id==='string'&&typeof completed.text==='string')this.tracking.message(params.turnId,completed.id,completed.text,completed.phase==='final_answer'&&completed.delivery!=='async');
         this.onItemCompleted(params.item as Obj);
         return;
       case "thread/tokenUsage/updated":

@@ -809,6 +809,50 @@ it('reserves stop admission when ordinary task mutation capacity is exhausted',a
  expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
 });
 
+it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true},{outcome:'failed',progress:true},{outcome:'interrupted',progress:false},{outcome:'exit',progress:false}])('reports one final Codex result after its native outcome ($outcome, progress=$progress)',async({outcome,progress})=>{
+ let reportCalls=0;
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;reportCalls++;
+  const frame={id:'codex-report',object:'chat.completion.chunk',created:1,model:'fixture'};
+  const content='进展：'+(raw.includes('echo: run delayed final tracking')?'最终合成结果已收到。':'PROGRESS_ONE_OF_THREE，工作尚在进行。')+'\n限制：尚未用户验收。\n下一步：查看结果。\n来源：Codex final result';
+  res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,'codex',true,true,undefined,false,[],true,outcome==='exit'?'lost-final':outcome),source=await app.workspaces.createChatConversation();
+ const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile);
+ const run=(args:string[])=>git('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:seed});
+ await run(['init','-b','main']);await writeFile(join(seed,'note.txt'),'base');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('synthetic-codex-final',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'codex');
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ const sockets:WebSocket[]=[];
+ async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(id===source.id&&e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
+ try{
+  const dst=await open(target.id);dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target',text:'run delayed final tracking'+(progress?' with progress':'')}));
+  await expect.poll(()=>dst.frames.some(f=>f.event?.type==='extension_ui_request'),{timeout:10000}).toBe(true);
+  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+  const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=async(body:unknown)=>await(await app.call(body,'owner',token,'/api/mishu/runtime')).json();
+  const contact=(await req({action:'directory'})).configuredTargets[0],base={action:'tasks',version:1};
+  const brief=(await req({...base,operation:'register',operationId:'brief',targetId:target.id,binding:contact.binding,purpose:'Codex final result',scope:'Existing run only',summary:'Await result',nextStep:'Report'})).task;
+  const watching=await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:1,runId:contact.observation.runId});expect(watching.task.observation).toBe('waiting');
+  const src=await open(source.id);src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'enable',text:'/mishu-notifications'}));
+  await expect.poll(async()=>(await req({action:'status'})).notifications.enabled,{timeout:10000}).toBe(true);
+  await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const question=dst.frames.find(f=>f.event?.type==='extension_ui_request').event;
+  dst.ws.send(JSON.stringify({v:1,type:'ui_response',requestId:'approve-target',id:question.id,confirmed:true}));
+  await expect.poll(()=>dst.frames.some(f=>f.event?.type==='message_end'&&f.event.text?.startsWith('echo: run delayed final tracking')),{timeout:10000}).toBe(true);
+  // Final text remains visible in the native Browser stream before settlement.
+  // It must not consume another report while the exact outcome is still pending.
+  await new Promise(r=>setTimeout(r,400));expect(reportCalls).toBe(progress?1:0);
+  const expected=outcome==='completed'?'reply-available':outcome==='exit'?'uncertain':'incomplete';
+  await expect.poll(async()=>(await req({...base,operation:'get',taskId:brief.taskId})).task?.observation,{timeout:10000}).toBe(expected);
+  await expect.poll(async()=>{const status=await req({action:'status'});return status.origin==='user-intent'&&status.notifications.backlog===0;},{timeout:10000}).toBe(true);
+  const final=await req({...base,operation:'get',taskId:brief.taskId});expect(final.task.observation).toBe(expected);expect(final.task.fact.latestReply).toContain('echo: run delayed final tracking');expect(final.task.acceptance).toBe('pending');
+  expect(reportCalls).toBe(progress?2:1);expect(final.task.reports).toHaveLength(progress?2:1);expect(final.task.reports.every((r:any)=>r.state==='committed')).toBe(true);
+  if(progress){expect(final.task.reports[0].events[0]).toMatchObject({state:'watching',latestReply:'PROGRESS_ONE_OF_THREE'});expect(final.task.reports[0].events[0].text).not.toContain('echo: run delayed final tracking');}
+  expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({state:expected,latestReply:expect.stringContaining('echo: run delayed final tracking')});
+ }finally{for(const socket of sockets)socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},15000);
+
 it.each((['codex','claude','cursor','grok'] as const).flatMap(engine=>(['completed','interrupted','failed','exit','stale'] as const).map(outcome=>({engine,outcome}))))('tracks exact online $engine work ($outcome) and leaves restart gaps unknown',async({engine,outcome})=>{
  const app=await start(undefined,engine,false,false,undefined,false,[],engine==='codex',outcome),source=await app.workspaces.createChatConversation();
  const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile);

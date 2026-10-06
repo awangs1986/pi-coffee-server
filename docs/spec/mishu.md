@@ -734,6 +734,15 @@ limits beside the task. Model directory observations carry `capabilities`,
 
 Codex support is wired in the production `codex-adapter.ts`, not merely the fallback
 adapter. The fallback Codex adapter does not advertise this observation capability.
+For Codex's explicit native `final_answer` phase, the live Agent boundary retains
+the final message until that exact turn reports completion, failure, interruption
+or connection loss. It then exposes the facts with the proven outcome; a final
+message alone does not prove success. Native Browser text still streams immediately.
+Explicit commentary and native user questions remain eligible live progress; missing
+phase keeps the legacy unknown-phase behavior. Thus one terminal answer is not
+automatically reported first as ongoing progress and again as a settled result.
+This uses native phase/outcome identity, not a longer coalescing delay, and does not
+rewrite a previously admitted or committed progress report.
 ACP positional display IDs are never treated as durable native message identities.
 The Host durably commits captured facts/receipt references as part of the existing
 Task Brief journal. That provides a retained fact, not proof that omitted events
