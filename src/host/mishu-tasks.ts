@@ -7,13 +7,14 @@ export interface TaskBrief {
  purpose:string;scope:string;summary:string;nextStep:string;
  workState:'recorded'|'stopped';observation:'not-started'|'watching'|'reply-available'|'incomplete'|'uncertain'|'waiting'|'stopped';acceptance:'pending';
  obligation?:{runId:string;nativeBinding:string;watermark:string;state:'pending'|'reply-available'|'incomplete'|'uncertain'|'cancelled';generation:number};
- fact?:{text:string;entries:{id:string;revision:string}[]};
- notification?:{automatic?:boolean;id:string;revision:number;state:'pending'|'committed';reportId?:string};reports?:import('./mishu-reports.js').ReportRecord[];observationError?:string;
+ fact?:{text:string;latestReply?:string;entries:{id:string;revision:string}[]};
+ notificationError?:string;
+ notification?:{events?:import('./mishu-reports.js').ReportEvent[];readyAt?:number;automatic?:boolean;id:string;revision:number;state:'pending'|'committed';reportId?:string};reports?:import('./mishu-reports.js').ReportRecord[];observationError?:string;
 
  createdAt:string;updatedAt:string;
 }
 export interface TaskJournal {tasks:TaskBrief[];operations:{id:string;fingerprint:string;task:TaskBrief}[]}
-export const TASK_LIMITS={tasks:200,operations:2000,page:50,purpose:500,scope:2000,summary:4000,nextStep:1000} as const;
+export const TASK_LIMITS={tasks:200,operations:2000,reservedStops:200,page:50,purpose:500,scope:2000,summary:4000,nextStep:1000} as const;
 const id=(v:unknown):v is string=>typeof v==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v);
 const fields=['purpose','scope','summary','nextStep'] as const;
 const keys:Record<string,string[]>={register:['operationId','targetId','binding',...fields],update:['operationId','taskId','expectedRevision',...fields],observe:['operationId','taskId','expectedRevision','runId'],stop:['operationId','taskId','expectedRevision'],list:['offset','limit'],get:['taskId']};
@@ -39,7 +40,7 @@ export async function taskOperation(journal:TaskJournal,sourceBinding:string,inp
  if(!id(targetId)||typeof expected!=='string'||!expected)throw Error('Exact configured target and binding required');
  await authorize(targetId,expected);
  if(prior){if(prior.fingerprint!==fingerprint)throw Error('operationId already belongs to different content');return {version:1,task:prior.task};}
- if(journal.operations.length>=TASK_LIMITS.operations)throw Error('Task operation capacity reached');
+ if(journal.operations.length>=TASK_LIMITS.operations&&operation!=='stop')throw Error('Task operation capacity reached');
  for(const key of fields)if(input[key]!==undefined&&(typeof input[key]!=='string'||!(input[key] as string).trim()||(input[key] as string).length>TASK_LIMITS[key]))throw Error(`Invalid ${key}; maximum ${TASK_LIMITS[key]} characters`);
  let result:TaskBrief;
  const now=new Date().toISOString();

@@ -622,13 +622,13 @@ it('defaults event reminders off and rejects model-side reminder grants',async()
  const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
  const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
- expect(await(await app.call({action:'status',id:source.id})).json()).toMatchObject({notifications:{enabled:false,capacity:20,maxAttempts:1}});
+ expect(await(await app.call({action:'status',id:source.id})).json()).toMatchObject({notifications:{enabled:false,capacity:20,maxAttempts:1,limits:{foregroundBurst:3,coalesceMs:250,wakesPerWindow:12,budgetWindowMs:3600000,automaticRecoveries:1,eventVersions:16,evidenceReferences:64,outboxBytes:262144},backlog:0,uncertain:0,remainingWakes:12}});
  expect((await app.call({action:'notifications',enabled:true},'owner',token,'/api/mishu/runtime')).status).toBe(409);
 });
 
 
-it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error'] as const)('automatically reports a late observed Pi reply through trusted queue (%s)',async(mode)=>{
- const requests:any[]=[];let finishTarget=()=>{},finishForeground=()=>{},finishReport=()=>{};
+it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover'] as const)('automatically reports a late observed Pi reply through trusted queue (%s)',async(mode)=>{
+ const requests:any[]=[];let finishTarget=()=>{},finishForeground=()=>{},finishReport=()=>{};let secondStatus:(()=>Promise<any>)|undefined;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);requests.push(body);
   const send=(content:string)=>{if(res.writableEnded)return;const f={id:'auto',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
@@ -651,8 +651,31 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
   const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
   const brief=(await(await req({...base,operation:'register',operationId:'late',targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;
   const watched=(await(await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:brief.revision,runId:contact.observation.runId})).json()).task;
-  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FOREGROUND_BUSY'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);}
+  if(mode==='budget')for(let n=0;n<12;n++){const another=(await(await req({...base,operation:'register',operationId:'budget-'+n,targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;await req({...base,operation:'observe',operationId:'budget-watch-'+n,taskId:another.taskId,expectedRevision:1,runId:contact.observation.runId});}
+  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='queue-full'||mode==='queue-recover'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FOREGROUND_BUSY'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);}
+  if(mode==='budget'){
+   const second=await app.workspaces.createChatConversation();await app.call({action:'select',id:second.id,selected:true});await setupThroughChat(app,second.id,target.id,true);const channel=await open(second.id),rt=(await app.host.mishuRuntime('owner',second.id)).env.PI_COFFEE_MISHU_TOKEN,req2=async(body:unknown)=>await(await app.call(body,'owner',rt,'/api/mishu/runtime')).json();
+   channel.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=>(await req2({action:'status'})).notifications.enabled).toBe(true);
+   const otherContact=(await req2({action:'directory'})).configuredTargets[0],otherTask=(await req2({...base,operation:'register',operationId:'separate-secretary',targetId:target.id,binding:otherContact.binding,purpose:'Late synthetic task',scope:'Second secretary',summary:'Independent',nextStep:'Review'})).task;
+   await req2({...base,operation:'observe',operationId:'separate-watch',taskId:otherTask.taskId,expectedRevision:1,runId:contact.observation.runId});secondStatus=()=>req2({action:'status'});
+  }
+  if(mode==='queue-full'||mode==='queue-recover'){for(let n=0;n<100;n++)src.ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId:'fill-'+n,text:'pending '+n}));await expect.poll(()=>src.frames.filter(f=>f.type==='queue_state').at(-1)?.items.length,{timeout:10000}).toBe(100);}
   finishTarget();await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].observation;},{timeout:10000}).toBe('reply-available');
+  if(mode==='queue-recover'){
+   await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.admissionFailures,{timeout:10000}).toBe(1);
+   for(const row of src.frames.filter(f=>f.type==='queue_state').at(-1).items)src.ws.send(JSON.stringify({v:1,type:'queue_action',requestId:randomUUID(),id:row.id,revision:row.revision,action:'cancel'}));
+   await expect.poll(()=>src.frames.filter(f=>f.type==='queue_state').at(-1)?.items.some((q:any)=>q.readOnly),{timeout:10000}).toBe(true);
+   expect((await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0]).toMatchObject({state:'admitted',recoveries:1});finishForeground();
+  }
+  if(mode==='budget'||mode==='queue-full'){
+   if(mode==='budget'){await expect.poll(async()=>(await(await req({action:'status'})).json()).notifications.remainingWakes,{timeout:20000}).toBe(0);await expect.poll(()=>requests.length,{timeout:10000}).toBe(14);expect((await secondStatus!()).notifications.remainingWakes).toBe(11);expect((await(await req({action:'status'})).json()).notifications.backlog).toBeGreaterThanOrEqual(1);}
+   else {await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.retryBlocked,{timeout:10000}).toBe(true);const report=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0];expect(report).toMatchObject({state:'pending',recoveries:1,admissionFailures:2});expect(report.deliveryAttempted).not.toBe(true);expect((await(await req({action:'status'})).json()).notifications.error).toContain('预算已耗尽');}
+   for(const socket of sockets)socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+   const resumed=await start(app.root,undefined,true,true);const rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+   const resumedStatus=await(await resumed.call({action:'status'},'owner',rt,'/api/mishu/runtime')).json();
+   expect(resumedStatus.notifications.remainingWakes).toBe(mode==='budget'?0:12);
+   await new Promise(r=>setTimeout(r,1200));expect(requests).toHaveLength(mode==='budget'?14:2);return;
+  }
   if(mode==='disabled'){expect(requests).toHaveLength(1);const task=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task;expect(task.fact.text).toContain('LATE_AUTOMATIC_FACT');expect(task.reports).toBeUndefined();return;}
   if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'){
    await expect.poll(()=>src.frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly&&q.text==='MISHU 汇报：Late synthetic task')),{timeout:10000}).toBe(true);expect(requests).toHaveLength(2);
@@ -678,7 +701,7 @@ it.each(['late','disabled','busy','revoked','restart-queued','restart-uncertain'
    const restarted=await start(app.root,undefined,true,true);await restarted.host.mishuRuntime('owner',source.id);
   }
   await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].reports?.[0]?.state;},{timeout:10000}).toBe('committed');
-  expect(requests).toHaveLength(mode==='busy'||mode==='restart-queued'?3:2);expect(JSON.stringify(requests.at(-1))).not.toContain('"state":"reply-available"');
+  expect(requests).toHaveLength(mode==='busy'||mode==='restart-queued'||mode==='queue-recover'?3:2);expect(JSON.stringify(requests.at(-1))).not.toContain('"state":"reply-available"');
   if(mode!=='restart-queued')expect(src.frames.some(f=>f.event?.type==='message_end'&&JSON.stringify(f.event).includes('LATE_AUTOMATIC_FACT'))).toBe(true);
  }finally{for(const s of sockets)s.close();finishTarget();finishForeground();finishReport();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
@@ -694,3 +717,59 @@ it.each(['source','target'] as const)('filters stale %s task bindings at public 
  const resumed=await start(app.root,undefined,true),frames:any[]=[],ws=new WebSocket(`ws://127.0.0.1:${resumed.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
  try{await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);ws.send(JSON.stringify({v:1,type:'prompt',requestId:'stale-list',text:'/mishu-report'}));await expect.poll(()=>frames.some(f=>f.event?.message==='暂无可汇报的原生结果。'),{timeout:10000}).toBe(true);expect(frames.some(f=>f.event?.method==='select')).toBe(false);await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);ws.send(JSON.stringify({v:1,type:'prompt',requestId:'stale-exact',text:'/mishu-report '+task.taskId}));await expect.poll(()=>frames.some(f=>String(f.event?.message??'').startsWith('汇报未能开始')),{timeout:10000}).toBe(true);}finally{ws.close();}
 });
+
+it.each(['burst','capacity'] as const)('coalesces exact task versions, keeps report inputs immutable, and fairly serves foreground (%s)',async(mode)=>{
+ const order:string[]=[],reportBodies:string[]=[];let releaseFirst=()=>{};
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);
+  const current=body.messages.filter((m:any)=>m.role==='user'&&!JSON.stringify(m).includes('【PI Coffee 插件状态】')).at(-1);const report=JSON.stringify(current).includes('<task-facts>');
+  const send=(content:string)=>{if(res.writableEnded)return;const f={id:'burst',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  if(report){reportBodies.push(JSON.stringify(current));const title=raw.includes('Burst alpha')&&!raw.includes('Burst beta')?'Burst alpha':String(JSON.stringify(current).includes('Burst beta')?'Burst beta':'Burst alpha');order.push(title);send('进展：已收到合成结果。\n限制：待验收。\n下一步：查看原记录。\n来源：'+title);}
+  else {const text=JSON.stringify(current?.content);const label=text.match(/USER_[0-9]/)?.[0]??'FIRST';order.push(label);if(label==='FIRST')releaseFirst=()=>send('FIRST_DONE');else send(label+'_DONE');}
+ });await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic burst target',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const env=(await app.host.mishuRuntime('owner',source.id)).env,req=async(body:unknown)=>await(await app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json(),base={action:'tasks',version:1};
+ const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,...(e.method==='confirm'?{confirmed:true}:{value:'开启事件提醒'})}));});
+ try{
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened')).toBe(true);
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=>(await req({action:'status'})).notifications.enabled).toBe(true);
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FIRST'}));await expect.poll(()=>order).toEqual(['FIRST']);
+  const contact=(await req({action:'directory'})).configuredTargets[0],tasks:any[]=[];
+  for(const title of ['Burst alpha','Burst beta']){const task=(await req({...base,operation:'register',operationId:randomUUID(),targetId:target.id,binding:contact.binding,purpose:title,scope:'Fixture',summary:'Pending',nextStep:'Review'})).task;tasks.push(task);await req({...base,operation:'observe',operationId:randomUUID(),taskId:task.taskId,expectedRevision:1,runId});}
+  const append=(text:string)=>native.appendMessage({role:'assistant',content:[{type:'text',text}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
+  append('PARTIAL_BURST');await req({...base,operation:'list'});if(mode==='capacity')for(let n=0;n<16;n++){append('PROGRESS_'+n);await req({...base,operation:'list'});}append('TERMINAL_BURST');native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+  const before=(await req({...base,operation:'list'})).tasks;expect(before.every((t:any)=>t.notification.events.length>=2)).toBe(true);if(mode==='capacity')for(const task of before){expect(task.notification.events).toHaveLength(16);expect(task.notificationError).toContain('容量已满');expect(task.fact.text).not.toContain('TERMINAL_BURST');}
+  await expect.poll(()=>frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly))).toBe(true);
+  for(let n=1;n<=5;n++)ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId:'foreground-'+n,text:'USER_'+n}));
+  await expect.poll(()=>frames.filter(f=>f.type==='queue_state').at(-1)?.items.length).toBe(6);
+  releaseFirst();await expect.poll(()=>reportBodies.length,{timeout:20000}).toBe(mode==='capacity'?4:2);
+  await expect.poll(async()=>(await req({...base,operation:'list'})).tasks.every((t:any)=>t.reports?.at(-1)?.state==='committed'),{timeout:10000}).toBe(true);
+  expect(order.slice(0,5)).toEqual(['FIRST','USER_1','USER_2','USER_3','Burst alpha']);
+  expect(order.indexOf('USER_5')).toBeLessThan(order.indexOf('Burst beta'));
+  const after=(await req({...base,operation:'list'})).tasks;
+  for(const task of after){expect(task.reports).toHaveLength(mode==='capacity'?2:1);expect(task.reports.at(-1).events.at(-1).text).toContain('TERMINAL_BURST');expect(task.reports[0].events.at(-1).entries).toHaveLength(mode==='capacity'?15:2);expect(task.reports[0].eventVersions).toEqual(before.find((t:any)=>t.taskId===task.taskId).notification.events.map((e:any)=>e.revision));}
+  expect(reportBodies[0]).toContain('PARTIAL_BURST');if(mode==='burst')expect(reportBodies[0]).toContain('TERMINAL_BURST');else expect(reportBodies[0]).not.toContain('TERMINAL_BURST');expect(reportBodies[0]).not.toContain('Burst beta');
+  expect((await req({action:'status'})).notifications).toMatchObject({backlog:0,remainingWakes:mode==='capacity'?8:10});
+  for(let n=0;n<3;n++)await req({...base,operation:'list'});expect(reportBodies).toHaveLength(mode==='capacity'?4:2);
+ }finally{releaseFirst();ws.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it('reserves stop admission when ordinary task mutation capacity is exhausted',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime'),base={action:'tasks',version:1};
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],task=(await(await req({...base,operation:'register',operationId:'capacity',targetId:target.id,binding:contact.binding,purpose:'Stop must remain usable',scope:'Fixture',summary:'Retained',nextStep:'Review'})).json()).task;
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ // Seed exhausted synthetic storage, then exercise admission only through public HTTP.
+ const file=join(app.workspaces.root,'.coffee','mishu','state.json'),state=JSON.parse(await readFile(file,'utf8')),journal=state.chats[source.id].taskJournal;
+ journal.operations=Array.from({length:2000},(_,n)=>({id:'seed-'+n,fingerprint:'synthetic',task}));await writeFile(file,JSON.stringify(state));
+ const resumed=await start(app.root),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,call=(body:unknown)=>resumed.call(body,'owner',rt,'/api/mishu/runtime');
+ expect((await call({...base,operation:'update',operationId:'blocked-update',taskId:task.taskId,expectedRevision:1,summary:'Cannot add ordinary mutation'})).status).toBe(409);
+ const stop={...base,operation:'stop',operationId:'reserved-stop',taskId:task.taskId,expectedRevision:1};
+ expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
+ expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
+},30000);

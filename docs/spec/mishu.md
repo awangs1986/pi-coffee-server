@@ -642,3 +642,73 @@ admission without replay; native output written before lost Host ACK; mobile
 explicit enable/stop and desktop/mobile reconnect with one visible report.
 Fixtures are synthetic. Production activation, immutable package pin, real-model
 quality and complete integrated lifecycle acceptance remain separate evidence.
+
+### Bounded multi-task reporting candidate — Server #74 (2026-10-06)
+
+This source candidate extends #69–#73; it is not an installed package or production
+release. Each secretary has its own durable model budget and each Task Brief has
+its own event batch. The first useful event opens a 250 ms coalescing window.
+While a report remains undelivered, further related versions may join that same
+batch. Admission snapshots event versions, state, bounded text and native evidence
+references; delivery freezes them. New events during processing form a new batch.
+Waiting-user and terminal states remain represented in the event list. Task and
+binding generations never merge. Raw tokens/tool logs and unchanged evidence do
+not create reports. Reports remain native transcript content, not Task Brief text.
+
+The normal serial input queue now chooses up to three pending foreground inputs,
+then one pending notification. After a notification, a pending foreground input
+wins again. FIFO is preserved within each class. Running turns are never preempted.
+The bound counts runnable queue services, not seconds: a still-running model or a
+failed foreground row may require human action for later foreground input; independent
+notifications may still proceed. No wall-clock completion is
+promised. Among tasks, the oldest ready batch goes first; fresh activity on one
+task does not move it ahead of already-waiting tasks.
+
+Published limits (`status.notifications.limits` and task-list limits):
+
+| Resource | Bound and overflow behavior |
+| --- | --- |
+| Task records, including retained stopped records | 200 per secretary; new registration rejected |
+| Idempotent task mutations | 2,000 ordinary mutation receipts plus up to 200 reserved terminal stops; ordinary mutation rejected at capacity, stopping remains available |
+| Task page | Default 20, maximum 50 |
+| Task purpose / scope / summary / next step | 500 / 2,000 / 4,000 / 1,000 characters |
+| Pending event batch | 16 event versions, 64 distinct native ID/revision references; 4,000 summary plus 4,000 latest-reply characters per event |
+| Event-batch bytes | 256 KiB pending event batches per secretary; do not advance the affected watermark on saturation |
+| Outbox | 20 outstanding report records; 100 retained reports per task |
+| Report output validation | At most 16,000 characters, required sections and source label |
+| Memory input queue | 100 rows, 512 KiB text and 16 MiB encoded images, shared with normal input |
+| Automatic model budget | 12 native report admissions per secretary per persisted one-hour window |
+| Safe automatic admission recovery | Once per report failure, one-second delay, persisted across restart; only before native delivery was attempted |
+
+These are resource-specific limits, not a total byte cap on `state.json`. Existing
+idempotency receipts retain bounded TaskBrief snapshots and can duplicate retained
+facts/report metadata across up to 2,200 receipts; whole-state validation and
+migration must account for that storage amplification.
+
+No unsettled responsibility or historical report is deleted to make space. Event
+saturation preserves the last confirmed cursor/facts and shows backpressure; after
+an existing report commits, the next passive audit can reconcile native evidence.
+The budgets limit new automatic admissions, not provider prices or existing native
+context size. Monetary cost cannot be guaranteed without provider accounting.
+A budget-window timer may resume already-admitted report work; it does not poll or
+contact targets. Disabled reminders and uncertain delivery never create a retry
+loop. Queue admission failure consumes only the single notification recovery; it
+never authorizes retrying target execution. An ambiguous native admission or model
+failure stays uncertain and requires native-history inspection.
+
+`/mishu` shows backlog, uncertain reports, remaining wakes, saturation and recovery
+instructions. `/mishu-tasks` retains per-task diagnostics and facts. Once queue
+capacity is available, direct `/mishu-report` may deliver a report proven never
+attempted; it reuses that report identity. It cannot regenerate uncertain output.
+Turn completion, durable report commit, user reading and acceptance remain distinct.
+
+Candidate evidence: HTTP/WS covers two simultaneous task batches with five
+foreground inputs, preserved event versions/references, no unchanged-event wakes,
+12-admission exhaustion, independent secretary budgets, saturated-queue single recovery
+and restart with exhausted budgets. `scripts/probe-mishu-multitask.mjs` exercises
+actual Chromium/Web/Host/native Pi with two separate synthetic target runs, two
+reports after the foreground turn ends, and one copy each after desktop/mobile
+reload. Synthetic model fixtures prove flow and isolation, not model quality.
+Installed artifact, all-account startup and the complete integrated lifecycle
+matrix remain #76 and final acceptance work. Other unmet A29–A35 and M01–M13
+requirements are preserved.
