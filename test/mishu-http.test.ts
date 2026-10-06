@@ -312,6 +312,7 @@ it('records task briefs only after durable admission, rejects conflicting retrie
  const req=(body:unknown)=>app.call(body,'other',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
  const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
  const save={action:'tasks',version:1,operation:'register',operationId:'brief-register',targetId:target.id,binding:contact.binding,purpose:'Verify the synthetic build',scope:'Read-only synthetic fixture',summary:'Waiting for evidence',nextStep:'Inspect build results'};
+ const {binding:_omittedBinding,...missingBinding}=save;expect((await req(missingBinding)).status).toBe(409);
  const response=await req(save);expect(response.status,await response.clone().text()).toBe(200);
  const initial=await response.json();expect(initial).toMatchObject({version:1,task:{revision:1,observation:'not-started',workState:'recorded',acceptance:'pending',purpose:save.purpose}});
  expect(await(await req(save)).json()).toEqual(initial);
