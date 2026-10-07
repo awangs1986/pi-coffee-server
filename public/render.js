@@ -397,6 +397,7 @@ export function userBubble(entry) {
 
 export function assistantNode(entry, { done = true } = {}) {
   const node = el('div', 'msg assistant');
+  node.dataset.messageComplete=String(done);
   const body = el('div', 'body');
   if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '');
   else renderBoundedText(body, entry.text || '');
@@ -413,6 +414,7 @@ export function assistantNode(entry, { done = true } = {}) {
 
 export function updateAssistant(node, text, { done = false, isCurrent = () => true } = {}) {
   if (!isCurrent()) return;
+  node.dataset.messageComplete=String(done);
   const body = node.querySelector('.body');
   if (!body) return;
   if (done && fitsRichText(text)) {

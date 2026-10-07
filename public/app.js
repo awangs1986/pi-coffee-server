@@ -6,6 +6,7 @@ import {ConversationModels} from './conversation-models.js';
 import {splitUploadedFilesText as parseUploadedFiles} from './uploaded-files.js';
 const splitUploadedFilesText = text => parseUploadedFiles(text, downloadUrl);
 import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
+import {createDocumentDownloads} from './document-downloads.js';
 import {initForkControls} from "./fork.js";
 import {createSidebarInteraction} from './sidebar-interaction.js';
 import {pixelCat} from './sync-status.js';
@@ -1809,6 +1810,7 @@ function handleEvent(event) {
   if(type==='native_request'){handleExtensionUi(event);return;}
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
+    void documentDownloads.refresh(true);
     queuedRequests.clear();
     pendingDelivery=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
     if(supports('models'))send({v:1,type:'get_models'});
@@ -1877,6 +1879,7 @@ function handleEvent(event) {
   if (type === 'compaction_end') { if(compacting)return; const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
 
   if (type === 'agent_settled') {
+    void documentDownloads.refresh(true);
     queuedRequests.clear();
     pendingDelivery=null;
     setStreaming(false);
@@ -3666,7 +3669,14 @@ fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;if(!cur
 
 function bindWorkspaceArtifacts() {
  bindWorkspaceArtifactLinks(document,(action,path)=>workspaceState&&transfer?fileEndpoint(action,path):null);
+ void documentDownloads.refresh();
 }
+const documentDownloads=createDocumentDownloads({
+ root:ui.thread,
+ context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
+ load:async()=>{const response=await fetch(fileEndpoint('artifacts'));if(!response.ok)throw new Error('Generated files unavailable');return (await response.json()).artifacts;},
+ endpoint:path=>transfer?fileEndpoint('workspace-download',path):null,
+});
 new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});
 
 // restore=true when the user closes the panel: bring back the Checkout panel it replaced and the focus.
