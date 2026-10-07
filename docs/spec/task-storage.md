@@ -56,6 +56,15 @@ settlement refreshes availability. Missing discovery or authorization retains
 plain filenames. Source publication and activation remain distinct. See
 [Server #94](https://github.com/awangs1986/pi-coffee-server/issues/94).
 
+Filename-signature discovery must remain linear in the bounded text inspected;
+an unbroken historical token must not cause a retry from every character on each
+streaming DOM mutation. The browser regression in
+`scripts/probe-streaming-responsiveness.mjs` exercises the actual app over synthetic
+HTTP/WS: browser timers keep advancing, drafts remain editable and the latest
+streamed text renders alongside dense history. Its second scenario preserves
+verified inline/plain Word links. This is a regression gate, not a production
+latency guarantee. See [Server #96](https://github.com/awangs1986/pi-coffee-server/issues/96).
+
 ## Upgrade and backup contract
 
 Back up the coffee tree **and** the existing Host registry, native Agent stores and necessary configuration/credentials separately with restricted access. The coffee tree alone is not a complete native recovery backup. Stop writes or take a consistent filesystem snapshot across these locations.

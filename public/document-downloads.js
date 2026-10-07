@@ -1,7 +1,9 @@
 const WORD=/\.docx?$/i;
 const INPUT=/^(?:\.\.\/attachments|(?:\.pi-coffee\/)?inbox)(?:\/|$)/;
 function bodies(root){return [...root.querySelectorAll('.msg.assistant[data-message-complete="true"] .body')].filter(node=>!node.querySelector('.bounded-text-content'));}
-function signature(root){return bodies(root).flatMap(node=>(node.textContent||'').slice(0,32768).match(/[^\s`]+\.docx?\b/gi)||[]).slice(0,400).join('\n');}
+// Match once per token. Restarting a greedy filename pattern at every character
+// makes dense historical text quadratic on every streaming DOM update.
+function signature(root){return bodies(root).flatMap(node=>(node.textContent||'').slice(0,32768).split(/[\s`]+/).flatMap(token=>token.match(/^[^\s`]+\.docx?\b/i)||[])).slice(0,400).join('\n');}
 function removeLink(link){link.replaceWith(link.querySelector('code')||document.createTextNode(link.dataset.documentText||''));}
 function unwrap(root){for(const link of root.querySelectorAll('.generated-document-download'))removeLink(link);}
 function verified(files){return Array.isArray(files)?files.slice(0,200).filter(file=>file?.available===true&&typeof file.path==='string'&&file.path.length<=512&&WORD.test(file.path)&&!INPUT.test(file.path)):[];}
