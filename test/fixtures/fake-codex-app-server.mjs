@@ -1,5 +1,5 @@
 import './github-env-probe.mjs';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -20,6 +20,18 @@ const uid = (prefix) => `${prefix}-${process.pid}-${++counter}`;
 const now = () => Math.floor(Date.now() / 1000);
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const notify = (method, params) => send({ method, params });
+// Ordering fixtures advance only when their public HTTP/WS assertions have
+// observed the preceding phase. No machine-speed assumption decides an outcome.
+function waitTrackingGate(name) {
+  const file=join(home,name);
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>finish(Error('Tracking fixture gate timed out: '+name)),30000);
+    const watcher=watch(home,()=>{if(existsSync(file))finish();});
+    function finish(error){clearTimeout(timer);watcher.close();if(error)reject(error);else resolve();}
+    watcher.on('error',finish);
+    if(existsSync(file))finish();
+  });
+}
 const pendingServerRequests = new Map();
 let nextServerId = 1000;
 const settings = new Map(); // threadId -> { approvalPolicy }
@@ -134,8 +146,8 @@ async function runTurn(thread, input, options) {
 
   if(text==='run delayed final tracking with progress'){
     notify('item/completed',{threadId:thread.id,turnId,item:{type:'agentMessage',id:'progress-'+turnId,text:'PROGRESS_ONE_OF_THREE',phase:'commentary'}});
-    await new Promise(resolve=>setTimeout(resolve,800));
   }
+  if(text.startsWith('run delayed final tracking'))await waitTrackingGate('allow-final');
   await new Promise((resolve) => setTimeout(resolve, 20));
   if(text==='ask async failure'){
     turn.status='failed';turn.error={message:'fixture failure during question pause'};
@@ -158,7 +170,7 @@ async function runTurn(thread, input, options) {
   notify("item/completed", { item: message, threadId: thread.id, turnId, completedAtMs: Date.now() });
   notify("thread/tokenUsage/updated", { threadId: thread.id, turnId, tokenUsage: { total: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, modelContextWindow: 1000 } });
   if(text.startsWith('run delayed final tracking')){
-    await new Promise(resolve=>setTimeout(resolve,1000));
+    await waitTrackingGate('allow-terminal');
     if(process.env.TRACKING_END_STATUS==='lost-final')process.exit(0);
   }
   turn.status = ["failed","interrupted"].includes(process.env.TRACKING_END_STATUS)?process.env.TRACKING_END_STATUS:"completed";
