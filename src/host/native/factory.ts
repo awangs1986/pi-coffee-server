@@ -190,6 +190,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
       }finally{await probe.stop();}
     }
     if(engine==="codex") {
+      // Readiness is local credential configuration, not remote account hydration.
+      // account/read can time out while this login and model/list remain usable.
+      const loggedIn=await exec(config.command,[...(config.args??[]),'login','status'],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192})
+        .then(()=>true,error=>{if(error.code===1)return false;throw error;});
+      if(loggedIn)return true;
+      // A custom provider can intentionally require no OpenAI credentials.
       const probe=new NativeProcess(config,["app-server"],process.cwd());
       try {
         await probe.call("initialize",{clientInfo:{name:"pi_coffee_readiness",version:"0.1.0"}},5000);
