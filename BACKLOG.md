@@ -547,6 +547,6 @@ Owner requested [Codex source support](docs/spec/mishu-codex-secretary.md), so a
 can select an existing Codex Work without a Pi secretary process. Shared Host
 coordination, exact source-user-run authorization, engine-native tool registration,
 mechanically tool-free report runs and original-output recovery are separate gates.
-[Ticket drafts](docs/development/mishu-codex-tickets.md) preserve #64/PR #78 as the
+[Approved tasks #85–#91](docs/development/mishu-codex-tickets.md) preserve #64/PR #78 as the
 unmerged tracking prerequisite, not an already deployed baseline. Source Codex
 support does not confer durable dispatch/recovery parity on non-Pi targets.

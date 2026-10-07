@@ -1,21 +1,21 @@
 # Codex 主秘书：to-tickets 拆分草稿
 
-状态：2026-10-07 完成 SPEC 与纵向票据草稿；等待粒度/阻塞关系审阅，尚未发布 Issue。
+状态：2026-10-07 用户确认采用七票拆分；已发布父项 [#84](https://github.com/awangs1986/pi-coffee-server/issues/84) 及 #85–#91，并建立原生子任务/阻塞关系。仅任务发布，未实现/未部署。
 契约：[Codex 主秘书目标规格与 C01–C12](../spec/mishu-codex-secretary.md)。
-Tracker：GitHub `awangs1986/pi-coffee-server`，确认后使用 `enhancement` / `ready-for-agent`。
+Tracker：GitHub `awangs1986/pi-coffee-server`，任务已使用 `enhancement` / `ready-for-agent`。
 不修改或关闭 #64，不把已存在 PR #78/插件 PR #4 自动合并，不启动实现或部署。
 
 ## 实施顺序
 
 | 草稿 | 完整可演示切片 | 真正阻塞 |
 | --- | --- | --- |
-| 01 | 验证 Codex 秘书源能力并展示可用性 | 无 |
-| 02 | 在 Codex Work 启用 MISHU 并完成真实信息联系 | 1 |
-| 03 | 从 Codex 秘书登记并跟踪真实目标运行 | 2 |
-| 04 | 让 Codex 安全汇报并恢复同一原生输出 | 3 |
-| 05 | 把延迟结果可靠地送回空闲 Codex 秘书 | 4 |
-| 06 | 让 Codex 秘书按明确授权派工且如实展示目标限制 | 3 |
-| 07 | 完成 Codex 秘书生命周期及安装版本闭环验收 | 5, 6 |
+| [#85](https://github.com/awangs1986/pi-coffee-server/issues/85) | 验证 Codex 秘书源能力并展示可用性 | 无 |
+| [#86](https://github.com/awangs1986/pi-coffee-server/issues/86) | 在 Codex Work 启用 MISHU 并完成真实信息联系 | 1 |
+| [#87](https://github.com/awangs1986/pi-coffee-server/issues/87) | 从 Codex 秘书登记并跟踪真实目标运行 | 2 |
+| [#88](https://github.com/awangs1986/pi-coffee-server/issues/88) | 让 Codex 安全汇报并恢复同一原生输出 | 3 |
+| [#89](https://github.com/awangs1986/pi-coffee-server/issues/89) | 把延迟结果可靠地送回空闲 Codex 秘书 | 4 |
+| [#90](https://github.com/awangs1986/pi-coffee-server/issues/90) | 让 Codex 秘书按明确授权派工且如实展示目标限制 | 3 |
+| [#91](https://github.com/awangs1986/pi-coffee-server/issues/91) | 完成 Codex 秘书生命周期及安装版本闭环验收 | 5, 6 |
 
 第3票另外需要集成并验证 #64 的持久跟踪候选（Server PR #78；Pi 回归的插件 PR #4）。
 第1票的协调能力与汇报安全/恢复能力分别判定：它即使完成“安全汇报不可用”的诊断，

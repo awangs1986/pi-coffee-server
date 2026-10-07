@@ -1,7 +1,8 @@
 # Codex 作为 MISHU 主秘书
 
-状态：2026-10-07 用户要求新增的目标规格；未实现、未上线。任务拆分见
-[实施草稿](../development/mishu-codex-tickets.md)。本规格扩展
+状态：2026-10-07 用户要求新增的目标规格；未实现、未上线。
+完整公开规格与实施父项：[#84](https://github.com/awangs1986/pi-coffee-server/issues/84)；任务拆分见
+[实施任务](../development/mishu-codex-tickets.md)。本规格扩展
 [现有 MISHU 契约](mishu.md)，不宣称 Codex 目标能力已经与 Pi 等同。
 
 ## 1. 用户得到什么
