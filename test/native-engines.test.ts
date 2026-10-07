@@ -270,6 +270,32 @@ it('disables an unverified native CLI version with an explicit readiness reason'
  expect((await response.json()).engines.find((e:any)=>e.id==='codex')).toMatchObject({available:false,reason:expect.stringContaining('Unsupported')});
  expect((await app.request({action:'conversation',id:'wrong-version',workspaceKind:'project',projectId:app.projectId,engine:'codex'})).status).toBe(409);
 });
+
+it('opens Codex and loads models with a configured login even when account metadata is unavailable',async()=>{
+ const app=await start(undefined,true,'codex',{FIXTURE_ACCOUNT_UNAVAILABLE:'1'});
+ const response=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
+ expect((await response.json()).engines.find((e:any)=>e.id==='codex')).toMatchObject({available:true,authentication:'configured'});
+ expect((await app.request({action:'conversation',id:'local-auth',workspaceKind:'project',projectId:app.projectId,engine:'codex'})).status).toBe(200);
+ const client=await connect(app.host,'local-auth');
+ try{
+  expect(await client.next(f=>f.type==='opened'||f.type==='error')).toMatchObject({type:'opened',engine:'codex'});
+  client.socket.send(JSON.stringify({v:1,type:'get_models',requestId:'local-models'}));
+  expect(await client.next(f=>f.requestId==='local-models')).toMatchObject({type:'models',models:[expect.objectContaining({id:'fixture'})]});
+ }finally{client.socket.close();}
+});
+
+it('retains Codex providers that do not require an OpenAI login',async()=>{
+ const app=await start(undefined,true,'codex',{FIXTURE_NO_OPENAI_AUTH:'1'});
+ const response=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
+ expect((await response.json()).engines.find((e:any)=>e.id==='codex')).toMatchObject({available:true,authentication:'configured'});
+});
+
+it('keeps failed Codex login-status checks unavailable rather than assuming a login',async()=>{
+ const app=await start(undefined,true,'codex',{FIXTURE_AUTH_STATUS_ERROR:'1'});
+ const response=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
+ expect((await response.json()).engines.find((e:any)=>e.id==='codex')).toMatchObject({available:false,authentication:'unknown'});
+ expect((await app.request({action:'conversation',id:'status-error',workspaceKind:'project',projectId:app.projectId,engine:'codex'})).status).toBe(409);
+});
 it('rejects replay of an already accepted native prompt after Host restart',async()=>{
  const app=await start(undefined,true);await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'once-only',engine:'codex'});
  const first=await connect(app.host,'once-only');await first.next(f=>f.type==='opened');const prompt={v:1,type:'prompt',requestId:'stable-delivery',text:'Run once'};first.socket.send(JSON.stringify(prompt));await first.next(f=>f.type==='event'&&f.event.type==='run_completed');first.socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);

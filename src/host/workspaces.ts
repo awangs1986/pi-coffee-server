@@ -1009,7 +1009,7 @@ export class Workspaces {
     const files=await this.scanFiles(c);
     for(const path of files.slice(0,5000)) {
       if(inputAttachment(path))continue;
-      if(!/\.(png|jpe?g|gif|webp|svg|md|pdf)$/i.test(path) || path.replace(/^\.\.\//,'').split(/[\\/]/).some(p=>(p.startsWith('.') && p!=='.pi-coffee') || /secret|credential|token/i.test(p)))continue;
+      if(!/\.(png|jpe?g|gif|webp|svg|md|pdf|docx?)$/i.test(path) || path.replace(/^\.\.\//,'').split(/[\\/]/).some(p=>(p.startsWith('.') && p!=='.pi-coffee') || /secret|credential|token/i.test(p)))continue;
       try {
         const full=await this.file(id,path);const info=await stat(full);
         if(!info.isFile() || (c.baseline ? c.baseline[path]===`${info.mtimeMs}:${info.size}` : info.mtimeMs<Date.parse(c.createdAt)-1000))continue;

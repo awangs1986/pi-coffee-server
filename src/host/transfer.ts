@@ -591,6 +591,7 @@ function safeScope(scope: string): string {
 }
 
 const MIME: Record<string, string> = {
+  ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".txt": "text/plain; charset=utf-8", ".md": "text/markdown; charset=utf-8", ".json": "application/json", ".csv": "text/csv",
   ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
   ".svg": "image/svg+xml", ".zip": "application/zip", ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".ts": "text/plain; charset=utf-8",

@@ -164,8 +164,10 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const client = new RpcClient({
       cliPath: this.options.cliPath ?? resolvePiCliPath(),
       cwd: this.options.cwdForSession ? await this.options.cwdForSession(options.workspaceSessionId ?? options.sessionId, existing !== undefined) : this.options.cwd,
-      provider: this.options.provider,
-      model: this.options.model,
+      // Global defaults seed new sessions only. Pi restores existing choices
+      // natively; passing defaults here overrides them on child recreation.
+      provider: existing ? undefined : this.options.provider,
+      model: existing ? undefined : this.options.model,
       env: {
         ...(this.options.agentDir === undefined ? {} : { PI_CODING_AGENT_DIR: this.options.agentDir }),
         ...buildHostChildEnv(environment),
