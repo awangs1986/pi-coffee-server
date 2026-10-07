@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Planned Codex main secretary: [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [ticket breakdown draft](development/mishu-codex-tickets.md). Explicitly selected Codex Work; ordinary Chat stays Pi-only. This is a new requirement, not implementation or production evidence.
+
 - MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 - Developer guardrails and release tools: [workflow and CLI contract](development/verification-and-release.md), [sidebar navigation/reviewer matrix](agents/sidebar.md), [Server #81](https://github.com/awangs1986/pi-coffee-server/issues/81), [acceptance and review](reviews/retro-guardrails-20261006.md). Source checks, publication, staging and activation remain distinct.
 
