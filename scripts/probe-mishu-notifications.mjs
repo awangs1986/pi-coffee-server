@@ -8,7 +8,7 @@ import {SessionManager} from '@earendil-works/pi-coding-agent';
 import {HostServer} from '../dist/src/host/server.js';import {WebServer} from '../dist/src/web/server.js';
 import {Workspaces} from '../dist/src/host/workspaces.js';import {RpcPiSessionFactory} from '../dist/src/host/pi-adapter.js';import {NativeAgentFactory} from '../dist/src/host/native/factory.js';
 const require=createRequire(import.meta.url),root=await mkdtemp(join(tmpdir(),'verify-mishu-')),store=join(root,'sessions'),agent=join(root,'agent');await mkdir(store);await mkdir(agent);
-let host,web,browser,page;const errors=[],requests=[],apiRecords=[];let target;let stage=0;let releaseTarget;let targetRequests=0;let reportRequests=0;let releaseSecretary;const queuedStop=process.env.MISHU_NOTIFICATION_QUEUED_STOP==='1';
+let host,web,browser,page;const errors=[],requests=[],apiRecords=[];let target;let stage=0;let releaseTarget;let targetRequests=0;let reportRequests=0;let releaseSecretary;const queuedStop=process.env.MISHU_NOTIFICATION_QUEUED_STOP==='1',failedStop=process.env.MISHU_STOP_WRITE_FAILURE==='1';
 const model=createServer(async(req,res)=>{
  try{
  let raw='';for await(const c of req)raw+=c;const input=JSON.parse(raw);requests.push({toolNames:(input.tools??[]).map(t=>t.function?.name??t.name),stage});
@@ -69,10 +69,18 @@ try{
  if(queuedStop){
   for(let n=0;n<200&&!releaseSecretary;n++)await new Promise(r=>setTimeout(r,20));if(!releaseSecretary)throw Error('Foreground did not start');
   releaseTarget();await page.locator('.queue-text').filter({hasText:'MISHU 汇报：Synthetic build brief'}).waitFor({timeout:15000});
-  await page.setViewportSize({width:390,height:700});await page.reload();await page.locator('.queue-text').filter({hasText:'MISHU 汇报：Synthetic build brief'}).waitFor();await page.screenshot({path:join(root,'queued-notification-mobile.png'),animations:'disabled'});await page.locator('[data-queue-action="cancel"]').click();
+  await page.setViewportSize({width:390,height:700});await page.reload();await page.locator('.queue-text').filter({hasText:'MISHU 汇报：Synthetic build brief'}).waitFor();await page.screenshot({path:join(root,'queued-notification-mobile.png'),animations:'disabled'});if(failedStop){
+   const blocked=join(workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blocked);
+   await page.locator('[data-queue-action="cancel"]').click();await page.locator('#toast').filter({hasText:'EISDIR'}).waitFor({timeout:10000});
+   await page.locator('.queue-text').filter({hasText:'MISHU 汇报：Synthetic build brief'}).waitFor();
+   await page.screenshot({path:join(root,'rejected-stop-keeps-queue.png')});
+   const {rm}=await import('node:fs/promises');await rm(blocked,{recursive:true});
+   if((await tasks())[0].workState!=='recorded')throw Error('Rejected stop changed the brief');
+  }
+  await page.locator('[data-queue-action="cancel"]').click();
   for(let n=0;n<200&&(await tasks())[0].workState!=='stopped';n++)await new Promise(r=>setTimeout(r,20));if((await tasks())[0].workState!=='stopped')throw Error('Queued mobile stop failed');
   releaseSecretary();await page.getByText('SECRETARY_CHAT_OK',{exact:false}).first().waitFor({timeout:30000});if(reportRequests!==0)throw Error('Stopped notification woke report model');
-  await writeFile(join(root,'evidence.json'),JSON.stringify({passed:true,syntheticModels:true,queuedMobileStop:true,reportRequests,targetRequests,foregroundContinued:true,browserErrors:errors},null,2));console.log(JSON.stringify({passed:true,evidence:root}));
+  await writeFile(join(root,'evidence.json'),JSON.stringify({passed:true,syntheticModels:true,queuedMobileStop:true,rejectedStopRetainsQueue:failedStop,reportRequests,targetRequests,foregroundContinued:true,browserErrors:errors},null,2));console.log(JSON.stringify({passed:true,evidence:root}));
  }else{
  await page.getByText('SECRETARY_CHAT_OK',{exact:false}).first().waitFor({timeout:30000});
  releaseTarget();

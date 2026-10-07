@@ -873,3 +873,36 @@ before starting native conversion, including when that conversion later fails.
 Fresh setup does not revive the cancelled obligation. Task headlines preserve
 waiting/incomplete/uncertain work state independently of committed report delivery;
 a delivered native-question report is not a completed target or user acceptance.
+
+
+## Review corrections (2026-10-07; source candidate)
+
+The #64 tracking follow-up corrects three review findings; it does not activate a
+production release or add Codex as secretary source.
+
+- Task mutations now share the coordinator's complete committed-state checkpoint.
+  A rejected stop preserves task, Assignment and receipt states together. Memory
+  notification rows are removed only after cancellation is durably committed;
+  a failed write retains the queued report and the accepted target responsibility.
+- The Pi plugin retains validated `status.tracking` counters and bounded error
+  text for both `/mishu` and its model tool. Counts are nonnegative integers bounded
+  by the 200-task capacity; the command no longer hides observation failures.
+- Live Agent evidence carries an optional `truncated` flag. The Host independently
+  records `fact.truncated` and `fact.latestReplyTruncated` for upstream clipping and
+  its own 4000-character limits, and preserves both in ReportEvents. Native output
+  IDs/hashes remain the evidence references; the bounds and dispatch rules do not grow.
+  Task details warn when a reply was clipped. Native report input carries the flags
+  and instructs the model to describe the missing tail in its limitations section.
+
+These are optional Boolean additions to private schema2 records. Existing records
+remain readable; absent flags mean completeness unverified, never false. Report
+inputs encode that unknown as null. Older strict readers may refuse the new fields;
+keep their state/diagnostics intact rather than strip metadata or restore old grants.
+
+Regression evidence is through scoped HTTP/WS, installed-native protocol fixtures
+and the independent plugin's public command/tool registration boundary: a rejected
+queued stop remains queued, tracking counts/errors reach callers, and a long native
+Codex result preserves truncation through the automatic report input. Real Chromium
+probes separately cover desktop/mobile detail warnings and failed queued-stop retention.
+Checks using `MISHU_PLUGIN_ROOT` verify candidate source; they do not validate a new
+immutable package or change Server's consumed tracking.2 artifact.

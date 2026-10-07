@@ -8,14 +8,14 @@ import {SessionManager} from '@earendil-works/pi-coding-agent';
 import {HostServer} from '../dist/src/host/server.js';import {WebServer} from '../dist/src/web/server.js';
 import {Workspaces} from '../dist/src/host/workspaces.js';import {RpcPiSessionFactory} from '../dist/src/host/pi-adapter.js';import {NativeAgentFactory} from '../dist/src/host/native/factory.js';
 const require=createRequire(import.meta.url),root=await mkdtemp(join(tmpdir(),'verify-mishu-')),store=join(root,'sessions'),agent=join(root,'agent');await mkdir(store);await mkdir(agent);
-let host,web,browser,page;const errors=[],requests=[],apiRecords=[];let target;let stage=0;let releaseTarget;let targetRequests=0;
+let host,web,browser,page;const errors=[],requests=[],apiRecords=[];let target;const reviewFix=process.env.MISHU_REVIEW_FIX_PROBE==='1';let stage=0;let releaseTarget;let targetRequests=0;
 const model=createServer(async(req,res)=>{
  try{
  let raw='';for await(const c of req)raw+=c;const input=JSON.parse(raw);requests.push({toolNames:(input.tools??[]).map(t=>t.function?.name??t.name),stage});
  const tool=(name,args)=>({role:'assistant',tool_calls:[{index:0,id:'call-'+stage,type:'function',function:{name,arguments:JSON.stringify(args)}}]});
  const userText=input.messages.filter(m=>m.role==='user').slice(-3).map(m=>m.content);
  if(JSON.stringify(userText).includes('DELAYED_OBSERVATION_WORK')){
-  targetRequests++;releaseTarget=()=>{if(res.writableEnded)return;res.writeHead(200,{'content-type':'text/event-stream'});const base={id:'target',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...base,choices:[{index:0,delta:{role:'assistant',content:'OBSERVATION_LATE_REPLY'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};return;
+  targetRequests++;releaseTarget=()=>{if(res.writableEnded)return;res.writeHead(200,{'content-type':'text/event-stream'});const base={id:'target',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...base,choices:[{index:0,delta:{role:'assistant',content:'OBSERVATION_LATE_REPLY'+(reviewFix?' '+ 'x'.repeat(4200)+' FINAL_LIMITATION_MUST_BE_READ':'')},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};return;
  }
  if(JSON.stringify(userText).includes('SECRETARY_STILL_AVAILABLE')){
   res.writeHead(200,{'content-type':'text/event-stream'});const base={id:'secretary',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...base,choices:[{index:0,delta:{role:'assistant',content:'SECRETARY_CHAT_OK'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');return;
@@ -58,16 +58,17 @@ try{
  await page.locator('#prompt').fill('/mishu-tasks');await page.locator('#send').click();await page.locator('#ui-options .ui-option').filter({hasText:'Synthetic build brief'}).click();
  await page.locator('#ui-options .ui-option').filter({hasText:'观察当前工作'}).click();await page.locator('#ui-options .ui-option').filter({hasText:'正在观察，等待回信'}).waitFor();
  if((await tasks())[0].observation!=='watching')throw Error('Observation not persisted');await page.screenshot({path:join(root,'watching.png')});await page.locator('#ui-cancel').click();await page.locator('#ui-modal').waitFor({state:'hidden'});
+ if(reviewFix){await page.locator('#prompt').fill('/mishu');await page.locator('#send').click();await page.getByText('跟进：等待 1，已有回信 0，待核实 0',{exact:false}).first().waitFor({timeout:10000});await page.screenshot({path:join(root,'tracking-status.png')});}
  await page.locator('#prompt').fill('SECRETARY_STILL_AVAILABLE');await page.locator('#send').click();await page.getByText('SECRETARY_CHAT_OK',{exact:false}).first().waitFor({timeout:30000});
  releaseTarget();
  for(let n=0;n<200&&(await tasks())[0].observation!=='reply-available';n++)await new Promise(r=>setTimeout(r,30));
- const observed=(await tasks())[0];if(observed.observation!=='reply-available'||observed.fact.text!=='OBSERVATION_LATE_REPLY')throw Error('Late native result not available');
+ const observed=(await tasks())[0];if(observed.observation!=='reply-available'||(reviewFix?!observed.fact.text.startsWith('OBSERVATION_LATE_REPLY')||observed.fact.truncated!==true||observed.fact.latestReplyTruncated!==true:observed.fact.text!=='OBSERVATION_LATE_REPLY'))throw Error('Late native result not available');
  for(const viewport of [{width:1360,height:960},{width:390,height:700}]){
   await page.setViewportSize(viewport);await page.reload();await page.locator('#prompt').fill('/mishu-tasks');await page.locator('#send').click();await page.locator('#ui-options .ui-option').filter({hasText:'已有回信'}).click();
-  await page.locator('#ui-title').filter({hasText:'OBSERVATION_LATE_REPLY'}).waitFor();await page.locator('.login-coffee').waitFor({state:'hidden'});await page.locator('#ui-title').evaluate(e=>{e.scrollTop=e.scrollHeight;});await page.screenshot({path:join(root,'late-reply-'+viewport.width+'.png')});await page.locator('#ui-cancel').click();await page.locator('#ui-modal').waitFor({state:'hidden'});
+  await page.locator('#ui-title').filter({hasText:'OBSERVATION_LATE_REPLY'}).waitFor();if(reviewFix)await page.locator('#ui-title').filter({hasText:'回信已截断，可能遗漏尾部'}).waitFor();await page.locator('.login-coffee').waitFor({state:'hidden'});await page.locator('#ui-title').evaluate(e=>{e.scrollTop=e.scrollHeight;});await page.screenshot({path:join(root,'late-reply-'+viewport.width+'.png')});await page.locator('#ui-cancel').click();await page.locator('#ui-modal').waitFor({state:'hidden'});
  }
  if(targetRequests!==1)throw Error('Observation replayed target execution');
  if(errors.length)throw Error('Browser/model errors: '+errors.join('; '));
- await writeFile(join(root,'evidence.json'),JSON.stringify({passed:true,sourceId:source.id,targetId:target.id,engine:'pi',targetRequests,lateReply:observed.fact.text,mainSecretaryAvailable:true,requests,viewports:[1360,390],observationWithoutPrompt:true,browserErrors:errors,syntheticModels:true},null,2));console.log(JSON.stringify({passed:true,evidence:root}));
+ await writeFile(join(root,'evidence.json'),JSON.stringify({passed:true,sourceId:source.id,targetId:target.id,engine:'pi',targetRequests,lateReply:observed.fact.text,truncationWarning:reviewFix,trackingStatus:reviewFix,mainSecretaryAvailable:true,requests,viewports:[1360,390],observationWithoutPrompt:true,browserErrors:errors,syntheticModels:true},null,2));console.log(JSON.stringify({passed:true,evidence:root}));
 }catch(e){await writeFile(join(root,'failure.json'),JSON.stringify({error:e.message,errors,requests,apiRecords},null,2));await page?.screenshot({path:join(root,'failure.png')}).catch(()=>{});console.log(JSON.stringify({passed:false,error:e.message,evidence:root}));process.exitCode=1;}
 finally{releaseTarget?.();await browser?.close();await web?.close();await host?.close();model.closeAllConnections();await new Promise(r=>model.close(r));}
