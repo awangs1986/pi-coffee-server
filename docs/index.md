@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Generated Word delivery: [contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and acceptance](reviews/word-delivery-20261007.md), [Server #94](https://github.com/awangs1986/pi-coffee-server/issues/94). Verified assistant filenames use existing scoped downloads; Word output discovery excludes inputs and does not inject Chat context or repeated cards.
+
 - Developer guardrails and release tools: [workflow and CLI contract](development/verification-and-release.md), [sidebar navigation/reviewer matrix](agents/sidebar.md), [Server #81](https://github.com/awangs1986/pi-coffee-server/issues/81), [acceptance and review](reviews/retro-guardrails-20261006.md). Source checks, publication, staging and activation remain distinct.
 
 - Recent-conversation sidebar order: [current contract](spec/arena-navigation.md#recent-conversation-order-2026-10-06-server-80-supersedes-54), [evidence](reviews/sidebar-activity-20261006.md), [Server #80](https://github.com/awangs1986/pi-coffee-server/issues/80). Dates and order use last conversation activity; this supersedes creation-time ordering.

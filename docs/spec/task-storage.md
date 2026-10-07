@@ -34,6 +34,28 @@ Archive preserves the entire bundle. Permanent cleanup requires the existing arc
 
 File APIs expose only the workspace and explicitly allowed attachments/artifacts/research/images siblings within the authorized task. Metadata, history snapshots, other tasks and escaping symlinks are not exposed through attachment grants.
 
+## Word document delivery — 2026-10-07, Server #94
+
+Generated `.doc` and `.docx` files are included in the bounded artifact index for
+Chat and Work. Input attachments, private filenames, escaping paths and symlinks
+remain excluded. Existing scoped file grants serve Word bytes as attachments
+with native MIME types, encoded filenames, `nosniff` and no-store headers.
+
+The Browser can bind inline code or plain Word filenames in completed, bounded
+assistant replies to downloads after the existing artifact API verifies an
+available file. Exact relative paths win; a basename resolves only when unique.
+User messages, fenced commands, unverified examples, input attachments and
+ambiguous names are not rewritten. Existing Markdown links remain intact.
+No per-round workspace-artifact card is added, and no system instruction or
+file content is inserted into native Chat context.
+
+Discovery is lazy for document-bearing replies, bounded to the existing index,
+and shared while in flight. User/Conversation/selection/native-binding changes
+invalidate it and discard late replies. Grant renewal rebinds existing downloads;
+settlement refreshes availability. Missing discovery or authorization retains
+plain filenames. Source publication and activation remain distinct. See
+[Server #94](https://github.com/awangs1986/pi-coffee-server/issues/94).
+
 ## Upgrade and backup contract
 
 Back up the coffee tree **and** the existing Host registry, native Agent stores and necessary configuration/credentials separately with restricted access. The coffee tree alone is not a complete native recovery backup. Stop writes or take a consistent filesystem snapshot across these locations.
