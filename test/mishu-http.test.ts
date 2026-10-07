@@ -17,6 +17,34 @@ import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
+async function waitForNativeFrame(socket:WebSocket,frames:any[],offset:number,ready:(frame:any)=>boolean,timeout:number,phase:string){
+ return new Promise<void>((resolve,reject)=>{
+  const timer=setTimeout(()=>finish(Error(phase+' timed out: '+JSON.stringify(frames.slice(offset).map(f=>({type:f.type,requestId:f.requestId,event:f.event?.type}))))),timeout);
+  const inspect=()=>{
+   const current=frames.slice(offset),failure=current.find(f=>f.type==='error'||f.event?.type==='extension_error');
+   if(failure)finish(Error(phase+' failed: '+JSON.stringify(failure)));
+   else if(current.some(ready))finish();
+  };
+  function finish(error?:Error){clearTimeout(timer);socket.off('message',inspect);if(error)reject(error);else resolve();}
+  socket.on('message',inspect);inspect();
+ });
+}
+async function enqueueFollowUp(socket:WebSocket,frames:any[],requestId:string,text:string,size:number){
+ const admitted=new Promise<void>((resolve,reject)=>{
+  const timer=setTimeout(()=>finish(Error('Queue admission timed out: '+requestId)),10000);
+  const receive=(raw:unknown)=>{
+   const frame=JSON.parse(String(raw));
+   if(frame.type==='error'&&frame.requestId===requestId)finish(Error(JSON.stringify(frame)));
+   if(frame.type==='queue_state'&&frame.items.some((row:any)=>row.requestId===requestId))finish();
+  };
+  function finish(error?:Error){clearTimeout(timer);socket.off('message',receive);if(error)reject(error);else resolve();}
+  socket.on('message',receive);
+ });
+ socket.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId,text}));
+ await admitted;
+ expect(frames.some(f=>f.type==='ack'&&f.operation==='follow_up'&&f.requestId===requestId)).toBe(true);
+ expect(frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(size);
+}
 async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>,loseDispatchAck=false,extraExtensions:string[]=[],productionCodex=false,trackingOutcome='completed'){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
@@ -53,8 +81,10 @@ it('selected Chat knows MISHU identity through the installed plugin, including d
  let socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
  socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
  async function prompt(text:string){
-  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text}));
-  await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const offset=frames.length,requestId=randomUUID();socket.send(JSON.stringify({v:1,type:'prompt',requestId,text}));
+  await waitForNativeFrame(socket,frames,offset,f=>f.type==='ack'&&f.operation==='prompt'&&f.requestId===requestId,10000,'Identity prompt admission');
+  // This checks identity through native startup/stream/persistence, not a 10s response SLO.
+  await waitForNativeFrame(socket,frames,offset,f=>f.event?.type==='agent_settled',20000,'Identity native completion');
   expect(frames.slice(offset).filter(f=>f.type==='error'||f.event?.type==='extension_error')).toEqual([]);
  }
  function identity(state:string){
@@ -731,23 +761,7 @@ for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-
    // Fill the real durable queue one acknowledged command at a time. A single
    // deadline for 100 fsync-backed admissions measures runner disk speed instead
    // of the report's backpressure behavior. ACK precedes the public queue row.
-   for(let n=0;n<100;n++){
-    const requestId='fill-'+n;
-    const admitted=new Promise<void>((resolve,reject)=>{
-     const timer=setTimeout(()=>finish(Error('Queue admission timed out: '+requestId)),10000);
-     const receive=(raw:unknown)=>{
-      const frame=JSON.parse(String(raw));
-      if(frame.type==='error'&&frame.requestId===requestId)finish(Error(JSON.stringify(frame)));
-      if(frame.type==='queue_state'&&frame.items.some((row:any)=>row.requestId===requestId))finish();
-     };
-     function finish(error?:Error){clearTimeout(timer);src.ws.off('message',receive);if(error)reject(error);else resolve();}
-     src.ws.on('message',receive);
-    });
-    src.ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId,text:'pending '+n}));
-    await admitted;
-    expect(src.frames.some(f=>f.type==='ack'&&f.operation==='follow_up'&&f.requestId===requestId)).toBe(true);
-    expect(src.frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(n+1);
-   }
+   for(let n=0;n<100;n++)await enqueueFollowUp(src.ws,src.frames,'fill-'+n,'pending '+n,n+1);
    expect(requests).toHaveLength(2);
   }
   finishTarget();await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].observation;},{timeout:10000}).toBe('reply-available');
@@ -830,19 +844,23 @@ it.each(['burst','capacity'] as const)('coalesces exact task versions, keeps rep
  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
  const env=(await app.host.mishuRuntime('owner',source.id)).env,req=async(body:unknown)=>await(await app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json(),base={action:'tasks',version:1};
  const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
- ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,...(e.method==='confirm'?{confirmed:true}:{value:'开启事件提醒'})}));});
+ ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&['select','confirm'].includes(e.method))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,...(e.method==='confirm'?{confirmed:true}:{value:'开启事件提醒'})}));});
  try{
-  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened')).toBe(true);
-  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=>(await req({action:'status'})).notifications.enabled).toBe(true);
-  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FIRST'}));await expect.poll(()=>order).toEqual(['FIRST']);
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await waitForNativeFrame(ws,frames,0,f=>f.type==='opened',10000,'Fairness source open');
+  const consentOffset=frames.length;
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));
+  await expect.poll(async()=>(await req({action:'status'})).notifications.enabled,{timeout:10000}).toBe(true);
+  await waitForNativeFrame(ws,frames,consentOffset,f=>f.event?.type==='agent_settled',10000,'Notification consent completion');
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FIRST'}));await expect.poll(()=>order,{timeout:10000}).toEqual(['FIRST']);
   const contact=(await req({action:'directory'})).configuredTargets[0],tasks:any[]=[];
   for(const title of ['Burst alpha','Burst beta']){const task=(await req({...base,operation:'register',operationId:randomUUID(),targetId:target.id,binding:contact.binding,purpose:title,scope:'Fixture',summary:'Pending',nextStep:'Review'})).task;tasks.push(task);await req({...base,operation:'observe',operationId:randomUUID(),taskId:task.taskId,expectedRevision:1,runId});}
   const append=(text:string)=>native.appendMessage({role:'assistant',content:[{type:'text',text}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
   append('PARTIAL_BURST');await req({...base,operation:'list'});if(mode==='capacity')for(let n=0;n<16;n++){append('PROGRESS_'+n);await req({...base,operation:'list'});}append('TERMINAL_BURST');native.appendCustomEntry('coffee-native-settled',{version:1,runId});
   const before=(await req({...base,operation:'list'})).tasks;expect(before.every((t:any)=>t.notification.events.length>=2)).toBe(true);if(mode==='capacity')for(const task of before){expect(task.notification.events).toHaveLength(16);expect(task.notificationError).toContain('容量已满');expect(task.fact.text).not.toContain('TERMINAL_BURST');}
-  await expect.poll(()=>frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly))).toBe(true);
-  for(let n=1;n<=5;n++)ws.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId:'foreground-'+n,text:'USER_'+n}));
-  await expect.poll(()=>frames.filter(f=>f.type==='queue_state').at(-1)?.items.length).toBe(6);
+  await expect.poll(()=>frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly)),{timeout:10000}).toBe(true);
+  // Establish the complete queue before releasing FIRST and measuring fairness.
+  for(let n=1;n<=5;n++)await enqueueFollowUp(ws,frames,'foreground-'+n,'USER_'+n,n+1);
+  expect(frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(6);
   releaseFirst();await expect.poll(()=>reportBodies.length,{timeout:20000}).toBe(mode==='capacity'?4:2);
   await expect.poll(async()=>(await req({...base,operation:'list'})).tasks.every((t:any)=>t.reports?.at(-1)?.state==='committed'),{timeout:10000}).toBe(true);
   expect(order.slice(0,5)).toEqual(['FIRST','USER_1','USER_2','USER_3','Burst alpha']);
@@ -869,7 +887,8 @@ it('reserves stop admission when ordinary task mutation capacity is exhausted',a
  const stop={...base,operation:'stop',operationId:'reserved-stop',taskId:task.taskId,expectedRevision:1};
  expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
  expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
-});
+// Native setup, Host restart and validation of 2,000 durable receipts are not a 5s SLO.
+},30000);
 
 it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true},{outcome:'failed',progress:true},{outcome:'interrupted',progress:false},{outcome:'exit',progress:false}])('reports one final Codex result after its native outcome ($outcome, progress=$progress)',async({outcome,progress})=>{
  let reportCalls=0;
