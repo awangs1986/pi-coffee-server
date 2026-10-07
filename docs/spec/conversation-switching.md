@@ -134,6 +134,29 @@ user's Host registry. Success and failure both release the shared promise; the
 next refresh reads again. Running, queue and attention state are decorated from
 live sessions after the read, never cached with the stored metadata.
 
+## Pi process lifetime and native model recovery — 2026-10-07, Server #92
+
+An idle native Pi child may be retired while the Host remains running. Reopening
+after browser detachment, reload, idle disposal or Host restart must use the
+existing native conversation's model selection. Host-wide provider/model defaults
+seed genuinely new native sessions only; they must not be passed as explicit CLI
+overrides when an existing native file is resumed.
+
+Pi's own session restoration remains authoritative for ordinary populated
+conversations. Existing empty reset/fork bindings retain the established native
+branch model/thinking restoration. No browser display cache is allowed to change
+execution settings, and no additional synchronous transcript scan is added to
+ordinary conversation opening. Chat's zero-system boundary, supported-model policy,
+task/native identities and no-prompt-replay behavior remain intact.
+
+Acceptance uses the real pinned Pi CLI behind authenticated Host WS operations:
+conflicting Host defaults versus a saved model in ordinary, populated reset and
+empty reset conversations; recovery across Host recreation; no provider request
+during opening; the next explicit prompt reaching the selected model in a local
+provider fixture; independent new Chat tasks retaining the Host default. A
+no-turn Gemini/Meta reproduction separately checks the actual installed CLI.
+See [Server #92](https://github.com/awangs1986/pi-coffee-server/issues/92).
+
 ## Temporary directories
 
 Host startup allocates a private directory under
