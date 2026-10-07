@@ -25,9 +25,10 @@ Browser activation and backend activation are separate outcomes.
 5. Stage the verified release and activate only its compatible Browser assets.
    Host/Web service replacement remains an explicit maintenance operation.
 
-`npm run check` runs mechanical JS lint, the production build, Vitest, then four
+`npm run check` runs mechanical JS lint, the production build, Vitest, then five
 no-model Chromium probes: model display, completion icons, recent sidebar activity
-and busy scrolling. A failed command stops later commands. Install the pinned
+and busy scrolling, plus streaming responsiveness with dense history and verified
+Word downloads. A failed command stops later commands. Install the pinned
 Playwright browser with `npx playwright install chromium`, or set
 `BROWSER_EXECUTABLE` to the matching installed browser.
 
