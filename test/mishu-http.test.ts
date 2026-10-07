@@ -560,7 +560,7 @@ it('keeps truncated, missing-final-audit and next-user replies incomplete or unc
  await writeFile(nativeFile,original);
 },30000);
 
-it.each(['normal','lost-ack','queued-stop'] as const)('dispatch persists business responsibility and deduplicates changed IDs (%s)',async(mode)=>{
+it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch persists business responsibility and deduplicates changed IDs (%s)',async(mode)=>{
  let targetCalls=0,sourceCalls=0;let finishSource=()=>{},finishTarget=()=>{};
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const isTarget=JSON.stringify(body.messages).includes('DISPATCH_SYNTHETIC_WORK');
   const reply=(text:string)=>{if(res.writableEnded||res.destroyed)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:randomUUID(),object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
@@ -576,19 +576,29 @@ it.each(['normal','lost-ack','queued-stop'] as const)('dispatch persists busines
  expect((await req(command)).status).toBe(409);
  const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
  let targetSocket:WebSocket|undefined;const targetFrames:any[]=[];
- if(mode==='queued-stop'){
+ if(mode==='queued-stop'||mode==='failed-stop'){
   targetSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});targetSocket.on('message',raw=>targetFrames.push(JSON.parse(String(raw))));await once(targetSocket,'open');targetSocket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));await expect.poll(()=>targetFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);targetSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-busy-target',text:'DISPATCH_SYNTHETIC_WORK already running'}));await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
  }
  try{if(socket.readyState!==WebSocket.OPEN)await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);socket.send(JSON.stringify({v:1,type:'prompt',requestId:'trusted-user-dispatch',text:'Please perform two independent isolated checks'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(1);
- const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);expect((await req(command)).status).toBe(409);await rm(blockedWrite,{recursive:true});expect(targetCalls).toBe(mode==='queued-stop'?1:0);
+ const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);expect((await req(command)).status).toBe(409);await rm(blockedWrite,{recursive:true});expect(targetCalls).toBe(mode==='queued-stop'||mode==='failed-stop'?1:0);
  const accepted=await req(command);expect(accepted.status,await accepted.clone().text()).toBe(200);const result=await accepted.json();expect(result.assignment).toMatchObject({state:'accepted',taskId:brief.task.taskId});
  const duplicate=await req({...command,messageId:'model-changed-id'});expect(duplicate.status,await duplicate.clone().text()).toBe(200);expect((await duplicate.json()).assignment.id).toBe(result.assignment.id);
  await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
  expect((await req({...command,messageId:'conflict',text:'different scope'})).status).toBe(409);expect(targetCalls).toBe(1);
  const stored=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));expect(stored.chats[source.id].assignments).toHaveLength(1);expect(stored.chats[source.id].taskJournal.tasks[0].obligation.runId).toBe(result.assignment.requestId);
- if(mode==='queued-stop'){
+ if(mode==='queued-stop'||mode==='failed-stop'){
   await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.assignment.state).toBe('queued');
   const queued=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
+  if(mode==='failed-stop'){
+   await mkdir(blockedWrite);
+   const rejected=await req({...base,operation:'stop',operationId:'failed-cancel',taskId:queued.taskId,expectedRevision:queued.revision});
+   await rm(blockedWrite,{recursive:true});
+   expect(rejected.status).toBe(409);
+   // A rejected stop cannot announce an accepted dispatch as cancelled.
+   const inbox=await(await req({action:'inbox'})).json();
+   expect(inbox.messages.find((m:any)=>m.messageId===command.messageId)).toMatchObject({state:'queued'});
+   expect((await(await req({...base,operation:'get',taskId:queued.taskId})).json()).task).toMatchObject({workState:'recorded',assignment:{state:'queued'}});
+  }
   expect((await req({...base,operation:'stop',operationId:'cancel-queued',taskId:queued.taskId,expectedRevision:queued.revision})).status).toBe(200);
   finishTarget();await expect.poll(()=>targetFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
   const stopped=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;expect(stopped).toMatchObject({assignment:{state:'cancelled'},observation:'stopped'});expect(targetCalls).toBe(1);return;
@@ -890,10 +900,11 @@ it('reserves stop admission when ordinary task mutation capacity is exhausted',a
 // Native setup, Host restart and validation of 2,000 durable receipts are not a 5s SLO.
 },30000);
 
-it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true},{outcome:'failed',progress:true},{outcome:'interrupted',progress:false},{outcome:'exit',progress:false}])('reports one final Codex result after its native outcome ($outcome, progress=$progress)',async({outcome,progress})=>{
- let reportCalls=0;
+it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true},{outcome:'failed',progress:true},{outcome:'interrupted',progress:false},{outcome:'exit',progress:false},{outcome:'completed',progress:false,truncated:true}])('reports one final Codex result after its native outcome ($outcome, progress=$progress)',async({outcome,progress,truncated=false})=>{
+ let reportCalls=0;const reportInputs:string[]=[];
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part;reportCalls++;
+  const body=JSON.parse(raw);reportInputs.push(body.messages.map((m:any)=>typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.map((p:any)=>p.text??'').join(''):'').join('\n'));
   const frame={id:'codex-report',object:'chat.completion.chunk',created:1,model:'fixture'};
   const content='进展：'+(raw.includes('echo: run delayed final tracking')?'最终合成结果已收到。':'PROGRESS_ONE_OF_THREE，工作尚在进行。')+'\n限制：尚未用户验收。\n下一步：查看结果。\n来源：Codex final result';
   res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');
@@ -908,7 +919,7 @@ it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true
  const sockets:WebSocket[]=[];
  async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(id===source.id&&e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
  try{
-  const dst=await open(target.id);dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target',text:'run delayed final tracking'+(progress?' with progress':'')}));
+  const dst=await open(target.id);dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target',text:'run delayed final tracking'+(progress?' with progress':'')+(truncated?' '+ 'x'.repeat(4100)+' FINAL_LIMITATION_MUST_BE_READ':'')}));
   await expect.poll(()=>dst.frames.some(f=>f.event?.type==='extension_ui_request'),{timeout:10000}).toBe(true);
   await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
   const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=async(body:unknown)=>await(await app.call(body,'owner',token,'/api/mishu/runtime')).json();
@@ -945,6 +956,14 @@ it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true
   expect(reportCalls).toBe(progress?2:1);expect(final.task.reports).toHaveLength(progress?2:1);expect(final.task.reports.every((r:any)=>r.state==='committed')).toBe(true);
   if(progress){expect(final.task.reports[0].events[0]).toMatchObject({state:'watching',latestReply:'PROGRESS_ONE_OF_THREE'});expect(final.task.reports[0].events[0].text).not.toContain('echo: run delayed final tracking');}
   expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({state:expected,latestReply:expect.stringContaining('echo: run delayed final tracking')});
+  if(truncated){
+   expect(final.task.fact).toMatchObject({truncated:true,latestReplyTruncated:true});
+   expect(final.task.fact.latestReply).not.toContain('FINAL_LIMITATION_MUST_BE_READ');
+   expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({truncated:true,latestReplyTruncated:true});
+   const facts=JSON.parse(reportInputs.at(-1)!.split('<task-facts>\n')[1].split('\n</task-facts>')[0]);
+   expect(facts).toMatchObject({truncated:true,latestReplyTruncated:true});
+   expect(reportInputs.at(-1)).toContain('截断');
+  }
  }finally{await mkdir(join(app.root,'codex-home'),{recursive:true});await writeFile(join(app.root,'codex-home','allow-final'),'');await writeFile(join(app.root,'codex-home','allow-terminal'),'');for(const socket of sockets)socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
 

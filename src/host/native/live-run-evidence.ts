@@ -19,7 +19,7 @@ export class LiveRunEvidence {
  }
  message(runId:string|undefined,id:string|undefined,text:string,final=false){
   const run=runId?this.runs.get(runId):undefined;if(!run||run.state!=='running'||!id||!text)return;
-  const entry={id,revision:createHash('sha256').update(text).digest('hex'),text:text.slice(0,4000)};
+  const entry={id,revision:createHash('sha256').update(text).digest('hex'),text:text.slice(0,4000),truncated:text.length>4000};
   const pending=this.pendingFinals.get(runId!)??[];
   // A native terminal answer can precede its turn outcome. Keep it bounded here,
   // without publishing the same final facts once as progress and again as settled.

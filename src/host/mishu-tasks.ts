@@ -7,7 +7,7 @@ export interface TaskBrief {
  purpose:string;scope:string;summary:string;nextStep:string;
  workState:'recorded'|'stopped';observation:'not-started'|'watching'|'reply-available'|'incomplete'|'uncertain'|'waiting'|'stopped';acceptance:'pending';
  obligation?:{runId:string;nativeBinding:string;watermark:string;state:'pending'|'reply-available'|'incomplete'|'uncertain'|'cancelled';generation:number};
- fact?:{text:string;latestReply?:string;entries:{id:string;revision:string}[]};
+ fact?:{text:string;latestReply?:string;truncated?:boolean;latestReplyTruncated?:boolean;entries:{id:string;revision:string}[]};
  notificationError?:string;
  notification?:{events?:import('./mishu-reports.js').ReportEvent[];readyAt?:number;automatic?:boolean;id:string;revision:number;state:'pending'|'committed';reportId?:string};reports?:import('./mishu-reports.js').ReportRecord[];observationError?:string;
 

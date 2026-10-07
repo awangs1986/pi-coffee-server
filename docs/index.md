@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
+
 - MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 - Developer guardrails and release tools: [workflow and CLI contract](development/verification-and-release.md), [sidebar navigation/reviewer matrix](agents/sidebar.md), [Server #81](https://github.com/awangs1986/pi-coffee-server/issues/81), [acceptance and review](reviews/retro-guardrails-20261006.md). Source checks, publication, staging and activation remain distinct.
 

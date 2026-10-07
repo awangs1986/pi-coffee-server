@@ -70,7 +70,13 @@ export class MishuCoordinator {
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
- private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);}
+ private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
+  // Queue cancellation is a side effect of committed revocation, never a staged edit.
+  for(const [id,queued] of this.notificationQueued){
+   const report=this.state.chats[id]?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===queued.reportId);
+   if(report?.state==='cancelled')this.cancelNotificationQueue(id);
+  }
+ }
  private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
  private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
@@ -141,7 +147,7 @@ export class MishuCoordinator {
   throw Error('Unknown MISHU operation');
  }
  private cancelQueued(c:Config,task:TaskBrief){
-  for(const report of task.reports??[])if(report.state!=='committed'){report.state='cancelled';for(const [id,queued] of this.notificationQueued)if(queued.reportId===report.id)this.cancelNotificationQueue(id);}
+  for(const report of task.reports??[])if(report.state!=='committed')report.state='cancelled';
 
   const assignment=c.assignments?.find(a=>a.id===task.assignment?.id);if(assignment&&['accepted','queued'].includes(assignment.state)){assignment.state='cancelled';assignment.error='Task access revoked before delivery';task.assignment={...assignment};const receipt=c.messages.find(m=>m.requestId===assignment.requestId);if(receipt){receipt.state='cancelled';receipt.error=assignment.error;}}
  }
@@ -179,12 +185,15 @@ export class MishuCoordinator {
   const priorNotification=task.notification;
   const frozen=task.reports?.some(r=>r.notificationRevision===priorNotification?.revision&&(r.deliveryAttempted||['processing','committed','uncertain'].includes(r.state)));
   const events:ReportEvent[]=priorNotification?.state==='pending'&&!frozen?structuredClone(priorNotification.events??[]):[];
-  const fact=proven&&evidence.entries?.length?{text:clean(evidence.entries.map(e=>e.text).join('\n')).slice(0,4000),latestReply:clean(evidence.entries.at(-1)!.text).slice(0,4000),entries:evidence.entries.map(({id,revision})=>({id,revision}))}:task.fact;
+  const fullText=proven&&evidence.entries?.length?clean(evidence.entries.map(e=>e.text).join('\n')):undefined;
+  const latest=proven&&evidence.entries?.length?evidence.entries.at(-1):undefined;
+  const fullReply=latest?clean(latest.text):undefined;
+  const fact=fullText!==undefined?{text:fullText.slice(0,4000),latestReply:fullReply!.slice(0,4000),truncated:fullText.length>4000||evidence.entries!.some(e=>e.truncated===true),latestReplyTruncated:fullReply!.length>4000||latest!.truncated===true,entries:evidence.entries!.map(({id,revision})=>({id,revision}))}:task.fact;
   const reportable=['reply-available','incomplete','waiting','uncertain'].includes(state)||proven&&Boolean(fact?.entries.length)&&JSON.stringify(fact?.entries)!==JSON.stringify(task.fact?.entries);
   const automatic=this.state.chats[id].notifications===true&&(reportable||events.length>0);
   if((fact?.entries.length??0)>NOTIFICATION_LIMITS.evidenceReferences){if(registerRun)throw Error('Native evidence exceeds observation capacity; inspect the native conversation');task.notificationError='原生证据引用达到 64 条上限；责任和已知事实保留，请查看目标原生记录。';return;}
   if(automatic&&reportable){
-   const event:ReportEvent={revision:task.revision+1,state,text:fact?.text??'',latestReply:fact?.latestReply,entries:fact?.entries??[]};
+   const event:ReportEvent={revision:task.revision+1,state,text:fact?.text??'',latestReply:fact?.latestReply,truncated:fact?.truncated,latestReplyTruncated:fact?.latestReplyTruncated,entries:fact?.entries??[]};
    const refs=new Set([...events,event].flatMap(e=>e.entries.map(r=>r.id+':'+r.revision)));
    const bytes=Buffer.byteLength(JSON.stringify([...events,event]));
    const otherBytes=((journal??this.state.chats[id].taskJournal)?.tasks??[]).filter(t=>t.taskId!==task.taskId&&t.notification?.state==='pending'&&t.workState!=='stopped').reduce((n,t)=>n+Buffer.byteLength(JSON.stringify(t.notification?.events??[])),0);
@@ -196,7 +205,7 @@ export class MishuCoordinator {
   obligation.state=state==='reply-available'?'reply-available':state==='incomplete'?'incomplete':state==='uncertain'?'uncertain':'pending';
   task.observation=state;
   task.observationError=state==='uncertain'?'Exact run outcome is unproven; last facts retained. No work was replayed.':state==='waiting'?'Target needs native user input. Open the target conversation; MISHU cannot answer it.':undefined;
-  if(proven&&evidence.entries?.length)task.fact={text:clean(evidence.entries.map(e=>e.text).join('\n')).slice(0,4000),latestReply:clean(evidence.entries.at(-1)!.text).slice(0,4000),entries:evidence.entries.map(({id,revision})=>({id,revision}))};
+  if(proven&&evidence.entries?.length)task.fact=fact;
   task.revision++;task.updatedAt=new Date().toISOString();
   task.notification={id:'task-'+task.taskId,revision:task.revision,state:'pending',automatic,events,readyAt:!frozen&&priorNotification?.state==='pending'?priorNotification.readyAt??Date.now()+NOTIFICATION_LIMITS.coalesceMs:Date.now()+NOTIFICATION_LIMITS.coalesceMs};
   for(const report of task.reports??[])if(report.automatic&&!report.deliveryAttempted&&['pending','admitted'].includes(report.state)&&report.generation===obligation.generation){report.notificationRevision=task.revision;report.events=structuredClone(events);report.eventVersions=events.map(e=>e.revision);}
@@ -346,17 +355,15 @@ export class MishuCoordinator {
   const source=await this.source(id);if(task.sourceBinding!==binding(source)||report.sourceBinding!==task.sourceBinding)throw Error('Task source changed');await this.authorize(id,task.targetId,task.binding,'information-only');return {task,report};
  }
  private tasks(id:string,input:Record<string,unknown>){
-  const next=this.tail.then(async()=>{
-   await this.load();const source=await this.source(id),config=this.state.chats[id];
+  return this.change(async()=>{
+   const source=await this.source(id),config=this.state.chats[id];
    if(!config?.selected||!config.enabled||config.sourceBinding!==binding(source))throw Error('MISHU authorization changed');
-   // Stage the journal separately: validation or disk failure cannot acknowledge or
-   // retain an uncommitted edit, and receipt objects remain valid for active runs.
-   const previous=config.taskJournal,journal=structuredClone(previous??{tasks:[],operations:[]});
+   const journal=structuredClone(config.taskJournal??{tasks:[],operations:[]});
    await this.refreshTasks(id,journal);
    const result=await taskOperation(journal,binding(source),input,(targetId,expected)=>this.authorize(id,targetId,expected,'information-only',['list','get'].includes(String(input.operation))),(task,runId)=>this.auditTask(id,task,runId,journal));
    if(input.operation==='stop'){const stopped=journal.tasks.find(t=>t.taskId===input.taskId);if(stopped)this.cancelQueued(config,stopped);}
-   config.taskJournal=journal;try{await this.save(input.operation==='stop');this.observationFailure=undefined;}catch(error){config.taskJournal=previous;throw error;}return result;
-  });this.tail=next.catch(()=>undefined);void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;
+   config.taskJournal=journal;this.observationFailure=undefined;return result;
+  },true,input.operation==='stop');
  }
  private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
   const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();

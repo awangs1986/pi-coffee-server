@@ -93,7 +93,7 @@ export interface AgentRunEvidence {
  identity?:'native-run'|'host-invocation';referenceKind?:'native-message'|'host-live-receipt';
  supported:boolean;freshness:'current'|'unknown';runId?:string;binding?:string;watermark?:string;
  state:'running'|'reply-available'|'incomplete'|'uncertain';
- entries?:{id:string;revision:string;text:string}[];reason?:string;
+ entries?:{id:string;revision:string;text:string;truncated?:boolean}[];reason?:string;
 }
 
 export interface AgentSessionFactory {
