@@ -920,10 +920,24 @@ it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true
   await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
   const question=dst.frames.find(f=>f.event?.type==='extension_ui_request').event;
   dst.ws.send(JSON.stringify({v:1,type:'ui_response',requestId:'approve-target',id:question.id,confirmed:true}));
-  await expect.poll(()=>dst.frames.some(f=>f.event?.type==='message_end'&&f.event.text?.startsWith('echo: run delayed final tracking')),{timeout:10000}).toBe(true);
-  // Final text remains visible in the native Browser stream before settlement.
-  // It must not consume another report while the exact outcome is still pending.
-  await new Promise(r=>setTimeout(r,400));expect(reportCalls).toBe(progress?1:0);
+  await waitForNativeFrame(dst.ws,dst.frames,0,f=>f.event?.type==='tool_execution_end',10000,'Codex approved tool completion');
+  if(progress){
+   await expect.poll(async()=>(await req({...base,operation:'get',taskId:brief.taskId})).task.reports?.[0]?.state,{timeout:10000}).toBe('committed');
+   await expect.poll(async()=>(await req({action:'status'})).origin,{timeout:10000}).toBe('user-intent');
+  }
+  const beforeFinal=(await req({...base,operation:'get',taskId:brief.taskId})).task;
+  expect(reportCalls).toBe(progress?1:0);expect(beforeFinal.reports??[]).toHaveLength(progress?1:0);
+  if(progress)expect(beforeFinal.fact.latestReply).toBe('PROGRESS_ONE_OF_THREE');
+  const durableSnapshot=(task:any)=>({fact:task.fact??null,reports:task.reports??[],notification:task.notification??null});
+  await writeFile(join(app.root,'codex-home','allow-final'),'');
+  await waitForNativeFrame(dst.ws,dst.frames,0,f=>f.event?.type==='message_end'&&f.event.text?.startsWith('echo: run delayed final tracking'),10000,'Codex Browser final text');
+  // The fixture holds the terminal outcome until this public evidence assertion.
+  // Browser-visible final text must not publish final facts or spend another wake.
+  const pendingFinal=(await req({...base,operation:'get',taskId:brief.taskId})).task;
+  expect(durableSnapshot(pendingFinal)).toEqual(durableSnapshot(beforeFinal));
+  expect((await req({action:'status'})).notifications).toMatchObject({backlog:0,remainingWakes:progress?11:12});
+  expect(reportCalls).toBe(progress?1:0);
+  await writeFile(join(app.root,'codex-home','allow-terminal'),'');
   const expected=outcome==='completed'?'reply-available':outcome==='exit'?'uncertain':'incomplete';
   await expect.poll(async()=>(await req({...base,operation:'get',taskId:brief.taskId})).task?.observation,{timeout:10000}).toBe(expected);
   await expect.poll(async()=>{const status=await req({action:'status'});return status.origin==='user-intent'&&status.notifications.backlog===0;},{timeout:10000}).toBe(true);
@@ -931,8 +945,8 @@ it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true
   expect(reportCalls).toBe(progress?2:1);expect(final.task.reports).toHaveLength(progress?2:1);expect(final.task.reports.every((r:any)=>r.state==='committed')).toBe(true);
   if(progress){expect(final.task.reports[0].events[0]).toMatchObject({state:'watching',latestReply:'PROGRESS_ONE_OF_THREE'});expect(final.task.reports[0].events[0].text).not.toContain('echo: run delayed final tracking');}
   expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({state:expected,latestReply:expect.stringContaining('echo: run delayed final tracking')});
- }finally{for(const socket of sockets)socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
-},15000);
+ }finally{await mkdir(join(app.root,'codex-home'),{recursive:true});await writeFile(join(app.root,'codex-home','allow-final'),'');await writeFile(join(app.root,'codex-home','allow-terminal'),'');for(const socket of sockets)socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
 
 it.each((['codex','claude','cursor','grok'] as const).flatMap(engine=>(['completed','interrupted','failed','exit','stale'] as const).map(outcome=>({engine,outcome}))))('tracks exact online $engine work ($outcome) and leaves restart gaps unknown',async({engine,outcome})=>{
  const app=await start(undefined,engine,false,false,undefined,false,[],engine==='codex',outcome),source=await app.workspaces.createChatConversation();
