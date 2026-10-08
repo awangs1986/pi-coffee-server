@@ -1,13 +1,14 @@
 import {afterEach,expect,it} from 'vitest';
-import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,writeFile,readFile,readdir,stat,truncate} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {WebSocket} from 'ws';
+import {CodexSessionFactory} from '../src/host/codex-adapter.js';
 import {NativeAgentFactory} from '../src/host/native/factory.js';
 import {SessionManager} from '@earendil-works/pi-coding-agent';
 import {HostServer} from '../src/host/server.js';
@@ -16,15 +17,46 @@ import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const h of hosts.splice(0))await h.close();for(const r of roots.splice(0))await rm(r,{recursive:true,force:true});});
-async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false){
+async function waitForNativeFrame(socket:WebSocket,frames:any[],offset:number,ready:(frame:any)=>boolean,timeout:number,phase:string){
+ return new Promise<void>((resolve,reject)=>{
+  const timer=setTimeout(()=>finish(Error(phase+' timed out: '+JSON.stringify(frames.slice(offset).map(f=>({type:f.type,requestId:f.requestId,event:f.event?.type}))))),timeout);
+  const inspect=()=>{
+   const current=frames.slice(offset),failure=current.find(f=>f.type==='error'||f.event?.type==='extension_error');
+   if(failure)finish(Error(phase+' failed: '+JSON.stringify(failure)));
+   else if(current.some(ready))finish();
+  };
+  function finish(error?:Error){clearTimeout(timer);socket.off('message',inspect);if(error)reject(error);else resolve();}
+  socket.on('message',inspect);inspect();
+ });
+}
+async function enqueueFollowUp(socket:WebSocket,frames:any[],requestId:string,text:string,size:number){
+ const admitted=new Promise<void>((resolve,reject)=>{
+  const timer=setTimeout(()=>finish(Error('Queue admission timed out: '+requestId)),10000);
+  const receive=(raw:unknown)=>{
+   const frame=JSON.parse(String(raw));
+   if(frame.type==='error'&&frame.requestId===requestId)finish(Error(JSON.stringify(frame)));
+   if(frame.type==='queue_state'&&frame.items.some((row:any)=>row.requestId===requestId))finish();
+  };
+  function finish(error?:Error){clearTimeout(timer);socket.off('message',receive);if(error)reject(error);else resolve();}
+  socket.on('message',receive);
+ });
+ socket.send(JSON.stringify({v:1,type:'prompt',mode:'follow_up',requestId,text}));
+ await admitted;
+ expect(frames.some(f=>f.type==='ack'&&f.operation==='follow_up'&&f.requestId===requestId)).toBe(true);
+ expect(frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(size);
+}
+async function start(root?:string,engine?:'codex'|'claude'|'cursor'|'grok',nativePi=false,fixtureModel=false,auditGate?:(id:string,runId?:string)=>Promise<void>,loseDispatchAck=false,extraExtensions:string[]=[],productionCodex=false,trackingOutcome='completed'){
  root??=await mkdtemp(join(tmpdir(),'coffee-mishu-'));roots.push(root);
  const workspaces=new Workspaces(join(root,'work'));
  let host:HostServer;
  const fixturePi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions'),cwdForSession:id=>workspaces.file(id,'')});
- const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),...(fixtureModel?{provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:"off",PI_COFFEE_LSP:"off",PI_COFFEE_WEB:"off",PI_COFFEE_HANDOFF:"off"})}:{}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>(await host.mishuRuntime('owner',id)).extensions,envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime('owner',id)).env})});
+ const realPi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),...(fixtureModel?{provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:"off",PI_COFFEE_LSP:"off",PI_COFFEE_WEB:"off",PI_COFFEE_HANDOFF:"off"})}:{}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>{const runtime=await host.mishuRuntime('owner',id);return [...(runtime.extensions.length&&process.env.MISHU_PLUGIN_ROOT?[resolve(process.env.MISHU_PLUGIN_ROOT)]:runtime.extensions),...extraExtensions];},envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime('owner',id)).env})});
  const pi=nativePi?realPi:{create:async(options:{sessionId:string})=>((await host.mishuRuntime('owner',options.sessionId)).extensions.length?realPi:fixturePi).create(options),list:()=>realPi.list(),readHistory:(id:string)=>realPi.readHistory(id),delete:(id:string)=>realPi.delete(id)};
- const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
- const factory=engine||nativePi?new NativeAgentFactory({pi,workspaces,...(engine?{[engine]:command}:{})}):pi;
+ const command=engine?{command:process.execPath,args:[resolve('test/fixtures/fake-'+(engine==='grok'?'cursor':engine)+'.mjs')],env:{TRACKING_END_STATUS:trackingOutcome,CLAUDE_CONFIG_DIR:join(root,'native'),...(engine==='grok'?{FIXTURE_GROK:'1'}:{})}}:undefined;
+ const codexCli=join(root,'codex-fixture');if(productionCodex)await writeFile(codexCli,`#!/bin/sh\nexec "${process.execPath}" "${resolve('test/fixtures/fake-codex-app-server.mjs')}" "$@"\n`,{mode:0o755});
+ const factory=engine||nativePi?new NativeAgentFactory({pi,workspaces,...(engine?{[engine]:command}:{}),...(productionCodex?{codexSessionFactory:(_id:string,cwd:string,onBound:(id:string)=>Promise<void>)=>new CodexSessionFactory({cliPath:codexCli,cwd,codexHome:join(root,'codex-home'),env:{TRACKING_END_STATUS:trackingOutcome},approvalPolicy:'on-request',onBound:async(_session,native)=>onBound(native)})}:{})}):pi;
+ if(auditGate&&factory.readRunEvidence){const read=factory.readRunEvidence.bind(factory);factory.readRunEvidence=async(id:string,runId?:string)=>{const evidence=await read(id,runId);await auditGate(id,runId);return evidence;};}
+ if(loseDispatchAck){const create=factory.create.bind(factory);factory.create=async options=>{const session=await create(options),prompt=session.prompt.bind(session);session.prompt=async(text,images,correlation)=>{await prompt(text,images,correlation);if(correlation)throw Error('Synthetic native acceptance acknowledgement lost');};return session;};}
  const other=new Workspaces(join(root,'other'));
  host=new HostServer({port:0,token:'host-test',requireUser:true,factory,workspaces,scopeForUser:user=>({factory,workspaces:user==='owner'?workspaces:other})});hosts.push(host);await host.start();
  const call=(body:unknown,user='owner',token='host-test',path='/api/mishu')=>fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
@@ -49,8 +81,10 @@ it('selected Chat knows MISHU identity through the installed plugin, including d
  let socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
  socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
  async function prompt(text:string){
-  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text}));
-  await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const offset=frames.length,requestId=randomUUID();socket.send(JSON.stringify({v:1,type:'prompt',requestId,text}));
+  await waitForNativeFrame(socket,frames,offset,f=>f.type==='ack'&&f.operation==='prompt'&&f.requestId===requestId,10000,'Identity prompt admission');
+  // This checks identity through native startup/stream/persistence, not a 10s response SLO.
+  await waitForNativeFrame(socket,frames,offset,f=>f.event?.type==='agent_settled',20000,'Identity native completion');
   expect(frames.slice(offset).filter(f=>f.type==='error'||f.event?.type==='extension_error')).toEqual([]);
  }
  function identity(state:string){
@@ -176,14 +210,15 @@ it.each(['codex','claude','cursor','grok'] as const)('relays to the existing %s 
  socket.close();
 },30000);
 
-async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:string,targetId:string,allow:boolean){
+async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:string,targetId:string,allow:boolean,exclusive=false){
  const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
  const frames:any[]=[];let chosen=false;
  socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
   if(e.method==='select'){
    const target=e.options.find((v:string)=>v.includes(targetId));
-   const value=e.title.includes('消息权限')?e.options[allow?1:0]:chosen||target?.startsWith('✓')?e.options.find((v:string)=>v.startsWith('完成选择')):target;
-   if(!e.title.includes('消息权限'))chosen=true;
+   const unwanted=exclusive?e.options.find((v:string)=>v.startsWith('✓')&&!v.includes(targetId)):undefined;
+   const value=unwanted??(e.title.includes('消息权限')?e.options[allow?1:0]:chosen||target?.startsWith('✓')?e.options.find((v:string)=>v.startsWith('完成选择')):target);
+   if(!unwanted&&!e.title.includes('消息权限'))chosen=true;
    socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,value}));
   }else if(e.method==='confirm')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,confirmed:true}));
  });
@@ -302,3 +337,791 @@ it('offers the plugin a loopback-only capability endpoint when the Host binds an
  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({selected:true,enabled:false});
  const forbidden=await fetch(new URL('/api/workspace',runtime.env.PI_COFFEE_MISHU_URL),{headers:{authorization:'Bearer host-test'}});expect(forbidden.status).toBe(404);
 });
+
+it('records task briefs only after durable admission, rejects conflicting retries and preserves revisions after restart',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const env=(await app.host.mishuRuntime('owner',source.id)).env;
+ const req=(body:unknown)=>app.call(body,'other',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const save={action:'tasks',version:1,operation:'register',operationId:'brief-register',targetId:target.id,binding:contact.binding,purpose:'Verify the synthetic build',scope:'Read-only synthetic fixture',summary:'Waiting for evidence',nextStep:'Inspect build results'};
+ const {binding:_omittedBinding,...missingBinding}=save;expect((await req(missingBinding)).status).toBe(409);
+ const response=await req(save);expect(response.status,await response.clone().text()).toBe(200);
+ const initial=await response.json();expect(initial).toMatchObject({version:1,task:{revision:1,observation:'not-started',workState:'recorded',acceptance:'pending',purpose:save.purpose}});
+ expect(await(await req(save)).json()).toEqual(initial);
+ expect((await req({...save,purpose:'different'})).status).toBe(409);
+ const update={action:'tasks',version:1,operation:'update',operationId:'brief-update',taskId:initial.task.taskId,expectedRevision:1,summary:'Corrected synthetic scope'};
+ expect((await req({...update,acceptance:'accepted'})).status).toBe(409);
+ expect((await req({...save,operationId:'forged',sourceId:'another'})).status).toBe(409);
+ const failedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(failedWrite);
+ expect((await req({...update,operationId:'disk-failed'})).status).toBe(409);await rm(failedWrite,{recursive:true});
+ expect(await(await req({action:'tasks',version:1,operation:'get',taskId:initial.task.taskId})).json()).toMatchObject({task:{revision:1,summary:'Waiting for evidence'}});
+ const raced=await Promise.all([req(update),req({...update,operationId:'race'})]);expect(raced.map(r=>r.status).sort()).toEqual([200,409]);
+ expect((await req({...update,operationId:'stale'})).status).toBe(409);
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const resumed=await start(app.root),token=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const read=(body:unknown)=>resumed.call(body,'owner',token,'/api/mishu/runtime');
+ const list=await(await read({action:'tasks',version:1,operation:'list',limit:1})).json();
+ expect(list.tasks).toEqual([expect.objectContaining({taskId:initial.task.taskId,revision:2,summary:'Corrected synthetic scope'})]);
+ expect((await read({...update,operationId:'oversize',expectedRevision:2,summary:'x'.repeat(4001)})).status).toBe(409);
+ const stop={action:'tasks',version:1,operation:'stop',operationId:'stop-record',taskId:initial.task.taskId,expectedRevision:2};
+ expect(await(await read(stop)).json()).toMatchObject({task:{revision:3,workState:'stopped',acceptance:'pending'}});
+ expect(await(await read(stop)).json()).toMatchObject({task:{revision:3}});
+ expect((await resumed.workspaces.lookup(target.id))?.archived).not.toBe(true);
+ expect((await read({...update,operationId:'after-stop',expectedRevision:3})).status).toBe(409);
+},30000);
+
+it('isolates brief references between secretaries and rejects stale contacts and source context resets',async()=>{
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),second=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const piHome=join(app.root,'pi-home');await mkdir(piHome,{recursive:true});await writeFile(join(piHome,'models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const native=SessionManager.create(source.cwd,join(app.root,'sessions'),{id:source.id});native.appendMessage({role:'user',content:'Synthetic brief context',timestamp:Date.now()});
+ for(const chat of [source,second]){await app.call({action:'select',id:chat.id,selected:true});await setupThroughChat(app,chat.id,target.id,false);}
+ const request=async(chat:string,body:unknown)=>(app.call(body,'owner',(await app.host.mishuRuntime('owner',chat)).env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime'));
+ const contact=(await(await request(source.id,{action:'directory'})).json()).configuredTargets[0];
+ const input={action:'tasks',version:1,operation:'register',operationId:'owned',targetId:target.id,binding:contact.binding,purpose:'Same title',scope:'Synthetic',summary:'No evidence',nextStep:'Inspect'};
+ const first=await(await request(source.id,input)).json();
+ expect((await request(second.id,{action:'tasks',version:1,operation:'get',taskId:first.task.taskId})).status).toBe(409);
+ const independent=await(await request(second.id,input)).json();expect(independent.task.taskId).not.toBe(first.task.taskId);
+ expect((await app.call({action:'status',id:source.id},'other')).status).toBe(409);
+ expect((await request(source.id,{...input,operationId:'invalid-target',targetId:second.id})).status).toBe(409);
+ const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
+ const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);
+ expect((await request(source.id,{action:'tasks',version:1,operation:'list'})).status).toBe(409);
+ await setupThroughChat(app,source.id,target.id,false);
+ expect(await(await request(source.id,{action:'tasks',version:1,operation:'list'})).json()).toMatchObject({tasks:[]});
+ expect((await request(source.id,{action:'tasks',version:1,operation:'get',taskId:first.task.taskId})).status).toBe(409);
+},30000);
+
+
+it('native MISHU observes an existing run with redundant matching target identities while Host stays strict',async()=>{
+ let args:Record<string,unknown>={},calls=0;const requests:any[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));calls++;
+  const frame={id:'observe-input',object:'chat.completion.chunk',created:1,model:'fixture'};
+  const delta=calls===1?{role:'assistant',tool_calls:[{index:0,id:'observe-existing',type:'function',function:{name:'mishu',arguments:JSON.stringify(args)}}]}:{role:'assistant',content:'OBSERVE_FIXTURE_DONE'};
+  res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:calls===1?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Existing synthetic run',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'EXACT_EXISTING_REPLY'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=(await(await req({...base,operation:'register',operationId:'existing-brief',targetId:target.id,binding:contact.binding,purpose:'Observe existing task',scope:'Only existing run',summary:'Await native facts',nextStep:'Report'})).json()).task;
+ args={action:'tasks',operation:'observe',operationId:'stable-observation',taskId:brief.taskId,runId,expectedRevision:1,targetId:target.id,binding:contact.binding};
+ // The Host rejects redundant routing directly; only the plugin may verify and normalize it.
+ expect((await req({...args,version:1})).status).toBe(409);
+ const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:'user-observe',text:'Observe the existing authorized task without sending target instructions.'}));
+  await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const result=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task;
+  expect(result).toMatchObject({taskId:brief.taskId,targetId:target.id,binding:contact.binding,obligation:{runId},observation:'reply-available',fact:{text:'EXACT_EXISTING_REPLY'},acceptance:'pending'});
+  expect(JSON.stringify(requests.at(-1).messages.filter((m:any)=>m.role==='tool'))).toContain('观察已经登记');expect(calls).toBe(2);
+  const {targetId:_target,binding:_binding,...canonical}=args;
+  expect((await(await req({...canonical,version:1})).json()).task).toEqual(result);
+ }finally{ws.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},15000);
+
+it.each(['normal','race','commit-failure'])('observes direct native Pi work without replay (%s)',async(mode)=>{
+ const racing=mode==='race';
+ let calls=0,reply:()=>void=()=>{},registrationGate:(()=>Promise<void>)|undefined;
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;expect(raw).not.toContain('coffee-native-run');expect(raw).not.toContain('baselineId');calls++;const report=raw.includes('<task-facts>');
+  reply=()=>{if(res.writableEnded)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:'observation-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:report?'进展：LATE_NATIVE_RESULT。\n限制：待用户验收。\n下一步：查看证据。\n来源：Track synthetic run':'LATE_NATIVE_RESULT'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true,async()=>{const gate=registrationGate;registrationGate=undefined;await gate?.();}),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});
+ await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+ await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));
+ await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+ socket.send(JSON.stringify({v:1,type:'prompt',requestId:'user-direct-work',text:'Synthetic existing work'}));
+ await expect.poll(()=>calls,{timeout:10000}).toBe(1);
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ expect(contact.observation).toMatchObject({supported:true,state:'running'});const runId=contact.observation.runId;expect(runId).toBeTruthy();
+ const base={action:'tasks',version:1};
+ const registered=await(await req({...base,operation:'register',operationId:'observe-brief',targetId:target.id,binding:contact.binding,purpose:'Track synthetic run',scope:'Only this run',summary:'Await result',nextStep:'Read reply'})).json();
+ const watch={...base,operation:'observe',operationId:'observe-run',taskId:registered.task.taskId,expectedRevision:1,runId};
+ let correction:Record<string,unknown>|undefined,corrected:any;
+ const assertOriginalReceipts=async(request:(body:unknown)=>Promise<Response>)=>{expect(await(await request(watch)).json()).toEqual(admitted);if(correction)expect(await(await request(correction)).json()).toEqual(corrected);};
+ const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);
+ expect((await req(watch)).status).toBe(409);await rm(blockedWrite,{recursive:true});
+ expect((await(await req({...base,operation:'get',taskId:registered.task.taskId})).json()).task.obligation).toBeUndefined();
+ if(racing)registrationGate=async()=>{reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);};
+ const response=await req(watch);expect(response.status,await response.clone().text()).toBe(200);
+ const admitted=await response.json();expect(admitted.task.obligation.runId).toBe(runId);if(!racing)expect(admitted.task.observation).toBe('watching');
+ if(mode==='normal'){
+  correction={...base,operation:'update',operationId:'correct-watching-task',taskId:registered.task.taskId,expectedRevision:admitted.task.revision,summary:'Still awaiting exact target reply'};
+  const edited=await req(correction);expect(edited.status).toBe(200);corrected=await edited.json();
+  await assertOriginalReceipts(req);
+  socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'rename-tracked',sessionId:target.id,name:'Renamed tracked target'}));await expect.poll(()=>frames.some(f=>f.type==='ack'&&f.requestId==='rename-tracked'),{timeout:10000}).toBe(true);expect((await(await req({action:'status'})).json()).targets[0]).toMatchObject({id:target.id,title:'Renamed tracked target',binding:contact.binding});}
+ if(mode==='commit-failure')await mkdir(blockedWrite);
+ socket.close();reply();
+ const get={...base,operation:'get',taskId:registered.task.taskId};
+ if(mode==='commit-failure'){
+  await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.error),{timeout:10000}).toContain('persistence failed');
+  await rm(blockedWrite,{recursive:true});await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  const recovered=await start(app.root,undefined,true),recoveredToken=(await recovered.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+  const restored=await(await recovered.call(get,'owner',recoveredToken,'/api/mishu/runtime')).json();
+  expect(restored.task).toMatchObject({observation:'reply-available',fact:{text:'LATE_NATIVE_RESULT'},acceptance:'pending'});expect(calls).toBe(1);return;
+ }
+ // Status exposes committed counters without performing a passive task audit.
+ await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.replies),{timeout:10000}).toBe(1);
+ await expect.poll(async()=>((await(await req(get)).json()).task.observation),{timeout:10000}).toBe('reply-available');
+ const result=await(await req(get)).json();expect(result.task).toMatchObject({observation:'reply-available',obligation:{state:'reply-available'},fact:{text:'LATE_NATIVE_RESULT'},acceptance:'pending'});
+ expect(await(await req(get)).json()).toEqual(result);expect(calls).toBe(1);
+ if(mode==='normal'){expect(result.task.revision).toBeGreaterThan(corrected.task.revision);await assertOriginalReceipts(req);}
+ const nextSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),nextFrames:any[]=[];
+ nextSocket.on('message',raw=>nextFrames.push(JSON.parse(String(raw))));await once(nextSocket,'open');nextSocket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));
+ await expect.poll(()=>nextFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+ nextSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'unrelated-user-work',text:'Unrelated next work'}));await expect.poll(()=>calls,{timeout:10000}).toBe(2);reply();
+ await expect.poll(()=>nextFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);nextSocket.close();
+ expect(await(await req(get)).json()).toEqual(result);
+ if(mode==='normal'){
+  const reportSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),reportFrames:any[]=[];
+  reportSocket.on('message',raw=>reportFrames.push(JSON.parse(String(raw))));
+  try{
+   await once(reportSocket,'open');reportSocket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));
+   await expect.poll(()=>reportFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+   reportSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'receipt-report',text:'/mishu-report '+registered.task.taskId}));
+   await expect.poll(()=>calls,{timeout:10000}).toBe(3);reply();
+   await expect.poll(async()=>(await(await req(get)).json()).task.reports?.[0]?.state,{timeout:10000}).toBe('committed');
+   await assertOriginalReceipts(req);
+  }finally{reportSocket.close();}
+ }
+ const beforeRestart=await(await req(get)).json();
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ await rm(join(app.workspaces.root,'.coffee','conversation-index'),{recursive:true,force:true});
+  const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ expect(await(await resumed.call(get,'owner',rt,'/api/mishu/runtime')).json()).toEqual(beforeRestart);expect(calls).toBe(mode==='normal'?3:2);
+ if(mode==='normal')await assertOriginalReceipts(body=>resumed.call(body,'owner',rt,'/api/mishu/runtime'));
+ }finally{socket.close();reply();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it.each(['stop','disable','archive','remove','source-archive','source-clear','target-clear'] as const)('revokes observation on %s without stopping or adopting target work',async(mode)=>{
+ const clearing=mode==='source-clear'||mode==='target-clear';
+ const app=await start(undefined,undefined,true,clearing),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation(),other=await app.workspaces.createChatConversation();
+ if(clearing){await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));}
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ if(mode==='source-clear'){const sourceNative=SessionManager.create(source.cwd,join(app.root,'sessions'),{id:source.id});sourceNative.appendMessage({role:'user',content:'Synthetic source old context',timestamp:Date.now()});}
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic ongoing work',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime'),base={action:'tasks',version:1};
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const brief=await(await req({...base,operation:'register',operationId:'revocable',targetId:target.id,binding:contact.binding,purpose:'Track',scope:'Exact run',summary:'No reply yet',nextStep:'Await'})).json();
+ const observation=await(await req({...base,operation:'observe',operationId:'watch',taskId:brief.task.taskId,expectedRevision:1,runId})).json();
+ expect(observation.task.obligation.runId).toBe(runId);
+ if(mode==='stop')expect((await req({...base,operation:'stop',operationId:'stop',taskId:brief.task.taskId,expectedRevision:observation.task.revision})).status).toBe(200);
+ if(mode==='disable')expect((await req({action:'disable'})).status).toBe(200);
+ if(mode==='archive')expect((await app.call({action:'archive',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+ if(mode==='remove')await setupThroughChat(app,source.id,other.id,false,true);
+ if(mode==='source-archive'){expect((await app.call({action:'archive',id:source.id},'owner','host-test','/api/workspace')).status).toBe(200);expect((await app.call({action:'restore',id:source.id},'owner','host-test','/api/workspace')).status).toBe(200);}
+ if(mode==='source-clear'||mode==='target-clear'){const cleared=mode==='source-clear'?source:target,nativeId=(await app.workspaces.lookup(cleared.id))!.nativeBinding?.id??cleared.id;const reset=await app.call({action:'clear_chat_context',id:cleared.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);}
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'AFTER_REVOCATION'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ if(mode==='archive')expect((await app.call({action:'restore',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+ if(mode==='disable'||mode==='remove')await setupThroughChat(app,source.id,target.id,false);
+ if(mode==='source-clear'||mode==='target-clear'){expect((await req({...base,operation:'get',taskId:brief.task.taskId})).status).toBe(409);const saved=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8')).chats[source.id].taskJournal.tasks[0];expect(saved.obligation.state).toBe('cancelled');expect(saved.notification).toBeUndefined();return;}
+ const latest=await(await req({...base,operation:'get',taskId:brief.task.taskId})).json();
+ expect(latest.task).toMatchObject({observation:'stopped',obligation:{state:'cancelled'},acceptance:'pending'});expect(latest.task.fact).toBeUndefined();expect(latest.task.notification).toBeUndefined();
+ expect((await app.workspaces.lookup(target.id))?.archived).not.toBe(true);
+},30000);
+
+it('keeps truncated, missing-final-audit and next-user replies incomplete or uncertain',async()=>{
+ const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic unfinished work',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime'),base={action:'tasks',version:1};
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const brief=await(await req({...base,operation:'register',operationId:'incomplete',targetId:target.id,binding:contact.binding,purpose:'Track',scope:'Exact run',summary:'Pending',nextStep:'Await'})).json();
+ await req({...base,operation:'observe',operationId:'watch',taskId:brief.task.taskId,expectedRevision:1,runId});
+ const get={...base,operation:'get',taskId:brief.task.taskId};
+ const append=(text:string,stopReason:'stop'|'length')=>native.appendMessage({role:'assistant',content:[{type:'text',text}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason,timestamp:Date.now()});
+ append('Partial evidence','length');expect((await(await req(get)).json()).task).toMatchObject({observation:'uncertain',fact:{text:'Partial evidence'}});
+ native.appendCustomEntry('coffee-native-settled',{version:1,runId});expect((await(await req(get)).json()).task).toMatchObject({observation:'incomplete',acceptance:'pending'});
+ const stable=await(await req(get)).json();native.appendMessage({role:'user',content:'Unrelated later work',timestamp:Date.now()});append('UNRELATED_SUCCESS','stop');
+ expect(await(await req(get)).json()).toEqual(stable);
+ const nativeFile=native.getSessionFile()!;const original=await readFile(nativeFile,'utf8');await writeFile(nativeFile,original+'{"partial":');
+ const unknown=await(await req(get)).json();expect(unknown.task).toMatchObject({observation:'uncertain',fact:{text:'Partial evidence'}});
+ expect(await(await req(get)).json()).toEqual(unknown);
+ await writeFile(nativeFile,original);
+},30000);
+
+it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch persists business responsibility and deduplicates changed IDs (%s)',async(mode)=>{
+ let targetCalls=0,sourceCalls=0;let finishSource=()=>{},finishTarget=()=>{};
+ const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const isTarget=JSON.stringify(body.messages).includes('DISPATCH_SYNTHETIC_WORK');
+  const reply=(text:string)=>{if(res.writableEnded||res.destroyed)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:randomUUID(),object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  if(isTarget){targetCalls++;finishTarget=()=>reply('DISPATCH_RESULT');}else{sourceCalls++;finishSource=()=>reply('Secretary done');}
+ });await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true,undefined,mode==='lost-ack'),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=await(await req({...base,operation:'register',operationId:'dispatch-brief',targetId:target.id,binding:contact.binding,purpose:'Run check',scope:'Synthetic isolated task',summary:'Requested',nextStep:'Deliver'})).json();
+ const command={...base,operation:'dispatch',taskId:brief.task.taskId,expectedRevision:1,messageId:'first-model-id',text:'DISPATCH_SYNTHETIC_WORK',authorizationRef:'User explicitly requested the synthetic check'};
+ expect((await req(command)).status).toBe(409);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ let targetSocket:WebSocket|undefined;const targetFrames:any[]=[];
+ if(mode==='queued-stop'||mode==='failed-stop'){
+  targetSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});targetSocket.on('message',raw=>targetFrames.push(JSON.parse(String(raw))));await once(targetSocket,'open');targetSocket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));await expect.poll(()=>targetFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);targetSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-busy-target',text:'DISPATCH_SYNTHETIC_WORK already running'}));await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
+ }
+ try{if(socket.readyState!==WebSocket.OPEN)await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);socket.send(JSON.stringify({v:1,type:'prompt',requestId:'trusted-user-dispatch',text:'Please perform two independent isolated checks'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(1);
+ const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blockedWrite);expect((await req(command)).status).toBe(409);await rm(blockedWrite,{recursive:true});expect(targetCalls).toBe(mode==='queued-stop'||mode==='failed-stop'?1:0);
+ const accepted=await req(command);expect(accepted.status,await accepted.clone().text()).toBe(200);const result=await accepted.json();expect(result.assignment).toMatchObject({state:'accepted',taskId:brief.task.taskId});
+ const duplicate=await req({...command,messageId:'model-changed-id'});expect(duplicate.status,await duplicate.clone().text()).toBe(200);expect((await duplicate.json()).assignment.id).toBe(result.assignment.id);
+ await expect.poll(()=>targetCalls,{timeout:10000}).toBe(1);
+ expect((await req({...command,messageId:'conflict',text:'different scope'})).status).toBe(409);expect(targetCalls).toBe(1);
+ const stored=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));expect(stored.chats[source.id].assignments).toHaveLength(1);expect(stored.chats[source.id].taskJournal.tasks[0].obligation.runId).toBe(result.assignment.requestId);
+ if(mode==='queued-stop'||mode==='failed-stop'){
+  await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.assignment.state).toBe('queued');
+  const queued=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
+  if(mode==='failed-stop'){
+   await mkdir(blockedWrite);
+   const rejected=await req({...base,operation:'stop',operationId:'failed-cancel',taskId:queued.taskId,expectedRevision:queued.revision});
+   await rm(blockedWrite,{recursive:true});
+   expect(rejected.status).toBe(409);
+   // A rejected stop cannot announce an accepted dispatch as cancelled.
+   const inbox=await(await req({action:'inbox'})).json();
+   expect(inbox.messages.find((m:any)=>m.messageId===command.messageId)).toMatchObject({state:'queued'});
+   expect((await(await req({...base,operation:'get',taskId:queued.taskId})).json()).task).toMatchObject({workState:'recorded',assignment:{state:'queued'}});
+  }
+  expect((await req({...base,operation:'stop',operationId:'cancel-queued',taskId:queued.taskId,expectedRevision:queued.revision})).status).toBe(200);
+  finishTarget();await expect.poll(()=>targetFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const stopped=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;expect(stopped).toMatchObject({assignment:{state:'cancelled'},observation:'stopped'});expect(targetCalls).toBe(1);return;
+ }
+ finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');
+ const final=await(await req({...base,operation:'get',taskId:brief.task.taskId})).json();expect(final.task).toMatchObject({fact:{text:'DISPATCH_RESULT'},acceptance:'pending'});expect(final.task.assignment.id).toBe(result.assignment.id);
+ let replayCommand:Record<string,unknown>=command,replayId=result.assignment.id,expectedCalls=1;
+ if(mode==='normal'){
+  const separate=await(await req({...base,operation:'register',operationId:'second-explicit-task',targetId:target.id,binding:contact.binding,purpose:'Second independent check',scope:'Synthetic isolated task',summary:'Requested',nextStep:'Deliver'})).json();
+  const second=await req({...command,taskId:separate.task.taskId,messageId:'distinct-operation'});expect(second.status,await second.clone().text()).toBe(200);expect((await second.json()).assignment.id).not.toBe(result.assignment.id);
+  await expect.poll(()=>targetCalls,{timeout:10000}).toBe(2);finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:separate.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');
+ }
+ finishSource();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+ if(mode==='normal'){
+  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'new-user-repeat',text:'Repeat the first isolated check once more'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(2);
+  const current=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
+  replayCommand={...command,expectedRevision:current.revision,messageId:'legitimate-repeat',retryOf:result.assignment.id};
+  const repeat=await req(replayCommand);expect(repeat.status,await repeat.clone().text()).toBe(200);const repeated=await repeat.json();expect(repeated.assignment.retryOf).toBe(result.assignment.id);replayId=repeated.assignment.id;expect(replayId).not.toBe(result.assignment.id);
+  await expect.poll(()=>targetCalls,{timeout:10000}).toBe(3);finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');finishSource();await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);expectedCalls=3;
+ }
+ socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const restarted=await start(app.root,undefined,true),rt=(await restarted.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const recovered=await restarted.call({...replayCommand,messageId:'after-restart'},'owner',rt,'/api/mishu/runtime');expect(recovered.status,await recovered.clone().text()).toBe(200);expect((await recovered.json()).assignment.id).toBe(replayId);expect(targetCalls).toBe(expectedCalls);
+ }finally{socket.close();targetSocket?.close();finishSource();finishTarget();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as const)('persists a native on-demand report identity without replay (%s)',async(mode)=>{
+ let calls=0,foregroundCalls=0,taskId='',privatePath='',reply:()=>void=()=>{};const requests:any[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));calls++;const foreground=raw.includes('FOREGROUND_READ_REQUEST');if(foreground)foregroundCalls++;
+  reply=()=>{
+   if(res.writableEnded)return;
+   const frame={id:'report-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};
+   const content=mode==='promise'?'我会稍后帮你汇报。':mode==='tool-only'?'':`进展：REPORT_RESULT 已收到。\n限制：仅合成测试，尚未用户验收。\n下一步：请查看证据。\n来源：Synthetic report`;
+   const delta=foreground?(foregroundCalls===1?{role:'assistant',tool_calls:[{index:0,id:'allowed-read',type:'function',function:{name:'read',arguments:JSON.stringify({path:privatePath})}}]}:{role:'assistant',content:'FOREGROUND_RESTORED'}):(mode==='tool-attempt'||mode==='tool-only')&&calls===1?{role:'assistant',tool_calls:[...[['read',{path:privatePath}],['bash',{command:'touch '+privatePath+'.side-effect'}],['write',{path:privatePath,content:'MALICIOUS'}],['edit',{path:privatePath,edits:[{oldText:'SYNTHETIC_REPORT_FORBIDDEN_READ',newText:'MALICIOUS'}]}],['mishu',{action:'send',text:'MALICIOUS'}],['report_nested',{}]].map(([name,args],index)=>({index,id:'forbidden-'+name,type:'function',function:{name,arguments:JSON.stringify(args)}}))]}:{role:'assistant',content};
+   res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:foreground&&foregroundCalls===1||(mode==='tool-attempt'||mode==='tool-only')&&calls===1?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+  };
+  if(calls>1)reply();
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const fixtureRoot=await mkdtemp(join(tmpdir(),'coffee-report-')),extension=join(fixtureRoot,'active-tools.ts');
+ privatePath=join(fixtureRoot,'private-marker.txt');await writeFile(privatePath,'SYNTHETIC_REPORT_FORBIDDEN_READ');
+ await writeFile(extension,`import {registerChatTools} from ${JSON.stringify(resolve('node_modules/pi-coffee-harness/dist/harness/chat-tools.js'))};export default function(pi){registerChatTools(pi,['report_nested']);pi.registerTool({name:'report_nested',label:'Nested test',description:'Synthetic nested tool',parameters:{type:'object',properties:{}},async execute(id,args,signal,onUpdate,ctx){return ctx.executeTool('write',{path:${JSON.stringify(privatePath)},content:'NESTED_MALICIOUS'});}});pi.on('before_provider_request',()=>{pi.setActiveTools(pi.getAllTools().map(t=>t.name));});}`);
+ const app=await start(fixtureRoot,undefined,true,true,undefined,false,[extension]),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();
+ native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic target work',timestamp:Date.now()});
+ native.appendMessage({role:'assistant',content:[{type:'text',text:'REPORT_RESULT'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+ const brief=await(await req({...base,operation:'register',operationId:'report-brief',targetId:target.id,binding:contact.binding,purpose:'Synthetic report',scope:'Only test',summary:'Result ready',nextStep:'Review'})).json();taskId=brief.task.taskId;
+ await req({...base,operation:'observe',operationId:'report-watch',taskId,expectedRevision:1,runId});
+ expect((await req({action:'report',operation:'prepare',taskId})).status).toBe(409);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'report-user',text:'/mishu-report '+taskId}));
+  await expect.poll(()=>calls,{timeout:10000}).toBe(1);
+  expect(await(await req({action:'status'})).json()).toMatchObject({origin:'task-report'});
+  for(const action of ['send','setup','disable','tasks','directory'])expect((await req({action})).status).toBe(409);
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'bad-steer',mode:'steer',text:'Do not mix me into report'}));
+  await expect.poll(()=>frames.some(f=>f.type==='error'&&f.requestId==='bad-steer'),{timeout:10000}).toBe(true);
+  const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');if(mode==='lost-ack')await mkdir(blockedWrite);
+  if(mode==='revoked')expect((await app.call({action:'archive',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+  reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  if(mode==='provider-error'){
+   await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].reports?.[0]?.state;},{timeout:10000}).toBe('uncertain');
+   for(let n=0;n<5;n++)await req({action:'status'});await new Promise(r=>setTimeout(r,250));expect(requests).toHaveLength(2);return;
+  }
+  if(mode==='lost-ack'){
+   await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.error),{timeout:10000}).toContain('persistence failed');
+   await rm(blockedWrite,{recursive:true});
+  }
+  if(mode==='normal'){
+   expect(await(await req({action:'status'})).json()).toMatchObject({origin:'user-intent'});
+   const from=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'foreground-user',text:'FOREGROUND_READ_REQUEST'}));
+   await expect.poll(()=>frames.slice(from).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+   expect(JSON.stringify(requests.flatMap(r=>r.messages.filter((m:any)=>m.role==='tool')))).toContain('SYNTHETIC_REPORT_FORBIDDEN_READ');
+  }
+  if(mode==='revoked')expect((await app.call({action:'restore',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
+  socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  if(mode==='lost-ack'){
+   const migrationFile=join(app.workspaces.root,'.coffee','mishu','state.json'),migration=JSON.parse(await readFile(migrationFile,'utf8'));migration.version=1;await writeFile(migrationFile,JSON.stringify(migration));
+   const stored=(await SessionManager.listAll(join(app.root,'sessions'))).find(s=>s.id===source.id)!;
+   const rows=(await readFile(stored.path,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+   await writeFile(stored.path,rows.filter(row=>!(row.type==='custom'&&row.customType==='coffee-native-settled')).map(row=>JSON.stringify(row)).join('\n')+'\n');
+  }
+  await rm(join(app.workspaces.root,'.coffee','conversation-index'),{recursive:true,force:true});
+  const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+  const result=await(await resumed.call({...base,operation:'get',taskId},'owner',rt,'/api/mishu/runtime')).json();
+  const report=result.task.reports[0];expect(report.state).toBe(mode==='revoked'?'cancelled':mode==='promise'||mode==='tool-only'?'uncertain':'committed');
+  expect(result.task.acceptance).toBe('pending');
+  if(mode!=='promise'&&mode!=='tool-only'&&mode!=='revoked'){
+   expect(result.task.notification).toMatchObject({state:'committed',reportId:report.id});
+   expect(report.outputs.length).toBeGreaterThan(0);
+   const read=new RpcPiSessionFactory({sessionDir:join(app.root,'sessions')});
+   const evidence=await read.readRunEvidence(source.id,report.processingId);expect(evidence.entries?.map(({id,revision})=>({id,revision}))).toEqual(report.outputs);
+   const page=await fetch(`http://127.0.0.1:${resumed.host.address().port}/api/conversations/${source.id}/page`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});expect(page.status,await page.clone().text()).toBe(200);expect(JSON.stringify(await page.json())).toContain('REPORT_RESULT');
+   const history=await read.readHistory(source.id);expect(history.history.entries.filter(e=>e.kind==='user')).toHaveLength(mode==='normal'?1:0);
+  }
+  expect(calls).toBe(mode==='normal'?3:mode==='tool-attempt'||mode==='tool-only'?2:1);
+  if(mode!=='normal')expect(JSON.stringify(requests.flatMap(r=>r.messages.filter((m:any)=>m.role==='tool')))).not.toContain('SYNTHETIC_REPORT_FORBIDDEN_READ');
+  expect(await readFile(privatePath,'utf8')).toBe('SYNTHETIC_REPORT_FORBIDDEN_READ');await expect(readFile(privatePath+'.side-effect','utf8')).rejects.toMatchObject({code:'ENOENT'});
+  if(mode==='tool-attempt'){const results=requests.at(-1).messages.filter((m:any)=>m.role==='tool');expect(results).toHaveLength(6);for(const result of results)expect(JSON.stringify(result)).toContain('Host report-only run');}
+ }finally{socket.close();reply();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+
+it('fences a competing Host owner and only admits a fresh owner after process death',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-owner-')),lockRoot=join(root,'work','.coffee','mishu');await mkdir(lockRoot,{recursive:true});
+ const owner=spawn(process.execPath,['--input-type=module','-e',"import {DatabaseSync} from 'node:sqlite'; const db=new DatabaseSync(process.argv[1]);db.exec('BEGIN EXCLUSIVE');console.log('locked');process.stdin.resume();",join(lockRoot,'writer.sqlite')],{stdio:['pipe','pipe','pipe']});
+ await once(owner.stdout,'data');
+ const app=await start(root),source=await app.workspaces.createChatConversation();
+ try{
+  expect((await app.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+  owner.kill('SIGKILL');await once(owner,'exit');
+  // The stale failed owner cannot acquire a new generation or overwrite a successor.
+  expect((await app.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+  await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+  const fresh=await start(root);expect((await fresh.call({action:'select',id:source.id,selected:true})).status).toBe(200);
+ }finally{owner.kill('SIGKILL');}
+},30000);
+
+
+it('defaults event reminders off and rejects model-side reminder grants',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ expect(await(await app.call({action:'status',id:source.id})).json()).toMatchObject({notifications:{enabled:false,capacity:20,maxAttempts:1,limits:{foregroundBurst:3,coalesceMs:250,wakesPerWindow:12,budgetWindowMs:3600000,automaticRecoveries:1,eventVersions:16,evidenceReferences:64,outboxBytes:262144},backlog:0,uncertain:0,remainingWakes:12}});
+ expect((await app.call({action:'notifications',enabled:true},'owner',token,'/api/mishu/runtime')).status).toBe(409);
+});
+
+
+for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-uncertain','lost-ack','provider-error','budget','queue-full','queue-recover','disable-queued'] as const)it(`automatically reports a late observed Pi reply through trusted queue (${mode})`,async()=>{
+ const requests:any[]=[];let finishTarget=()=>{},finishForeground=()=>{},finishReport=()=>{};let secondStatus:(()=>Promise<any>)|undefined;
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);requests.push(body);
+  const send=(content:string)=>{if(res.writableEnded)return;const f={id:'auto',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  if(raw.includes('自动测试目标'))finishTarget=()=>send('LATE_AUTOMATIC_FACT');
+  else if(raw.includes('FOREGROUND_BUSY')&&!raw.includes('<task-facts>'))finishForeground=()=>send('FOREGROUND_DONE');
+  else if(mode==='provider-error'){res.writeHead(404,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'synthetic model_not_found',code:'model_not_found'}}));}
+  else {finishReport=()=>send('进展：LATE_AUTOMATIC_FACT 已完成。\n限制：只验证合成数据，未验收。\n下一步：请查看目标结果。\n来源：Late synthetic task');if(mode!=='lost-ack')finishReport();}
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const sockets:WebSocket[]=[];
+ async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
+ try{
+  const src=await open(source.id),dst=await open(target.id);
+  if(mode!=='disabled'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=> (await(await app.call({action:'status',id:source.id})).json()).notifications.enabled,{timeout:10000}).toBe(true);await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);}
+  dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'自动测试目标'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(1);
+  const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
+  const brief=(await(await req({...base,operation:'register',operationId:'late',targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;
+  const watched=(await(await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:brief.revision,runId:contact.observation.runId})).json()).task;
+  if(mode==='budget')for(let n=0;n<12;n++){const another=(await(await req({...base,operation:'register',operationId:'budget-'+n,targetId:target.id,binding:contact.binding,purpose:'Late synthetic task',scope:'Only fixture',summary:'Follow up',nextStep:'Report'})).json()).task;await req({...base,operation:'observe',operationId:'budget-watch-'+n,taskId:another.taskId,expectedRevision:1,runId:contact.observation.runId});}
+  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='queue-full'||mode==='queue-recover'||mode==='disable-queued'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FOREGROUND_BUSY'}));await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);}
+  if(mode==='budget'){
+   const second=await app.workspaces.createChatConversation();await app.call({action:'select',id:second.id,selected:true});await setupThroughChat(app,second.id,target.id,true);const channel=await open(second.id),rt=(await app.host.mishuRuntime('owner',second.id)).env.PI_COFFEE_MISHU_TOKEN,req2=async(body:unknown)=>await(await app.call(body,'owner',rt,'/api/mishu/runtime')).json();
+   channel.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=>(await req2({action:'status'})).notifications.enabled).toBe(true);
+   const otherContact=(await req2({action:'directory'})).configuredTargets[0],otherTask=(await req2({...base,operation:'register',operationId:'separate-secretary',targetId:target.id,binding:otherContact.binding,purpose:'Late synthetic task',scope:'Second secretary',summary:'Independent',nextStep:'Review'})).task;
+   await req2({...base,operation:'observe',operationId:'separate-watch',taskId:otherTask.taskId,expectedRevision:1,runId:contact.observation.runId});secondStatus=()=>req2({action:'status'});
+  }
+  if(mode==='queue-full'||mode==='queue-recover'){
+   // Fill the real durable queue one acknowledged command at a time. A single
+   // deadline for 100 fsync-backed admissions measures runner disk speed instead
+   // of the report's backpressure behavior. ACK precedes the public queue row.
+   for(let n=0;n<100;n++)await enqueueFollowUp(src.ws,src.frames,'fill-'+n,'pending '+n,n+1);
+   expect(requests).toHaveLength(2);
+  }
+  finishTarget();await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].observation;},{timeout:10000}).toBe('reply-available');
+  if(mode==='queue-recover'){
+   await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.admissionFailures,{timeout:10000}).toBe(1);
+   for(const row of src.frames.filter(f=>f.type==='queue_state').at(-1).items)src.ws.send(JSON.stringify({v:1,type:'queue_action',requestId:randomUUID(),id:row.id,revision:row.revision,action:'cancel'}));
+   await expect.poll(()=>src.frames.filter(f=>f.type==='queue_state').at(-1)?.items.some((q:any)=>q.readOnly),{timeout:10000}).toBe(true);
+   expect((await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0]).toMatchObject({state:'admitted',recoveries:1});finishForeground();
+  }
+  if(mode==='budget'||mode==='queue-full'){
+   if(mode==='budget'){await expect.poll(async()=>(await(await req({action:'status'})).json()).notifications.remainingWakes,{timeout:20000}).toBe(0);await expect.poll(()=>requests.length,{timeout:10000}).toBe(14);expect((await secondStatus!()).notifications.remainingWakes).toBe(11);expect((await(await req({action:'status'})).json()).notifications.backlog).toBeGreaterThanOrEqual(1);}
+   else {await expect.poll(async()=>{
+    // Concurrent readers can schedule another Outbox pass while a full queue
+    // rejects admission. They must not open an extra safe-recovery allowance.
+    const reads=await Promise.all(Array.from({length:8},async()=>await(await req({...base,operation:'get',taskId:brief.taskId})).json()));
+    return reads.at(-1).task.reports?.[0]?.retryBlocked;
+   },{timeout:10000}).toBe(true);const report=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0];expect(report).toMatchObject({state:'pending',recoveries:1,admissionFailures:2});expect(report.deliveryAttempted).not.toBe(true);expect((await(await req({action:'status'})).json()).notifications.error).toContain('预算已耗尽');}
+   for(const socket of sockets)socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+   const resumed=await start(app.root,undefined,true,true);const rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+   const resumedStatus=await(await resumed.call({action:'status'},'owner',rt,'/api/mishu/runtime')).json();
+   expect(resumedStatus.notifications.remainingWakes).toBe(mode==='budget'?0:12);
+   await new Promise(r=>setTimeout(r,1200));expect(requests).toHaveLength(mode==='budget'?14:2);return;
+  }
+  if(mode==='disabled'){expect(requests).toHaveLength(1);const task=(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task;expect(task.fact.text).toContain('LATE_AUTOMATIC_FACT');expect(task.reports).toBeUndefined();return;}
+  if(mode==='busy'||mode==='revoked'||mode==='restart-queued'||mode==='restart-uncertain'||mode==='disable-queued'){
+   await expect.poll(()=>src.frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly&&q.text==='MISHU 汇报：Late synthetic task')),{timeout:10000}).toBe(true);expect(requests).toHaveLength(2);
+   const row=src.frames.filter(f=>f.type==='queue_state').at(-1).items[0];expect(JSON.stringify(row)).not.toContain('processingId');expect(row.text).not.toContain('/mishu-report');
+   if(mode==='disable-queued'){expect((await req({action:'disable'})).status).toBe(200);finishForeground();await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);await setupThroughChat(app,source.id,target.id,true);expect((await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.obligation.state).toBe('cancelled');await new Promise(r=>setTimeout(r,300));expect(requests).toHaveLength(2);return;}
+   if(mode==='revoked'){src.ws.send(JSON.stringify({v:1,type:'queue_action',requestId:'stop-notification',id:row.id,revision:row.revision,action:'cancel'}));await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.workState,{timeout:10000}).toBe('stopped');}
+   if(mode==='restart-queued'||mode==='restart-uncertain'){
+    for(const s of sockets)s.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+    {const file=join(app.workspaces.root,'.coffee','mishu','state.json'),state=JSON.parse(await readFile(file,'utf8'));state.version=1;if(mode==='restart-uncertain')state.chats[source.id].taskJournal.tasks[0].reports[0].deliveryAttempted=true;await writeFile(file,JSON.stringify(state));}
+    const restarted=await start(app.root,undefined,true,true);await restarted.host.mishuRuntime('owner',source.id);
+   }else finishForeground();
+  }
+  if(mode==='restart-uncertain'){const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));expect(state.chats[source.id].taskJournal.tasks[0].reports[0].state).toBe('uncertain');expect(requests).toHaveLength(2);return;}
+  if(mode==='revoked'){await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);expect(requests).toHaveLength(2);return;}
+  if(mode==='provider-error'){
+   await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].reports?.[0]?.state;},{timeout:10000}).toBe('uncertain');
+   for(let n=0;n<5;n++)await req({action:'status'});await new Promise(r=>setTimeout(r,250));expect(requests).toHaveLength(2);return;
+  }
+  if(mode==='lost-ack'){
+   await expect.poll(()=>requests.length,{timeout:10000}).toBe(2);
+   const temp=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(temp);finishReport();
+   await expect.poll(async()=> (await(await req({action:'status'})).json()).tracking.error,{timeout:10000}).toContain('persistence failed');
+   for(const s of sockets)s.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);await rm(temp,{recursive:true});
+   const restarted=await start(app.root,undefined,true,true);await restarted.host.mishuRuntime('owner',source.id);
+  }
+  await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].reports?.[0]?.state;},{timeout:10000}).toBe('committed');
+  expect(requests).toHaveLength(mode==='busy'||mode==='restart-queued'||mode==='queue-recover'?3:2);expect(JSON.stringify(requests.at(-1))).not.toContain('"state":"reply-available"');
+  if(mode!=='restart-queued')expect(src.frames.some(f=>f.event?.type==='message_end'&&JSON.stringify(f.event).includes('LATE_AUTOMATIC_FACT'))).toBe(true);
+ }finally{for(const s of sockets)s.close();finishTarget();finishForeground();finishReport();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+// The two capacity fixtures perform 100 separate durable command admissions.
+},mode==='queue-full'||mode==='queue-recover'?60000:30000);
+
+it.each(['source','target'] as const)('filters stale %s task bindings at public report chooser and exact prepare',async(kind)=>{
+ const app=await start(undefined,undefined,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();native.appendCustomEntry('coffee-native-run',{version:1,runId});native.appendMessage({role:'user',content:'Synthetic only',timestamp:Date.now()});native.appendMessage({role:'assistant',content:[{type:'text',text:'SYNTHETIC'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime'),base={action:'tasks',version:1};const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const task=(await(await req({...base,operation:'register',operationId:'stale',targetId:target.id,binding:contact.binding,purpose:'Private stale task',scope:'Fixture',summary:'Known',nextStep:'Report'})).json()).task;await req({...base,operation:'observe',operationId:'observe',taskId:task.taskId,expectedRevision:1,runId});
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const file=join(app.workspaces.root,'.coffee','mishu','state.json'),state=JSON.parse(await readFile(file,'utf8'));state.chats[source.id].taskJournal.tasks[0][kind==='source'?'sourceBinding':'binding']='stale-generation';await writeFile(file,JSON.stringify(state));
+ const resumed=await start(app.root,undefined,true),frames:any[]=[],ws=new WebSocket(`ws://127.0.0.1:${resumed.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);ws.send(JSON.stringify({v:1,type:'prompt',requestId:'stale-list',text:'/mishu-report'}));await expect.poll(()=>frames.some(f=>f.event?.message==='暂无可汇报的原生结果。'),{timeout:10000}).toBe(true);expect(frames.some(f=>f.event?.method==='select')).toBe(false);await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);ws.send(JSON.stringify({v:1,type:'prompt',requestId:'stale-exact',text:'/mishu-report '+task.taskId}));await expect.poll(()=>frames.some(f=>String(f.event?.message??'').startsWith('汇报未能开始')),{timeout:10000}).toBe(true);}finally{ws.close();}
+});
+
+it.each(['burst','capacity'] as const)('coalesces exact task versions, keeps report inputs immutable, and fairly serves foreground (%s)',async(mode)=>{
+ const order:string[]=[],reportBodies:string[]=[];let releaseFirst=()=>{};
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);
+  const current=body.messages.filter((m:any)=>m.role==='user'&&!JSON.stringify(m).includes('【PI Coffee 插件状态】')).at(-1);const report=JSON.stringify(current).includes('<task-facts>');
+  const send=(content:string)=>{if(res.writableEnded)return;const f={id:'burst',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
+  if(report){reportBodies.push(JSON.stringify(current));const title=raw.includes('Burst alpha')&&!raw.includes('Burst beta')?'Burst alpha':String(JSON.stringify(current).includes('Burst beta')?'Burst beta':'Burst alpha');order.push(title);send('进展：已收到合成结果。\n限制：待验收。\n下一步：查看原记录。\n来源：'+title);}
+  else {const text=JSON.stringify(current?.content);const label=text.match(/USER_[0-9]/)?.[0]??'FIRST';order.push(label);if(label==='FIRST')releaseFirst=()=>send('FIRST_DONE');else send(label+'_DONE');}
+ });await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Synthetic burst target',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const env=(await app.host.mishuRuntime('owner',source.id)).env,req=async(body:unknown)=>await(await app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).json(),base={action:'tasks',version:1};
+ const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&['select','confirm'].includes(e.method))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,...(e.method==='confirm'?{confirmed:true}:{value:'开启事件提醒'})}));});
+ try{
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await waitForNativeFrame(ws,frames,0,f=>f.type==='opened',10000,'Fairness source open');
+  const consentOffset=frames.length;
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));
+  await expect.poll(async()=>(await req({action:'status'})).notifications.enabled,{timeout:10000}).toBe(true);
+  await waitForNativeFrame(ws,frames,consentOffset,f=>f.event?.type==='agent_settled',10000,'Notification consent completion');
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'FIRST'}));await expect.poll(()=>order,{timeout:10000}).toEqual(['FIRST']);
+  const contact=(await req({action:'directory'})).configuredTargets[0],tasks:any[]=[];
+  for(const title of ['Burst alpha','Burst beta']){const task=(await req({...base,operation:'register',operationId:randomUUID(),targetId:target.id,binding:contact.binding,purpose:title,scope:'Fixture',summary:'Pending',nextStep:'Review'})).task;tasks.push(task);await req({...base,operation:'observe',operationId:randomUUID(),taskId:task.taskId,expectedRevision:1,runId});}
+  const append=(text:string)=>native.appendMessage({role:'assistant',content:[{type:'text',text}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});
+  append('PARTIAL_BURST');await req({...base,operation:'list'});if(mode==='capacity')for(let n=0;n<16;n++){append('PROGRESS_'+n);await req({...base,operation:'list'});}append('TERMINAL_BURST');native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+  const before=(await req({...base,operation:'list'})).tasks;expect(before.every((t:any)=>t.notification.events.length>=2)).toBe(true);if(mode==='capacity')for(const task of before){expect(task.notification.events).toHaveLength(16);expect(task.notificationError).toContain('容量已满');expect(task.fact.text).not.toContain('TERMINAL_BURST');}
+  await expect.poll(()=>frames.some(f=>f.type==='queue_state'&&f.items.some((q:any)=>q.readOnly)),{timeout:10000}).toBe(true);
+  // Establish the complete queue before releasing FIRST and measuring fairness.
+  for(let n=1;n<=5;n++)await enqueueFollowUp(ws,frames,'foreground-'+n,'USER_'+n,n+1);
+  expect(frames.filter(f=>f.type==='queue_state').at(-1).items).toHaveLength(6);
+  releaseFirst();await expect.poll(()=>reportBodies.length,{timeout:20000}).toBe(mode==='capacity'?4:2);
+  await expect.poll(async()=>(await req({...base,operation:'list'})).tasks.every((t:any)=>t.reports?.at(-1)?.state==='committed'),{timeout:10000}).toBe(true);
+  expect(order.slice(0,5)).toEqual(['FIRST','USER_1','USER_2','USER_3','Burst alpha']);
+  expect(order.indexOf('USER_5')).toBeLessThan(order.indexOf('Burst beta'));
+  const after=(await req({...base,operation:'list'})).tasks;
+  for(const task of after){expect(task.reports).toHaveLength(mode==='capacity'?2:1);expect(task.reports.at(-1).events.at(-1).text).toContain('TERMINAL_BURST');expect(task.reports[0].events.at(-1).entries).toHaveLength(mode==='capacity'?15:2);expect(task.reports[0].eventVersions).toEqual(before.find((t:any)=>t.taskId===task.taskId).notification.events.map((e:any)=>e.revision));}
+  expect(reportBodies[0]).toContain('PARTIAL_BURST');if(mode==='burst')expect(reportBodies[0]).toContain('TERMINAL_BURST');else expect(reportBodies[0]).not.toContain('TERMINAL_BURST');expect(reportBodies[0]).not.toContain('Burst beta');
+  expect((await req({action:'status'})).notifications).toMatchObject({backlog:0,remainingWakes:mode==='capacity'?8:10});
+  for(let n=0;n<3;n++)await req({...base,operation:'list'});expect(reportBodies).toHaveLength(mode==='capacity'?4:2);
+ }finally{releaseFirst();ws.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it('reserves stop admission when ordinary task mutation capacity is exhausted',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime'),base={action:'tasks',version:1};
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],task=(await(await req({...base,operation:'register',operationId:'capacity',targetId:target.id,binding:contact.binding,purpose:'Stop must remain usable',scope:'Fixture',summary:'Retained',nextStep:'Review'})).json()).task;
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ // Seed exhausted synthetic storage, then exercise admission only through public HTTP.
+ const file=join(app.workspaces.root,'.coffee','mishu','state.json'),state=JSON.parse(await readFile(file,'utf8')),journal=state.chats[source.id].taskJournal;
+ journal.operations=Array.from({length:2000},(_,n)=>({id:'seed-'+n,fingerprint:'synthetic',task}));await writeFile(file,JSON.stringify(state));
+ const resumed=await start(app.root),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,call=(body:unknown)=>resumed.call(body,'owner',rt,'/api/mishu/runtime');
+ expect((await call({...base,operation:'update',operationId:'blocked-update',taskId:task.taskId,expectedRevision:1,summary:'Cannot add ordinary mutation'})).status).toBe(409);
+ const stop={...base,operation:'stop',operationId:'reserved-stop',taskId:task.taskId,expectedRevision:1};
+ expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
+ expect(await(await call(stop)).json()).toMatchObject({task:{workState:'stopped',revision:2}});
+// Native setup, Host restart and validation of 2,000 durable receipts are not a 5s SLO.
+},30000);
+
+it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true},{outcome:'failed',progress:true},{outcome:'interrupted',progress:false},{outcome:'exit',progress:false},{outcome:'completed',progress:false,truncated:true}])('reports one final Codex result after its native outcome ($outcome, progress=$progress)',async({outcome,progress,truncated=false})=>{
+ let reportCalls=0;const reportInputs:string[]=[];
+ const provider=createServer(async(req,res)=>{
+  let raw='';for await(const part of req)raw+=part;reportCalls++;
+  const body=JSON.parse(raw);reportInputs.push(body.messages.map((m:any)=>typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.map((p:any)=>p.text??'').join(''):'').join('\n'));
+  const frame={id:'codex-report',object:'chat.completion.chunk',created:1,model:'fixture'};
+  const content='进展：'+(raw.includes('echo: run delayed final tracking')?'最终合成结果已收到。':'PROGRESS_ONE_OF_THREE，工作尚在进行。')+'\n限制：尚未用户验收。\n下一步：查看结果。\n来源：Codex final result';
+  res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');
+ });
+ await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,'codex',true,true,undefined,false,[],true,outcome==='exit'?'lost-final':outcome),source=await app.workspaces.createChatConversation();
+ const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile);
+ const run=(args:string[])=>git('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:seed});
+ await run(['init','-b','main']);await writeFile(join(seed,'note.txt'),'base');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('synthetic-codex-final',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'codex');
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ const sockets:WebSocket[]=[];
+ async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(id===source.id&&e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
+ try{
+  const dst=await open(target.id);dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target',text:'run delayed final tracking'+(progress?' with progress':'')+(truncated?' '+ 'x'.repeat(4100)+' FINAL_LIMITATION_MUST_BE_READ':'')}));
+  await expect.poll(()=>dst.frames.some(f=>f.event?.type==='extension_ui_request'),{timeout:10000}).toBe(true);
+  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+  const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=async(body:unknown)=>await(await app.call(body,'owner',token,'/api/mishu/runtime')).json();
+  const contact=(await req({action:'directory'})).configuredTargets[0],base={action:'tasks',version:1};
+  const brief=(await req({...base,operation:'register',operationId:'brief',targetId:target.id,binding:contact.binding,purpose:'Codex final result',scope:'Existing run only',summary:'Await result',nextStep:'Report'})).task;
+  const watching=await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:1,runId:contact.observation.runId});expect(watching.task.observation).toBe('waiting');
+  const src=await open(source.id);src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'enable',text:'/mishu-notifications'}));
+  await expect.poll(async()=>(await req({action:'status'})).notifications.enabled,{timeout:10000}).toBe(true);
+  await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
+  const question=dst.frames.find(f=>f.event?.type==='extension_ui_request').event;
+  dst.ws.send(JSON.stringify({v:1,type:'ui_response',requestId:'approve-target',id:question.id,confirmed:true}));
+  await waitForNativeFrame(dst.ws,dst.frames,0,f=>f.event?.type==='tool_execution_end',10000,'Codex approved tool completion');
+  if(progress){
+   await expect.poll(async()=>(await req({...base,operation:'get',taskId:brief.taskId})).task.reports?.[0]?.state,{timeout:10000}).toBe('committed');
+   await expect.poll(async()=>(await req({action:'status'})).origin,{timeout:10000}).toBe('user-intent');
+  }
+  const beforeFinal=(await req({...base,operation:'get',taskId:brief.taskId})).task;
+  expect(reportCalls).toBe(progress?1:0);expect(beforeFinal.reports??[]).toHaveLength(progress?1:0);
+  if(progress)expect(beforeFinal.fact.latestReply).toBe('PROGRESS_ONE_OF_THREE');
+  const durableSnapshot=(task:any)=>({fact:task.fact??null,reports:task.reports??[],notification:task.notification??null});
+  await writeFile(join(app.root,'codex-home','allow-final'),'');
+  await waitForNativeFrame(dst.ws,dst.frames,0,f=>f.event?.type==='message_end'&&f.event.text?.startsWith('echo: run delayed final tracking'),10000,'Codex Browser final text');
+  // The fixture holds the terminal outcome until this public evidence assertion.
+  // Browser-visible final text must not publish final facts or spend another wake.
+  const pendingFinal=(await req({...base,operation:'get',taskId:brief.taskId})).task;
+  expect(durableSnapshot(pendingFinal)).toEqual(durableSnapshot(beforeFinal));
+  expect((await req({action:'status'})).notifications).toMatchObject({backlog:0,remainingWakes:progress?11:12});
+  expect(reportCalls).toBe(progress?1:0);
+  await writeFile(join(app.root,'codex-home','allow-terminal'),'');
+  const expected=outcome==='completed'?'reply-available':outcome==='exit'?'uncertain':'incomplete';
+  await expect.poll(async()=>(await req({...base,operation:'get',taskId:brief.taskId})).task?.observation,{timeout:10000}).toBe(expected);
+  await expect.poll(async()=>{const status=await req({action:'status'});return status.origin==='user-intent'&&status.notifications.backlog===0;},{timeout:10000}).toBe(true);
+  const final=await req({...base,operation:'get',taskId:brief.taskId});expect(final.task.observation).toBe(expected);expect(final.task.fact.latestReply).toContain('echo: run delayed final tracking');expect(final.task.acceptance).toBe('pending');
+  expect(reportCalls).toBe(progress?2:1);expect(final.task.reports).toHaveLength(progress?2:1);expect(final.task.reports.every((r:any)=>r.state==='committed')).toBe(true);
+  if(progress){expect(final.task.reports[0].events[0]).toMatchObject({state:'watching',latestReply:'PROGRESS_ONE_OF_THREE'});expect(final.task.reports[0].events[0].text).not.toContain('echo: run delayed final tracking');}
+  expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({state:expected,latestReply:expect.stringContaining('echo: run delayed final tracking')});
+  if(truncated){
+   expect(final.task.fact).toMatchObject({truncated:true,latestReplyTruncated:true});
+   expect(final.task.fact.latestReply).not.toContain('FINAL_LIMITATION_MUST_BE_READ');
+   expect(final.task.reports.at(-1).events.at(-1)).toMatchObject({truncated:true,latestReplyTruncated:true});
+   const facts=JSON.parse(reportInputs.at(-1)!.split('<task-facts>\n')[1].split('\n</task-facts>')[0]);
+   expect(facts).toMatchObject({truncated:true,latestReplyTruncated:true});
+   expect(reportInputs.at(-1)).toContain('截断');
+  }
+ }finally{await mkdir(join(app.root,'codex-home'),{recursive:true});await writeFile(join(app.root,'codex-home','allow-final'),'');await writeFile(join(app.root,'codex-home','allow-terminal'),'');for(const socket of sockets)socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it.each((['codex','claude','cursor','grok'] as const).flatMap(engine=>(['completed','interrupted','failed','exit','stale'] as const).map(outcome=>({engine,outcome}))))('tracks exact online $engine work ($outcome) and leaves restart gaps unknown',async({engine,outcome})=>{
+ const app=await start(undefined,engine,false,false,undefined,false,[],engine==='codex',outcome),source=await app.workspaces.createChatConversation();
+ const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile);
+ const run=(args:string[])=>git('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:seed});
+ await run(['init','-b','main']);await writeFile(join(seed,'note.txt'),'base');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('synthetic-project',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,engine);
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];
+ socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:target.id,nativeProtocol:1}));
+ try{
+ await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+ socket.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target-user',text:engine==='codex'?'run synthetic read':'track approval'}));
+ await expect.poll(()=>frames.some(f=>['extension_ui_request','native_request'].includes(f.event?.type)),{timeout:10000}).toBe(true);
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ expect(contact.observation).toMatchObject({supported:true,freshness:'current',state:'running',capabilities:{online:'supported',restartRecovery:'unknown',detachedWriters:'unknown'}});
+ const base={action:'tasks',version:1},brief=(await(await req({...base,operation:'register',operationId:'brief',targetId:target.id,binding:contact.binding,purpose:'Track direct work',scope:'One invocation',summary:'Waiting',nextStep:'Report'})).json()).task;
+ expect((await req({...base,operation:'observe',operationId:'wrong',taskId:brief.taskId,expectedRevision:1,runId:'unrelated-native-run'})).status).toBe(409);
+ if(outcome==='stale'){
+  // Inject a native binding replacement while the old adapter still exists.
+  (await app.workspaces.lookup(target.id))!.nativeBinding={state:'bound',id:'replacement-native'};
+  expect((await req({...base,operation:'observe',operationId:'stale-watch',taskId:brief.taskId,expectedRevision:1,runId:contact.observation.runId})).status).toBe(409);
+  await setupThroughChat(app,source.id,target.id,false);
+  const replaced=(await(await req({action:'directory'})).json()).configuredTargets[0];expect(replaced.observation).toMatchObject({freshness:'unknown',state:'uncertain'});return;
+ }
+ const watch=await req({...base,operation:'observe',operationId:'watch',taskId:brief.taskId,expectedRevision:1,runId:contact.observation.runId});expect(watch.status,await watch.clone().text()).toBe(200);expect((await watch.json()).task).toMatchObject({observation:'waiting',acceptance:'pending'});
+ expect((await(await req({action:'status'})).json()).tracking.replies).toBe(0);
+ const question=frames.find(f=>['extension_ui_request','native_request'].includes(f.event?.type)).event;
+ socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'user-target-answer',id:question.id,...(engine==='codex'?{confirmed:true}:{value:'allow'})}));
+ const get={...base,operation:'get',taskId:brief.taskId};
+ if(outcome!=='completed'){
+  const expected=outcome==='exit'||(outcome==='failed'&&(engine==='cursor'||engine==='grok'))?'uncertain':'incomplete';
+  await expect.poll(async()=>(await(await req(get)).json()).task.observation,{timeout:10000}).toBe(expected);
+  const failed=(await(await req(get)).json()).task;expect(failed.acceptance).toBe('pending');expect(failed.obligation.runId).toBe(contact.observation.runId);
+  expect((await(await req({action:'status'})).json()).tracking.replies).toBe(0);return;
+ }
+ await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.replies),{timeout:10000}).toBe(1);
+ const result=(await(await req(get)).json()).task;
+ expect(result).toMatchObject({observation:'reply-available',acceptance:'pending'});expect(result.fact.entries.length).toBeGreaterThan(0);
+ expect(result.fact.entries[0].id.startsWith('host-live:')).toBe(engine==='cursor'||engine==='grok');
+ const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'unrelated-later',text:'Unrelated work'}));
+ await expect.poll(()=>frames.slice(offset).some(f=>['agent_settled','run_completed'].includes(f.event?.type)),{timeout:10000}).toBe(true);
+ expect((await(await req(get)).json()).task.fact).toEqual(result.fact);
+ socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const recovered=await start(app.root,engine,false,false,undefined,false,[],engine==='codex'),newToken=(await recovered.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
+ const restored=(await(await recovered.call(get,'owner',newToken,'/api/mishu/runtime')).json()).task;
+ expect(restored).toMatchObject({observation:'uncertain',fact:result.fact,acceptance:'pending'});
+ }finally{socket.close();}
+},30000);
+
+
+it('migrates private legacy coordination before writes, fences rollback and preserves revoked state',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const directory=join(app.workspaces.root,'.coffee','mishu'),file=join(directory,'state.json');
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
+ const legacy=JSON.parse(await readFile(file,'utf8'));legacy.version=1;
+ const original=JSON.stringify(legacy);await writeFile(file,original);
+ const resumed=await start(app.root);const status=await resumed.call({action:'status',id:source.id});expect(status.status).toBe(200);
+ expect((await resumed.call({action:'select',id:source.id,selected:false})).status).toBe(200);
+ const saved=JSON.parse(await readFile(file,'utf8'));expect(saved.version).toBe(2);expect(saved.chats[source.id]).toMatchObject({selected:false,enabled:false,notifications:false});
+ const backups=(await readdir(directory)).filter(n=>n.startsWith('state.v1.')&&n.endsWith('.json'));
+ expect(backups).toHaveLength(1);expect(await readFile(join(directory,backups[0]),'utf8')).toBe(original);expect((await stat(join(directory,backups[0]))).mode&0o777).toBe(0o600);
+ await resumed.host.close();hosts.splice(hosts.indexOf(resumed.host),1);
+ const upgraded=await start(app.root);expect(await(await upgraded.call({action:'status',id:source.id})).json()).toMatchObject({selected:false,enabled:false});
+ expect((await readdir(directory)).filter(n=>n.startsWith('state.v1.'))).toHaveLength(1);
+},30000);
+
+it.each(['truncated','future','nested'])('fails closed with private diagnosable %s storage without changing source bytes',async(mode)=>{
+ const app=await start(),source=await app.workspaces.createChatConversation();
+ const directory=join(app.workspaces.root,'.coffee','mishu'),file=join(directory,'state.json');await mkdir(directory,{recursive:true});
+ const invalid=mode==='truncated'?'{"version":1,':JSON.stringify({version:mode==='future'?99:2,chats:{[source.id]:{selected:true,enabled:true,allowInstructions:true,sourceBinding:'saved',targets:[],messages:[],taskJournal:{tasks:[{taskId:'invalid'}],operations:[]}}}});
+ await writeFile(file,invalid);
+ const status=await app.call({action:'status',id:source.id});expect(status.status).toBe(409);expect(await status.text()).toContain('MISHU storage');
+ expect((await app.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+ expect(await readFile(file,'utf8')).toBe(invalid);expect((await readdir(directory)).filter(n=>n.startsWith('state.v1.'))).toEqual([]);
+ expect(JSON.parse(await readFile(join(directory,'diagnostic.json'),'utf8'))).toMatchObject({mode:'read-only',code:mode==='future'?'unsupported-version':'invalid-state'});
+ expect((await stat(join(directory,'diagnostic.json'))).mode&0o777).toBe(0o600);
+});
+
+
+it('restores explicitly selected historical notes after source reset without contacts or execution authority',async()=>{
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation(),second=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const native=SessionManager.create(source.cwd,join(app.root,'sessions'),{id:source.id});native.appendMessage({role:'user',content:'Synthetic historical source',timestamp:Date.now()});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
+ let env=(await app.host.mishuRuntime('owner',source.id)).env;
+ const req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const brief=(await(await req({action:'tasks',version:1,operation:'register',operationId:'history-original',targetId:target.id,binding:contact.binding,purpose:'Historical note',scope:'Synthetic old scope',summary:'Old facts only',nextStep:'Review afresh'})).json()).task;
+ const forkId=randomUUID();const fork=await app.call({action:'fork',id:source.id,targetId:forkId,mode:'native'},'owner','host-test','/api/workspace');expect(fork.status,await fork.clone().text()).toBe(202);
+ // Observe committed Fork completion through the public workspace listing.
+ // Internal lookup can see the mutation before its save and lifecycle unlock.
+ await expect.poll(async()=>{
+  const listing=await fetch(`http://127.0.0.1:${app.host.address().port}/api/workspace`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
+  expect(listing.status,await listing.clone().text()).toBe(200);
+  return (await listing.json()).conversations.find((row:any)=>row.id===forkId)?.fork?.status;
+ },{timeout:10000}).toBe('completed');
+ expect(await(await app.call({action:'status',id:forkId})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false,targets:[],notifications:{enabled:false}});
+ const nativeId=(await app.workspaces.lookup(source.id))!.nativeBinding?.id??source.id;
+ const reset=await app.call({action:'clear_chat_context',id:source.id,operationId:randomUUID(),expectedNativeId:nativeId},'owner','host-test','/api/workspace');expect(reset.status,await reset.clone().text()).toBe(200);
+ env=(await app.host.mishuRuntime('owner',source.id)).env;
+ expect((await req({action:'history',version:1,operation:'list'})).status).toBe(409);
+ async function chooser(restore:boolean){
+  const frames:any[]=[],socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
+  socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
+   if(e.method==='select')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,...(restore?{value:e.options.find((v:string)=>v.includes('Historical note'))}:{cancelled:true})}));
+   else if(e.method==='confirm')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,confirmed:true}));
+  });
+  try{await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);frames.length=0;socket.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-history'}));await expect.poll(()=>frames.some(f=>f.event?.method==='notify'||f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);return frames;}finally{socket.close();}
+ }
+ const cancelled=await chooser(false);expect(cancelled.some(f=>f.event?.method==='select')).toBe(true);
+ const file=join(app.workspaces.root,'.coffee','mishu','state.json');expect(JSON.parse(await readFile(file,'utf8')).chats[source.id].notes??[]).toEqual([]);
+ const restored=await chooser(true);expect(restored.some(f=>String(f.event?.message).includes('历史笔记已恢复'))).toBe(true);
+ const config=JSON.parse(await readFile(file,'utf8')).chats[source.id];expect(config.notes).toHaveLength(1);expect(config.notes[0]).toMatchObject({fromTaskId:brief.taskId,purpose:'Historical note',summary:'Old facts only'});
+ for(const key of ['targetId','binding','obligation','assignment','reports','notification'])expect(config.notes[0]).not.toHaveProperty(key);
+ expect(await(await app.call({action:'status',id:source.id})).json()).toMatchObject({selected:true,enabled:false,allowInstructions:false,targets:[],notifications:{enabled:false}});
+ expect((await req({action:'tasks',version:1,operation:'list'})).status).toBe(409);
+ await app.call({action:'select',id:second.id,selected:true});const secondEnv=(await app.host.mishuRuntime('owner',second.id)).env;
+ expect((await app.call({action:'history',version:1,operation:'restore',taskId:brief.taskId,operationId:'stolen'},'owner',secondEnv.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime')).status).toBe(409);
+},30000);
+
+
+it('keeps ordinary zero-system Chat usable when optional MISHU storage is corrupt',async()=>{
+ const requests:any[]=[];const provider=createServer(async(req,res)=>{let raw='';for await(const p of req)raw+=p;requests.push(JSON.parse(raw));const f={id:'ordinary',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content:'ORDINARY_OK'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ const app=await start(undefined,undefined,true,true),source=await app.workspaces.createChatConversation();await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const dir=join(app.workspaces.root,'.coffee','mishu');await mkdir(dir,{recursive:true});await writeFile(join(dir,'state.json'),'{broken');
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);socket.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'普通合成对话'}));await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);expect(requests).toHaveLength(1);expect(requests[0].messages.some((m:any)=>['system','developer'].includes(m.role))).toBe(false);expect(JSON.stringify(requests)).not.toContain('你是 MISHU');expect((await app.call({action:'status',id:source.id})).status).toBe(409);expect(await readFile(join(dir,'state.json'),'utf8')).toBe('{broken');}finally{socket.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
+},30000);
+
+it('retains schema-valid amplified journals above per-resource byte limits and keeps terminal stop idempotent',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);
+ const env=(await app.host.mishuRuntime('owner',source.id)).env,req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const task=(await(await req({action:'tasks',version:1,operation:'register',operationId:'large',targetId:target.id,binding:contact.binding,purpose:'p'.repeat(500),scope:'s'.repeat(2000),summary:'汉'.repeat(4000),nextStep:'n'.repeat(1000)})).json()).task;
+ await app.host.close();hosts.splice(hosts.indexOf(app.host),1);const file=join(app.workspaces.root,'.coffee','mishu','state.json'),state=JSON.parse(await readFile(file,'utf8'));state.chats[source.id].taskJournal.operations=Array.from({length:2000},(_,n)=>({id:'large-'+n,fingerprint:'synthetic',task}));await writeFile(file,JSON.stringify(state));expect((await stat(file)).size).toBeGreaterThan(16*1024*1024);
+ const resumed=await start(app.root),token=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,read=(body:unknown)=>resumed.call(body,'owner',token,'/api/mishu/runtime');const stop={action:'tasks',version:1,operation:'stop',operationId:'stop-at-capacity',taskId:task.taskId,expectedRevision:1};const first=await(await read(stop)).json();expect(first.task.workState).toBe('stopped');expect(await(await read(stop)).json()).toEqual(first);expect((await stat(file)).size).toBeLessThan(40*1024*1024);
+},30000);
+
+it('diagnoses oversized persisted state before allocating it and never turns a failed selection into a grant',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation();const directory=join(app.workspaces.root,'.coffee','mishu');await mkdir(directory,{recursive:true});const file=join(directory,'state.json');await writeFile(file,'{}');await truncate(file,512*1024*1024+1);expect((await app.call({action:'status',id:source.id})).status).toBe(409);expect(JSON.parse(await readFile(join(directory,'diagnostic.json'),'utf8')).code).toBe('storage-capacity');expect((await stat(file)).size).toBe(512*1024*1024+1);
+ const healthy=await start(),chat=await healthy.workspaces.createChatConversation();await healthy.call({action:'status',id:chat.id});const blocked=join(healthy.workspaces.root,'.coffee','mishu','state.json.tmp');await mkdir(blocked);expect((await healthy.call({action:'select',id:chat.id,selected:true})).status).toBe(409);expect(await(await healthy.call({action:'status',id:chat.id})).json()).toMatchObject({selected:false,enabled:false,allowInstructions:false});
+});
+
+it('revokes the old observation at accepted Work takeover before preparation can restore or replace a binding',async()=>{
+ const app=await start(undefined,'codex',true,true,undefined,false,[],true),source=await app.workspaces.createChatConversation();
+ await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:1/v1',api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));
+ const seed=join(app.root,'seed'),remote=join(app.root,'remote.git');await mkdir(seed);const git=promisify(execFile),run=(args:string[])=>git('git',['-c','user.name=Test','-c','user.email=test@localhost',...args],{cwd:seed});await run(['init','-b','main']);await writeFile(join(seed,'note.txt'),'base');await run(['add','.']);await run(['commit','-m','fixture']);await run(['clone','--bare',seed,remote]);
+ const project=await app.workspaces.registerProject('takeover-fixture',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'pi');
+ const native=SessionManager.create(target.cwd,join(app.root,'sessions'),{id:target.id}),runId=randomUUID();native.appendCustomEntry('coffee-native-run',{version:1,runId,baselineId:native.getLeafId()});native.appendMessage({role:'user',content:'Original synthetic Pi task',timestamp:Date.now()});native.appendMessage({role:'assistant',content:[{type:'text',text:'Original Pi reply'}],api:'openai-completions',provider:'fixture',model:'fixture',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()});native.appendCustomEntry('coffee-native-settled',{version:1,runId});
+ await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,false);const env=(await app.host.mishuRuntime('owner',source.id)).env,req=(body:unknown)=>app.call(body,'owner',env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');const contact=(await(await req({action:'directory'})).json()).configuredTargets[0];
+ const brief=(await(await req({action:'tasks',version:1,operation:'register',operationId:'takeover-old',targetId:target.id,binding:contact.binding,purpose:'Original Pi work',scope:'Only original run',summary:'Reply exists',nextStep:'Review'})).json()).task;
+ const watch=await req({action:'tasks',version:1,operation:'observe',operationId:'takeover-watch',taskId:brief.taskId,expectedRevision:1,runId});expect(watch.status,await watch.clone().text()).toBe(200);
+ const takeover=await app.call({action:'takeover',id:target.id,engine:'codex',expectedEngine:'pi',acceptDrift:true},'owner','host-test','/api/workspace');expect(takeover.status,await takeover.clone().text()).toBe(202);
+ const saved=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8')).chats[source.id].taskJournal.tasks[0];expect(saved.obligation.state).toBe('cancelled');expect(saved.notification).toBeUndefined();expect(saved.fact.text).toBe('Original Pi reply');
+ // Source Chat itself is not eligible for a Work takeover.
+ expect((await app.call({action:'takeover',id:source.id,engine:'codex',expectedEngine:'pi',acceptDrift:true},'owner','host-test','/api/workspace')).status).toBe(409);
+},30000);

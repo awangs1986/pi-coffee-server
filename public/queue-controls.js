@@ -20,8 +20,9 @@ export function initQueueControls({container,send,requestId,toast,canPromote}){
    if(item.error){row.title=item.error;row.append(element('span','queue-warning',item.error));}
    const controls=element('span','queue-actions');
    for(const [kind,label] of [['edit','编辑'],['promote',item.status==='failed'?'重试发送':'立即插入'],['cancel','取消']]){
+    if(item.readOnly&&kind!=='cancel')continue;
     if(kind==='promote'&&!canPromote())continue;
-    const button=element('button','context-action',label);button.type='button';button.dataset.queueAction=kind;
+    const button=element('button','context-action',item.readOnly?'停止跟进':label);button.type='button';button.dataset.queueAction=kind;
     button.disabled=!connected||item.status==='sending'||[...pending.values()].some(p=>p.itemId===item.id);
     button.onclick=()=>{
      if(kind==='edit'){editing={...item};$('queue-edit-text').value=item.text;$('queue-edit-status').textContent='保存前，原指令仍可能开始执行。图片附件将保留。';dialog.showModal();return;}

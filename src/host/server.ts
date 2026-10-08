@@ -1,3 +1,4 @@
+import {MishuStateError} from './mishu-state.js';
 import {readReleaseCommit} from '../shared/release.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
 import {MishuCoordinator} from './mishu.js';
@@ -76,6 +77,8 @@ export interface HostServerOptions {
    * set this so a misconfigured Web Server cannot open the shared root scope.
    */
   requireUser?: boolean;
+  /** Existing saved coordination scopes; recovery starts only after runtime HTTP listens. */
+  savedMishuScopes?: () => AsyncIterable<string | undefined>;
   sharedSkillOwner?: string;
   eventBufferSize?: number;
   /** Stop idle Pi processes after this long; the conversation stays in Pi's session store. */
@@ -146,6 +149,7 @@ export class HostServer {
   private started = false;
   private closing = false;
   private closePromise?: Promise<void>;
+  private savedScopeRecovery?:Promise<void>;
   private readonly apiOperations = new Set<Promise<void>>();
   private readonly backgroundOperations = new Set<Promise<unknown>>();
   private readonly workspaces?: Workspaces;
@@ -222,8 +226,9 @@ export class HostServer {
     const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
     const extension=this.mishuExtension();if(!extension)return {extensions:[],env:{}};
     const address=this.mishuHttp.address();if(!address||typeof address==='string')throw Error('MISHU local interface is not listening');
-    const env=await slot.mishu.environment(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
-    return {extensions:env.PI_COFFEE_MISHU_TOKEN?[extension]:[],env};
+    try{const env=await slot.mishu.environment(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
+      return {extensions:env.PI_COFFEE_MISHU_TOKEN?[extension]:[],env};
+    }catch(error){if(error instanceof MishuStateError)return {extensions:[],env:{}};throw error;}
   }
   private mishuExtension():string|undefined {
     if(this.options.runtimeStatus?.().mode==='emergency')return undefined;
@@ -360,6 +365,7 @@ export class HostServer {
         const history=await session.getHistory();
         if(!history.entries.length){json(res,200,task);return;}
         const listing=(await slot.registry.list()).find(row=>row.id===id);
+        await slot.mishu?.revokeConversation(id);
         await session.clearContext({id:input.operationId,expectedNativeId:input.expectedNativeId,title:listing?.name||listing?.preview||'Chat'});
         const changed=await ws.lookup(id),source=await slot.factory.readHistory?.(id);
         await slot.index?.reconcile(id,[],{binding:source?.binding??`pi:${changed!.nativeBinding!.id}:original`,sourceGeneration:source?.sourceGeneration,sourceFreshness:'current',checkedAt:new Date().toISOString()});
@@ -419,6 +425,7 @@ export class HostServer {
         const listing=(await slot.registry.list()).find(s=>s.id===id);
         const title=listing?.name||listing?.preview;
         const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
+        await slot.mishu?.revokeConversation(id);
         await ws.beginTakeover(id,operation);
         // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
         const takeover = session.takeover(operation).then(async()=>{
@@ -518,6 +525,7 @@ export class HostServer {
         case "pull_request": result=await ws.openPullRequest(input.id,input.title);break;
         case "archive":
         case "restore": {
+          if(input.action==="archive")await slot.mishu?.revokeConversation(input.id);
           if(await ws.lookup(input.id)) result=await ws.archive(input.id,input.action==="archive",false);
           else {
             if(!(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");
@@ -643,6 +651,22 @@ export class HostServer {
       });
     }catch(error){await new Promise<void>(resolve=>this.http.close(()=>resolve()));throw error;}
     this.started = true;
+    if(this.options.savedMishuScopes)this.savedScopeRecovery=this.recoverSavedMishuScopes();
+  }
+
+  private async recoverSavedMishuScopes():Promise<void> {
+    try {
+      for await(const user of this.options.savedMishuScopes!()){
+        if(this.closing)break;
+        if(user!==undefined&&(!this.scopeForUser||normalizeUsername(user)!==user))continue;
+        try {
+          const slot=await this.slotFor(user);
+          // Load one scoped store at a time; model notification work remains
+          // serial per secretary through the existing coordinator scheduler.
+          await slot.mishu?.recoveryReady();
+        }catch{console.warn('[pi-coffee] MISHU saved-scope recovery unavailable; stored state retained, other scopes continue.');}
+      }
+    }catch{console.warn('[pi-coffee] MISHU saved-scope discovery unavailable; stored state retained.');}
   }
 
   address(): HostAddress {
@@ -672,6 +696,9 @@ export class HostServer {
     // A disconnected HTTP client does not cancel its workspace mutation. Wait
     // for its finally block to release the durable lock before main exits.
     await Promise.allSettled([...this.apiOperations]);
+    // Startup discovery may be awaiting a scope constructor. Fence its iterator
+    // before taking the registry snapshot so shutdown also owns that last slot.
+    await this.savedScopeRecovery;
     const slots = await Promise.allSettled([...this.slots.values()]);
     this.slots.clear();
     this.transferTargets.clear();
@@ -1157,7 +1184,10 @@ class HostSocket implements SessionSink {
     // first Pi event synchronously.
     setImmediate(() => {
       const setup=frame.text.trim()==='/mishu-setup';
+      if(frame.text.trim()==='/mishu-history')this.mishu?.beginHistory(session.id,frame.requestId);
+      if(frame.text.trim()==='/mishu-notifications')this.mishu?.beginNotifications(session.id,frame.requestId);
       if(setup)this.mishu?.beginSetup(session.id,frame.requestId);
+      if(/^\/mishu-report(?:\s|$)/.test(frame.text.trim()))this.mishu?.beginReport(session.id,frame.requestId);
       void session.prompt(frame.requestId, frame.text, frame.images).catch((error) => {
         this.send({
           v: 1,
@@ -1166,7 +1196,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      }).finally(()=>this.mishu?.endSetup(session.id,frame.requestId));
+      }).finally(()=>{this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);});
     });
   }
 

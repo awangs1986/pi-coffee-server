@@ -56,6 +56,7 @@ export interface SessionOpenResult {
  * recreated later without losing the conversation.
  */
 export class HostSession {
+  readRunEvidence(runId?:string){return this.pi?.readRunEvidence?.(runId);}
   readonly id: string;
   private readonly inputs:InputQueue;
   private readonly runnerGuidance?:HostSessionOptions['runnerGuidance'];
@@ -106,7 +107,8 @@ export class HostSession {
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
       deliver:async(text,images,promote,queuedRequestId)=>{
         const generation=this.deliveryGeneration;
-        if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
+        if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
+        if(promote&&queuedRequestId?.startsWith("mishu-dispatch-"))throw Error("Tracked assignments must remain serial; inspect their task record instead of promoting them");
         if(promote&&this.state.isStreaming){
           try {
             if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
@@ -225,6 +227,13 @@ export class HostSession {
     if (this.unseenSettle) return "finished";
     return undefined;
   }
+  /** Internal callback stays outside public queue rows and cannot be edited/steered. */
+  enqueueNotification(title:string,deliver:()=>Promise<void>,cancel:()=>Promise<void>){return this.inputs.addInternal('MISHU 汇报：'+title,deliver,cancel);}
+  cancelNotification(id:string,requestId?:string){if(this.inputs.cancelInternal(id)&&requestId)void this.onCommand?.(this.id,requestId,'cancelled').catch(()=>undefined);}
+  private reportOrigin=false;
+  /** Host-controlled run classification; never populated from model fields. */
+  setReportOrigin(){if(!this.activeRequestId)throw Error('Report requires reserved command');this.reportOrigin=true;}
+  get isReportRun(){return this.reportOrigin;}
   private contextChanging=false;
   private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get isTransitioning():boolean {return this.contextChanging||this.compacting;}
@@ -261,7 +270,7 @@ export class HostSession {
     const generation=this.deliveryGeneration;
     try {
       await this.onCommand?.(this.id,requestId,"delivering");this.assertDelivery(generation);this.runCommands.add(requestId);
-      await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images),generation);
+      await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images,requestId.startsWith("mishu-dispatch-")?{runId:requestId}:undefined),generation);
     } catch (error) {
       if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
       const cancelled=error instanceof DeliveryCancelledError;
@@ -286,7 +295,7 @@ export class HostSession {
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
   async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[],requestId?:string,accepted=false): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
-    if (this.compacting || this.contextChanging) throw new SessionBusyError();
+    if (this.compacting || this.contextChanging || this.reportOrigin && mode === "steer") throw new SessionBusyError();
     const generation=this.deliveryGeneration;
     if(requestId&&!accepted)await this.onCommand?.(this.id,requestId,"accepted",mode);
     try {
@@ -302,8 +311,10 @@ export class HostSession {
 
   get queueFrame():Extract<ServerFrame,{type:'queue_state'}>{return {v:1,type:'queue_state',sessionId:this.id,items:this.inputs.items};}
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
-    if(this.interrupted||this.compacting||this.contextChanging)throw new SessionBusyError();
-    const command=action.action==='cancel'?this.inputs.items.find(item=>item.id===action.id)?.requestId:undefined;
+    if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
+    const queued=this.inputs.items.find(item=>item.id===action.id);
+    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited or promoted; stop the task and inspect its original dispatch');
+    const command=action.action==='cancel'?queued?.requestId:undefined;
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
   async abort(): Promise<void> {
@@ -515,7 +526,7 @@ export class HostSession {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
         this.interrupted = true;this.unseenSettle=false;this.inputs.pause();
         this.state = {...this.state,isStreaming:false};
-        this.activeRequestId = undefined;
+        this.activeRequestId = undefined;this.reportOrigin=false;
         this.pendingUi.clear();
         // A reopened browser must not replay the dead run's agent_start/deltas
         // as though it were still streaming; durable history remains authoritative.
@@ -532,7 +543,7 @@ export class HostSession {
       }
       if ((safeEvent.type === "agent_settled" || safeEvent.type === "run_completed")) {
         this.state = { ...this.state, isStreaming: false };
-        this.activeRequestId = undefined;
+        this.activeRequestId = undefined;this.reportOrigin=false;
         settled = true;
         lifecycle = true;
         // Whatever dialogs were open have been answered or timed out by now.
@@ -607,6 +618,8 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
+  async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
+  async readRunEvidence(id:string,runId?:string){return await this.sessions.get(id)?.readRunEvidence(runId)??await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
   constructor(private options: { runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;

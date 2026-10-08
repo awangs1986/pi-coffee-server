@@ -60,8 +60,10 @@ export interface AgentModels {
 }
 
 export interface AgentSession {
+  /** Reads already observed live evidence without starting or querying a native runtime. */
+  readRunEvidence?(runId?:string):AgentRunEvidence|Promise<AgentRunEvidence>;
   backgroundState?(): Promise<{known:boolean;active:number}>;
-  prompt(text: string, images?: ImageInput[]): Promise<void>;
+  prompt(text: string, images?: ImageInput[], correlation?:{runId:string}): Promise<void>;
   /** Interrupt a running turn after its current tool calls. */
   steer(text: string, images?: ImageInput[]): Promise<void>;
   /** Queue a message for after the current run finishes. */
@@ -87,8 +89,20 @@ export interface AgentSession {
   stop(): Promise<void>;
 }
 
+export interface AgentRunEvidence {
+ capabilities?:{online:'supported'|'unavailable';restartRecovery:'supported'|'unknown';passiveHistory:'supported'|'unknown';detachedWriters:'supported'|'unknown'};
+ identity?:'native-run'|'host-invocation';referenceKind?:'native-message'|'host-live-receipt';
+ supported:boolean;freshness:'current'|'unknown';runId?:string;binding?:string;watermark?:string;
+ state:'running'|'reply-available'|'incomplete'|'uncertain';
+ entries?:{id:string;revision:string;text:string;truncated?:boolean}[];reason?:string;
+}
+
 export interface AgentSessionFactory {
   contextResetEngines?():AgentEngine[];
+  /** True only when prompt correlation is persisted and passively recoverable. */
+  supportsDispatchCorrelation?(sessionId:string):Promise<boolean>;
+ /** Passive exact native run audit; never starts a runtime or replays work. */
+ readRunEvidence?(sessionId:string,runId?:string):Promise<AgentRunEvidence>;
   forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;

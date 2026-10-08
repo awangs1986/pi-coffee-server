@@ -1,3 +1,4 @@
+import {savedMishuScopes} from './host/mishu-recovery.js';
 import {homedir} from "node:os";
 import {RunnerManager} from "./host/runners.js";
 import {hostSessionInstructions} from "./host/session-instructions.js";
@@ -166,6 +167,7 @@ async function run(selectedRole: Role): Promise<void> {
     ...defaultScope!,
     sharedSkillOwner:process.env.PI_COFFEE_SKILL_OWNER,
     scopeForUser,
+    savedMishuScopes:()=>savedMishuScopes(workdir,defaultScope!.workspaces!.root),
   });
   if (host) await host.start();
 
