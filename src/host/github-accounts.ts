@@ -42,6 +42,7 @@ export class GitHubAccounts {
       if(value)identity[key]=value;
     }
     const transport=join(this.root,'transport.json'),temp=transport+'.'+randomUUID();
+    await mkdir(this.root,{recursive:true,mode:0o700});
     await writeFile(temp,JSON.stringify({identity,gitea:this.options.gitea}),{mode:0o600});await rename(temp,transport);
     const script=fileURLToPath(new URL('./github-tools.mjs',import.meta.url));
     for(const [name,program] of [['gh',ghProgram],['git',gitProgram]]){

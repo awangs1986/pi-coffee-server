@@ -9,10 +9,10 @@ Type=simple
 # The VM boundary is the isolation boundary (ADR-0005); do not sandbox here.
 User=REPLACE_WITH_VM_OWNER
 Group=REPLACE_WITH_VM_OWNER
-WorkingDirectory=/opt/pi-coffee
+WorkingDirectory=/opt/pi-coffee-server
 EnvironmentFile=/etc/pi-coffee/host.env
 Environment=HOME=/home/REPLACE_WITH_VM_OWNER
-ExecStart=/usr/bin/node dist/src/main.js
+ExecStart=/usr/bin/node dist/src/main.js host
 Restart=on-failure
 RestartSec=2
 # Give Pi a real PATH: package managers, compilers and git live in the usual places.

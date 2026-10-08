@@ -80,6 +80,9 @@ const ui = {
 
 // ---------- state ----------
 let socket, reconnectTimer, connectionEpoch=0;
+const HEARTBEAT_MS=15000, PONG_TIMEOUT_MS=10000;
+let heartbeatTimer=null, pongTimer=null, awaitingPongNonce=null, reconnectAttempt=0;
+let modelsRequestEpoch=0, modelsSyncTimer=null;
 
 let retryNote;
 let finishedWhileHidden = false;
@@ -523,7 +526,7 @@ function agentMenuState() {
   const agent = task ? (task.engine || 'pi') : activeId ? engine : $('#task-engine').value;
   const kind = task ? (task.workspaceKind === 'chat' ? 'chat' : 'project') : $('#task-kind').value;
   const choiceLocked = Boolean(task) || !!pendingOpenId;
-  const modelLocked = modelControlsLocked() || !models;
+  const modelLocked = modelControlsLocked() || (!models && !modelPreview);
   return { task, agent, kind, choiceLocked, modelLocked };
 }
 function renderAgentTrigger() {
@@ -1358,10 +1361,11 @@ function refreshComposer() {
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
   ui.hint.textContent = streaming && !supports('steer') && !supports('followUp') ? '运行中 · 可停止当前轮次' : streaming ? '运行中 · Enter ' + (ui.mode.value === 'steer' ? '插话' : '排队') : '';
   if(activeId && !historyReady)ui.hint.textContent='正在同步对话…';
+  else if(activeId && opened && !models && modelPreview)ui.hint.textContent='模型同步中（可继续输入）';
   if(clearingContextId===activeId&&activeId)ui.hint.textContent='正在清空上下文…';
   else if(takeoverBusy())ui.hint.textContent=(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…')+' 当前对话操作已锁定，草稿已保留。';
   else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
-  ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady));
+  ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady) && !(activeId && opened && !models && modelPreview));
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   if (connected) {
     ui.status.textContent = streaming ? engineName()+' 正在工作…' : '已连接';
@@ -1410,7 +1414,7 @@ async function whoAmI(epoch) {
 function revokeCachedIdentity(){
   conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
-  connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
+  connectionEpoch++;taskSelectionEpoch++;modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
@@ -1533,15 +1537,63 @@ function renderProjectContext() {
 }
 
 
+function clearHeartbeat() {
+  clearInterval(heartbeatTimer); clearTimeout(pongTimer);
+  heartbeatTimer = pongTimer = null; awaitingPongNonce = null;
+}
+function clearModelsSyncTimer() { clearTimeout(modelsSyncTimer); modelsSyncTimer = null; }
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  const attempt = reconnectAttempt++;
+  const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(attempt, 5))) * (0.8 + Math.random() * 0.4);
+  reconnectTimer = setTimeout(connect, delay);
+}
+function forceReconnect(reason) {
+  clearHeartbeat();
+  const ws = socket;
+  if (!ws) { scheduleReconnect(); return; }
+  // Half-open sockets may never fire onclose; detach handlers then close and reconnect.
+  ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+  try { ws.close(); } catch { /* ignore */ }
+  if (socket === ws) socket = null;
+  opened = false; connected = false; historyReady = false; pendingOpenId = null; activeBindingEpoch = null;
+  setConnection('连接无响应，重连中…（' + reason + '）', 'error');
+  scheduleReconnect();
+}
+function armHeartbeat(ws) {
+  clearHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (socket !== ws || ws.readyState !== WebSocket.OPEN) { clearHeartbeat(); return; }
+    const nonce = 'hb-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    awaitingPongNonce = nonce;
+    if (!send({ v: 1, type: 'ping', nonce })) { forceReconnect('ping_send_failed'); return; }
+    clearTimeout(pongTimer);
+    pongTimer = setTimeout(() => {
+      if (socket === ws && awaitingPongNonce === nonce) forceReconnect('pong_timeout');
+    }, PONG_TIMEOUT_MS);
+  }, HEARTBEAT_MS);
+}
+function resumeLiveSubscription() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) { connect(); return; }
+  const nonce = 'vis-' + Date.now();
+  awaitingPongNonce = nonce;
+  if (!send({ v: 1, type: 'ping', nonce })) { forceReconnect('visibility_ping_failed'); return; }
+  clearTimeout(pongTimer);
+  pongTimer = setTimeout(() => {
+    if (awaitingPongNonce === nonce) forceReconnect('visibility_pong_timeout');
+  }, PONG_TIMEOUT_MS);
+  send({ v: 1, type: 'list_sessions' });
+  if (activeId) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
+}
 function disconnectExecution() {
-  abandonPendingSettings();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
+  abandonPendingSettings();clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   connectionEpoch++;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   opened=false;connected=false;historyReady=false;pendingOpenId=null;activeBindingEpoch=null;
 }
 function connect() {
   abandonPendingSettings();
-  clearTimeout(reconnectTimer);
+  clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);
   abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   const epoch=++connectionEpoch;viewScheduler.setView(currentRenderView());
   // Detach immediately so old replies cannot mutate the newly selected view.
@@ -1551,7 +1603,7 @@ function connect() {
   whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); });
 }
 function connectSocket() {
-  clearTimeout(reconnectTimer);
+  clearTimeout(reconnectTimer);clearHeartbeat();
   queuedRequests.clear();
   if (socket) { socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null; try { socket.close(); } catch { /* ignore */ } }
   opened = false;historyReady=false;
@@ -1561,6 +1613,9 @@ function connectSocket() {
   socket = ws;
   setConnection('连接中…');
   ws.onopen = () => {
+    if (socket !== ws) return;
+    reconnectAttempt = 0;
+    armHeartbeat(ws);
     setConnection('已连接', 'ready');
     void loadRuntimeStatus();
     // Host handles frames sequentially: open the selected task before the full sidebar scan.
@@ -1577,6 +1632,7 @@ function connectSocket() {
   };
   ws.onclose = (event) => {
     if (socket !== ws) return;
+    clearHeartbeat();
     abandonRenames();unconfirmedUiAnswers();
     abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);
     queuedRequests.clear();
@@ -1586,7 +1642,7 @@ function connectSocket() {
     workspaceSync={...workspaceSync,state:'unknown',error:'VM 连接断开；显示上次已知值'};renderSyncState();renderProjectContext();
     syncStatus.update({conversationId:activeId,state:'offline',message:'连接中断，仍可阅读本地内容'});
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
-    reconnectTimer = setTimeout(connect, 1200);
+    scheduleReconnect();
   };
   ws.onerror = () => { if (socket === ws) setConnection('连接错误', 'error'); };
 }
@@ -1636,13 +1692,29 @@ async function openSession(id) {
 }
 function afterOpened() {
   refreshComposer();
-  if(supports('models') && !modelPending)send({ v: 1, type: 'get_models' });
-  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });}
+  if(supports('models') && !modelPending){
+    const epoch=++modelsRequestEpoch;
+    const id=activeId;
+    clearModelsSyncTimer();
+    send({ v: 1, type: 'get_models', requestId: 'models-sync-' + epoch });
+    modelsSyncTimer=setTimeout(()=>{
+      if(epoch!==modelsRequestEpoch || id!==activeId || models)return;
+      toast('模型信息同步较慢，仍按上次设置显示，可继续输入');
+      renderAgentSettings();refreshComposer();
+    },8000);
+  }
+  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });
   if(supports('stats'))send({ v: 1, type: 'get_stats' });
   if (pluginsWaiting && supports('extensions')) send({ v: 1, type: 'get_extensions' });
 }
 
 function handleFrame(frame, ws) {
+  if(frame.type==='pong'){
+    if(socket===ws && (!awaitingPongNonce || frame.nonce===awaitingPongNonce)){
+      awaitingPongNonce=null;clearTimeout(pongTimer);pongTimer=null;
+    }
+    return;
+  }
   if(frame.conversationId&&frame.conversationId!==activeId&&frame.type!=='opened')return;
   if(activeBindingEpoch&&frame.bindingEpoch&&frame.bindingEpoch!==activeBindingEpoch&&!['opened','history','sync_changed'].includes(frame.type))return;
   switch (frame.type) {
@@ -1715,9 +1787,14 @@ function handleFrame(frame, ws) {
         const confirmed=frame.current?.provider===modelTarget?.provider && frame.current?.id===modelTarget?.id;
         modelPending=null;modelTarget=null;modelConfirmation=null;
         if(!confirmed){thinkingToApply=null;restoreQueuedPrompt();toast('模型设置尚未得到确认，请重新选择');}
+      } else if(frame.requestId && String(frame.requestId).startsWith('models-sync-')){
+        const epoch=Number(String(frame.requestId).slice('models-sync-'.length));
+        if(!Number.isFinite(epoch) || epoch!==modelsRequestEpoch)return;
+        clearModelsSyncTimer();
       }
       models = frame;
       modelPreview=null;
+      clearModelsSyncTimer();
       if(thinkingToApply && !thinkingPending){
         const wanted=thinkingToApply;thinkingToApply=null;
         if(frame.thinkingLevels?.includes(wanted.level)){
@@ -2902,7 +2979,7 @@ function applySessionSelection(id) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
+  taskSelectionEpoch++;modelsRequestEpoch++;clearModelsSyncTimer();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;queuedPrompt=null;workspaceSync=null;
   activeId = id;
   models=null;restoreModelPreview();
   engine=currentTask()?.engine||sessions.find(s=>s.id===id)?.engine||modelPreview?.engine||'pi';capabilities=null;
@@ -2920,6 +2997,8 @@ function applySessionSelection(id) {
   renderProjectContext();
   renderHeader();
   renderSessionList();
+  // Optimistic: cached model is already visible; keep typing enabled and restore focus.
+  queueMicrotask(()=>{ try { ui.prompt.focus({ preventScroll: true }); } catch { ui.prompt.focus(); } });
 }
 function newSession(focus = true) {navigation.select(null);if(focus)ui.prompt.focus();}
 function applyNewSession(focus = true) {
@@ -3012,9 +3091,11 @@ document.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState==='visible')maybeReadCompletion();
-  if (document.visibilityState === 'visible' && socket && socket.readyState === WebSocket.OPEN) send({ v: 1, type: 'list_sessions' });
+  if(document.visibilityState!=='visible')return;
+  maybeReadCompletion();
+  resumeLiveSubscription();
 });
+window.addEventListener('online', () => { reconnectAttempt = 0; connect(); });
 installCopyHandlers(ui.thread);
 
 // ---------- boot ----------

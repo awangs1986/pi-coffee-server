@@ -1298,7 +1298,10 @@ describe("Host WebSocket seam", () => {
     await server.start();
     const socket = await connect(server.address().port);
     const frames = new FrameQueue(socket);
+    // ping is a connection-level keepalive and is answered before open.
     socket.send(encodeFrame({ v: 1, type: "ping", nonce: "n" }));
+    await expect(frames.next()).resolves.toMatchObject({ type: "pong", nonce: "n" });
+    socket.send(encodeFrame({ v: 1, type: "get_queue" }));
     await expect(frames.next()).resolves.toMatchObject({ type: "error", code: "not_open" });
     socket.close();
   });
