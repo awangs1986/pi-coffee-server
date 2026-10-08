@@ -1568,6 +1568,7 @@ function armHeartbeat(ws) {
   if(document.visibilityState==='visible')heartbeat.start();
 }
 function resumeLiveSubscription() {
+  if(document.visibilityState!=='visible')return;
   if(socket?.readyState===WebSocket.CONNECTING)return;
   if (!socket || socket.readyState !== WebSocket.OPEN) { connect(); return; }
   heartbeat?.start();heartbeat?.probe();
