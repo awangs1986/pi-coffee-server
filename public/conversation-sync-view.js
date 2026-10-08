@@ -177,7 +177,7 @@ export class ConversationSyncView {
         let body=item.kind==='tool'?entry.node.querySelector('.tool-body'):entry.node.querySelector('.body,.text,.remote-content-body');
         if(!body){body=document.createElement('div');body.className='remote-content-body';entry.node.replaceChildren(body,controls);}
         entry.text=shortText(page.text);remoteText=entry.text;body.replaceChildren(document.createTextNode(entry.text));body.style.whiteSpace='pre-wrap';
-        offset=page.offset;end=page.nextOffset;total=page.totalLength||total;this.restore(anchor);
+        offset=page.offset;end=page.nextOffset;total=page.totalLength||total;entry.displayedContentEnd=end;this.restore(anchor);this.onRendered(this.entries,this.window);
       }catch(error){if(generation===this.generation)this.onError(error);}
       finally{delete controls.dataset.loading;update();}
     };

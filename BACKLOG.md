@@ -540,3 +540,5 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
   event handoff, Outbox ownership, trusted reporting-only runs, native report
   commit, business idempotency and revocation races. Documentation only; all
   persistent-tracking implementation and real browser acceptance remain pending.
+
+- 2026-10-08: [Server #100](https://github.com/awangs1986/pi-coffee-server/issues/100) changes the sidebar coffee cup to an unread-completion reminder. Actual latest-reply viewing clears a scoped Browser receipt; native completed status remains durable. [Current contract](docs/spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100).

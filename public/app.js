@@ -1,3 +1,4 @@
+import {CompletionReads,completionKey} from './completion-reads.js';
 import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
 import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
@@ -86,6 +87,8 @@ const pendingToolFills = new Set();
 let connected = false, opened = false, streaming = false, compacting = false, modelPending = null;
 let activeId = null;
 let currentUser = null;
+const completionReads=new CompletionReads();
+let completionProof=null, completionIndexState=null, openCompletionKey=null, openedEventCursor=0, receivedEventCursor=0, liveCompletionStart=null, liveCompletionSettled=false;
 const loginCoffee=createLoginCoffee();
 let activeBindingEpoch=null, syncHintTimer=null;
 const preferDurableSync=new URLSearchParams(location.search).get('syncProtocol')!=='1';
@@ -94,7 +97,7 @@ function currentRenderView(){return {userScope:currentUser,conversationId:active
 const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened)connect();}},timeoutMs:10000});
 const conversationRepository=new ConversationRepository({onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
-  onRendered:(visible,state)=>{entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();},
+  onRendered:(visible,state)=>{entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
 function requestConversationSync(){
   if(!activeId||!currentUser)return;
@@ -102,11 +105,12 @@ function requestConversationSync(){
   const id=activeId,user=currentUser;
   syncHintTimer=setTimeout(()=>{syncHintTimer=null;if(user===currentUser)void conversationRepository.sync(id,{priority:0}).catch(()=>{});},75);
 }
-const conversationDisplay=new ConversationDisplay({repository:conversationRepository,view:syncedView,status:syncStatus,renderNative:frame=>{
+const conversationDisplay=new ConversationDisplay({onState:state=>{completionIndexState=state;maybeReadCompletion();},repository:conversationRepository,view:syncedView,status:syncStatus,renderNative:frame=>{
   const scroll=previewScroll===null?null:ui.scroller.scrollTop;
   renderHistory(frame);if(scroll!==null)ui.scroller.scrollTop=scroll;
 }});
 function selectConversationView(id){
+  completionProof=null;completionIndexState=null;openCompletionKey=null;openedEventCursor=0;receivedEventCursor=0;liveCompletionStart=null;liveCompletionSettled=false;
   clearTimeout(syncHintTimer);syncHintTimer=null;
   viewScheduler.setView(currentRenderView());conversationDisplay.select(id);
 }
@@ -740,6 +744,7 @@ function scheduleEntryRender(entry,tool=false,done=false){
     const stick=nearBottom();
     if(tool)fillToolCard(entry.node,entry);else updateAssistant(entry.node,entry.text,{done});
     if(stick)scrollToEnd();
+    maybeReadCompletion();
   }});
 }
 function scheduleAssistantRender(){scheduleEntryRender(currentAssistant);}
@@ -827,6 +832,38 @@ function addRegenerateButton() {
 }
 
 // ---------- sidebar ----------
+function startCompletionReadRun(replayed){
+  const session=sessions.find(s=>s.id===activeId);
+  liveCompletionStart=replayed?completionProof:session?.completionId||completionKey(session);
+  completionProof=null;liveCompletionSettled=false;
+}
+function maybeReadCompletion(){
+  if(!connected||!opened||streaming||!historyReady||document.visibilityState!=='visible'||!nearBottom())return;
+  const session=sessions.find(s=>s.id===activeId),key=completionKey(session);
+  if(!key||!completionReads.unread(session))return;
+  if(!conversationDisplay.indexed&&receivedEventCursor<openedEventCursor&&completionProof!==key)return;
+  let proof=completionProof;
+  if(conversationDisplay.indexed){
+    const state=completionIndexState;
+    if(!state||state.conversationId!==activeId||state.status!=='current'||state.sourceFreshness!=='current'||state.runState!=='settled'||syncedView.readingOlder)return;
+    if(session.completedAt && !((typeof state.lastSourceCheckAt==='number'?state.lastSourceCheckAt:Date.parse(state.lastSourceCheckAt))>=Date.parse(session.completedAt)))return;
+    if(!state.entries?.length||!state.entries.every(item=>{const rendered=syncedView.nodes.get(item.id);return rendered?.node.isConnected&&rendered.revision===String(item.entityRevision??state.appliedRevision??state.baseRevision??'0');}))return;
+    const reply=state.entries.findLast(item=>item.kind==='assistant'),renderedReply=reply&&syncedView.nodes.get(reply.id);
+    if(reply?.contentTruncated && (renderedReply.displayedContentEnd??((reply.contentOffset||0)+(renderedReply.text?.length||0)))<reply.contentLength)return;
+    proof=key;
+  }else if(liveCompletionSettled && key!==liveCompletionStart){
+    // A fence follows pending native message renders, including fair-scheduler
+    // turns. Switching or a new run invalidates it through the view generation.
+    const acknowledge=()=>{
+      if(!liveCompletionSettled||completionKey(sessions.find(s=>s.id===activeId))!==key)return;
+      if(viewScheduler.pendingCount)return acknowledge;
+      completionProof=key;liveCompletionSettled=false;maybeReadCompletion();
+    };
+    viewScheduler.schedule({...currentRenderView(),entityId:'completion-read',entityRevision:key,priority:3,run:acknowledge});
+    return;
+  }
+  if(completionReads.read(session,proof))renderSessionList();
+}
 function sessionTitle(session) {
   const raw = (session && (session.name || session.preview)) || '';
   // The preview is the first prompt as sent; drop the attachment listing we append.
@@ -963,8 +1000,8 @@ function openGroupMenu(group,anchor){
 }
 
 function smallRunningCat(){const cat=pixelCat(document);cat.classList.add('sidebar-running-cat');return cat;}
-function smallFinishedCoffee(unread=true){
-  const label=unread?'已完成，待查看':'已完成';
+function smallFinishedCoffee(){
+  const label='已完成，待查看';
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox','0 0 28 20');svg.setAttribute('class','finished-coffee');
   svg.setAttribute('role','img');svg.setAttribute('aria-label',label);
@@ -992,16 +1029,16 @@ function sessionRow(session) {
   if(workspaceState?.conversations.find(c=>c.id===session.id)?.runState==='interrupted')main.append(el('span','interrupted-badge','上次运行中断 · 未自动续跑'));
   const metaParts = [relativeTime(conversationActivityAt(session)), session.messageCount ? session.messageCount + ' 条' : ''];
   if (attention === 'waiting') metaParts.unshift('等你回答');
-  else if (attention === 'finished') metaParts.unshift('已完成，待查看');
+  else if (completionReads.unread(session)) metaParts.unshift('已完成，待查看');
   else if (attention === 'running') metaParts.unshift('运行中');
   else if(session.runStatus==='settled')metaParts.unshift('已完成');
   if (terminal) metaParts.push('终端');
   main.appendChild(el('span', 'meta', metaParts.filter(Boolean).join(' · ')));
   item.appendChild(main);
   if (attention === 'waiting') item.appendChild(el('span', 'badge waiting', '?'));
-  else if (attention === 'finished') item.appendChild(smallFinishedCoffee());
+  else if (completionReads.unread(session) && attention !== 'running') item.appendChild(smallFinishedCoffee());
   else if (attention === 'running') item.appendChild(smallRunningCat());
-  else if(session.runStatus==='settled')item.appendChild(smallFinishedCoffee(false));
+
   const menu = el('button', 'more', '⋯');
   menu.type = 'button';
   menu.title = workspaceState ? '重命名 / Fork / 归档' : '重命名 / 删除';
@@ -1353,7 +1390,7 @@ async function whoAmI(epoch) {
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
     if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
-    conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
+    completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = navigation.initial(sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null); }
@@ -1375,11 +1412,12 @@ function revokeCachedIdentity(){
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  loginCoffee.reset();sidebarOrder.clear();conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
+  loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
 window.addEventListener('storage',event=>{
+  if(completionReads.key()&&(event.key===null||event.key?.startsWith(completionReads.key()))){completionReads.refresh();renderSessionList();return;}
   if(event.key!==CACHE_CLEAR_KEY)return;
   if(event.newValue?.startsWith('cache:')){void clearPreviews();if(previewScroll!==null)resetThread();connect();return;}
   revokeCachedIdentity();void clearPreviews();connect();
@@ -1611,6 +1649,7 @@ function handleFrame(frame, ws) {
     case 'sessions':
       void loadWorkspace();
       sessions = Array.isArray(frame.sessions) ? frame.sessions : [];
+      maybeReadCompletion();
       renderSessionList();
       renderHeader();
       return;
@@ -1619,6 +1658,9 @@ function handleFrame(frame, ws) {
       if(pendingOpenId && pendingOpenId!=="new" && frame.sessionId!==pendingOpenId)return;
       engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;resetSlashCommands();skillReloadScope=null;
       const sameTransfer=(transfer?.sessionId || transfer?.scope)===frame.sessionId;
+      openedEventCursor=Number.isSafeInteger(frame.cursor)?frame.cursor:0;receivedEventCursor=0;
+      openCompletionKey=completionKey(sessions.find(s=>s.id===frame.sessionId));
+      liveCompletionStart=sessions.find(s=>s.id===frame.sessionId)?.completionId||openCompletionKey;
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
@@ -1651,7 +1693,9 @@ function handleFrame(frame, ws) {
     case 'history': {
       if (frame.sessionId !== activeId) return;
       if(!conversationDisplay.history(frame))return;
-      historyReady=true;renderUncertainPrompts();if(!conversationDisplay.indexed)rememberRecentThread();refreshComposer();flushFirstPrompt();
+      historyReady=true;
+      if(!conversationDisplay.indexed){completionProof=frame.completionId||(openCompletionKey?.startsWith('legacy:')?openCompletionKey:null);if(!streaming)liveCompletionStart=completionProof;maybeReadCompletion();}
+      renderUncertainPrompts();if(!conversationDisplay.indexed)rememberRecentThread();refreshComposer();flushFirstPrompt();
       return;
     }
     case 'model_catalog':
@@ -1737,14 +1781,15 @@ function handleFrame(frame, ws) {
       return;
     case 'event':
       if(frame.sessionId!==activeId)return;
+      if(Number.isSafeInteger(frame.cursor))receivedEventCursor=Math.max(receivedEventCursor,frame.cursor);
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       if(conversationDisplay.indexed){
         requestConversationSync();
         const type=frame.event?.type;
         if(['message_delta','message_completed','tool_update','message_update','message_start','message_end','tool_execution_start','tool_execution_update','tool_execution_end'].includes(type))return;
       }
-      handleEvent(frame.event || {});
-      scheduleRecentThread();
+      handleEvent(frame.event || {},{replayed:Number.isSafeInteger(frame.cursor)&&frame.cursor<=openedEventCursor});
+      maybeReadCompletion();scheduleRecentThread();
       return;
     case 'error':
       void loadRuntimeStatus();
@@ -1782,10 +1827,10 @@ function handleFrame(frame, ws) {
   }
 }
 
-function handleEvent(event) {
+function handleEvent(event,{replayed=false}={}) {
   const type = event.type;
 
-  if (type === 'agent_start') { setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
+  if (type === 'agent_start') {startCompletionReadRun(replayed); setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
   if (type === 'tool_execution_update') {
     // Live output of a running command: refresh the card at most once per frame.
     const entry = event.toolCallId && openTools.get(event.toolCallId);
@@ -1795,7 +1840,7 @@ function handleEvent(event) {
     return;
   }
   if (type === 'turn_diff') { scheduleTurnDiffRefresh(); return; }   // Codex edited a file: refresh an open 最近一轮
-  if(type==='run_started'){setStreaming(true);showThinking(true);return;}
+  if(type==='run_started'){startCompletionReadRun(replayed);setStreaming(true);showThinking(true);return;}
   if(type==='message_delta' || type==='message_completed'){
     showThinking(false);let entry=nativeItems.get(event.id);
     if(!entry){entry=pushAssistant('');nativeItems.set(event.id,entry);}
@@ -1810,6 +1855,7 @@ function handleEvent(event) {
   if(type==='native_request'){handleExtensionUi(event);return;}
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
+    liveCompletionSettled=true;
     void documentDownloads.refresh(true);
     queuedRequests.clear();
     pendingDelivery=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
@@ -1879,6 +1925,7 @@ function handleEvent(event) {
   if (type === 'compaction_end') { if(compacting)return; const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
 
   if (type === 'agent_settled') {
+    liveCompletionSettled=true;
     void documentDownloads.refresh(true);
     queuedRequests.clear();
     pendingDelivery=null;
@@ -2940,7 +2987,7 @@ $('#search-open').addEventListener('click',()=>setSearchOpen(true));
 $('#search-close').addEventListener('click',()=>{setSearchOpen(false);$('#search-open').focus();});
 $('#search-filters').addEventListener('click',event=>{const button=event.target.closest('[data-filter]');if(!button)return;searchFilter=button.dataset.filter;for(const item of $('#search-filters').querySelectorAll('button'))item.setAttribute('aria-pressed',String(item===button));renderSearchResults();});
 ui.search.addEventListener('input',renderSearchResults);
-ui.scroller.addEventListener('scroll', () => ui.toBottom.classList.toggle('hidden', nearBottom()));
+ui.scroller.addEventListener('scroll', () => {ui.toBottom.classList.toggle('hidden', nearBottom());maybeReadCompletion();});
 ui.toBottom.addEventListener('click', scrollToEnd);
 document.addEventListener('keydown', (event) => {
   if(event.isComposing || event.keyCode===229 || event.defaultPrevented)return;
@@ -2965,6 +3012,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState==='visible')maybeReadCompletion();
   if (document.visibilityState === 'visible' && socket && socket.readyState === WebSocket.OPEN) send({ v: 1, type: 'list_sessions' });
 });
 installCopyHandlers(ui.thread);

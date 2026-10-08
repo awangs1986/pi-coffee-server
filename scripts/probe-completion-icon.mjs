@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright';
 const root=resolve('dist/public');
-let runStatus='settled',grouped=true;
-const sessions=()=>['completed','untouched'].map((id,i)=>({id,name:`Synthetic ${id}`,engine:'pi',createdAt:`2026-10-06T00:00:0${i}Z`,updatedAt:'2026-10-06T01:00:00Z',messageCount:2,preview:'Synthetic fixture',running:id==='completed'&&runStatus==='running',...(id==='completed'?{runStatus}:{})}));
+let runStatus='settled',grouped=true,completionId='completion-1';
+const sessions=()=>['completed','untouched'].map((id,i)=>({id,name:`Synthetic ${id}`,engine:'pi',createdAt:`2026-10-06T00:00:0${i}Z`,updatedAt:'2026-10-06T01:00:00Z',messageCount:2,preview:'Synthetic fixture',running:id==='completed'&&runStatus==='running',...(id==='completed'?{runStatus,completionId}:{})}));
 const json=(res,data)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data));};
 const server=createServer(async(req,res)=>{
  try{
@@ -34,7 +34,7 @@ ws.on('connection',socket=>{
   if(f.type==='list_sessions')send({type:'sessions',sessions:sessions()});
   if(f.type==='open'){
    send({type:'opened',sessionId:f.sessionId,engine:'pi',state:{isStreaming:false},capabilities:{}});
-   send({type:'history',sessionId:f.sessionId,entries:[{kind:'assistant',id:'fixture',text:'Synthetic completed reply'}]});
+   send({type:'history',sessionId:f.sessionId,completionId,entries:[{kind:'assistant',id:'fixture',text:'Synthetic completed reply'}]});
   }
  });
 });
@@ -43,22 +43,34 @@ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECU
 const evidence=[];
 try{
  for(grouped of [true,false]){
-  runStatus='settled';const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  runStatus='settled';completionId='completion-1';const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/?syncProtocol=1`);
   const row=page.locator('[data-session-id="completed"]');await row.locator('.finished-coffee').waitFor();
   assert.equal(await page.locator('[data-session-id="untouched"] .finished-coffee').count(),0);
+  await page.addInitScript(()=>Object.defineProperty(document,'visibilityState',{get:()=>window.fixtureVisibility||'visible'}));
+  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{get:()=>window.fixtureVisibility||'visible',configurable:true});window.fixtureVisibility='hidden';});
   await row.locator('.session-main').click();await page.locator('#thread').getByText('Synthetic completed reply').waitFor();
-  assert.equal(await row.locator('.finished-coffee').getAttribute('aria-label'),'已完成');
-  await page.reload();await row.locator('.finished-coffee').waitFor();
-  assert.equal(await row.locator('.finished-coffee').count(),1);
+  assert.equal(await row.locator('.finished-coffee').count(),1,'A hidden tab must not acknowledge completion');
+  await page.evaluate(()=>{window.fixtureVisibility='visible';document.dispatchEvent(new Event('visibilitychange'));});
+  await page.waitForFunction(()=>!document.querySelector('[data-session-id="completed"] .finished-coffee'));
+  assert.equal(await row.locator('.finished-coffee').count(),0,'Reading the latest completed reply must clear the coffee indicator');
+  await page.reload();await page.locator('#thread').getByText('Synthetic completed reply').waitFor();
+  assert.equal(await row.locator('.finished-coffee').count(),0,'Read completion must stay hidden after reload');
   const order=await page.locator('#session-list [data-session-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.sessionId));
   runStatus='running';for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'sessions',sessions:sessions()}));
   await row.locator('.sidebar-running-cat').waitFor();assert.equal(await row.locator('.finished-coffee').count(),0);
+  // A later completion cannot be acknowledged against the previous reply.
+  completionId='completion-2';runStatus='settled';for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'sessions',sessions:sessions()}));
+  await row.locator('.finished-coffee').waitFor();
+  for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'history',sessionId:'completed',completionId:'completion-1',entries:[{kind:'assistant',id:'fixture',text:'Synthetic completed reply'}]}));
+  await page.waitForTimeout(100);assert.equal(await row.locator('.finished-coffee').count(),1,'Stale history must not read a new completion');
+  for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'history',sessionId:'completed',completionId,entries:[{kind:'assistant',id:'fixture-2',text:'Synthetic next completed reply'}]}));
+  await page.waitForFunction(()=>!document.querySelector('[data-session-id="completed"] .finished-coffee'));
   runStatus='interrupted';for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'sessions',sessions:sessions()}));
   await page.waitForFunction(()=>!document.querySelector('[data-session-id="completed"] .sidebar-running-cat'));
   assert.equal(await row.locator('.finished-coffee').count(),0);
   if(!grouped)assert.deepEqual(await page.locator('#session-list [data-session-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.sessionId)),order);
-  assert.deepEqual(errors,[]);evidence.push({grouped,reloadCoffee:true,untouchedNoCoffee:true,runningOverrides:true,interruptedNoCoffee:true,pageErrors:errors.length});
+  assert.deepEqual(errors,[]);evidence.push({grouped,readSurvivesReload:true,newCompletionUnread:true,staleHistoryRejected:true,hiddenTabUnread:true,untouchedNoCoffee:true,runningOverrides:true,interruptedNoCoffee:true,pageErrors:errors.length});
   await page.close();
  }
  const result={passed:true,evidence};
