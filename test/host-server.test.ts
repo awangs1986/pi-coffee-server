@@ -1305,6 +1305,18 @@ describe("Host WebSocket seam", () => {
     await expect(frames.next()).resolves.toMatchObject({ type: "error", code: "not_open" });
     socket.close();
   });
+
+  it("answers connection pings while native open is blocked, without creating a second session",async()=>{
+    let release!:()=>void;const gate=new Promise<void>(r=>release=r);let creates=0;
+    const factory=new FakeFactory();const create=factory.create.bind(factory);factory.create=async options=>{creates++;await gate;return create(options);};
+    server=new HostServer({port:0,factory,idleTimeoutMs:0});await server.start();const socket=await connect(server.address().port),frames=new FrameQueue(socket);
+    try{
+      socket.send(encodeFrame({v:1,type:'open',sessionId:'slow-open'}));
+      socket.send(encodeFrame({v:1,type:'ping',nonce:'during-open'}));
+      await expect(frames.next()).resolves.toMatchObject({type:'pong',nonce:'during-open'});
+      release();await expect(frames.next()).resolves.toMatchObject({type:'opened'});expect(creates).toBe(1);
+    }finally{release();socket.close();}
+  });
   it("archives without stopping children and refuses deletion until all writers are quiescent",async()=>{
     const root=mkdtempSync(join(tmpdir(),"coffee-lifecycle-"));
     const factory=new FakeFactory();const {workspaces:ws,conversation}=await workspaceConversation(root,"safe");

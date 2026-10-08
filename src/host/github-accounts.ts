@@ -32,6 +32,7 @@ export class GitHubAccounts {
   private async prepareEnvironment(id:unknown,ghProgram?:string):Promise<Record<string,string>> {
     if(id!==undefined&&(typeof id!=='string'||!/^[a-zA-Z0-9-]{1,100}$/.test(id)))throw new Error('Invalid GitHub authorization');
     const bin=join(this.root,'tools',id??'unbound'),config=join(bin,'config');
+    await mkdir(this.root,{recursive:true,mode:0o700});
     await mkdir(config,{recursive:true,mode:0o700});
     // Git gets a private HOME so ~/.netrc and global helpers cannot silently authenticate.
     const gitProgram=(await exec('/bin/sh',['-c','command -v git'],{env:process.env})).stdout.trim();
@@ -42,7 +43,6 @@ export class GitHubAccounts {
       if(value)identity[key]=value;
     }
     const transport=join(this.root,'transport.json'),temp=transport+'.'+randomUUID();
-    await mkdir(this.root,{recursive:true,mode:0o700});
     await writeFile(temp,JSON.stringify({identity,gitea:this.options.gitea}),{mode:0o600});await rename(temp,transport);
     const script=fileURLToPath(new URL('./github-tools.mjs',import.meta.url));
     for(const [name,program] of [['gh',ghProgram],['git',gitProgram]]){

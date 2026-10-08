@@ -329,3 +329,32 @@ separate drafts; delayed replies unable to repaint another view; login/deep-link
 recovery; unavailable-ID errors; active native task continuity; and queue promotion
 under occupied background capacity. Report local paint, latest reply visibility
 and native readiness separately. A cache paint alone is not a freshness verdict.
+
+## Connection recovery (2026-10-08)
+
+[Server #103](https://github.com/awangs1986/pi-coffee-server/issues/103)
+adds a Browser-to-Host application ping every 15 seconds while visible. A matching
+pong must arrive within 10 seconds. Pings are authenticated connection operations,
+carry no task binding, and do not wait behind native opening, Fork, takeover or
+context reset. Hidden pages pause heartbeat timers; returning or coming online
+probes the current connection and requests fresh session/history metadata.
+Repeated wake events do not extend an outstanding pong deadline.
+
+A silent transport follows the ordinary disconnect cleanup, retains editable
+and unacknowledged drafts, and reconnects with exponential backoff and jitter
+(about 1 second initially, capped near 30 seconds). Only an end-to-end matching
+pong resets the backoff. Opening the Browser-to-Web socket alone is insufficient.
+The Web-to-Host hop also uses protocol ping every 20 seconds and terminates only
+that socket after 10 seconds without pong. Native task processes continue running.
+
+Cached models remain display-only; selectable model/source/thinking controls wait
+for the authoritative catalog. Initial model requests carry a selection epoch;
+a late response cannot overwrite another selected task. A slow catalog shows a
+synchronization notice after eight seconds without making the cached catalog
+editable or changing native settings.
+
+The compact spacing update retains the existing desktop/mobile layout and all
+operation controls. Codex defaults remain unrestricted with native approval set
+to never, and the existing Work environment instruction asks for user consent
+before dangerous operations. Repository-free Chat retains its zero-custom-prompt
+contract. File transfer retains its reachable LAN bind and scoped grants.

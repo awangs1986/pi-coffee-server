@@ -64,8 +64,9 @@ describe("original Pi RPC adapter", () => {
   });
 
   it("strips Relay credentials from the spawned Host Pi environment", () => {
-    const env = buildHostChildEnv({ PI_COFFEE_UPSTREAM_KEY: "override", SAFE_SETTING: "kept" });
+    const env = buildHostChildEnv({ PI_COFFEE_UPSTREAM_KEY: "override", PI_COFFEE_GITEA_TOKEN: "synthetic-forge-secret", SAFE_SETTING: "kept" });
     expect(env.SAFE_SETTING).toBe("kept");
+    expect(env.PI_COFFEE_GITEA_TOKEN).toBeUndefined();
     for (const key of HOST_STRIPPED_ENV_KEYS) expect(env[key]).toBeUndefined();
   });
 

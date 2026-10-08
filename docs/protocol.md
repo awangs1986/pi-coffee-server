@@ -404,3 +404,12 @@ Projects and Conversations persist `githubAccountId`; repository list/PR/Git
 execution resolve it only inside the authenticated user scope. `github_bind` with
 `projectId` and `accountId` explicitly migrates an unbound legacy project and its
 idle tasks. See [the current contract](spec/github-accounts.md).
+
+## Connection-level ping (2026-10-08)
+
+`ping` is allowed on an authenticated connection before or during `open`. It is
+independent of conversation/binding epochs and task lifecycle locks; the Host
+immediately returns `pong` with the validated nonce. It does not create or resume
+an Agent session. Other session commands retain their open, scope and binding
+checks. Malformed frames retain normal protocol rejection. See Server #103 and
+[connection recovery](spec/conversation-switching.md#connection-recovery-2026-10-08).
