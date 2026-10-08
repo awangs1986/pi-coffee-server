@@ -320,11 +320,15 @@ it.each(['codex','claude','cursor','grok'] as const)('reports missing native aut
  expect((await app.request({action:'conversation',workspaceKind:'project',projectId:app.projectId,id:'no-auth',engine})).status).toBe(409);
 });
 
-it('rejects native Chat creation without persisting a Task and defaults Chat to Pi',async()=>{
+it('creates repository-free Codex Chat while defaulting Chat to Pi and rejecting other engines',async()=>{
  const app=await start(undefined,true);
- const denied=await app.request({action:'conversation',workspaceKind:'chat',id:'native-chat',engine:'codex'});
- expect(denied.status).toBe(409);expect(await denied.json()).toMatchObject({error:expect.stringContaining('Chat is available only with Pi')});
- expect((await (await app.request()).json()).conversations).toEqual([]);
+ const created=await app.request({action:'conversation',workspaceKind:'chat',id:'native-chat',engine:'codex'});
+ expect(created.status,await created.clone().text()).toBe(200);
+ const chat=await created.json();expect(chat).toMatchObject({engine:'codex',workspaceKind:'chat',branch:'',creationState:'ready'});expect(chat.projectId).toBeUndefined();
+ expect((await app.request({action:'conversation',workspaceKind:'chat',id:chat.id,engine:'codex'})).status).toBe(200);
+ expect((await app.request({action:'conversation',workspaceKind:'chat',id:chat.id,engine:'pi'})).status).toBe(409);
+ for(const engine of ['claude','cursor','grok'])expect((await app.request({action:'conversation',workspaceKind:'chat',id:'unsupported-'+engine,engine})).status).toBe(409);
+ expect((await (await app.request()).json()).conversations).toHaveLength(1);
  const allowed=await app.request({action:'conversation',workspaceKind:'chat',id:'default-chat'});
  expect(allowed.status).toBe(200);expect(await allowed.json()).toMatchObject({engine:'pi',workspaceKind:'chat'});
 });

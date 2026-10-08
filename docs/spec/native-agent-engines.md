@@ -31,7 +31,7 @@ This maintained contract is implemented for the version-pinned interfaces; live 
 6. As a Browser User, I want the existing three-pane layout to remain, so that adding engines does not change how I navigate.
 7. As a Browser User, I want to choose a Gitea Project and starting branch, so that each engine starts from the intended code.
 8. As a Browser User, I want every code Task to receive an independent clone and Conversation Branch, so that simultaneous Tasks do not share local Git state.
-9. As a Browser User, I want a Pi-only local Chat Workspace without a Repository, so that conversations and their attachments still have a dedicated directory.
+9. As a Browser User, I want a Pi or Codex local Chat Workspace without a Repository, so that conversations and their attachments still have a dedicated directory.
 10. As a Browser User, I want Workspace type and native engine mode to remain distinct, so that choosing a directory does not silently alter agent behavior.
 11. As a Browser User, I want VM identity, Project, complete local path, actual branch and synchronization status to remain available, so that I know where work happens.
 12. As a Browser User, I want rename, refresh and reconnect to retain the same Workspace, so that my local work remains stable.
@@ -75,7 +75,7 @@ This maintained contract is implemented for the version-pinned interfaces; live 
 3. **NE-03 — Pi customization isolation.** Preserve Pi's current Chat/Work policies, prompts, tools, LSP Skill/CLI integration, plugins, search/subagent configuration and native automatic compaction plus experimental manual Handoff. Move automatic Pi configuration injection behind the Pi Adapter. Do not install or inject those customizations, system prompts, tool restrictions, environment overrides or Relay routing into Codex or Claude Code. Existing ordinary project instructions remain subject to each engine's native discovery rules; the platform must not synthesize Pi instructions into another engine's project configuration.
 4. **NE-04 — Native permissions.** Preserve the trusted User VM owner deployment and its existing Git/file service boundaries. No new PI Coffee command sandbox or approval tier is introduced. This does not remove Codex or Claude Code's own permission, approval, trust or sandbox behavior, and the platform must not automatically enable bypass settings. Surface supported native requests and use native user configuration without rewriting it to imitate Pi.
 5. **NE-05 — Stable identity.** Persist the selected engine, native Session identifier when established, owning VM, Workspace identity and creation/binding state. A native Session identifier is scoped by engine and VM; it is not assumed to equal the platform Conversation ID. Existing records without engine metadata resolve to Pi. Keep native identity out of authorization decisions supplied by the browser. A missing native transcript must produce a recoverable error, not an empty replacement Session.
-6. **NE-06 — Engine creation and explicit takeover.** New Work tasks choose any of the five Host-advertised engines. Ordinary creation retries, reconnects, model changes and archive/restore preserve the engine and native binding. Only the owner-confirmed [Work Pi/Codex takeover](agent-takeover.md) may replace the active binding, after drift consent and successful reconstruction in a fresh native session. Chat remains Pi and cannot upgrade; Claude, Cursor and Grok are not switchable. Persist authoritative native IDs; never resend uncertain prompts or silently fall back to another engine. Validate the registered workspace before starting an Agent.
+6. **NE-06 — Engine creation and explicit takeover.** New Work tasks choose any of the five Host-advertised engines. Ordinary creation retries, reconnects, model changes and archive/restore preserve the engine and native binding. Only the owner-confirmed [Work Pi/Codex takeover](agent-takeover.md) may replace the active binding, after drift consent and successful reconstruction in a fresh native session. Chat remains on its selected Pi or Codex engine and cannot upgrade; Claude, Cursor and Grok are not switchable. Persist authoritative native IDs; never resend uncertain prompts or silently fall back to another engine. Validate the registered workspace before starting an Agent.
 
 7. **NE-07 — Workspace identity versus mode.** Keep Chat and Project Workspace semantics, independent clones, assigned branches, paths and file ownership unchanged. The existing Chat/Work product labels must not claim that Codex or Claude Code is running Pi's Chat/Work policy. Native planning, reasoning or permission modes are native capabilities, not automatic translations of Pi slash commands. A native mode change does not move the Workspace.
 8. **NE-08 — Codex transport.** Prefer the installed native Codex App Server using its documented local stdio protocol behind the Host. Keep the process and native history in the User VM and translate thread/turn/item lifecycle into the common Host contract. No MCP layer or externally exposed Codex listener is required. Pin and record the verified CLI/protocol version; generate or consume version-appropriate schemas where provided. Experimental upstream interfaces are a version-validation requirement, not a claim of stable support across arbitrary releases.
@@ -168,7 +168,9 @@ compatibility; status-command failure remaining unknown. See
 - Sources inspected on 2026-09-23: [Codex App Server](https://developers.openai.com/codex/app-server), [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), and [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview). The distinction between an end user's official login to hosted unmodified Claude Code and third-party SDK authentication must remain explicit. Applicable terms should be rechecked before release; this SPEC is not a provider's written approval.
 - [ClaudeCodeUI runtime at revision 6c51fcaa76c250af70561fad7312c5a7f841a733](https://github.com/siteboon/claudecodeui/blob/6c51fcaa76c250af70561fad7312c5a7f841a733/server/modules/providers/list/claude/claude-runtime.provider.js) demonstrates streaming, native ID mapping and interruption through the Agent SDK. It is technical prior art only; this SPEC neither adopts its authentication path nor copies its implementation. The selected native CLI transport and pinned-version verification are recorded in the implementation evidence and deployment runbook.
 
-## Pi-only Chat creation — owner correction, 2026-09-23
+## Historical Pi-only Chat creation — owner correction, 2026-09-23
+
+Superseded for Codex creation by [repository-free Chat](#repository-free-codex-chat--2026-10-08-server-98). The dated decision below explains the previous restriction.
 
 Agent #60 / Server #4 supersedes engine-independent Chat creation. New Chat
 Tasks default to Pi and reject Codex/Claude at the Host HTTP creation boundary
@@ -180,3 +182,74 @@ and history are not migrated or relabeled by this change.
 Pi account import into Web Server is a possible future direction only. No
 credentials move in this change; native Codex/Claude authentication and VM data
 ownership remain unchanged.
+
+
+## Repository-free Codex Chat — 2026-10-08, Server #98
+
+The owner reopens Codex Chat. A new Chat defaults to Pi and may select available
+Codex before creation; Claude, Cursor and Grok remain Work-only. Host advertises
+`chatEngines`; a Browser connected to an older Host treats missing metadata as
+Pi-only. Native authentication/readiness still gates Codex. No repository, forge
+permission, Project or Git clone is required. Directory and attachment ownership
+use the existing per-user task bundle. Creation retries preserve the chosen engine.
+Chat cannot upgrade to Work or use Agent takeover. Nonempty native threads retain their binding across archive/reopen, along with
+cwd, history and acknowledged model settings.
+
+Codex Chat retains native Codex prompts, tools, Skills, authentication and question
+transport. It does not load Pi Harness or automatically activate MISHU. Coffee
+supplies no Work environment, project/Fork or test-runner guidance. Native user
+configuration and the existing Web question-delivery bridge remain intact; Pi's
+zero-system filtering is not applied to Codex's provider payload.
+
+The native catalog determines selectable models, including Luna when available;
+Coffee does not fabricate a model list or guarantee provider access. Users select
+model, reasoning (default medium) and context preset before the first message.
+The first message waits for acknowledged settings; failures retain the draft.
+Selections survive native/Host restart without another conversation's defaults.
+
+Context Usage exposes one-click clear without confirmation for supported engines.
+`contextResetEngines` advertises exact support; older Hosts default to Pi support.
+Clear requires an idle, unarchived Chat, an exact expected native ID and a unique
+operation ID. Host prepares an empty native thread, applies model/effort/context
+and title, checks emptiness, and atomically changes the binding. Failed preparation
+keeps the original active binding. Old native records and local files are retained;
+no vendor session file is rewritten or transcript replayed. Repeating an accepted
+operation is idempotent; a stale expected binding is rejected. An empty Codex thread
+may also be replaced by native context-preset selection: Host fences this against
+the previous binding and retains the retired native ID.
+
+Acceptance: `test/native-engines.test.ts` (HTTP creation/retry/unsupported engines),
+`test/native-agents.test.ts` (draft Luna ACK ordering and one-click clear),
+`test/codex-chat-http.test.ts` (production Host entry, native JSON-RPC, guidance,
+model/effort/context, archive/restart and reset), plus existing scope, attachment,
+Pi Chat and streaming responsiveness regressions. CLI fixtures do not establish
+real-account model acceptance. Source verification is separate from deployment.
+
+
+Native Codex 0.159.1 does not durably reopen an entirely empty thread. Coffee
+records a Host-owned `nativeContextEmpty` marker only on new Codex Chat or explicit
+clear. For that marker and a native missing-thread/missing-rollout response only,
+Host can recreate empty context through native APIs, carry confirmed settings and
+atomically rebind the same Chat; no historical input is replayed. Prompt admission
+revokes this marker durably before native dispatch. Once any prompt was admitted,
+or for Work/legacy/unknown records, a missing native transcript remains an error.
+Authentication, timeout and arbitrary native errors never trigger this recovery.
+Old IDs are retained, and the cleared title stays available in task metadata.
+
+
+A fresh native thread can report an unmaterialized or missing-source-rollout
+paginated history before its first input. Only those exact ID-bound responses for
+a fresh or explicitly proven unused native session are treated as empty; after
+native input or on unknown resumed history the error surfaces. `scripts/probe-codex-chat-native.mjs`
+checks installed native empty recovery, Luna/medium/500K and revoked recovery,
+without any model turn. `scripts/probe-codex-chat.mjs` checks desktop/mobile draft
+creation in the actual Browser, using synthetic HTTP/WS.
+
+
+The adapter also persists an `emptyContext` proof in its existing per-thread
+settings sidecar. Model/effort/context changes retain that proof only before any
+native input; native prompt admission durably revokes it before `turn/start`.
+When a Host supplies an empty-recovery authority, its current scoped decision
+must also permit treating resumed native history as known empty. Old sidecars
+without this Boolean are unproven, and an admitted request is not replayed after
+clear. The native settings file remains Coffee-owned; vendor history is unchanged.
