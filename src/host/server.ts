@@ -1051,7 +1051,7 @@ class HostSocket implements SessionSink {
         useSync=false;syncPage=undefined;
         return this.registry.open(sessionId,frame.after);
       }
-      return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},replay:[] as ServerFrame[],resync:undefined};
+      return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},completionId:null,replay:[] as ServerFrame[],resync:undefined};
     })() : await this.registry.open(sessionId, frame.after);
     this.syncProtocol=useSync?2:undefined;
     // Switching away while native history loads must not leave a phantom subscriber.
@@ -1073,7 +1073,7 @@ class HostSocket implements SessionSink {
       cursor: result.session.currentCursor,
       state,
     });
-    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId));
+    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:{...boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId),completionId:result.completionId});
     if(syncPage)this.index!.scheduleAudit(sessionId,true);
 
     if (result.resync) {
@@ -1195,7 +1195,7 @@ class NotOpenError extends Error {
  * The history frame must respect MAX_FRAME_BYTES. Keep the newest entries and
  * flag truncation; older conversation stays in the User VM's session file.
  */
-function boundedHistoryFrame(sessionId: string, entries: HistoryEntry[], leafId: string | null): ServerFrame {
+function boundedHistoryFrame(sessionId: string, entries: HistoryEntry[], leafId: string | null): Extract<ServerFrame,{type:"history"}> {
   const budget = MAX_FRAME_BYTES - 4096;
   let kept = entries;
   let truncated = false;

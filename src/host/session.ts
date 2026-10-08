@@ -19,6 +19,7 @@ export interface SessionSink {
 }
 
 export interface HostSessionOptions {
+  completionForHistory?:(id:string)=>Promise<string|null>;
   runnerGuidance?:(id:string)=>Promise<{revision:string;text?:string}|undefined>;
   id?: string;
   factory: PiSessionFactory;
@@ -44,6 +45,7 @@ export interface HostSessionOptions {
 export interface SessionOpenResult {
   session: HostSession;
   history: PiHistory;
+  completionId?: string|null;
   replay: ServerFrame[];
   resync?: { oldestCursor: number; newestCursor: number };
 }
@@ -62,6 +64,7 @@ export class HostSession {
   private readonly eventBufferSize: number;
   private readonly idleTimeoutMs: number;
   private readonly onIdle?: (session: HostSession) => void;
+  private readonly completionForHistory?:HostSessionOptions["completionForHistory"];
   private readonly onHistory?: (id:string,history:PiHistory)=>Promise<void>;
   private readonly onRun?: HostSessionOptions["onRun"];
   private readonly onEvent?: HostSessionOptions["onEvent"];
@@ -120,6 +123,7 @@ export class HostSession {
     this.eventBufferSize = Math.max(1, options.eventBufferSize ?? 256);
     this.idleTimeoutMs = Math.max(0, options.idleTimeoutMs ?? 0);
     this.onIdle = options.onIdle;
+    this.completionForHistory=options.completionForHistory;
     this.onHistory=options.onHistory;
     this.onRun=options.onRun;this.onEvent=options.onEvent;this.onCommand=options.onCommand;
     this.onLifecycle = options.onLifecycle;
@@ -161,9 +165,10 @@ export class HostSession {
     if(after!==undefined && after>this.cursor)throw new Error("Future session cursor");
     // Capture a proven completion boundary BEFORE asynchronous export. A completion
     // racing the history RPC requires another read, never an invented watermark.
-    let history:PiHistory;let historyCursor:number;let attempts=0;
+    let history:PiHistory;let historyCursor:number;let completionId:string|null;let attempts=0;
     do {
       historyCursor=this.lastMessageEndCursor;
+      completionId=await this.completionForHistory?.(this.id)??null;
       history=await this.pi.getHistory();
       if(historyCursor===this.lastMessageEndCursor)break;
       if(++attempts>=3)throw new Error("History changed while loading; retry the read");
@@ -180,7 +185,7 @@ export class HostSession {
     const replay = resync
       ? []
       : this.events.filter((frame) => frame.type === "event" && frame.cursor > replayFrom);
-    return { session: this, history, replay, ...(resync === undefined ? {} : { resync }) };
+    return { session: this, history, completionId, replay, ...(resync === undefined ? {} : { resync }) };
   }
 
   attach(sink: SessionSink): void {
@@ -602,7 +607,7 @@ export class HostSessionRegistry {
 
   private readonly externalPollMs?: number;
 
-  constructor(private options: { runStatuses?:()=>Promise<Map<string,NonNullable<SessionSummary["runStatus"]>>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -633,6 +638,7 @@ export class HostSessionRegistry {
       ...(this.externalPollMs === undefined ? {} : { externalPollMs: this.externalPollMs }),
       onIdle: (idle) => void this.retire(idle),
       onLifecycle: (session) => this.notifyChange(session),
+      completionForHistory:this.options.runStatuses?async id=>{const metadata=(await this.options.runStatuses!()).get(id);return metadata?.runStatus==='settled'?metadata.completionId??null:null;}:undefined,
       onHistory:this.options.onHistory,
       onRun:this.options.onRun,
       onEvent:this.options.onEvent,onCommand:this.options.onCommand,
@@ -725,7 +731,7 @@ export class HostSessionRegistry {
     const statuses=await this.options.runStatuses?.();
     return summaries.map(item=>{
       const status=statuses?.get(item.id);
-      return {...item,...(status?{runStatus:status}:{})};
+      return {...item,...(status??{})};
     });
   }
 

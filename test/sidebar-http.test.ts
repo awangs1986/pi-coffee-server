@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,rename} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
@@ -79,7 +79,13 @@ it('keeps last native run boundaries scoped and durable without inferring comple
   const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No Agent needed');}};
   server=new HostServer({port:0,token:'completion-scope',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
   const get=async(user:string)=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{headers:{authorization:'Bearer completion-scope','x-pi-coffee-user':user}});expect(r.status).toBe(200);return (await r.json()).conversations[0];};
-  expect(await get('alice')).toMatchObject({id:'same-id',lastRunStatus:'settled',runState:'idle'});
+  const completed=await get('alice');
+  expect(completed).toMatchObject({id:'same-id',lastRunStatus:'settled',runState:'idle',completionId:expect.any(String),completedAt:expect.any(String)});
+  await stores.get('alice')!.recordRunStatus('same-id','settled');
+  expect((await get('alice')).completionId).toBe(completed.completionId);
+  await stores.get('alice')!.markRun('same-id','running');
+  await stores.get('alice')!.recordRunStatus('same-id','settled');
+  expect((await get('alice')).completionId).not.toBe(completed.completionId);
   expect((await get('bob')).lastRunStatus).toBeUndefined();
   await stores.get('alice')!.markRun('same-id','running');
   expect((await get('alice')).lastRunStatus).toBe('running');
@@ -90,6 +96,19 @@ it('keeps last native run boundaries scoped and durable without inferring comple
   await stores.get('bob')!.recordRunStatus('same-id','settled');
   await stores.get('bob')!.commitContextReset('same-id',{id:'synthetic-reset',expectedNativeId:'same-id'},'reset-binding');
   expect((await get('bob')).lastRunStatus).toBeUndefined();
+  expect((await get('bob')).completionId).toBeUndefined();
   expect((await get('bob')).cwd).toBe(c!.cwd);
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
+
+ it('preserves the original completion identity when context reset cannot persist',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'coffee-reset-completion-'));
+  try{
+   const store=new Workspaces(join(root,'projects'));await store.createChatConversation('reset');
+   await store.recordRunStatus('reset','settled');const before=structuredClone(await store.lookup('reset'));
+   const state=join(store.root,'.coffee','state.json');
+   await rename(state,state+'.backup');await mkdir(state);
+   await expect(store.commitContextReset('reset',{id:'reset-attempt',expectedNativeId:'reset'},'new-binding')).rejects.toThrow();
+   expect(await store.lookup('reset')).toMatchObject({lastRunStatus:'settled',completionId:before!.completionId,completedAt:before!.completedAt});
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
