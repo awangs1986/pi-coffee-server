@@ -2,8 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 export interface NativeCommand { command: string; args?: string[]; env?: Record<string,string>; }
 export function nativeEnvironment(overrides: Record<string,string> = {}): NodeJS.ProcessEnv {
-  const env = {...process.env, ...overrides};
+  // Strip Host secrets from the inherited environment first, then apply the
+  // caller's overrides so intentional workspace markers (DATA_ROOT, INITIAL_MODE,
+  // SUBAGENTS_TEMP_ROOT, …) survive into the native child.
+  const env = {...process.env};
   for (const key of Object.keys(env)) if (/^(PI_COFFEE_|PI_SUBAGENTS_|PI_MCP_|PI_LSP_)/.test(key)) delete env[key];
+  Object.assign(env, overrides);
   return env;
 }
 /** One task-owned native child. No shell, credential inspection or browser lifetime ownership. */

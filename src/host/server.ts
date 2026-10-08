@@ -994,7 +994,7 @@ class HostSocket implements SessionSink {
           break;
         }
         case "ping":
-          if (!this.opened) throw new NotOpenError();
+          // Connection-level keepalive: answer before a Session is opened.
           this.send({ v: 1, type: "pong", nonce: frame.nonce });
           break;
         case "close":

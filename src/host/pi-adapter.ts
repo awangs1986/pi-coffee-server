@@ -61,6 +61,8 @@ export const HOST_STRIPPED_ENV_KEYS = [
   "PI_COFFEE_RELAY_TOKENS",
   "SERPER_API_KEY",
   "PI_COFFEE_GITEA_CLIENT_SECRET",
+  // Host-side Gitea forge token (workspace/git helper); never inherit into Agent children.
+  "PI_COFFEE_GITEA_TOKEN",
   // The Host's GitHub API token (ADR-0022); Agents push with the VM's own Git credentials.
   "PI_COFFEE_GITHUB_TOKEN",
   "PI_COFFEE_GITHUB_CLIENT_SECRET",

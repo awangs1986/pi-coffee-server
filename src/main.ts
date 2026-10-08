@@ -7,7 +7,7 @@ import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
 import {GitHubAccounts} from "./host/github-accounts.js";
 import { HostPiRuntime } from "./host/pi-runtime.js";
-import { parseUserRoutes } from "./web/identity.js";
+import { parseUserRoutes, type IdentityOptions } from "./web/identity.js";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -80,7 +80,7 @@ async function run(selectedRole: Role): Promise<void> {
   // File transfer (ADR-0009): the Host speaks LocalSend v2 on the User VM's LAN
   // interface so browsers move files without touching the Web Server.
   let host: HostServer | undefined;
-  const transferBind = envString("PI_COFFEE_TRANSFER_BIND", "0.0.0.0");
+  const transferBind = envString("PI_COFFEE_TRANSFER_BIND", "127.0.0.1");
   const transfer = !wantHost || transferBind === "off" ? undefined : new TransferServer({
     host: transferBind,
     port: envNumber("PI_COFFEE_TRANSFER_PORT", 53317),
@@ -111,8 +111,8 @@ async function run(selectedRole: Role): Promise<void> {
   // Codex CLI's app-server. Both are logged in once, in the VM, by its owner.
   const agent = envString("PI_COFFEE_AGENT", "pi").toLowerCase();
   if (agent !== "pi" && agent !== "codex") throw new Error("PI_COFFEE_AGENT must be pi or codex");
-  const codexSandbox = envString("PI_COFFEE_CODEX_SANDBOX", "danger-full-access");
-  const codexApproval = envString("PI_COFFEE_CODEX_APPROVAL", "never");
+  const codexSandbox = envString("PI_COFFEE_CODEX_SANDBOX", "workspace-write");
+  const codexApproval = envString("PI_COFFEE_CODEX_APPROVAL", "on-request");
   if (!["read-only", "workspace-write", "danger-full-access"].includes(codexSandbox)) throw new Error("PI_COFFEE_CODEX_SANDBOX must be read-only, workspace-write or danger-full-access");
   if (!["never", "on-request", "untrusted"].includes(codexApproval)) throw new Error("PI_COFFEE_CODEX_APPROVAL must be never, on-request or untrusted");
   const idleTimeoutMs = envNumber("PI_COFFEE_IDLE_TIMEOUT_MS", 10 * 60 * 1000);
@@ -204,6 +204,23 @@ async function run(selectedRole: Role): Promise<void> {
     throw new Error("PI_COFFEE_DEFAULT_USER must be a plain login name (letters, digits, . - _)");
   }
 
+  let identity: IdentityOptions | undefined;
+  if (wantWeb && routeFile) {
+    const required = (key: string): string => {
+      const value = process.env[key]?.trim();
+      if (!value) throw new Error(`${key} is required for multi-user mode`);
+      return value;
+    };
+    identity = {
+      sharedHost: process.env.PI_COFFEE_SHARED_HOST === "1",
+      giteaUrl: required("PI_COFFEE_GITEA_URL"),
+      clientId: required("PI_COFFEE_GITEA_CLIENT_ID"),
+      clientSecret: required("PI_COFFEE_GITEA_CLIENT_SECRET"),
+      publicUrl: required("PI_COFFEE_PUBLIC_URL"),
+      routes: () => parseUserRoutes(readFileSync(routeFile, "utf8")),
+    };
+  }
+
   const githubOAuthClient=process.env.PI_COFFEE_GITHUB_CLIENT_ID?.trim();
   const githubOAuthSecret=process.env.PI_COFFEE_GITHUB_CLIENT_SECRET?.trim();
   if(wantWeb&&Boolean(githubOAuthClient)!==Boolean(githubOAuthSecret))throw new Error('Configure both GitHub OAuth client ID and secret');
@@ -215,7 +232,7 @@ async function run(selectedRole: Role): Promise<void> {
     hostUrl: process.env.PI_COFFEE_HOST_URL ?? `ws://127.0.0.1:${host?.address().port ?? envNumber("PI_COFFEE_HOST_PORT", 8788)}/host`,
     hostToken: process.env.PI_COFFEE_HOST_TOKEN,
     ...(webTls === undefined ? {} : { tls: webTls }),
-    ...(routeFile ? {identity:{giteaUrl:giteaUrl!,clientId:giteaClientId!,clientSecret:giteaClientSecret!,publicUrl:process.env.PI_COFFEE_PUBLIC_URL!,sharedHost:process.env.PI_COFFEE_SHARED_HOST==="1",routes:()=>parseUserRoutes(readFileSync(routeFile,"utf8"))}} : {}),
+    ...(identity === undefined ? {} : { identity }),
     allowUnauthenticated:process.env.PI_COFFEE_ALLOW_UNAUTHENTICATED==="1",
     ...(auth === undefined ? {} : { auth }),
     ...(auth !== undefined || defaultUser === undefined ? {} : { defaultUser }),

@@ -14,6 +14,7 @@ export class HostClient {
   private socket?: WebSocket;
   private intentionalClose = false;
   private ready = false;
+  private upstreamPingTimer?: ReturnType<typeof setInterval>;
   private readonly listeners = new Set<(data: RawData, isBinary: boolean) => void>();
 
   constructor(options: HostClientOptions) {
@@ -60,6 +61,27 @@ export class HostClient {
       socket.once("close", onClose);
     });
     this.ready = true;
+    this.startUpstreamPing(socket);
+  }
+
+  /** Keep the Web↔Host hop alive through idle NAT/firewall timeouts. */
+  private startUpstreamPing(socket: WebSocket): void {
+    this.clearUpstreamPing();
+    this.upstreamPingTimer = setInterval(() => {
+      if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) {
+        this.clearUpstreamPing();
+        return;
+      }
+      try { socket.ping(); } catch { /* close handler reports unavailability */ }
+    }, 20000);
+    this.upstreamPingTimer.unref?.();
+  }
+
+  private clearUpstreamPing(): void {
+    if (this.upstreamPingTimer) {
+      clearInterval(this.upstreamPingTimer);
+      this.upstreamPingTimer = undefined;
+    }
   }
 
   send(data: RawData | string, isBinary = false): void {
@@ -79,6 +101,7 @@ export class HostClient {
     this.socket = undefined;
     this.intentionalClose = true;
     this.ready = false;
+    this.clearUpstreamPing();
     if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
   }
 }
