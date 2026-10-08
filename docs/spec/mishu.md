@@ -412,3 +412,497 @@ or legacy test count does not complete a stage. Read-only S1/S2 can ship while n
 enhanced execution remains disabled; execution extensions must pass S3 first.
 The historical gap audit remains historical evidence, with this target SPEC as
 its implementation roadmap; do not erase missing requirements from that audit.
+
+## Candidate task briefs (#69, not a production activation)
+
+The candidate adds `tasks` to the capability-authenticated runtime Interface.
+`version: 1` and `operation` are mandatory. `register` takes a stable `operationId`,
+exact configured `targetId`/`binding`, and `purpose`, `scope`, `summary`, `nextStep`.
+`list` accepts `offset`/`limit`; `get` takes `taskId`; `update` takes `taskId`,
+`operationId`, `expectedRevision` and changed text fields; `stop` takes the same
+identity/revision fields. Unknown fields, including claimed source/user ownership
+or acceptance, are rejected. Host derives secretary/account ownership.
+
+Host creates independent task IDs even for identical titles. Every read/mutation
+rechecks current source and contact bindings; lists exclude revoked contacts.
+A new source native context cannot read or inherit old briefs, even after setup.
+Mutations serialize within the scoped coordinator, stage a journal copy, and flush
+an atomic private state-file replacement before acknowledging. Disk failure leaves
+the prior journal in memory. Identical operation retries return their original
+result, including the nested observation and report data captured at admission;
+later native evidence, report commits and Host restarts do not rewrite that receipt.
+Current state remains available through `tasks/get`. Changed payloads or stale
+revisions fail. Failed/cancelled UI edits make
+no mutation. Existing message receipt identity and execution remain unchanged.
+
+Limits per secretary: 200 briefs (including stopped/history), 2,000 accepted write
+operations, default page 20 and maximum 50; purpose 500, scope 2,000, summary 4,000,
+next step 1,000 characters. Capacity exhaustion is explicit, with no history or
+idempotency-key eviction. Brief data are Host task data, not native transcript.
+
+Users can ask the selected enabled secretary to record/view/correct a brief, or
+open `/mishu-tasks` to browse, correct a field and stop a record through native UI
+on desktop/mobile. Cancel/Escape does not save. Long native dialog titles scroll within a bounded
+viewport area so detail text cannot hide correction/cancel buttons. The browser displays **已记录，尚未
+开始观察** until explicitly opting into the #70 observation capability below. Work state is recorded/stopped and
+acceptance remains separately pending; models cannot claim user acceptance.
+Stopping a record preserves history and never terminates the target task.
+
+The #69 slice alone did not implement observation. #70 below adds existing Pi run
+observation and reply obligations; #71–#76 reporting/dispatch/multi-engine requirements remain pending.
+Evidence: public HTTP/WS tests in `mishu-http`, plugin public extension/HTTP tests,
+and `scripts/probe-mishu-tasks.mjs` (real Browser/Web/Host/native Pi, deterministic
+model). An editable plugin root is source evidence only; the integrated candidate
+must repeat the probe with its immutable installed artifact.
+
+
+## Candidate existing Pi run observation (#70, not a production activation)
+
+An explicitly enabled secretary can observe one existing configured Pi native run
+through `tasks`, version 1, operation `observe`: taskId, stable operationId,
+expectedRevision and exact runId are required. The configured directory exposes
+bounded observation capability/run metadata, without other conversation content.
+No target prompt is sent. A missing/uninstrumented run or unsupported engine
+rejects admission; future work in the same conversation is never adopted.
+
+The engine-neutral Agent Interface supplies passive `readRunEvidence` audits.
+Pi's final Host extension appends hidden custom native run UUID/baseline markers
+before the run's first user message and a settled audit after native output append.
+The marker baseline is the previous native leaf, **not** the current user entry.
+The selected run owns its first subsequent native user entry and following output,
+ending before a second user boundary or next run marker. Exact native binding,
+entry IDs/content revisions and a stable range watermark determine evidence.
+Hidden markers never enter model context; ordinary Chat retains zero-system.
+`message_end` triggers a passive audit but is never a persistence acknowledgment.
+Missing terminal audit, invalid/changed history, absent live process, model errors,
+length-limited output and tool-only output remain incomplete/uncertain with last
+facts. A normal native text reply is reply-available, not business/user acceptance.
+
+Admission and event work share one scoped serial writer. The Host subscription
+exists before registration; an event arriving during native snapshot/save is
+retained by a coalesced dirty flag and trailing audit. Responsibility, watermark,
+latest bounded facts and pending notification revision are flushed atomically
+before success. Native delta streams are not copied as a second execution ledger.
+Host restart first reconciles recorded exact ranges passively, never spawning a
+CLI or replaying an instruction. Failed event writes retain the prior journal and
+expose diagnostic status; an explicit detail read retries only the native audit.
+
+`/mishu-tasks` supports explicit observation and later viewing of waiting replies,
+latest facts, incomplete or uncertain evidence and the exact responsible target.
+Waiting native questions show a user-action notice; only the target handles them.
+`status.tracking` reports committed waiting/reply/uncertain counts without a fresh
+native audit. The secretary stays usable while target work runs. No automatic
+model wake, report commit, recurring prompt or new-agent creation exists here.
+
+Stopping, deselection, disable, contact removal, archive or source context reset
+fences observation generations through the same writer. Restoring/re-enabling
+does not revive cancelled observations. These actions do not abort target work.
+Exact scope/binding authorization is checked before and after native reads.
+Current source-candidate tests: direct native Pi HTTP/WS, registration/settlement
+race, browser disconnect, event commit failure plus restart, duplicate audits,
+unrelated later user input, partial native evidence and revocation. Real browser
+probe `scripts/probe-mishu-observation.mjs` exercises desktop/mobile inspection,
+late native reply and ordinary secretary chat while the target waits; its model
+is deterministic and its workspace synthetic. Immutable installed-candidate and
+production evidence remain separate release requirements. A29 and the observation
+part of A34 are covered for Pi; preserve all other unmet A29–A35 requirements.
+
+## Candidate durable dispatch (#71, not a production activation)
+
+`tasks/dispatch` version 1 accepts a saved Task Brief, its admission-phase
+`expectedRevision`, bounded `text`, `authorizationRef` and a transport `messageId`.
+The Host derives the source native user-run identity; callers cannot provide it.
+A new dispatch requires a live foreground Pi user run and enabled instruction
+capability. The direct task instruction remains authorization; no additional
+confirmation phrase is required. Interpreting whether a natural-language request
+is an instruction remains the plugin/model responsibility, not a claimed complete
+M10 proof of user intent. Queries, discussion and target results grant no new work.
+
+Host persists the Assignment and exact-run Reply Obligation before target admission.
+The business key is source binding/native user run + Task Brief + accepted phase;
+changing messageId returns the same Assignment even after the current brief's
+revision advances. Conflicting content/scope is rejected. Distinct explicit work
+uses distinct briefs. Later legitimate repeated work needs a new user input,
+current brief revision, `retryOf`, and proof that the original native result ended
+(or was cancelled before execution). An uncertain original is never replayed.
+
+The existing serial input queue remains a delivery adapter. Assigned queue rows
+cannot be edited or promoted into unrelated running work; cancellation is allowed.
+Stop, contact removal, disable and binding changes fence undelivered assignments.
+Native acceptance/transport ACK loss becomes uncertain; neither a model retry nor
+Host restart replays delivery. The Pi adapter privately seeds the exact hidden run
+marker before prompt delivery. Matching persisted native evidence resolves the
+obligation; new dispatch rejects engines without an explicit verified correlation capability;
+legacy sends and existing observations retain their documented boundaries. Delivered/settled is not user acceptance or proof of business
+success. `/mishu-tasks` shows accepted, queued, executing/waiting, cancelled or
+uncertain dispatch and the existing observed native facts.
+
+The legacy `send` message bridge and manual `inbox` remain compatible, including
+information-only notifications. Legacy messageId deduplication is **not** A33
+business intent deduplication. The candidate plugin directs durable task work to
+`tasks/dispatch`; it does not claim legacy sends gained a persistent task mandate.
+Evidence: public HTTP/WS disk failure, changed-ID, lost-native-ACK, restart and
+queued-stop tests; native Pi Browser probe `probe-mishu-dispatch` using synthetic
+content. Source candidates and immutable installation/production remain distinct.
+
+## Candidate on-demand native reports (#72; not a production activation)
+
+A directly entered `/mishu-report` opens a task-title chooser; an exact task ID is
+accepted for integration callers. It summarizes already persisted bounded facts
+in the same native Pi Chat using a hidden custom input, never a synthetic user
+message. Ordinary conversational summaries do not claim durable report delivery.
+No automatic wakeup, retry timer or new target execution is introduced.
+
+Before native input, the scoped Host saves a ReportRecord with stable report and
+notification/revision identities, source binding, obligation generation and native
+processing UUID. The final platform extension records a native marker with that
+UUID, then starts native summary processing. The report asks for progress, limits,
+next step and a human source title. Internal task IDs are not required in visible
+summary text. The ledger stores native output IDs/hashes, not another transcript.
+
+All report tool calls, including built-ins, extension tools and callers of nested
+tools, are denied by Pi's actual `tool_call` gate. Host runtime action admission
+also denies setup, dispatch, send, disable and task mutations during that run.
+Declaration filtering alone is not the boundary. User steering and queue promotion
+cannot mix into a report; follow-up user input waits separately. A subsequent real
+user turn restores ordinary capabilities. Plugin report identity carries no
+foreground execution invitation or empty-action continuation.
+
+Neither `message_end` nor queue acceptance commits a report. After local settle,
+or during passive recovery after the native process has stopped, the Adapter
+verifies the exact marker, hidden custom input and native assistant range. Only
+successful, nonempty bounded output containing the required report sections and
+source title commits the ReportRecord and notification atomically. This validates
+correlation and the report envelope, not model truthfulness. Tool-only output,
+plain promises, errors and unprovable ranges stay uncertain without regeneration.
+A persisted assistant with a lost final audit/Host ACK is reconciled from that same
+native output; no second provider request is made.
+
+The state owner holds a kernel-backed SQLite exclusive transaction for its
+lifetime. Another Host fails closed before reading or mutating that coordination
+state; process death releases ownership. All state changes remain under the
+scoped serialized writer and atomic flushed JSON replacement. This is process
+crash recovery, not a claim of native-file fsync or power-loss atomicity.
+
+Stop/removal/archive/reset cancels unfinished reports and prevents stale ACK.
+Already admitted native text may have streamed before revocation or ACK; it remains
+scoped native historical output, never evidence of completed notification, user
+read or acceptance. Existing output cannot be retracted. Automatic worker leases,
+notification delivery and multi-engine task observation remain later slices.
+
+Acceptance uses synthetic native Pi over Host HTTP/WS and real Browser/Web/Host:
+report marker/output mapping; assistant write without final audit or Host ACK;
+no replay after restart; promise/tool-only uncertain; malicious built-in and nested
+caller denial; restored foreground tools; revoked target; competing owner process;
+chooser, desktop/mobile reload and repeated command without duplicate generation.
+Immutable package/fresh-clone/integrated release evidence remains the parent PR's
+responsibility. Existing pending A29–A35 and all broader target criteria remain.
+
+## Candidate automatic event reports (#73; not a production activation)
+
+After explicit `/mishu-notifications` selection and confirmation, newly observed
+results from already registered exact Pi runs can wake the same secretary after
+its current turn ends. The default is off. Cancellation changes nothing; enabling
+does not replay old facts. Disabling reminders cancels unfinished automatic
+reports while retaining task records and target execution. `/mishu-tasks` still
+reads late facts when reminders are off. Selection/setup and event consent are
+separate, per-source-binding capabilities.
+
+Host owns the durable Outbox as automatic ReportRecords: pending → admitted →
+processing → committed, or cancelled/uncertain. One notification per secretary
+is placed on the existing FIFO input queue at a time; foreground input retains
+its position. A private callback owns the exact report admission and command;
+Browser sees only a human title with a stop-following action, never editable native command text,
+a processing nonce or capability. Notifications cannot be edited, promoted or steered. Cancelling the queued row is an authenticated user stop-following action; it does not stop target execution.
+The native report retains #72's hidden custom input, all-tools denial, exact
+native output evidence and atomic notification/report commit. It grants no new
+execution authority and cannot mix with foreground instruction origin.
+
+A persisted delivery-attempt fence precedes the native call. Queue acceptance is
+not completion. A restart may requeue only a pending/admitted report proven never
+to have attempted native delivery; that receives a new transport command receipt
+while keeping the same report and processing identities. Ambiguous admission
+stays uncertain, without another model request. Lost report ACK reconciles the
+same native output. No target execution is replayed. Source/contact binding,
+source permission generation, obligation generation and notification revision
+are checked at admission, delivery, processing and commit. Stop, contact removal,
+archive and clear cancel pending delivery and later ACK; already streamed native
+text remains scoped historical output, not a successful notification.
+
+Baseline bounds: 20 outstanding reports per secretary, 100 report records per
+Task Brief, one automatic native delivery attempt per report, one queued
+notification per secretary, and existing input queue limits (100 rows/512 KiB
+text/16 MiB attachments). Capacity/persistence failures are visible in status and
+retain the obligation. There is no polling wake, infinite retry or retry with a
+new processing identity. FIFO prevents a series of reports from overtaking user
+input. Multi-task coalescing, richer fair scheduling and per-engine observation
+are later slices, not claimed by this candidate.
+
+Candidate verification crosses public HTTP/WS and actual Browser/Web/Host/native
+Pi: default off and model-side grant denial; late result with no second prompt;
+foreground-busy queue; queued revocation; never-delivered restart; ambiguous
+admission without replay; native output written before lost Host ACK; mobile
+explicit enable/stop and desktop/mobile reconnect with one visible report.
+Fixtures are synthetic. Production activation, immutable package pin, real-model
+quality and complete integrated lifecycle acceptance remain separate evidence.
+
+### Bounded multi-task reporting candidate — Server #74 (2026-10-06)
+
+This source candidate extends #69–#73; it is not an installed package or production
+release. Each secretary has its own durable model budget and each Task Brief has
+its own event batch. The first useful event opens a 250 ms coalescing window.
+While a report remains undelivered, further related versions may join that same
+batch. Admission snapshots event versions, state, bounded text and native evidence
+references; delivery freezes them. New events during processing form a new batch.
+Waiting-user and terminal states remain represented in the event list. Task and
+binding generations never merge. Raw tokens/tool logs and unchanged evidence do
+not create reports. Reports remain native transcript content, not Task Brief text.
+
+The normal serial input queue now chooses up to three pending foreground inputs,
+then one pending notification. After a notification, a pending foreground input
+wins again. FIFO is preserved within each class. Running turns are never preempted.
+The bound counts runnable queue services, not seconds: a still-running model or a
+failed foreground row may require human action for later foreground input; independent
+notifications may still proceed. No wall-clock completion is
+promised. Among tasks, the oldest ready batch goes first; fresh activity on one
+task does not move it ahead of already-waiting tasks.
+
+Published limits (`status.notifications.limits` and task-list limits):
+
+| Resource | Bound and overflow behavior |
+| --- | --- |
+| Task records, including retained stopped records | 200 per secretary; new registration rejected |
+| Idempotent task mutations | 2,000 ordinary mutation receipts plus up to 200 reserved terminal stops; ordinary mutation rejected at capacity, stopping remains available |
+| Task page | Default 20, maximum 50 |
+| Task purpose / scope / summary / next step | 500 / 2,000 / 4,000 / 1,000 characters |
+| Pending event batch | 16 event versions, 64 distinct native ID/revision references; 4,000 summary plus 4,000 latest-reply characters per event |
+| Event-batch bytes | 256 KiB pending event batches per secretary; do not advance the affected watermark on saturation |
+| Outbox | 20 outstanding report records; 100 retained reports per task |
+| Report output validation | At most 16,000 characters, required sections and source label |
+| Memory input queue | 100 rows, 512 KiB text and 16 MiB encoded images, shared with normal input |
+| Automatic model budget | 12 native report admissions per secretary per persisted one-hour window |
+| Safe automatic admission recovery | Once per report failure, one-second delay, persisted across restart; only before native delivery was attempted |
+
+These are resource-specific limits, not a total byte cap on `state.json`. Existing
+idempotency receipts retain bounded TaskBrief snapshots and can duplicate retained
+facts/report metadata across up to 2,200 receipts; whole-state validation and
+migration must account for that storage amplification.
+
+No unsettled responsibility or historical report is deleted to make space. Event
+saturation preserves the last confirmed cursor/facts and shows backpressure; after
+an existing report commits, the next passive audit can reconcile native evidence.
+The budgets limit new automatic admissions, not provider prices or existing native
+context size. Monetary cost cannot be guaranteed without provider accounting.
+A budget-window timer may resume already-admitted report work; it does not poll or
+contact targets. Disabled reminders and uncertain delivery never create a retry
+loop. Queue admission failure consumes only the single notification recovery; it
+never authorizes retrying target execution. The in-flight admission claim remains
+held until the rejection, backoff and recovery budget are durably saved. Concurrent
+task reads or event wakes cannot claim the same report in that transition or
+consume an additional recovery. The claim is identified by both report ID and
+request ID; a superseded pre-queue admission attempt cannot mutate or release
+a replacement claim.
+If saving the rejection fails, automatic admission stays blocked with a visible
+persistence diagnostic; explicit manual report recovery or revocation clears the
+claim, while restart recovers only durable state. An ambiguous native admission or model
+failure stays uncertain and requires native-history inspection.
+
+`/mishu` shows backlog, uncertain reports, remaining wakes, saturation and recovery
+instructions. `/mishu-tasks` retains per-task diagnostics and facts. Once queue
+capacity is available, direct `/mishu-report` may deliver a report proven never
+attempted; it reuses that report identity. It cannot regenerate uncertain output.
+Turn completion, durable report commit, user reading and acceptance remain distinct.
+
+Candidate evidence: HTTP/WS covers two simultaneous task batches with five
+foreground inputs, preserved event versions/references, no unchanged-event wakes,
+12-admission exhaustion, independent secretary budgets, saturated-queue single recovery
+and restart with exhausted budgets. `scripts/probe-mishu-multitask.mjs` exercises
+actual Chromium/Web/Host/native Pi with two separate synthetic target runs, two
+reports after the foreground turn ends, and one copy each after desktop/mobile
+reload. Synthetic model fixtures prove flow and isolation, not model quality.
+Installed artifact, all-account startup and the complete integrated lifecycle
+matrix remain #76 and final acceptance work. Other unmet A29–A35 and M01–M13
+requirements are preserved.
+
+### Native observation capability slice — Server #75 candidate
+
+This source candidate adds online observation of user-started existing work through
+Agent interfaces. It does not grant cross-engine durable dispatch or imply equal
+recovery across engines. Browser `/mishu-tasks` offers **观察当前工作** only when the
+configured exact target exposes current run evidence, and shows the capability
+limits beside the task. Model directory observations carry `capabilities`,
+`identity`, `referenceKind`, and `dispatchSupported` independently.
+
+| Engine | Online identity / evidence | Host restart run recovery | Passive display history | Detached writers | Durable `tasks/dispatch` |
+| --- | --- | --- | --- | --- | --- |
+| Pi | Persisted native run marker and native message IDs | Supported for exact retained native run | Supported | Unknown | Supported |
+| Codex production app-server | Native thread / turn / item IDs observed on the existing connection | Unknown; no unverified rollout terminal parser | Supported where canonical native display IDs are available | Unknown | Unavailable |
+| Claude Code | Explicit Host invocation ID in one connection generation; native message ID or UUID | Unknown | Supported for selected native branch | Unknown | Unavailable |
+| Cursor / Grok ACP | Explicit Host invocation ID and Host live receipt UUID for the captured message | Unknown | Unknown; no passive CLI launch | Unknown | Unavailable |
+
+Codex support is wired in the production `codex-adapter.ts`, not merely the fallback
+adapter. The fallback Codex adapter does not advertise this observation capability.
+For Codex's explicit native `final_answer` phase, the live Agent boundary retains
+the final message until that exact turn reports completion, failure, interruption
+or connection loss. It then exposes the facts with the proven outcome; a final
+message alone does not prove success. Native Browser text still streams immediately.
+Explicit commentary and native user questions remain eligible live progress; missing
+phase keeps the legacy unknown-phase behavior. Thus one terminal answer is not
+automatically reported first as ongoing progress and again as a settled result.
+This uses native phase/outcome identity, not a longer coalescing delay, and does not
+rewrite a previously admitted or committed progress report.
+ACP positional display IDs are never treated as durable native message identities.
+The Host durably commits captured facts/receipt references as part of the existing
+Task Brief journal. That provides a retained fact, not proof that omitted events
+can be recovered after a lost connection. A fresh Host retains prior facts and
+marks unprovable run outcomes uncertain; it never resends target work.
+
+Connection evidence retains at most 32 runs and 100 completed messages per run,
+with 4000 characters per message. Evicted/missing runs and exceeded evidence
+capacity return uncertainty. Native completion, failure, interruption, process
+loss, blocking question and partial message are distinct. Only exact registered
+run identity can advance a brief. Codex's asynchronous unanswered-question pause
+remains pending; a subsequent different native turn is not adopted implicitly.
+Binding replacement fences an old live adapter even when the new binding was
+separately selected. Native questions remain in the target conversation.
+
+Native facts retain an optional bounded `latestReply`, independently of older
+progress text, so a report can distinguish a new explicit result from an earlier
+plan. It is the latest complete observed message, not a user acceptance claim.
+After `tasks/observe` succeeds, the plugin returns current reminder status and
+explicit guidance to end the foreground turn: Host owns subsequent events, and
+repeated model polling is not the notification mechanism. With reminders off,
+the secretary explains `/mishu-notifications` or later user queries instead of
+promising automatic delivery. This does not force arbitrary model compliance;
+the actual natural-request probe and public-entry regression cover the observed
+loop and its correction.
+
+Legacy `send/inbox` remains available under its existing authorization. Its
+cross-engine messaging support must not be described as durable correlated
+`tasks/dispatch`; that latter capability still requires Pi's persisted correlation.
+See [candidate evidence](../development/mishu-native-tracking-75.md) for separate
+fixture, actual account, browser and source/package status.
+
+### Upgrade and explicit historical-note recovery (#76 candidate)
+
+The tracking candidate writes coordination envelope `version: 2`. On a validated
+version1 read it preserves the exact old bytes as private
+`state.v1.<sha256>.json` before the first version2 replacement. Current grants,
+Task Briefs, Assignments, Outbox states, budgets and native report references stay
+in the scoped Host store; no execution is replayed by migration. In-flight
+admission without proof remains uncertain. Version1-only binaries reject the
+version2 envelope; rollback keeps the new file in place and disables MISHU until
+a compatible Host is restored. **Never restore an old backup as live authority.**
+The ordinary release procedure must stop the old Host before a schema upgrade;
+pre-tracking binaries do not participate in the newer lifetime writer lock.
+
+Nested records and resource-specific bounds are checked before accepting a store.
+Corrupt, future-schema, unsafe-file and capacity failures retain original bytes,
+write only a private, static `diagnostic.json`, and reject MISHU operations.
+Ordinary Pi Chat can still start without the optional plugin; it retains zero
+system context. Diagnostics contain no source text, parser snippets or credentials.
+A rejected mutation restores the last successfully committed in-memory checkpoint,
+including grant changes; a committed cancellation is not undone by its subsequent
+rejection response.
+
+The previous resource limits are not a state-file limit: operation receipts may
+copy large task snapshots. Ordinary state growth stops at480 MiB; once revocation uses its reserve, reads and non-growing saves remain possible.32 MiB is reserved for
+revocation, and loading stops at512 MiB before reading the file. A larger valid
+store is diagnosed and retained, never truncated, silently migrated or purged.
+Terminal stop receipts reference the retained, immutable stopped task instead of
+copying its report snapshots, so stopping at ordinary receipt capacity remains
+possible. These are serialized UTF-8 byte bounds, separate from field-character
+and pending-event limits. This protocol tests process-crash recovery and atomic
+file replacement; it does not claim power-loss durability for an unsynced directory.
+
+Direct `/mishu-history` opens a bounded human chooser in the current selected
+Pi Chat even when a source reset has invalidated setup. Only this secretary's
+prior source-bound brief text can be inspected; explicit confirmation copies
+purpose, scope, summary, next step, source/time provenance into a new current-source
+**note**, capped at200 retained notes. Cancel does not save. Repeated restoration
+of the same historical revision is idempotent. Notes do not contain target IDs,
+active bindings, Assignment, obligation, notification, report admission or grants.
+They can be viewed again through the command; they are not automatically injected
+into model context or treated as current progress. Fresh setup and a new explicit
+instruction are required for new follow-up. Another secretary/account cannot
+restore these references; Fork creates a separate secretary with no inherited
+authority. Source-reset status masks old contacts, instruction permission and
+reminder consent. The broader M05 transparent-memory roadmap remains open.
+
+### Unattended scoped startup recovery — Server #76 candidate
+
+The real Host entry point discovers already-existing MISHU stores after both Host
+transport and the private runtime listener are ready. It uses the configured
+default project root and normalized direct user directories under `WORKDIR`,
+including their `projects/.coffee/mishu/state.json`. Browser reconnect, a status
+request, a user prompt and `mishuRuntime` priming are not prerequisites. Discovery
+only supplies candidates: the coordinator still validates the complete saved
+format, current source/target bindings, selection, setup and explicit reminder
+authority before passive reconciliation or a report admission. It does not start
+target CLIs for passive reads, replay target prompts, or grant authority from a
+folder name. Disabled, stopped or revoked responsibilities cannot wake a source.
+
+Discovery checks at most 4,096 direct directory entries and initializes at most
+256 saved scopes, loading one store at a time. Only canonical usernames and real
+(non-symlink) directory/file paths qualify. Oversized state files use the same
+512 MiB ceiling as coordinator loading; the same ceiling also bounds total
+candidate file bytes admitted during one startup scan. Capacity, unavailable stores and recovery
+failures produce static Host-local diagnostics without account names or private
+content; unchanged stores beyond the scan budget remain recoverable by explicit
+authenticated access. This limit is not a claim of unattended coverage for more
+than 256 existing scopes: an operator must resolve the capacity diagnostic before
+claiming all-account recovery. One rejected store does not suppress another
+scope's recovery. A default root overlapping a named-user layout is diagnosed
+and excluded from unattended recovery until the operator resolves the ambiguous
+account identity. Shutdown fences discovery before closing its last created slot.
+
+`scripts/probe-mishu-startup.mjs` runs actual `main.js` against isolated synthetic
+stores. Public menu/setup/reminder and native model-tool flows first persist two
+queued reports. After process restart it makes no HTTP/WS/runtime call until both
+source reports arrive, then checks native output references, no target replay,
+default/custom-root and user isolation, disabled/corrupt stores, invalid and
+symlink paths, oversized state and bounded discovery. Synthetic provider evidence
+is source-candidate acceptance; installed-artifact and production evidence remain
+separate.
+
+The #76 lifecycle matrix also fixes two integration seams: a completed/failed Fork
+preparation record no longer hides the original secretary or target from MISHU;
+only an active preparation blocks access. The newly forked Chat is unselected.
+Accepted Work takeover durably cancels old observation/queued report responsibility
+before starting native conversion, including when that conversion later fails.
+Fresh setup does not revive the cancelled obligation. Task headlines preserve
+waiting/incomplete/uncertain work state independently of committed report delivery;
+a delivered native-question report is not a completed target or user acceptance.
+
+
+## Review corrections (2026-10-07; source candidate)
+
+The #64 tracking follow-up corrects three review findings; it does not activate a
+production release or add Codex as secretary source.
+
+- Task mutations now share the coordinator's complete committed-state checkpoint.
+  A rejected stop preserves task, Assignment and receipt states together. Memory
+  notification rows are removed only after cancellation is durably committed;
+  a failed write retains the queued report and the accepted target responsibility.
+- The Pi plugin retains validated `status.tracking` counters and bounded error
+  text for both `/mishu` and its model tool. Counts are nonnegative integers bounded
+  by the 200-task capacity; the command no longer hides observation failures.
+- Live Agent evidence carries an optional `truncated` flag. The Host independently
+  records `fact.truncated` and `fact.latestReplyTruncated` for upstream clipping and
+  its own 4000-character limits, and preserves both in ReportEvents. Native output
+  IDs/hashes remain the evidence references; the bounds and dispatch rules do not grow.
+  Task details warn when a reply was clipped. Native report input carries the flags
+  and instructs the model to describe the missing tail in its limitations section.
+
+These are optional Boolean additions to private schema2 records. Existing records
+remain readable; absent flags mean completeness unverified, never false. Report
+inputs encode that unknown as null. Older strict readers may refuse the new fields;
+keep their state/diagnostics intact rather than strip metadata or restore old grants.
+
+Regression evidence is through scoped HTTP/WS, installed-native protocol fixtures
+and the independent plugin's public command/tool registration boundary: a rejected
+queued stop remains queued, tracking counts/errors reach callers, and a long native
+Codex result preserves truncation through the automatic report input. Real Chromium
+probes separately cover desktop/mobile detail warnings and failed queued-stop retention.
+Checks using `MISHU_PLUGIN_ROOT` verify candidate source; they do not validate a new
+immutable package or change Server's consumed tracking.2 artifact.

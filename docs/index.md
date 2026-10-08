@@ -6,6 +6,9 @@
 
 - Streaming browser responsiveness: [Word discovery contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and regression evidence](reviews/streaming-browser-freeze-20261007.md), [Server #96](https://github.com/awangs1986/pi-coffee-server/issues/96). Dense historical text must not block live replies or browser interaction during file-link discovery.
 
+- MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
+
+- MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 - Codex local readiness: [contract](spec/native-agent-engines.md#codex-local-readiness-correction--2026-10-06-server-82), [diagnosis and evidence](reviews/codex-readiness-20261006.md), [Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82). Local configured-login status is distinct from slow account metadata and provider acceptance; source verification is distinct from production activation.
 - Pi native model recovery: [contract](spec/conversation-switching.md#pi-process-lifetime-and-native-model-recovery--2026-10-07-server-92), [diagnosis and verification](reviews/pi-model-recovery-20261007.md), [Server #92](https://github.com/awangs1986/pi-coffee-server/issues/92). Host model defaults seed new sessions only; reopening preserves Pi's native choice independently of browser display caches.
 - Generated Word delivery: [contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and acceptance](reviews/word-delivery-20261007.md), [Server #94](https://github.com/awangs1986/pi-coffee-server/issues/94). Verified assistant filenames use existing scoped downloads; Word output discovery excludes inputs and does not inject Chat context or repeated cards.
@@ -22,7 +25,11 @@
 
 - MISHU task authorization without repeated confirmation: [contract](spec/mishu.md#bounded-autonomy-and-authorization-continuity-016), [evidence](reviews/mishu-autonomy-20261006.md), [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65).
 
-- MISHU durable tracking design: [Host closure contracts and A29–A35](spec/mishu.md#durable-coordination-loop-contract-2026-10-06-planned), [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64). Pending implementation: durable event ingestion, trusted notification runs, report commit/recovery and business-operation idempotency.
+- MISHU integrated tracking acceptance: [44 stories and A29–A35](development/mishu-tracking-acceptance-76.md), source candidate #76; immutable installation and production are separate gates.
+
+- MISHU upgrade/history recovery candidate: [current contract](spec/mishu.md#upgrade-and-explicit-historical-note-recovery-76-candidate), Server #76. Versioned private migration, fail-closed diagnostics and explicit note-only recovery; package/production acceptance remains separate.
+
+- MISHU durable tracking design: [Host closure contracts and A29–A35](spec/mishu.md#durable-coordination-loop-contract-2026-10-06-planned), [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64). The review candidate implements durable event ingestion, trusted notification runs, report commit/recovery and business-operation idempotency; the linked acceptance map separates source evidence from package/release gates. Mutation retry receipts retain their original nested admission snapshot while task queries show current evidence. Explicit Codex final answers are reported with their native turn outcome; commentary remains live progress. Queue-capacity rejection keeps its in-flight claim until the rejection and single-recovery budget are durable, including concurrent task reads.
 
 - MISHU complete-secretary target: [Host resource contracts and staged acceptance](spec/mishu.md#complete-secretary-target-and-implementation-status-2026-10-05), [canonical plugin SPEC](http://gitea/awangs/pi-coffee-mishu/src/commit/8b2b2ca87a3eee8cbe9ef3cf6781f5d57fda3353/docs/coffee-secretary-spec.md). Planned capabilities remain distinct from current-request messaging; the lockfile and deployment evidence identify the consumed and running versions.
 
@@ -155,3 +162,18 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Ordinary Chat zero-system and no automatic runner guidance: [current boundary](spec/session-environment.md#chat-zero-system-boundary--2026-10-05), [Server #60](https://github.com/awangs1986/pi-coffee-server/issues/60). Explicitly enabled MISHU remains independently scoped.
 
 - Reviewed keepalive and compact UI integration: [connection recovery contract](spec/conversation-switching.md#connection-recovery-2026-10-08), [Server #103](https://github.com/awangs1986/pi-coffee-server/issues/103). Unrestricted Codex defaults and LAN transfer remain unchanged; source integration is separate from service activation.
+- [MISHU candidate task briefs](spec/mishu.md#candidate-task-briefs-69-not-a-production-activation): versioned scoped registration, correction and stop; explicit existing Pi observation is described below.
+
+- [MISHU candidate existing Pi observation](spec/mishu.md#candidate-existing-pi-run-observation-70-not-a-production-activation): durable exact-run reply responsibility, passive restart reconciliation and native task-browser inspection; automatic event reports are the #73 candidate below.
+
+- MISHU candidate durable dispatch: [current contract](spec/mishu.md#candidate-durable-dispatch-71-not-a-production-activation); Task Brief/Assignment admission and exact native result correlation. Production activation is separate.
+
+- [MISHU candidate on-demand native reports](spec/mishu.md#candidate-on-demand-native-reports-72-not-a-production-activation): trusted restricted native summary, durable output references and lost-ACK reconciliation; automatic event delivery is the #73 candidate below.
+
+- [MISHU candidate automatic event reports](spec/mishu.md#candidate-automatic-event-reports-73-not-a-production-activation): explicit default-off reminders, durable Outbox, trusted FIFO native report delivery, generation fences and bounded recovery.
+
+- MISHU bounded multi-task reporting source candidate: [limits, fairness and diagnostics](spec/mishu.md#bounded-multi-task-reporting-candidate--server-74-2026-10-06), [Server #74](https://github.com/awangs1986/pi-coffee-server/issues/74). Synthetic HTTP/WS and native Browser evidence is separate from installed-artifact/production acceptance.
+
+- MISHU native observation candidate: [capability matrix](spec/mishu.md#native-observation-capability-slice--server-75-candidate), [bounded fixture/native account and Browser evidence](development/mishu-native-tracking-75.md), [Server #75](https://github.com/awangs1986/pi-coffee-server/issues/75). Online run evidence is distinct from passive recovery and durable dispatch; no production activation claim.
+
+- MISHU unattended startup candidate: [saved-scope recovery and bounds](spec/mishu.md#unattended-scoped-startup-recovery--server-76-candidate), [Server #76](https://github.com/awangs1986/pi-coffee-server/issues/76). Actual main process recovery without Browser/API priming; synthetic default/user and path/capacity acceptance remains distinct from production activation.

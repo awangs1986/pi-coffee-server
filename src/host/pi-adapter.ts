@@ -162,6 +162,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     if (this.options.sessionDir !== undefined) {
       args.push("--session-dir", this.options.sessionDir);
     }
+    const dispatchToken=randomUUID();
     const client = new RpcClient({
       cliPath: this.options.cliPath ?? resolvePiCliPath(),
       cwd: this.options.cwdForSession ? await this.options.cwdForSession(options.workspaceSessionId ?? options.sessionId, existing !== undefined) : this.options.cwd,
@@ -172,12 +173,13 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       env: {
         ...(this.options.agentDir === undefined ? {} : { PI_CODING_AGENT_DIR: this.options.agentDir }),
         ...buildHostChildEnv(environment),
+        PI_COFFEE_DISPATCH_CONTROL: dispatchToken,
         PI_COFFEE_CONTEXT_CONTROL: "1",
         PI_COFFEE_ROOT_SESSION: this.options.runtimeIdForSession?.(options.workspaceSessionId ?? options.sessionId) ?? options.sessionId,
       },
       args,
     });
-    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels);
+    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken);
     try{
       await session.start();
       // Pi applies defaults when resuming a branch with no messages. Restore the
@@ -240,6 +242,38 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       }
       return { history: projectHistory(entries, leafId, { preserveToolContent: true }), binding: `${binding}:${source.identity}:${sourceHash(JSON.stringify(branches.reverse()))}`, sourceGeneration: source.generation, sourceFreshness: "current", checkedAt: new Date().toISOString() };
     } catch { return unknownHistory(binding); }
+  }
+
+  async supportsDispatchCorrelation(_sessionId:string){return true;}
+
+  async readRunEvidence(sessionId:string,runId?:string):Promise<import('./agent-adapter.js').AgentRunEvidence> {
+    const unknown={supported:true,freshness:'unknown' as const,state:'uncertain' as const,runId,reason:'Native run evidence unavailable; no execution replay'};
+    try{
+      const found=(await this.listWithPaths()).filter(s=>s.id===sessionId);if(found.length!==1)return unknown;
+      const source=await readStableSource(found[0].path),rows=await parseSourceLines(source.text);
+      if(rows[0]?.type!=='session'||rows[0].id!==sessionId||![2,3].includes(rows[0].version))return unknown;
+      const byId=new Map(rows.slice(1).map(e=>[e.id,e]));if(byId.size!==rows.length-1)return unknown;
+      const branch:Record<string,any>[]=[],seen=new Set<string>();let leaf=rows.at(-1);
+      while(leaf?.id){if(seen.has(leaf.id))return unknown;seen.add(leaf.id);branch.unshift(leaf);if(leaf.parentId&&!byId.has(leaf.parentId))return unknown;leaf=byId.get(leaf.parentId);}
+      const markers=branch.filter(e=>e.type==='custom'&&e.customType==='coffee-native-run'&&e.data?.version===1);
+      const marker=runId?markers.find(e=>e.data.runId===runId):markers.at(-1);
+      if(marker&&markers.filter(e=>e.data.runId===marker.data.runId).length!==1)return unknown;
+      if(!marker||typeof marker.data.runId!=='string'||marker.parentId!==marker.data.baselineId||(marker.data.baselineId!==null&&!byId.has(marker.data.baselineId)))return {...unknown,reason:'This run has no provable native correlation marker'};
+      const report=marker.data.origin==='task-report';
+      const start=branch.indexOf(marker),range=[];let settled=false,inputSeen=false,closedByBoundary=false;
+      for(const e of branch.slice(start+1)){
+        if(e.type==='custom'&&e.customType==='coffee-native-run'){closedByBoundary=true;break;}
+        if(report&&e.type==='custom_message'&&e.customType==='coffee-task-report'&&e.details?.processingId===marker.data.runId){inputSeen=true;continue;}
+        if(e.type==='message'&&e.message?.role==='user'){if(inputSeen||report){closedByBoundary=true;break;}inputSeen=true;continue;}
+        if(e.type==='custom'&&e.customType==='coffee-native-settled'&&e.data?.runId===marker.data.runId){settled=true;break;}
+        range.push(e);
+      }
+      if(!inputSeen)return unknown;
+      const messages=range.filter(e=>e.type==='message'&&e.message?.role==='assistant');
+      const entries=messages.map(e=>({id:e.id,revision:sourceHash(JSON.stringify(e.message)),text:Array.isArray(e.message.content)?e.message.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):''})).filter(e=>e.text);
+      const final=messages.at(-1)?.message;
+      return {supported:true,freshness:'current',runId:marker.data.runId,binding:`pi:${sessionId}:${source.identity}`,watermark:sourceHash(JSON.stringify([marker.id,entries,settled])),state:settled||report&&final?.stopReason==='stop'?(final?.stopReason==='stop'&&entries.length?'reply-available':'incomplete'):closedByBoundary?'uncertain':'running',entries};
+    }catch{return unknown;}
   }
 
   async delete(sessionId: string): Promise<boolean> {
@@ -336,7 +370,7 @@ class RpcPiSession implements PiSession {
   private running = false;
   private handoffActive = false;
 
-  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[]) {
+  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[], private readonly dispatchToken?:string) {
     this.client = client;
     this.configuredExtensions = configuredExtensions;
     this.unsubscribe = client.onEvent((event) => {
@@ -395,7 +429,13 @@ class RpcPiSession implements PiSession {
     return !this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`));
   }
 
-  async prompt(text: string, images?: ImageInput[]): Promise<void> {
+  async prompt(text: string, images?: ImageInput[],correlation?:{runId:string}): Promise<void> {
+    if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
+    if(correlation){
+      if(!this.dispatchToken||!/^mishu-dispatch-[A-Za-z0-9-]+$/.test(correlation.runId))throw Error("Unsupported native dispatch correlation");
+      const disposition=await this.client.prompt(`/coffee-dispatch-control ${this.dispatchToken} ${correlation.runId} ${sourceHash(text)}`);
+      if(disposition!=="handled")throw Error("Native dispatch correlation was not admitted");
+    }
     if(this.allowedModels && /^\/model(?:\s|$)/.test(text.trim())){
       const match=/^\/model\s+([^\s/]+)\/(\S+)\s*$/.exec(text.trim());
       if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+this.allowedModels.join(', '));
@@ -416,7 +456,10 @@ class RpcPiSession implements PiSession {
         for (const listener of this.listeners) listener({type:"agent_settled"});
       }
     }
-    catch (error) {this.stopWatching();throw error;}
+    catch (error) {
+      if(correlation)await this.client.prompt(`/coffee-dispatch-control ${this.dispatchToken} clear`).catch(()=>undefined);
+      this.stopWatching();throw error;
+    }
   }
 
   async steer(text: string, images?: ImageInput[]): Promise<void> {
@@ -424,6 +467,7 @@ class RpcPiSession implements PiSession {
   }
 
   async validateFollowUp(text:string):Promise<void>{
+    if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
     const command=/^\/(\S+)/.exec(text)?.[1];
     if(command&&(await this.getCommands()).some(c=>c.name===command&&c.source==='extension'))throw new Error('Extension commands cannot be queued.');
     if(this.allowedModels){
@@ -540,7 +584,7 @@ class RpcPiSession implements PiSession {
 
   async getCommands(): Promise<CommandInfo[]> {
     const commands = await this.client.getCommands();
-    return commands.filter(command=>command.name!=='coffee-context-window').map((command) => ({
+    return commands.filter(command=>!['coffee-context-window','coffee-dispatch-control'].includes(command.name)).map((command) => ({
       name: command.name,
       ...(command.description === undefined ? {} : { description: command.description }),
       source: command.source,

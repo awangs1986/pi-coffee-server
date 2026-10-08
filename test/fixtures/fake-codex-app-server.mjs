@@ -1,5 +1,5 @@
 import './github-env-probe.mjs';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
@@ -25,6 +25,18 @@ const uid = (prefix) => `${prefix}-${process.pid}-${++counter}`;
 const now = () => Math.floor(Date.now() / 1000);
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const notify = (method, params) => send({ method, params });
+// Ordering fixtures advance only when their public HTTP/WS assertions have
+// observed the preceding phase. No machine-speed assumption decides an outcome.
+function waitTrackingGate(name) {
+  const file=join(home,name);
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>finish(Error('Tracking fixture gate timed out: '+name)),30000);
+    const watcher=watch(home,()=>{if(existsSync(file))finish();});
+    function finish(error){clearTimeout(timer);watcher.close();if(error)reject(error);else resolve();}
+    watcher.on('error',finish);
+    if(existsSync(file))finish();
+  });
+}
 const pendingServerRequests = new Map();
 let nextServerId = 1000;
 const settings = new Map(); // threadId -> { approvalPolicy }
@@ -109,6 +121,7 @@ async function runTurn(thread, input, options) {
     const answer=await new Promise(resolve=>{pendingServerRequests.set(id,resolve);send({id,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId,questions:[{id:'color',question:'Choose a color',options:[{label:'Blue',description:'A blue result'}]}]}});});
     questionAnswer=' '+(answer.answers?.color?.answers?.[0] ?? 'MISSING');
   }
+  if(text==='run synthetic read')notify('item/completed',{threadId:thread.id,turnId,item:{type:'agentMessage',id:'native-progress-'+turnId,text:'PARTIAL_NOT_DONE'}});
   if (text.startsWith("run ")) {
     const command = text.slice(4);
     const item = { type: "commandExecution", id: uid("item"), pluginId: null, scriptPath: null, command, cwd: thread.cwd, processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null };
@@ -117,6 +130,7 @@ async function runTurn(thread, input, options) {
     if ((settings.get(thread.id)?.approvalPolicy ?? "never") !== "never") {
       const decision = await askApproval(thread.id, turnId, item.id, command);
       approved = decision === "accept" || decision === "acceptForSession";
+      if(process.env.TRACKING_END_STATUS==='exit')process.exit(0);
     }
     if (approved) {
       notify("item/commandExecution/outputDelta", { threadId: thread.id, turnId, itemId: item.id, delta: "ran: " });
@@ -136,6 +150,10 @@ async function runTurn(thread, input, options) {
     notify("turn/diff/updated", { threadId: thread.id, turnId, diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n` });
   }
 
+  if(text==='run delayed final tracking with progress'){
+    notify('item/completed',{threadId:thread.id,turnId,item:{type:'agentMessage',id:'progress-'+turnId,text:'PROGRESS_ONE_OF_THREE',phase:'commentary'}});
+  }
+  if(text.startsWith('run delayed final tracking'))await waitTrackingGate('allow-final');
   await new Promise((resolve) => setTimeout(resolve, 20));
   if(text==='ask async failure'){
     turn.status='failed';turn.error={message:'fixture failure during question pause'};
@@ -149,7 +167,7 @@ async function runTurn(thread, input, options) {
     return;
   }
   const reply = text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
-  const message = { type: "agentMessage", id: uid("item"), text: reply, phase: null, memoryCitation: null, delivery: null, questions: null };
+  const message = { type: "agentMessage", id: uid("item"), text: reply, phase: text.startsWith('run delayed final tracking')?'final_answer':null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
   notify("item/agentMessage/delta", { threadId: thread.id, turnId, itemId: message.id, delta: reply.slice(0, half) });
@@ -157,7 +175,11 @@ async function runTurn(thread, input, options) {
   turn.items.push(message);
   notify("item/completed", { item: message, threadId: thread.id, turnId, completedAtMs: Date.now() });
   notify("thread/tokenUsage/updated", { threadId: thread.id, turnId, tokenUsage: { total: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0 }, modelContextWindow: 1000 } });
-  turn.status = "completed";
+  if(text.startsWith('run delayed final tracking')){
+    await waitTrackingGate('allow-terminal');
+    if(process.env.TRACKING_END_STATUS==='lost-final')process.exit(0);
+  }
+  turn.status = ["failed","interrupted"].includes(process.env.TRACKING_END_STATUS)?process.env.TRACKING_END_STATUS:"completed";
   turn.completedAt = now();
   active.delete(thread.id);
   save();

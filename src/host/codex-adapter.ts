@@ -1,3 +1,4 @@
+import {LiveRunEvidence} from './native/live-run-evidence.js';
 import { createHash, randomUUID } from "node:crypto";
 import type { ContextPreset } from "../shared/protocol.js";
 import { codexCommands, codexSkills } from "./codex/skills.js";
@@ -549,6 +550,8 @@ interface CodexSessionSettings {
 }
 
 class CodexSession implements PiSession {
+  private readonly tracking=new LiveRunEvidence('codex',()=>this.threadId);
+  readRunEvidence(runId?:string){return this.tracking.read(runId);}
   private readonly server: CodexAppServer;
   threadId: string;
   /** Set by the factory so it can count open sessions. */
@@ -644,7 +647,7 @@ class CodexSession implements PiSession {
       ...(this.settings.preparation?{sandboxPolicy:{type:'readOnly',networkAccess:false},approvalPolicy:'never'}:{}),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
-    if (turn && typeof turn.id === "string") this.activeTurnId = turn.id;
+    if (turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
   }
 
   async steer(text: string, images?: ImageInput[]): Promise<void> {
@@ -874,7 +877,7 @@ class CodexSession implements PiSession {
     switch (method) {
       case "turn/started": {
         const turn = params.turn as Obj | undefined;
-        if (turn && typeof turn.id === "string") this.activeTurnId = turn.id;
+        if (turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
         this.streaming = true;
         this.emit({ type: "agent_start" });
         return;
@@ -908,6 +911,10 @@ class CodexSession implements PiSession {
         this.onItemStarted(params.item as Obj);
         return;
       case "item/completed":
+        const completed=params.item as Obj|undefined;
+        // Explicit terminal answers wait for turn outcome in tracking only.
+        // Unknown phases and asynchronous user questions retain live compatibility.
+        if(completed?.type==='agentMessage'&&typeof params.turnId==='string'&&typeof completed.id==='string'&&typeof completed.text==='string')this.tracking.message(params.turnId,completed.id,completed.text,completed.phase==='final_answer'&&completed.delivery!=='async');
         this.onItemCompleted(params.item as Obj);
         return;
       case "thread/tokenUsage/updated":
@@ -936,6 +943,7 @@ class CodexSession implements PiSession {
           this.asyncQuestion.reject(new Error('Codex failed before the question could be paused'));
           this.asyncQuestion=undefined;this.questions.clear();
         }
+        this.tracking.finish(typeof turn?.id==='string'?turn.id:undefined,String(turn?.status??'unknown'));
         if(this.compactionPending)this.finishCompaction(turn?.status==='completed'&&this.compactionPending.observed?undefined:new Error('Codex compaction did not complete successfully'));
         if (turn?.status === "failed") {
           const error = turn.error as Obj | null | undefined;
@@ -1053,6 +1061,7 @@ class CodexSession implements PiSession {
   }
 
   private onServerExit(): void {
+    this.tracking.lost();
     this.asyncQuestion?.reject(new Error('Codex exited while awaiting an answer'));this.asyncQuestion=undefined;
     this.finishCompaction(new Error("Codex app-server exited during compaction"));
     this.questions.clear();

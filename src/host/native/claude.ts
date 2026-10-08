@@ -1,3 +1,4 @@
+import {LiveRunEvidence} from './live-run-evidence.js';
 import {assertNativePrompt,nativeCommandAllowed} from './commands.js';
 import {NativeSettingsStore} from './settings.js';
 import {NativeQuestions} from "./questions.js";
@@ -80,6 +81,9 @@ async function projectClaudeHistory(source: string, nativeId: string): Promise<{
 
 /** Claude Code 2.1.280's own stream-json CLI. No Agent SDK or provider HTTP client. */
 export class ClaudeSession implements AgentSession {
+  private readonly tracking=new LiveRunEvidence('claude',()=>this.nativeId);
+  private trackingRun?:string;
+  readRunEvidence(runId?:string){return this.tracking.read(runId);}
   private process:NativeProcess;
   private listeners=new Set<(event:unknown)=>void>();
   private controls=new Map<string,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:NodeJS.Timeout}>();
@@ -129,7 +133,7 @@ export class ClaudeSession implements AgentSession {
       try{this.process.send({type:"control_request",request_id,request});}catch(error){clearTimeout(timer);this.controls.delete(request_id);reject(error);}
     });
   }
-  private emit(event:unknown){for(const listener of this.listeners)listener(event);}
+  private emit(event:unknown){const e=event as {type?:string;id?:string;text?:string;status?:string};if(e.type==='message_completed')this.tracking.message(this.trackingRun,e.id,e.text??'');if(e.type==='run_completed')this.tracking.finish(this.trackingRun,e.status??'unknown');if(e.type==='run_interrupted')this.tracking.lost();for(const listener of this.listeners)listener(event);}
   private async handle(message:any){
     if(message.type==="control_response"){
       const r=message.response,c=this.controls.get(r.request_id);if(!c)return;
@@ -182,7 +186,7 @@ export class ClaudeSession implements AgentSession {
     assertNativePrompt(text);
     if(!this.bound)await this.save({state:"starting",requestedId:this.nativeId,writers:"unknown"});
     else await this.save({state:"bound",id:this.nativeId,writers:"unknown"});
-    this.interruptRequested=false;this.streaming=true;this.emit({type:"run_started",runId:randomUUID()});
+    this.interruptRequested=false;this.streaming=true;this.trackingRun=randomUUID();this.tracking.start(this.trackingRun);this.emit({type:"run_started",runId:this.trackingRun});
     const content:any[]=[{type:"text",text}];
     for(const image of images??[])content.push({type:"image",source:{type:"base64",media_type:image.mimeType,data:image.data}});
     this.process.send({type:"user",message:{role:"user",content},session_id:this.nativeId});

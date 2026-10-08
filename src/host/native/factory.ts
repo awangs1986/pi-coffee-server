@@ -108,6 +108,18 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }
     return factory;
   }
+  async supportsDispatchCorrelation(sessionId:string){const task=await this.options.workspaces.lookup(sessionId);return Boolean(task&&(task.engine??'pi')==='pi'&&await this.options.pi.supportsDispatchCorrelation?.(task.nativeBinding?.id??sessionId));}
+  async readRunEvidence(sessionId:string,runId?:string):Promise<import('../agent-adapter.js').AgentRunEvidence>{
+    const task=await this.options.workspaces.lookup(sessionId);
+    const unknown={supported:false,freshness:'unknown' as const,state:'uncertain' as const,runId,reason:'Engine has no verified passive run evidence capability'};
+    if(!task||task.cleanupStarted||task.workspaceRemoved)return unknown;
+    if((task.engine??'pi')!=='pi')return {...unknown,capabilities:{online:task.engine==='codex'&&!this.options.codexSessionFactory?'unavailable':'supported',restartRecovery:'unknown',passiveHistory:task.engine==='codex'||task.engine==='claude'?'supported':'unknown',detachedWriters:'unknown'},reason:'No verified passive run recovery; only work observed on an existing Host connection can be registered'};
+    const nativeId=task.nativeBinding?.id??sessionId,identity=JSON.stringify(task.nativeBinding);
+    const result=await this.options.pi.readRunEvidence?.(nativeId,runId)??unknown;
+    const after=await this.options.workspaces.lookup(sessionId);
+    if(!after||JSON.stringify(after.nativeBinding)!==identity||(after.engine??'pi')!=='pi')return {...unknown,supported:true};
+    return {...result,identity:'native-run',referenceKind:'native-message',capabilities:{online:'supported',restartRecovery:'supported',passiveHistory:'supported',detachedWriters:'unknown'}};
+  }
   async readHistory(sessionId: string): Promise<AgentHistoryRead> {
     const task = await this.options.workspaces.lookup(sessionId);
     if (!task) {
@@ -278,6 +290,17 @@ export class NativeAgentFactory implements AgentSessionFactory {
     const task=await this.options.workspaces.lookup(sessionId);
     const segment=task?.takeoverSegments?.at(-1);
     const session=await this.createNative(sessionId);
+    const read=session.readRunEvidence?.bind(session);
+    if(read){
+      // The adapter may remain open when an out-of-band task binding changes.
+      // Fence that connection before exposing evidence for the replacement task.
+      const engine=task?.engine,cwd=task?.cwd,generation=segment?.id;
+      session.readRunEvidence=async runId=>{
+        const current=await this.options.workspaces.lookup(sessionId),evidence=await read(runId);
+        const valid=current&&!current.cleanupStarted&&!current.workspaceRemoved&&current.engine===engine&&current.cwd===cwd&&current.takeoverSegments?.at(-1)?.id===generation&&current.nativeBinding?.id&&evidence.binding?.startsWith(`${engine}:${current.nativeBinding.id}:`);
+        return valid?evidence:{supported:true,freshness:'unknown',state:'uncertain',runId,capabilities:evidence.capabilities,reason:'Live native binding changed; no run was adopted'};
+      };
+    }
     if(!segment)return session;
     try{return withPriorHistory(session,await priorHistory(await this.options.workspaces.dataRoot(sessionId),segment));}
     catch(error){await session.stop();throw error;}
