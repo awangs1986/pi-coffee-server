@@ -43,6 +43,12 @@ the selected CLI's supported native transport. Pi uses RPC, Codex uses app-serve
 Claude uses stream-json, and Cursor/Grok use ACP over local stdio. Pi Harness,
 LSP and Handoff policy remain Pi-only.
 
+**MISHU Secretary Source (planned extension)**: an explicitly selected Pi Chat or
+Codex Work that uses the same scoped Host coordination ledger. Current executable
+source support remains Pi Chat; [the Codex target contract](docs/spec/mishu-codex-secretary.md)
+adds a separate native source Adapter, not general Codex Chat or target capability parity.
+Selection, contact grants and notification enablement remain distinct.
+
 ## Task, execution and history
 
 **Task / Conversation**: one user-facing unit with one stable Conversation ID
