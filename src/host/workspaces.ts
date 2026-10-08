@@ -5,7 +5,7 @@ import type {TakeoverState,TakeoverSegment} from "./takeover.js";
 import {checkedTaskRoot,claimTaskRoot,prepareTaskRoot,writeTaskJson} from './task-storage.js';
 import type {AgentHistory} from './agent-adapter.js';
 import {parseGitHubRepository} from './github.js';
-import { parseAgentEngine, type AgentEngine, type SessionSummary } from "../shared/protocol.js";
+import { CHAT_ENGINES, parseAgentEngine, type AgentEngine, type SessionSummary } from "../shared/protocol.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID, createHash } from "node:crypto";
@@ -17,7 +17,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; contextReset?:{id:string;at:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -254,6 +254,7 @@ export class Workspaces {
   }); }
   async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
+  async lookupByCwd(cwd:string){await this.load();return this.state.conversations.find(c=>samePath(c.cwd,cwd));}
   async branches(projectId:string):Promise<string[]> {
     await this.load();const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no remote repository');
     const rows=await this.git(this.root,['ls-remote','--heads',p.repoUrl],2*1024*1024,p.githubAccountId);
@@ -462,13 +463,14 @@ export class Workspaces {
       this.state.conversations[this.state.conversations.indexOf(c)]=old;throw error;
     }
   },()=>this.conversationLock(id));}
-  async commitContextReset(id:string,operation:{id:string;expectedNativeId:string},nativeId:string){return this.mutate(async()=>{
+  async commitContextReset(id:string,operation:{id:string;expectedNativeId:string;title?:string},nativeId:string){return this.mutate(async()=>{
     const c=this.conversation(id);
-    if(c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi Chat can clear context');
+    if(c.workspaceKind!=='chat'||!CHAT_ENGINES.includes(c.engine??'pi')||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi or Codex Chat can clear context');
     if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
-    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus};
+    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds};
     delete c.lastRunStatus;
-    c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString()};
+    c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString(),...(operation.title?{title:operation.title}:{})};
+    if(c.engine==='codex')c.nativeContextEmpty=true;
     c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),operation.expectedNativeId])];
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
@@ -476,6 +478,14 @@ export class Workspaces {
     const c=this.conversation(id);
     if(c.nativeBinding?.id && c.nativeBinding.id!==binding.id)throw new Error("Native Session binding cannot change");
     c.nativeBinding=binding;await this.save();
+  },()=>this.conversationLock(id));}
+  /** A Codex context-preset change may replace an empty native thread. */
+  async rebindCodexThread(id:string,expectedNativeId:string,nativeId:string){return this.mutate(async()=>{
+    const c=this.conversation(id);
+    if(c.engine!=='codex'||c.nativeBinding?.id!==expectedNativeId||c.archived||c.workspaceRemoved||c.cleanupStarted)throw new Error('Native context changed; refresh before changing settings');
+    const previous={nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    c.nativeBinding={state:'bound',id:nativeId};c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),expectedNativeId])];
+    try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
   async runtimeEnvironment(id:string):Promise<Record<string,string>> {
     const c=await this.lookup(id);if(!c)throw new Error('Unknown workspace');
@@ -540,13 +550,13 @@ export class Workspaces {
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
     if(c && c.workspaceKind!=='chat')throw new Error('Creation ID belongs to a different task');
-    if(!c && engine!=='pi')throw new Error('Chat is available only with Pi; choose Work instead');
+    if(!c && !CHAT_ENGINES.includes(engine))throw new Error('Chat is available with Pi or Codex; choose Work for this Agent');
     if(c && (!c.creationState || c.creationState==='ready')){await this.checkDirectory(c);return structuredClone(c);}
     const cwd=c?.cwd ?? (this.taskRoot ? join(this.taskRoot,id,'workspace') : join(this.chatRoot,id));
     if(!c){
       if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Chat directory already exists; inspect it before retrying');
       const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
-      c={...(taskRoot?{taskRoot}:{}),id,engine,workspaceKind:'chat',vmId:this.ownerId,cwd,branch:'',archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
+      c={...(taskRoot?{taskRoot}:{}),...(engine==='codex'?{nativeContextEmpty:true}:{}),id,engine,workspaceKind:'chat',vmId:this.ownerId,cwd,branch:'',archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
       this.state.conversations.push(c);await this.save();
     }
     try {
@@ -605,6 +615,7 @@ export class Workspaces {
     if(requestId && c.engine && c.engine!=="pi") {
       if(c.acceptedRequestIds?.includes(requestId))throw new Error("This request was already accepted; it was not replayed. Inspect native history before retrying with a new request.");
       c.acceptedRequestIds=[...(c.acceptedRequestIds??[]),requestId].slice(-256);
+      if(c.engine==='codex')c.nativeContextEmpty=false;
     }
     if(runState==="running" && this.recordsTurns(c)) {
       // Taken before the Agent receives the prompt; a failure never blocks the run
