@@ -247,7 +247,7 @@ compaction remains native Pi. This supersedes historical local-fold UI wording.
 [Server #6](https://github.com/awangs1986/pi-coffee-server/issues/6) clarifies task
 creation without changing the overall workbench layout. The settings menu starts
 with **Source** (Chat / Gitea / GitHub), followed by **Agent type** (Pi / Codex /
-Claude Code). Chat maps to the existing `chat` workspace kind and remains Pi-only;
+Claude Code). Chat maps to the existing `chat` workspace kind and offers Pi or Host-advertised Codex;
 Gitea and GitHub both map to `project`. The registered Project determines the
 forge. Native / Relay remains a separate **Model source** setting for Pi, with
 its existing protocol and credentials unchanged. The task source and directory remain fixed. Explicit [Work Pi/Codex takeover](agent-takeover.md) is available from Agent type; Chat cannot upgrade or switch.
@@ -256,7 +256,7 @@ The empty new-task hero shows exactly three actions: **New chat (Chat)**,
 **Start task (Gitea)** and **Start task (GitHub)**. These configure the draft,
 opening the existing repository picker for Work. They do not send a prompt or
 create a Conversation; typed text is preserved. Changing forge clears a selected
-repository from the previous forge. Choosing Chat selects Pi. GitHub remains
+repository from the previous forge. Choosing Chat retains Pi/Codex and resets a Work-only engine to Pi. GitHub remains
 visible but disabled with an explanation when Host has no GitHub configuration,
 rather than disappearing. Registered-project selection still reflects the
 selected repository's forge; delayed requests cannot replace a changed draft.

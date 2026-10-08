@@ -15,6 +15,8 @@ export const MAX_PROMPT_CHARS = MAX_FRAME_BYTES;
 export const MAX_REQUEST_ID_CHARS = 256;
 
 export type AgentEngine = "pi" | "codex" | "claude" | "cursor" | "grok";
+/** Repository-free Chat engines. Availability/authentication is checked separately. */
+export const CHAT_ENGINES: readonly AgentEngine[] = ["pi", "codex"];
 export function parseAgentEngine(value: unknown): AgentEngine {
   if (value === undefined) return "pi";
   if (value === "pi" || value === "codex" || value === "claude" || value === "cursor" || value === "grok") return value;
