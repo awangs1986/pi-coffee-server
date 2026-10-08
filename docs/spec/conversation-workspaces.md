@@ -33,7 +33,7 @@ User VM 使用一个共同工作根，推荐布局如下：
 │               ├── research/        # Web 搜索与来源证据
 │               └── images/          # 生成或转换出的图片
 └── chats/
-    └── <conversation-id>/           # Chat Workspace；Pi cwd
+    └── <conversation-id>/           # Chat Workspace；Pi/Codex cwd
         ├── inbox/
         ├── artifacts/
         ├── research/
@@ -128,7 +128,9 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 
 旧的按 Session ID 分隔的 inbox 保留原件，提供相同 Conversation scope 下的只读历史引用；新上传全部进入任务目录。全局 research/子任务结果不推断归属、不自动搬移。原生历史可继续读取；旧无 Workspace 的任务须显式分配目录才能继续写入。新 native subagent 运行目录也设置在所属 `artifacts/subagent-runs`，不只归档其返回摘要。创建中断保留元数据及目录；如果持久操作锁仍在，先检查未完成操作，再由 owner 移除对应锁重试。
 
-## Pi-only Chat creation — owner correction, 2026-09-23
+## Historical Pi-only Chat creation — owner correction, 2026-09-23
+
+Superseded for Codex by [Server #98 repository-free Chat](native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98). New Chat defaults to Pi and also accepts Codex, with the same independent directory and scoped files. No Project registration or clone is required. The dated account below describes the previous restriction.
 
 Agent #60 / Server #4 supersedes engine-independent Chat creation. New Chat
 Tasks default to Pi and reject Codex/Claude at the Host HTTP creation boundary

@@ -50,3 +50,13 @@ retains its existing environment sentence and configured runner revision updates
 Original transcripts are never rewritten and existing conversations are not silently
 cleared; after activation, a previously contaminated Chat needs one explicit clear
 (or a new Chat) to remove old user-turn injections already in its native history.
+
+
+## Codex Chat extension — 2026-10-08, Server #98
+
+[Repository-free Codex Chat](native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98)
+receives no Coffee Work environment/project/Fork or test-server guidance, including
+native reset and context-preset rebinding. Codex still owns its native system prompt
+and user configuration; its existing Web question bridge is preserved. Pi's
+zero-system provider filter remains Pi-only. Explicit SSHME remains a user action,
+and Codex Chat does not automatically load the Pi MISHU plugin.

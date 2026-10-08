@@ -95,6 +95,18 @@ describe("Codex app-server adapter", () => {
     expect(text(events.events)).toContain('still usable');
   });
 
+  it('does not treat an admitted resumed conversation with missing native turns as fresh empty context',async()=>{
+    const b=setup(),first=b.factory();const session=await first.create({sessionId:'admitted-history'});
+    const events=recorder(session);await session.prompt('Keep this admitted conversation');await events.until(settled);await first.close();
+    // Fault injection at the external native fixture's storage boundary.
+    const file=join(b.codexHome,'fake-threads.json'),threads=JSON.parse(readFileSync(file,'utf8'));
+    for(const thread of Object.values(threads) as Array<{turns:unknown[]}>)thread.turns=[];
+    writeFileSync(file,JSON.stringify(threads));
+    const resumed=await b.factory().create({sessionId:'admitted-history'});
+    await expect(resumed.getHistory()).rejects.toThrow('is not materialized yet');
+    await expect(resumed.setContextPreset!('maximum')).rejects.toThrow('is not materialized yet');
+  });
+
   it("exposes the native model catalog over authenticated WS without creating a thread",async()=>{
     const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory();
     const host=new HostServer({port:0,token:'catalog-test',factory});await host.start();

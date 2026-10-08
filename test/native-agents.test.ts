@@ -15,7 +15,7 @@ async function setup(legacy=false,wide=false,catalog=true,piCatalog=false,authUs
   if(url==='/auth/me'&&authUser)return {ok:true,status:200,json:async()=>({auth:true,user:authUser})};
   if(url==='/api/workspace'&&!init?.body)await workspaceRead;
   if(url==='/api/me')return {ok:true,json:async()=>null};
-  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,clearChatContext:true,engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:nativeReady,modelCatalog:nativeReady,reason:'CLI unavailable'},{id:'cursor',name:'Cursor',available:nativeReady,modelCatalog:false},{id:'grok',name:'Grok Build',available:nativeReady,modelCatalog:false}]})};
+  if(url==='/api/engines')return {ok:!legacy,json:async()=>({takeover:true,clearChatContext:true,chatEngines:['pi','codex'],contextResetEngines:['pi','codex'],engines:[{id:'pi',name:'Pi',available:true,modelCatalog:piCatalog},{id:'codex',name:'Codex',available:true,modelCatalog:catalog},{id:'claude',name:'Claude Code',available:nativeReady,modelCatalog:nativeReady,reason:'CLI unavailable'},{id:'cursor',name:'Cursor',available:nativeReady,modelCatalog:false},{id:'grok',name:'Grok Build',available:nativeReady,modelCatalog:false}]})};
   const body=init?.body?JSON.parse(init.body):null;if(!body)return {ok:true,json:async()=>({projects,conversations,sidebar,vmId:'linux001',capabilities:{chatWorkspaces:true}})};
   requests.push(body);if(body.action==='takeover'){const task=conversations.find(c=>c.id===body.id);task.takeover??={id:'switch-1',status:'preparing',from:body.expectedEngine,to:body.engine};return {ok:true,json:async()=>task.takeover};}
   if(body.action==='sidebar_pin'){sidebar.pinned=body.pinned?[body.id,...(sidebar.pinned??[]).filter(id=>id!==body.id)]:(sidebar.pinned??[]).filter(id=>id!==body.id);return {ok:true,json:async()=>structuredClone(sidebar)};}
@@ -230,13 +230,15 @@ it.each(['cancel','failure'])('retains the Work selection when Gitea creation en
  if(outcome==='cancel')expect(app.requests.some(r=>r.action==='project')).toBe(false);
  else expect(document.querySelector('#toast')?.textContent).toContain('Gitea repository already exists');
 });
-it('defaults new conversations to Pi Chat and only offers native engines for Work',async()=>{
+it('defaults to Pi Chat and offers Codex Chat without a project while keeping other engines Work-only',async()=>{
  const app=await setup();const kind=document.querySelector<HTMLSelectElement>('#task-kind')!,engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
- expect(kind.value).toBe('chat');expect(engine.value).toBe('pi');expect(engine.disabled).toBe(true);expect(engine.options[1].disabled).toBe(true);
- chooseWork();expect(engine.disabled).toBe(false);expect(engine.options[1].disabled).toBe(false);expect(engine.options[2].disabled).toBe(true);
- engine.value='codex';kind.value='chat';kind.dispatchEvent(new Event('change'));expect(engine.value).toBe('pi');
+ expect(kind.value).toBe('chat');expect(engine.value).toBe('pi');expect(engine.disabled).toBe(false);expect(engine.options[1].disabled).toBe(false);
+ expect(engine.options[2].disabled).toBe(true);
+ engine.value='codex';engine.dispatchEvent(new Event('change'));expect(engine.value).toBe('codex');
+ expect(document.querySelector('#project-select')!.closest('label')!.classList.contains('hidden')).toBe(true);
  document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
- expect(app.requests.find(r=>r.action==='conversation')).toMatchObject({engine:'pi',workspaceKind:'chat'});
+ expect(app.requests.find(r=>r.action==='conversation')).toMatchObject({engine:'codex',workspaceKind:'chat'});
+ expect(engine.disabled).toBe(true);
 });
 it('keeps global project/archive commands in the brand menu and review closed until requested',async()=>{
  await setup(false,true);
@@ -323,27 +325,28 @@ it('ignores stale Skill inventories after the user changes Agent',async()=>{
 });
 
 
-it.each(['pi','codex'].flatMap(agent=>['history-first','models-first','rejected'].map(order=>({agent,order}))))('selects a $agent draft model and waits before the first prompt ($order)',async({agent,order})=>{
- const app=await setup(false,false,true,agent==='pi',undefined,undefined,agent==='claude');if(agent!=='pi')chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
+it.each([{agent:'pi',kind:'chat'},{agent:'codex',kind:'project'},{agent:'codex',kind:'chat'}].flatMap(choice=>['history-first','models-first','rejected'].map(order=>({...choice,order}))))('selects a $agent $kind draft model and waits before the first prompt ($order)',async({agent,kind,order})=>{
+ const app=await setup(false,false,true,agent==='pi',undefined,undefined,agent==='claude');if(kind==='project')chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;
  if(agent==='codex'){engine.value=agent;engine.dispatchEvent(new Event('change'));}
+ const chosen=agent==='codex'&&kind==='chat'?'gpt-6-luna':'chosen-model';
  const query=app.frames.find(f=>f.type==='get_model_catalog' && f.engine===agent);expect(query).toMatchObject({engine:agent});
  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
  const ws=app.sockets.at(-1);
- ws.receive({type:'model_catalog',requestId:query.requestId,engine:agent,models:[{provider:agent,id:'default-model'},{provider:agent,id:'chosen-model'}],current:{provider:agent,id:'default-model'},thinkingLevels:[],thinkingLevel:''});
+ ws.receive({type:'model_catalog',requestId:query.requestId,engine:agent,models:[{provider:agent,id:'default-model'},{provider:agent,id:chosen}],current:{provider:agent,id:'default-model'},thinkingLevels:[],thinkingLevel:''});
  const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);button.click();
  document.querySelector<HTMLButtonElement>('#agent-model-row')!.click();
- [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes('chosen-model'))!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes(chosen))!.click();
  expect(app.frames.some(f=>f.type==='set_model')).toBe(false);
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first message';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(button.disabled).toBe(true);await vi.advanceTimersByTimeAsync(20);
- const id=app.requests.find(r=>r.action==='conversation').id;
+ const created=app.requests.find(r=>r.action==='conversation');expect(created.workspaceKind).toBe(kind);if(kind==='chat')expect(created.projectId).toBeUndefined();const id=created.id;
  ws.receive({type:'opened',engine:agent,sessionId:id,state:{},capabilities:{models:true}});
  if(order!=='models-first')ws.receive({type:'history',sessionId:id,entries:[]});
- const change=app.frames.find(f=>f.type==='set_model');expect(change).toMatchObject({provider:agent,id:'chosen-model'});
+ const change=app.frames.find(f=>f.type==='set_model');expect(change).toMatchObject({provider:agent,id:chosen});
  expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
  if(order==='rejected'){ws.receive({type:'error',requestId:change.requestId,code:'operation_failed',message:'Model unavailable'});expect(app.frames.some(f=>f.type==='prompt')).toBe(false);expect(prompt.value).toBe('first message');return;}
  ws.receive({type:'ack',operation:'set_model',requestId:change.requestId});
- ws.receive({type:'models',requestId:app.frames.filter(f=>f.type==='get_models').at(-1).requestId,models:[{provider:agent,id:'chosen-model'}],current:{provider:agent,id:'chosen-model'},thinkingLevels:[],thinkingLevel:''});
+ ws.receive({type:'models',requestId:app.frames.filter(f=>f.type==='get_models').at(-1).requestId,models:[{provider:agent,id:chosen}],current:{provider:agent,id:chosen},thinkingLevels:[],thinkingLevel:''});
  if(order==='models-first'){expect(app.frames.some(f=>f.type==='prompt')).toBe(false);ws.receive({type:'history',sessionId:id,entries:[]});}
  expect(app.frames.filter(f=>f.type==='prompt')).toEqual([expect.objectContaining({text:'first message'})]);
 });
@@ -1356,11 +1359,11 @@ it('pins outside project groups and restores membership when unpinned',async()=>
  expect(row().closest('[data-sidebar-pinned]')).toBeNull();document.querySelector<HTMLButtonElement>('#show-groups')!.click();await vi.advanceTimersByTimeAsync(20);expect(row().closest('[data-sidebar-project]')).not.toBeNull();
 });
 
-it.each([true,false])('clears Chat from context usage with one click (native UUID available: %s), no confirmation, and blocks duplicate clicks',async nativeUuid=>{
+it.each(['pi','codex'].flatMap(agent=>[true,false].map(nativeUuid=>({agent,nativeUuid}))))('clears $agent Chat from context usage with one click (native UUID: $nativeUuid), no confirmation, and blocks duplicate clicks',async({agent,nativeUuid})=>{
  if(!nativeUuid)vi.stubGlobal('crypto',{getRandomValues:crypto.getRandomValues.bind(crypto)});
- const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const app=await setup();if(agent==='codex'){const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;engine.value='codex';engine.dispatchEvent(new Event('change'));}document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
- ws.receive({type:'opened',engine:'pi',sessionId:id,state:{},capabilities:{stats:true}});ws.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'old',text:'OLD CHAT'}]});await vi.advanceTimersByTimeAsync(20);
+ ws.receive({type:'opened',engine:agent,sessionId:id,state:{},capabilities:{stats:true}});ws.receive({type:'history',sessionId:id,entries:[{kind:'user',id:'old',text:'OLD CHAT'}]});await vi.advanceTimersByTimeAsync(20);
  const button=document.querySelector<HTMLButtonElement>('#sp-clear-context')!;expect(document.querySelector('#sp-chat-actions')!.classList.contains('hidden'),'Chat clear action visibility').toBe(false);expect(button.disabled,'Chat clear action enabled').toBe(false);
  button.click();button.click();await vi.advanceTimersByTimeAsync(100);
  expect(app.requests.filter(r=>r.action==='clear_chat_context'),document.querySelector('#toast')!.textContent??'').toEqual([expect.objectContaining({id,expectedNativeId:id,operationId:expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)})]);
