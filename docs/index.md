@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Repository-free Codex Chat: [current contract](spec/native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98), [Server #98](https://github.com/awangs1986/pi-coffee-server/issues/98). Pi remains the default; Codex preserves native model selection, scoped files and upgrade-safe context reset without Work guidance. Source acceptance and production activation are separate.
+
 - Streaming browser responsiveness: [Word discovery contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and regression evidence](reviews/streaming-browser-freeze-20261007.md), [Server #96](https://github.com/awangs1986/pi-coffee-server/issues/96). Dense historical text must not block live replies or browser interaction during file-link discovery.
 
 - Codex local readiness: [contract](spec/native-agent-engines.md#codex-local-readiness-correction--2026-10-06-server-82), [diagnosis and evidence](reviews/codex-readiness-20261006.md), [Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82). Local configured-login status is distinct from slow account metadata and provider acceptance; source verification is distinct from production activation.

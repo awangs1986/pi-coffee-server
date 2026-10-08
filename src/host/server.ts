@@ -21,6 +21,7 @@ import { URL } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import {
   decodeClientFrame,
+  CHAT_ENGINES,
   parseAgentEngine,
   encodeFrame,
   MAX_FRAME_BYTES,
@@ -283,7 +284,7 @@ export class HostServer {
       json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
     }
     if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude","cursor","grok"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude"|"cursor"|"grok")??[]]))}); }
+      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,chatEngines:CHAT_ENGINES,contextResetEngines:slot.factory.contextResetEngines?.() ?? (slot.factory.prepareContextReset?["pi"]:[]),takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude","cursor","grok"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude"|"cursor"|"grok")??[]]))}); }
       catch { json(res,503,{error:"Agent discovery unavailable"}); }
       return;
     }
@@ -348,7 +349,7 @@ export class HostServer {
         const id=input.id;
         if(typeof id!=='string'||!id||id.length>200||typeof input.expectedNativeId!=='string'||!input.expectedNativeId||input.expectedNativeId.length>200||typeof input.operationId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.operationId))throw new Error('Invalid context reset request');
         const task=await ws.lookup(id);
-        if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi'||task.archived||task.creationState!=='ready'||task.workspaceRemoved||task.cleanupStarted||task.fork&&task.fork.status!=='completed')throw new Error('Only an active Pi Chat can clear context');
+        if(!task||task.workspaceKind!=='chat'||!CHAT_ENGINES.includes(task.engine??'pi')||task.archived||task.creationState!=='ready'||task.workspaceRemoved||task.cleanupStarted||task.fork&&task.fork.status!=='completed')throw new Error('Only an active Pi or Codex Chat can clear context');
         if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
         if(task.contextReset?.id===input.operationId){json(res,200,task);return;}
         if((task.nativeBinding?.id??id)!==input.expectedNativeId)throw new Error('Context changed; refresh before clearing');
@@ -435,7 +436,7 @@ export class HostServer {
         const engine=parseAgentEngine(input.engine);
         const existing=target ? await ws.lookup(target) : undefined;
         if(existing && (existing.engine ?? "pi")!==engine)throw new Error("Task Agent is fixed at creation");
-        if(!existing && input.action==='conversation' && input.workspaceKind==='chat' && engine!=='pi')throw new Error('Chat is available only with Pi; choose Work and a Gitea or GitHub Project for Codex or Claude Code');
+        if(!existing && input.action==='conversation' && input.workspaceKind==='chat' && !CHAT_ENGINES.includes(engine))throw new Error('Chat is available with Pi or Codex; choose Work for this Agent');
         const available=(await slot.factory.engines?.() ?? PI_ONLY_ENGINES).find(item=>item.id===engine);
         if(!existing && !available?.available)throw new Error(available?.reason ?? "Agent unavailable");
       }

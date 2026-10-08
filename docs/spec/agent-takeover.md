@@ -7,7 +7,7 @@ change an existing binding.
 
 ## User contract
 
-- Only an active Work task may switch Pi ↔ Codex. Chat stays Pi and cannot upgrade
+- Only an active Work task may switch Pi ↔ Codex. Chat stays on its selected Pi or Codex engine and cannot upgrade
   to Work. Claude and legacy unregistered tasks are outside this first version.
 - Click Agent type in the existing composer menu. No slash command is required.
   Select the other available Agent, then accept one modal explaining possible

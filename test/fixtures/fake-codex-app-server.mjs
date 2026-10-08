@@ -29,6 +29,7 @@ const pendingServerRequests = new Map();
 let nextServerId = 1000;
 const settings = new Map(); // threadId -> { approvalPolicy }
 const active = new Map();   // threadId -> { turnId, interrupted }
+const createdHere=new Set();
 // Account meters as `account/rateLimits/read` reports them (ChatGPT login);
 // FAKE_CODEX_NO_LIMITS mimics an API-key login that has none.
 const rateLimits = process.env.FAKE_CODEX_NO_LIMITS ? null : {
@@ -203,6 +204,7 @@ rl.on("line", (line) => {
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake", effort: params.config?.model_reasoning_effort };
       threads[thread.id] = thread;
+      createdHere.add(thread.id);
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
       save();
       reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null });
@@ -213,6 +215,7 @@ rl.on("line", (line) => {
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
+      if(process.env.FAKE_CODEX_EMPTY_NOT_DURABLE&&!createdHere.has(thread.id)&&!thread.turns.length)return fail('no rollout found for thread id '+thread.id);
       // Native resume applies configuration overrides; ignoring them masks
       // accidental model resets when the Host is reconstructed.
       if (params.model) thread.model = params.model;
@@ -251,6 +254,7 @@ rl.on("line", (line) => {
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       // Native Codex 0.156.1 materializes history only after the first user turn.
+      if(process.env.FAKE_CODEX_EMPTY_LINEAGE&&!thread.turns.length)return fail(`invalid paginated history lineage for ${thread.id}: missing source rollout`);
       if (thread.turns.length === 0) return fail(`thread ${thread.id} is not materialized yet; thread/turns/list is unavailable before first user message`);
       const limit = Math.max(1, params.limit ?? 25);
       const offset = params.cursor ? Number(params.cursor) : 0;

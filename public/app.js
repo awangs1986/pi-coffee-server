@@ -260,7 +260,7 @@ function renderUncertainPrompts(){
 const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
-let engine="pi", capabilities=null, engineAvailability=[],takeoverAvailable=false,forkModes={},clearChatContextAvailable=false,clearingContextId=null;
+let engine="pi", capabilities=null, engineAvailability=[],chatEngines=["pi"],takeoverAvailable=false,forkModes={},clearChatContextAvailable=false,contextResetEngines=["pi"],clearingContextId=null;
 const forkControls=initForkControls({task:id=>workspaceState?.conversations.find(c=>c.id===id),modes:engine=>forkModes[engine]??[],request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},selection:()=>taskSelectionEpoch,complete:(id,epoch)=>{send({v:1,type:"list_sessions"});if(epoch===taskSelectionEpoch)switchSession(id);},toast:message=>toast(message)});
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
 const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeoverControls.busy(activeId)||forkControls.busy(activeId)));
@@ -268,7 +268,7 @@ function canTakeover(){const task=currentTask();return takeoverAvailable&&opened
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code",cursor:"Cursor",grok:"Grok Build"})[value] || value;
 const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
+  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];chatEngines=Array.isArray(data.chatEngines)?data.chatEngines.filter(id=>['pi','codex'].includes(id)):['pi'];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;contextResetEngines=Array.isArray(data.contextResetEngines)?data.contextResetEngines.filter(id=>['pi','codex'].includes(id)):['pi'];forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
 }
 async function loadRuntimeStatus(){
@@ -445,7 +445,7 @@ function renderAgentPane(kind) {
   if (kind === 'kind') {
     for(const source of ['chat','gitea','github']) {
       const available=source==='chat' || forgeCapabilities()[source];
-      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'Pi 聊天':available?'Work 项目':'Host 未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
+      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'无仓库聊天':available?'Work 项目':'Host 未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
     }
     return;
   }
@@ -1206,7 +1206,7 @@ function showStatsPop() {
 }
 $('#sp-clear-context').addEventListener('click',async()=>{
   const task=currentTask(),id=activeId;
-  if($('#sp-clear-context').disabled||!id||task?.workspaceKind!=='chat'||(task.engine||'pi')!=='pi')return;
+  if($('#sp-clear-context').disabled||!id||task?.workspaceKind!=='chat'||!contextResetEngines.includes(task.engine||'pi'))return;
   const epoch=taskSelectionEpoch;
   clearingContextId=id;hideStatsPop();refreshComposer();
   try{
@@ -1298,7 +1298,7 @@ function setStreaming(active) {
 function refreshComposer() {
   mishuControls?.updateAvailability();
   const clearChat=currentTask();
-  $('#sp-chat-actions').classList.toggle('hidden',!clearChatContextAvailable||clearChat?.workspaceKind!=='chat'||(clearChat?.engine||'pi')!=='pi'||Boolean(clearChat?.archived));
+  $('#sp-chat-actions').classList.toggle('hidden',!clearChatContextAvailable||clearChat?.workspaceKind!=='chat'||!contextResetEngines.includes(clearChat?.engine||'pi')||Boolean(clearChat?.archived));
   $('#sp-clear-context').disabled=!opened||!connected||!historyReady||streaming||compacting||takeoverBusy()||Boolean(pendingDelivery)||queueControls.hasPending||queuedRequests.size>0||Boolean(sessions.find(s=>s.id===activeId)?.queued)||Boolean(modelPending||thinkingPending||contextPending);
   const switching=takeoverBusy();
   // Inert also covers dynamically rendered queue/file/message action buttons.
@@ -1418,12 +1418,12 @@ function renderProjectContext() {
   ui.startBranch.disabled = lockedToConversation;
   const kind=$('#task-kind');kind.disabled=lockedToConversation;
   if(conversation)kind.value=conversation.workspaceKind==='chat'?'chat':'project';
-  if(!conversation && kind.value==='chat')agentSelect.value='pi';
-  agentSelect.disabled=lockedToConversation || !!pendingOpenId || kind.value==='chat';
+  if(!conversation && kind.value==='chat' && !chatEngines.includes(agentSelect.value))agentSelect.value='pi';
+  agentSelect.disabled=lockedToConversation || !!pendingOpenId;
   for(const option of agentSelect.options){
     const found=engineAvailability.find(e=>e.id===option.value);
     const unavailable=found ? !found.available : option.value!=='pi';
-    const workOnly=!lockedToConversation && kind.value==='chat' && option.value!=='pi';
+    const workOnly=!lockedToConversation && kind.value==='chat' && !chatEngines.includes(option.value);
     option.disabled=unavailable || workOnly;
     option.textContent=engineName(option.value)+(workOnly?' · 仅 Work':unavailable?' · '+(found?.reason || 'Host 未启用'):'');
   }

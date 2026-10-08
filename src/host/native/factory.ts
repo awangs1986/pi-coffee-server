@@ -6,7 +6,7 @@ import {applyForkSettings,handoffPrompt,seedForkPrompt,forkTurn,HANDOFF_END,FORK
 import {writeFile,readFile} from 'node:fs/promises';
 import {prepareTakeoverRecords,takeoverPrompt,reconstruct,priorHistory,withPriorHistory,type TakeoverState} from "../takeover.js";
 import type {AgentHistory,AgentHistoryRead,AgentSession} from "../agent-adapter.js";
-import { capabilitiesFor } from "../../shared/protocol.js";
+import { CHAT_ENGINES, capabilitiesFor, type AgentEngine } from "../../shared/protocol.js";
 import { randomUUID } from "node:crypto";
 import { ClaudeSession, readClaudeHistory } from "./claude.js";
 import { readCodexHistory } from "../codex/history.js";
@@ -21,7 +21,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { instructions?:()=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -29,6 +29,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  contextResetEngines():AgentEngine[]{
+    return CHAT_ENGINES.filter(engine=>engine==='pi'?Boolean(this.options.pi.resetNative):Boolean(this.options.codex&&this.options.codexSessionFactory));
+  }
   forkModes(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):ForkMode[]{
     if(engine==='cursor'||engine==='grok')return [];
     if(engine==='pi')return this.options.pi.forkNative?['native','handoff']:[];
@@ -92,7 +95,19 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
   async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
-  private async codexFactory(id:string,cwd:string){const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);if(!factory && this.options.codexSessionFactory){factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,nativeId=>this.options.workspaces.setNativeBinding(id,{state:"bound",id:nativeId}),()=>this.options.workspaces.runtimeEnvironment(id));this.codexFactories.set(generation,factory);}return factory;}
+  private async codexFactory(id:string,cwd:string){
+    const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);
+    if(!factory&&this.options.codexSessionFactory){
+      let nativeId=(await this.options.workspaces.lookup(id))?.nativeBinding?.id;
+      factory=this.options.codexSessionFactory((this.generation.get(id)??'original')==='original'?id:generation.replace(':','-'),cwd,async value=>{
+        if(nativeId&&nativeId!==value)await this.options.workspaces.rebindCodexThread(id,nativeId,value);
+        else await this.options.workspaces.setNativeBinding(id,{state:'bound',id:value});
+        nativeId=value;
+      },()=>this.options.workspaces.runtimeEnvironment(id));
+      this.codexFactories.set(generation,factory);
+    }
+    return factory;
+  }
   async readHistory(sessionId: string): Promise<AgentHistoryRead> {
     const task = await this.options.workspaces.lookup(sessionId);
     if (!task) {
@@ -105,7 +120,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     const identity = (value: typeof task | undefined) => value ? JSON.stringify({ engine: value.engine ?? "pi", cwd: value.cwd, nativeId: value.nativeBinding?.id, segments: value.takeoverSegments ?? [], removed: value.workspaceRemoved, cleanup: value.cleanupStarted }) : "missing";
     const before = identity(task), segment = task.takeoverSegments?.at(-1), engine = task.engine ?? "pi";
     const nativeId = engine === "pi" && !segment && !task.contextReset ? sessionId : task.nativeBinding?.id;
-    const binding = `${engine}:${nativeId ?? "unbound"}:${segment?.id ?? "original"}`;
+    const binding = `${engine}:${nativeId ?? "unbound"}:${segment?.id ?? task.contextReset?.id ?? "original"}`;
     if (!nativeId || task.cleanupStarted || task.workspaceRemoved) return unknownHistory(binding);
     try {
       let read: AgentHistoryRead;
@@ -113,7 +128,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
       else if ((engine === "cursor" || engine === "grok")) read = unknownHistory(binding); // ACP has no verified passive native-history reader.
       else if (engine === "claude") read = this.options.claude ? await readClaudeHistory(this.options.claude, task.cwd, nativeId) : unknownHistory(binding);
       else {
-        this.generation.set(sessionId, segment?.id ?? "original");
+        this.generation.set(sessionId, segment?.id ?? task.contextReset?.id ?? "original");
         const factory = await this.codexFactory(sessionId, task.cwd);
         read = factory?.readHistory ? await factory.readHistory(nativeId) : this.options.codex ? await readCodexHistory({ cwd: task.cwd, env: this.options.codex.env }, nativeId) : unknownHistory(binding);
       }
@@ -242,18 +257,22 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   async prepareContextReset(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:import('../agent-adapter.js').AgentModels){
     const task=await this.options.workspaces.lookup(id);
-    if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi'||task.archived||task.contextReset?.id===operation.id||(task.nativeBinding?.id??id)!==operation.expectedNativeId)throw new Error('Chat context changed; refresh before clearing');
-    if(!this.options.pi.resetNative)throw new Error('Native context reset unavailable');
+    if(!task||task.workspaceKind!=='chat'||!this.contextResetEngines().includes(task.engine??'pi')||task.archived||task.contextReset?.id===operation.id||(task.nativeBinding?.id??id)!==operation.expectedNativeId)throw new Error('Chat context changed or reset unavailable; refresh before clearing');
     if(this.closing)throw new Error('Host is stopping');
-    const nativeId=randomUUID(),controller=new AbortController();let session:AgentSession|undefined;
+    let nativeId:string=randomUUID(),committed=false;const controller=new AbortController();let session:AgentSession|undefined,temporaryFactory:AgentSessionFactory|undefined;
+    const rollback=async()=>{this.preparations.delete(controller);await session?.stop();if(temporaryFactory)await temporaryFactory.close?.();else await this.options.pi.delete(nativeId);};
     try{
-      session=await this.options.pi.resetNative(operation.expectedNativeId,{sessionId:nativeId,cwd:task.cwd,workspaceSessionId:id});
+      if((task.engine??'pi')==='pi')session=await this.options.pi.resetNative!(operation.expectedNativeId,{sessionId:nativeId,cwd:task.cwd,workspaceSessionId:id});
+      else{
+        temporaryFactory=this.options.codexSessionFactory!(id+'-'+operation.id,task.cwd,async value=>{if(committed&&value!==nativeId)await this.options.workspaces.rebindCodexThread(id,nativeId,value);nativeId=value;},()=>this.options.workspaces.runtimeEnvironment(id));
+        session=await temporaryFactory.create({sessionId:operation.id});
+      }
       this.preparations.set(controller,session);if(this.closing||controller.signal.aborted)throw new Error('Host is stopping');
       await applyForkSettings(session,{model:settings.current??undefined,thinkingLevel:settings.thinkingLevel,contextPreset:settings.context?.preset});
       await session.rename(operation.title||'Chat');
       if((await session.getHistory()).entries.some(e=>e.kind==='user'||e.kind==='assistant'||e.kind==='tool'))throw new Error('Native context reset did not produce an empty conversation');
-      return {session,commit:async()=>{if(this.closing||controller.signal.aborted)throw new Error('Host is stopping');await this.options.workspaces.commitContextReset(id,operation,nativeId);this.preparations.delete(controller);},rollback:async()=>{this.preparations.delete(controller);await session!.stop();await this.options.pi.delete(nativeId);}};
-    }catch(error){this.preparations.delete(controller);await session?.stop().catch(()=>undefined);await this.options.pi.delete(nativeId).catch(()=>undefined);throw error;}
+      return {session,commit:async()=>{if(this.closing||controller.signal.aborted)throw new Error('Host is stopping');await this.options.workspaces.commitContextReset(id,operation,nativeId);committed=true;if(temporaryFactory){this.codexFactories.set(id+':'+operation.id,temporaryFactory);this.generation.set(id,operation.id);}this.preparations.delete(controller);},rollback};
+    }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async create({sessionId}:{sessionId:string}):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
@@ -285,12 +304,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
       const session=new ClaudeSession(config,cwd,task.nativeBinding!,binding=>this.options.workspaces.setNativeBinding(sessionId,binding),extraDirs,[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),false,new NativeSettingsStore(join(await this.options.workspaces.dataRoot(sessionId),'claude-settings.json')));
       try{return await session.start();}catch(error){await session.stop();throw error;}
     }
-    this.generation.set(sessionId,task.takeoverSegments?.at(-1)?.id??'original');
+    this.generation.set(sessionId,task.takeoverSegments?.at(-1)?.id??task.contextReset?.id??'original');
     const nativeId=task.nativeBinding?.id;
     if(!nativeId)await this.options.workspaces.setNativeBinding(sessionId,{state:"starting"});
     const advanced=await this.codexFactory(sessionId,cwd);
     if(advanced)return advanced.create({sessionId:nativeId ?? sessionId,requireExisting:Boolean(nativeId)});
-    const session=new CodexSession(config,cwd,this.options.instructions);
+    const session=new CodexSession(config,cwd,this.options.instructions&&task.workspaceKind!=='chat'?()=>this.options.instructions!(sessionId):undefined);
     try{return await session.start(nativeId,id=>this.options.workspaces.setNativeBinding(sessionId,{state:"bound",id}));}
     catch(error){await session.stop();throw error;}
   }
@@ -307,7 +326,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         : c.engine==="codex" && c.nativeBinding?.id && this.options.codexListings
         ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===(c.nativeBinding?.id??c.id)):undefined;
       const preferences=c.engine==="claude"&&readable?await new NativeSettingsStore(join(c.taskRoot??join(c.cwd,".pi-coffee"),"claude-settings.json")).load().catch(()=>({name:undefined})):undefined;
-      return {...(preferences?.name?{name:preferences.name}:{}),createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":c.engine==="cursor"?"Cursor Task":c.engine==="grok"?"Grok Build Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),id:c.id,engine:c.engine};
+      return {...(preferences?.name?{name:preferences.name}:{}),createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":c.engine==="cursor"?"Cursor Task":c.engine==="grok"?"Grok Build Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),...(c.contextReset?.title&&!known?.name?{name:c.contextReset.title}:{}),id:c.id,engine:c.engine};
     }));
     return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:row.name||task.fork.title,preview:row.preview||task.fork.title}:row;}),...summaries];
   }

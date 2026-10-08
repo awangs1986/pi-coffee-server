@@ -1,4 +1,5 @@
 import type {
+  AgentEngine,
   CommandInfo,
   ExtensionInfo,
   HistoryEntry,
@@ -87,6 +88,7 @@ export interface AgentSession {
 }
 
 export interface AgentSessionFactory {
+  contextResetEngines?():AgentEngine[];
   forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
   forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
