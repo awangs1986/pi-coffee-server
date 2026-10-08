@@ -120,3 +120,24 @@ in the task workspace or its supported sibling attachment/artifact directory.
 Use relative `../attachments/...` references for task attachments; a path outside
 the existing file-serving boundary remains denied. No original model session or
 model context is rewritten by this display behavior.
+
+## Local file link delivery — 2026-10-08, Server #102
+
+Ordinary local Markdown file links use the current Conversation's authorized
+`workspace-download` endpoint. This applies to relative task paths and absolute
+paths accepted by the existing Host allow-list; the Browser does not widen that
+allow-list or expose arbitrary VM files. Binary attachments such as APK and ZIP
+must download regardless of the separate 10 MiB preview limit.
+
+Embedded image elements and their preview anchor retain `preview`; explicit image
+download controls retain `workspace-download`. Missing grants disable local links,
+and renewed grants rebind them. External HTTP/mail links retain their behavior.
+Authentication, account/task scope, traversal/symlink/credential rejection and
+preview limits remain unchanged.
+
+Regression acceptance: `test/conversation-images.test.ts` runs the actual
+Markdown renderer/binder chain; `scripts/probe-attachment-download.mjs` exercises
+actual Chromium download bytes over synthetic HTTP while retaining image preview.
+Live diagnosis separately confirmed a real authorized binary download succeeds
+and the incorrectly bound preview returns 413; user file contents are not stored
+in repository evidence.

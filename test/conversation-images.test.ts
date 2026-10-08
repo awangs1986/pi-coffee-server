@@ -39,3 +39,19 @@ it('binds late grants to preview/download and gives visible failure feedback',()
  bindWorkspaceArtifactLinks(root,(action:string,path:string)=>endpoint(action,path)+'&renewed=1');
  image.dispatchEvent(new Event('load'));expect(image.hidden).toBe(false);expect(root.querySelector('.workspace-image-status')?.hasAttribute('hidden')).toBe(true);
 });
+
+it('downloads ordinary local file links and preserves embedded image preview',()=>{
+ const root=document.createElement('div');
+ root.innerHTML=renderMarkdown('[APK](/home/fixture/project/workspace/build/app.apk) [ZIP](build/app.zip) [Attachment](../attachments/data.csv)\n\n![Preview](images/picture.png)');
+ const endpoint=(action:string,path:string)=>'https://files.example/'+action+'?path='+encodeURIComponent(path);
+ bindWorkspaceArtifactLinks(root,()=>null);
+ for(const a of root.querySelectorAll('a[data-workspace-path]'))expect(a.hasAttribute('href')).toBe(false);
+ bindWorkspaceArtifactLinks(root,endpoint);
+ const links=[...root.querySelectorAll<HTMLAnchorElement>('a[data-workspace-path]')];
+ for(const label of ['APK','ZIP','Attachment'])expect(links.find(a=>a.textContent===label)?.href).toContain('/workspace-download?');
+ expect(root.querySelector<HTMLImageElement>('img')!.src).toContain('/preview?');
+ expect(root.querySelector<HTMLAnchorElement>('a:has(img)')!.href).toContain('/preview?');
+ expect(root.querySelector<HTMLAnchorElement>('.artifact-download')!.href).toContain('/workspace-download?');
+ bindWorkspaceArtifactLinks(root,(action,path)=>endpoint(action,path)+'&renewed=1');
+ expect(links[0].href).toContain('&renewed=1');
+});
