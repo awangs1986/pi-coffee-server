@@ -4,7 +4,8 @@ const watched = new WeakSet();
 export function bindWorkspaceArtifactLinks(root, endpoint) {
   for (const node of root.querySelectorAll('[data-workspace-path]')) {
     const path=node.getAttribute('data-workspace-path');
-    const url=endpoint(node.hasAttribute('data-workspace-download')?'workspace-download':'preview',path);
+    const preview=!node.hasAttribute('data-workspace-download') && (node.tagName==='IMG' || node.tagName==='A' && node.querySelector('img[data-workspace-path]'));
+    const url=endpoint(preview?'preview':'workspace-download',path);
     if(node.tagName==='IMG') {
       const status=node.closest('.workspace-image')?.querySelector('.workspace-image-status');
       if(!watched.has(node)) {
