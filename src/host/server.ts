@@ -778,6 +778,14 @@ class HostSocket implements SessionSink {
       if(this.closed)return;
       let decoded:ClientFrame|undefined;
       const receivedGeneration=this.session?.commandGeneration;
+      // Authenticated connection-level liveness must not wait for native open or task controls.
+      try {
+        const frame=decodeClientFrame(rawDataToBytes(data));decoded=frame;
+        if(frame.type==='ping'){
+          this.send({v:1,type:'pong',nonce:frame.nonce});return;
+        }
+      } catch { /* The ordered decoder reports malformed frames. */ }
+
       // Stop and pending answers must not queue behind durable prompt acceptance.
       // The normal handler still enforces identity, lifecycle and pending-request checks.
       if(this.opened&&!this.closed){

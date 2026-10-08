@@ -15,3 +15,12 @@ it.each(['pi','codex','claude'] as const)('passes managed Git authorization to t
  expect(frames.some(f=>f.type==='opened'),JSON.stringify(frames)).toBe(true);
  const observed=JSON.parse(await readFile(log,'utf8'));expect(observed).toMatchObject({token:'coffee-no-shared-auth',gitGlobal:'/dev/null'});expect(observed.githubConfig).toBe(join(accounts.root,'tools','unbound','config'));
 });
+
+it('keeps explicit task markers while stripping inherited Host secrets',async()=>{
+ const {nativeEnvironment}=await import('../src/host/native/process.js');
+ const prior=process.env.PI_COFFEE_HOST_TOKEN;process.env.PI_COFFEE_HOST_TOKEN='synthetic-secret';
+ try{
+  expect(nativeEnvironment({PI_COFFEE_DATA_ROOT:'/synthetic/task',PI_COFFEE_INITIAL_MODE:'work',PI_SUBAGENTS_TEMP_ROOT:'/synthetic/temp'})).toMatchObject({PI_COFFEE_DATA_ROOT:'/synthetic/task',PI_COFFEE_INITIAL_MODE:'work',PI_SUBAGENTS_TEMP_ROOT:'/synthetic/temp'});
+  expect(nativeEnvironment()).not.toHaveProperty('PI_COFFEE_HOST_TOKEN');
+ }finally{if(prior===undefined)delete process.env.PI_COFFEE_HOST_TOKEN;else process.env.PI_COFFEE_HOST_TOKEN=prior;}
+});

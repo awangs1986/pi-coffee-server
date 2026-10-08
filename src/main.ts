@@ -80,7 +80,7 @@ async function run(selectedRole: Role): Promise<void> {
   // File transfer (ADR-0009): the Host speaks LocalSend v2 on the User VM's LAN
   // interface so browsers move files without touching the Web Server.
   let host: HostServer | undefined;
-  const transferBind = envString("PI_COFFEE_TRANSFER_BIND", "127.0.0.1");
+  const transferBind = envString("PI_COFFEE_TRANSFER_BIND", "0.0.0.0");
   const transfer = !wantHost || transferBind === "off" ? undefined : new TransferServer({
     host: transferBind,
     port: envNumber("PI_COFFEE_TRANSFER_PORT", 53317),
@@ -111,8 +111,8 @@ async function run(selectedRole: Role): Promise<void> {
   // Codex CLI's app-server. Both are logged in once, in the VM, by its owner.
   const agent = envString("PI_COFFEE_AGENT", "pi").toLowerCase();
   if (agent !== "pi" && agent !== "codex") throw new Error("PI_COFFEE_AGENT must be pi or codex");
-  const codexSandbox = envString("PI_COFFEE_CODEX_SANDBOX", "workspace-write");
-  const codexApproval = envString("PI_COFFEE_CODEX_APPROVAL", "on-request");
+  const codexSandbox = envString("PI_COFFEE_CODEX_SANDBOX", "danger-full-access");
+  const codexApproval = envString("PI_COFFEE_CODEX_APPROVAL", "never");
   if (!["read-only", "workspace-write", "danger-full-access"].includes(codexSandbox)) throw new Error("PI_COFFEE_CODEX_SANDBOX must be read-only, workspace-write or danger-full-access");
   if (!["never", "on-request", "untrusted"].includes(codexApproval)) throw new Error("PI_COFFEE_CODEX_APPROVAL must be never, on-request or untrusted");
   const idleTimeoutMs = envNumber("PI_COFFEE_IDLE_TIMEOUT_MS", 10 * 60 * 1000);

@@ -38,3 +38,8 @@ it('requires an explicit owned GitHub binding for repository listing, even when 
  const r=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer transport','x-pi-coffee-user':'alice','content-type':'application/json'},body:JSON.stringify({action:'github_repos'})});
  expect(r.status).toBe(409);expect(await r.text()).not.toContain('owner/private');
 });
+
+it('creates the transport root privately before recursive tool directories',async()=>{
+ const {stat}=await import('node:fs/promises');root=await mkdtemp(join(tmpdir(),'coffee-transport-mode-'));const accounts=new GitHubAccounts(join(root,'new-account'));
+ await accounts.environment(undefined);expect((await stat(accounts.root)).mode&0o777).toBe(0o700);expect((await stat(join(accounts.root,'transport.json'))).mode&0o777).toBe(0o600);
+});

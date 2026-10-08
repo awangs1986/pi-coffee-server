@@ -1,3 +1,4 @@
+import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
 import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
@@ -80,8 +81,7 @@ const ui = {
 
 // ---------- state ----------
 let socket, reconnectTimer, connectionEpoch=0;
-const HEARTBEAT_MS=15000, PONG_TIMEOUT_MS=10000;
-let heartbeatTimer=null, pongTimer=null, awaitingPongNonce=null, reconnectAttempt=0;
+let heartbeat=null, reconnectAttempt=0;
 let modelsRequestEpoch=0, modelsSyncTimer=null;
 
 let retryNote;
@@ -526,7 +526,7 @@ function agentMenuState() {
   const agent = task ? (task.engine || 'pi') : activeId ? engine : $('#task-engine').value;
   const kind = task ? (task.workspaceKind === 'chat' ? 'chat' : 'project') : $('#task-kind').value;
   const choiceLocked = Boolean(task) || !!pendingOpenId;
-  const modelLocked = modelControlsLocked() || (!models && !modelPreview);
+  const modelLocked = modelControlsLocked() || !models;
   return { task, agent, kind, choiceLocked, modelLocked };
 }
 function renderAgentTrigger() {
@@ -1537,10 +1537,7 @@ function renderProjectContext() {
 }
 
 
-function clearHeartbeat() {
-  clearInterval(heartbeatTimer); clearTimeout(pongTimer);
-  heartbeatTimer = pongTimer = null; awaitingPongNonce = null;
-}
+function clearHeartbeat() { heartbeat?.stop(); heartbeat=null; }
 function clearModelsSyncTimer() { clearTimeout(modelsSyncTimer); modelsSyncTimer = null; }
 function scheduleReconnect() {
   clearTimeout(reconnectTimer);
@@ -1549,41 +1546,33 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(connect, delay);
 }
 function forceReconnect(reason) {
-  clearHeartbeat();
-  const ws = socket;
-  if (!ws) { scheduleReconnect(); return; }
-  // Half-open sockets may never fire onclose; detach handlers then close and reconnect.
-  ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
-  try { ws.close(); } catch { /* ignore */ }
-  if (socket === ws) socket = null;
-  opened = false; connected = false; historyReady = false; pendingOpenId = null; activeBindingEpoch = null;
-  setConnection('连接无响应，重连中…（' + reason + '）', 'error');
-  scheduleReconnect();
+  const ws=socket;
+  if(!ws)return;
+  // Use ordinary disconnect cleanup, including drafts and pending dialog answers.
+  socketDisconnected(ws,{code:1006});
+  ws.onopen=ws.onmessage=ws.onclose=ws.onerror=null;
+  socket=null;
+  try { ws.close(); } catch { /* already disconnected */ }
+  setConnection('连接无响应，重连中…（'+reason+'）','error');
 }
 function armHeartbeat(ws) {
   clearHeartbeat();
-  heartbeatTimer = setInterval(() => {
-    if (socket !== ws || ws.readyState !== WebSocket.OPEN) { clearHeartbeat(); return; }
-    const nonce = 'hb-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-    awaitingPongNonce = nonce;
-    if (!send({ v: 1, type: 'ping', nonce })) { forceReconnect('ping_send_failed'); return; }
-    clearTimeout(pongTimer);
-    pongTimer = setTimeout(() => {
-      if (socket === ws && awaitingPongNonce === nonce) forceReconnect('pong_timeout');
-    }, PONG_TIMEOUT_MS);
-  }, HEARTBEAT_MS);
+  heartbeat=createSocketHeartbeat({
+    sendPing:nonce=>{
+      if(socket!==ws || ws.readyState!==WebSocket.OPEN)return false;
+      // Transport liveness carries no task binding and remains available during takeover.
+      try { ws.send(JSON.stringify({v:1,type:'ping',nonce})); return true; } catch { return false; }
+    },
+    onFailure:reason=>{if(socket===ws)forceReconnect(reason);},
+  });
+  if(document.visibilityState==='visible')heartbeat.start();
 }
 function resumeLiveSubscription() {
+  if(socket?.readyState===WebSocket.CONNECTING)return;
   if (!socket || socket.readyState !== WebSocket.OPEN) { connect(); return; }
-  const nonce = 'vis-' + Date.now();
-  awaitingPongNonce = nonce;
-  if (!send({ v: 1, type: 'ping', nonce })) { forceReconnect('visibility_ping_failed'); return; }
-  clearTimeout(pongTimer);
-  pongTimer = setTimeout(() => {
-    if (awaitingPongNonce === nonce) forceReconnect('visibility_pong_timeout');
-  }, PONG_TIMEOUT_MS);
+  heartbeat?.start();heartbeat?.probe();
   send({ v: 1, type: 'list_sessions' });
-  if (activeId) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
+  if (activeId && !takeoverBusy()) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
 }
 function disconnectExecution() {
   abandonPendingSettings();clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
@@ -1614,7 +1603,6 @@ function connectSocket() {
   setConnection('连接中…');
   ws.onopen = () => {
     if (socket !== ws) return;
-    reconnectAttempt = 0;
     armHeartbeat(ws);
     setConnection('已连接', 'ready');
     void loadRuntimeStatus();
@@ -1630,9 +1618,12 @@ function connectSocket() {
     try { frame = JSON.parse(event.data); } catch { return; }
     handleFrame(frame, ws);
   };
-  ws.onclose = (event) => {
+  ws.onclose = event => socketDisconnected(ws,event);
+  ws.onerror = () => { if (socket === ws) setConnection('连接错误', 'error'); };
+}
+function socketDisconnected(ws,event) {
     if (socket !== ws) return;
-    clearHeartbeat();
+    clearHeartbeat();clearModelsSyncTimer();
     abandonRenames();unconfirmedUiAnswers();
     abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);
     queuedRequests.clear();
@@ -1643,9 +1634,8 @@ function connectSocket() {
     syncStatus.update({conversationId:activeId,state:'offline',message:'连接中断，仍可阅读本地内容'});
     setConnection('连接断开，重连中…（Host 上的任务不会被打断）', 'error');
     scheduleReconnect();
-  };
-  ws.onerror = () => { if (socket === ws) setConnection('连接错误', 'error'); };
 }
+
 function restoreQueuedPrompt() {
   if (queuedPrompt === null) return;
   ui.prompt.value = [queuedPrompt.text,ui.prompt.value!==queuedPrompt.text?ui.prompt.value:''].filter(Boolean).join('\n\n');
@@ -1699,20 +1689,18 @@ function afterOpened() {
     send({ v: 1, type: 'get_models', requestId: 'models-sync-' + epoch });
     modelsSyncTimer=setTimeout(()=>{
       if(epoch!==modelsRequestEpoch || id!==activeId || models)return;
-      toast('模型信息同步较慢，仍按上次设置显示，可继续输入');
+      toast('模型信息同步较慢，可继续输入；选择菜单将在同步后恢复');
       renderAgentSettings();refreshComposer();
     },8000);
   }
-  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });
+  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });}
   if(supports('stats'))send({ v: 1, type: 'get_stats' });
   if (pluginsWaiting && supports('extensions')) send({ v: 1, type: 'get_extensions' });
 }
 
 function handleFrame(frame, ws) {
   if(frame.type==='pong'){
-    if(socket===ws && (!awaitingPongNonce || frame.nonce===awaitingPongNonce)){
-      awaitingPongNonce=null;clearTimeout(pongTimer);pongTimer=null;
-    }
+    if(socket===ws && heartbeat?.pong(frame.nonce))reconnectAttempt=0;
     return;
   }
   if(frame.conversationId&&frame.conversationId!==activeId&&frame.type!=='opened')return;
@@ -2997,8 +2985,6 @@ function applySessionSelection(id) {
   renderProjectContext();
   renderHeader();
   renderSessionList();
-  // Optimistic: cached model is already visible; keep typing enabled and restore focus.
-  queueMicrotask(()=>{ try { ui.prompt.focus({ preventScroll: true }); } catch { ui.prompt.focus(); } });
 }
 function newSession(focus = true) {navigation.select(null);if(focus)ui.prompt.focus();}
 function applyNewSession(focus = true) {
@@ -3091,11 +3077,11 @@ document.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState!=='visible')return;
+  if(document.visibilityState!=='visible'){heartbeat?.stop();return;}
   maybeReadCompletion();
   resumeLiveSubscription();
 });
-window.addEventListener('online', () => { reconnectAttempt = 0; connect(); });
+window.addEventListener('online', resumeLiveSubscription);
 installCopyHandlers(ui.thread);
 
 // ---------- boot ----------
