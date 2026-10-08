@@ -54,6 +54,9 @@ export interface SessionSummary {
   queued?:number;
   /** Last observed native run boundary, independent of unread attention. */
   runStatus?: "running" | "settled" | "interrupted";
+  /** Stable identity of the most recent settled run; independent of read state. */
+  completionId?: string;
+  completedAt?: string;
   /**
    * Why this conversation wants the user's eyes: an agent dialog is waiting
    * for an answer, or a run finished while no browser was attached. Absent
@@ -375,6 +378,7 @@ export type ServerFrame = (
       olderCursor?: string | null;
       sourceFreshness?: string;
       sessionId: string;
+      completionId?: string | null;
       entries: HistoryEntry[];
       leafId: string | null;
       truncated: boolean;

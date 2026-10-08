@@ -39,7 +39,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
   const network = { showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
-  const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', runState: state.runState, entries: state.entries }; };
+  const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', lastSourceCheckAt:state.lastSourceCheckAt||'2026-10-03T00:00:00Z', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   class Socket {
     static OPEN = 1; readyState = 1;
@@ -65,7 +65,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
       const match = String(url).match(/\/api\/conversations\/([^/]+)\/(meta|page|changes|content)/)!;
       const id = match[1], action = match[2], state = syncStates.get(id)!;
       if (network.deferred.has(id)) return new Promise<Response>(resolve => network.deferred.set(id, resolve));
-      if (action === 'meta') data = { ...snapshot(id), oldestAvailableRevision: '0', lastSourceCheckAt: '2026-10-03T00:00:00Z' };
+      if (action === 'meta') data = { ...snapshot(id), oldestAvailableRevision: '0' };
       else if (action === 'page') data = snapshot(id);
       else if (action === 'changes') {
         const from = new URL(String(url), 'http://localhost').searchParams.get('afterRevision')!;
@@ -114,14 +114,112 @@ describe('actual app local-first live output', () => {
 
   it('restores the completed coffee icon from Host status without unread attention after reload',async()=>{
     const app=await setup('codex',2);
-    const rows=app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled'}:{})}));
+    const rows=app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'a-run-1'}:{})}));
     app.sockets.at(-1)!.receive({type:'sessions',sessions:rows});await tick();
     expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
     expect(document.querySelector('[data-session-id="a"]')?.textContent).toContain('已完成');
-    expect(document.querySelector('[data-session-id="a"]')?.textContent).not.toContain('待查看');
+    expect(document.querySelector('[data-session-id="a"]')?.textContent).toContain('待查看');
     app.sockets.at(-1)!.receive({type:'sessions',sessions:rows.map(c=>({...c,running:c.id==='a',attention:'finished'}))});await tick();
     expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
     app.sockets.at(-1)!.receive({type:'sessions',sessions:rows.map(c=>({...c,runStatus:'interrupted'}))});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it('acknowledges indexed completion only after fresh latest history is rendered',async()=>{
+    const app=await setup('codex',2);
+    const state=app.syncStates.get('a')!;
+    state.runState='settled';state.lastSourceCheckAt='2026-10-03T00:00:00Z';
+    const rows=app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'a-run-1',completedAt:'2026-10-03T01:00:00Z'}:{})}));
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:rows});await tick();
+    const socket=await app.select('a');
+    expect(thread().textContent).toContain('SYNC-a');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    state.lastSourceCheckAt='2026-10-03T02:00:00Z';
+    socket.receive({type:'sync_changed',sessionId:'a',bindingEpoch:'epoch-a'});await tick(500);
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+    // A delayed summary for the same run cannot resurrect the reminder.
+    socket.receive({type:'sessions',sessions:rows});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+    const scroller=document.querySelector<HTMLElement>('#scroller')!;
+    Object.defineProperties(scroller,{scrollHeight:{value:1000,configurable:true},clientHeight:{value:100,configurable:true}});
+    scroller.scrollTop=0;scroller.dispatchEvent(new Event('scroll'));
+    rows[0]={...rows[0],completionId:'a-run-2',completedAt:'2026-10-03T03:00:00Z'};
+    state.revision='2';state.lastSourceCheckAt='2026-10-03T04:00:00Z';state.entries=[{kind:'assistant',id:'a-answer-2',entityRevision:'2',text:'NEW-RESULT'}];
+    socket.receive({type:'sessions',sessions:rows});
+    socket.receive({type:'history',...app.snapshot('a')});await tick(500);
+    expect(thread().textContent).toContain('NEW-RESULT');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    scroller.scrollTop=900;scroller.dispatchEvent(new Event('scroll'));await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it.each(['pi','codex'] as const)('reads a live %s completion only after pending native renders finish',async engine=>{
+    const app=await setup(engine,1),socket=await app.select('a',[],true);
+    app.emit(socket,'a',{type:engine==='pi'?'agent_start':'run_started'});
+    socket.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:c.id==='a',runStatus:c.id==='a'?'running':undefined}))});
+    app.emit(socket,'a',assistantEvent(engine,'LIVE-COMPLETED-REPLY',true));
+    app.emit(socket,'a',{type:engine==='pi'?'agent_settled':'run_completed',status:'completed'});
+    socket.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'live-run-1'}:{})}))});
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    await tick(150);
+    expect(thread().textContent).toContain('LIVE-COMPLETED-REPLY');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it('does not assign a first completion to an older unbound native export',async()=>{
+    const app=await setup('codex',1);
+    choose('a');await tick();const socket=app.sockets.at(-1)!;
+    socket.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'first-result'}:{})}))});
+    socket.receive({type:'opened',sessionId:'a',engine:'codex',capabilities,state:{isStreaming:false}});
+    socket.receive({type:'history',sessionId:'a',completionId:null,entries:[{kind:'user',id:'old-user',text:'OLD-EXPORT'}]});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    socket.receive({type:'history',sessionId:'a',completionId:'first-result',entries:[{kind:'assistant',id:'new-answer',text:'ACTUAL-RESULT'}]});await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it('keeps a long completed reply unread until its latest content segment is viewed',async()=>{
+    const app=await setup('codex',2),state=app.syncStates.get('a')!;
+    state.runState='settled';state.lastSourceCheckAt='2026-10-03T02:00:00Z';
+    state.entries=[{kind:'assistant',id:'long-answer',entityRevision:'1',text:'OLD-SEGMENT',contentOffset:0,contentLength:5000,contentTruncated:true}];
+    app.sockets.at(-1)!.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'long-result',completedAt:'2026-10-03T01:00:00Z'}:{})}))});
+    app.network.custom=url=>{
+      if(!url.includes('/content'))return;
+      const offset=Number(new URL(url,'http://localhost').searchParams.get('offset')),text='L'.repeat(5000-offset);
+      return new Response(JSON.stringify({...app.snapshot('a'),entityId:'long-answer',entityRevision:'1',encoding:'utf-16',offset,nextOffset:5000,totalLength:5000,text}),{status:200});
+    };
+    await app.select('a');
+    expect(thread().textContent).toContain('OLD-SEGMENT');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    const latest=[...thread().querySelectorAll<HTMLButtonElement>('.content-page-trigger')].find(button=>button.textContent==='最新内容')!;
+    latest.click();await tick();
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it('acknowledges a completion replayed after an older native export finishes',async()=>{
+    const app=await setup('codex',1);choose('a');await tick();const socket=app.sockets.at(-1)!;
+    socket.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'replayed-result'}:{})}))});
+    socket.receive({type:'opened',sessionId:'a',engine:'codex',cursor:3,capabilities,state:{isStreaming:false}});
+    socket.receive({type:'history',sessionId:'a',completionId:null,entries:[{kind:'user',id:'old-user',text:'OLD-EXPORT'}]});
+    app.emit(socket,'a',{type:'run_started'});
+    app.emit(socket,'a',assistantEvent('codex','REPLAYED-COMPLETED-REPLY',true));
+    app.emit(socket,'a',{type:'run_completed',status:'completed'});
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    await tick(150);
+    expect(thread().textContent).toContain('REPLAYED-COMPLETED-REPLY');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
+  });
+
+  it.each(['pi','codex'] as const)('does not acknowledge a later %s run during partial replay',async engine=>{
+    const app=await setup(engine,1);choose('a');await tick();const socket=app.sockets.at(-1)!;
+    socket.receive({type:'sessions',sessions:app.conversations.map(c=>({...c,running:false,...(c.id==='a'?{runStatus:'settled',completionId:'second-replay-result'}:{})}))});
+    socket.receive({type:'opened',sessionId:'a',engine,cursor:6,capabilities,state:{isStreaming:false}});
+    socket.receive({type:'history',sessionId:'a',completionId:null,entries:[{kind:'user',id:'old-user',text:'OLD-EXPORT'}]});
+    const start={type:engine==='pi'?'agent_start':'run_started'},end={type:engine==='pi'?'agent_settled':'run_completed',status:'completed'};
+    app.emit(socket,'a',start);app.emit(socket,'a',assistantEvent(engine,'FIRST-REPLAY-REPLY',true));app.emit(socket,'a',end);await tick(150);
+    expect(thread().textContent).toContain('FIRST-REPLAY-REPLY');
+    expect(document.querySelector('[data-session-id="a"] .finished-coffee')).not.toBeNull();
+    app.emit(socket,'a',start);app.emit(socket,'a',assistantEvent(engine,'LATEST-REPLAY-REPLY',true));app.emit(socket,'a',end);await tick(150);
+    expect(thread().textContent).toContain('LATEST-REPLAY-REPLY');
     expect(document.querySelector('[data-session-id="a"] .finished-coffee')).toBeNull();
   });
 
