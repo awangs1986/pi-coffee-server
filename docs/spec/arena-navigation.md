@@ -359,8 +359,9 @@ character artwork is no longer displayed. The workbench layout is unchanged.
 
 A running conversation uses a small light-blue (`#7CBAE8`) pixel cat in the sidebar instead of a
 pulsing blue dot. Conversations whose last observed native run settled show a static
-pixel coffee cup, including after they have been viewed or the Web reconnects.
-Opening clears only unread attention; it does not clear the completion icon. Waiting
+pixel coffee cup until the latest completed reply has been viewed (Server #100).
+Unread completions survive Web reconnection; merely opening a cached preview does
+not acknowledge them. Waiting
 retains its question mark. An idle row
 has no running cat. Reduced-motion mode shows the cat without animation, and the
 dark theme adds a subtle outline to retain contrast.
@@ -500,9 +501,10 @@ retains its existing rendering bounds. No native transcript or prompt is changed
 Host stores the last observed native run boundary (`running`, `settled`, or
 `interrupted`) in each registered Conversation and includes `runStatus` in scoped
 session summaries. This status is separate from transient unread `attention`.
-A settled conversation retains its coffee icon after browser/Web reconnection,
-idle native-process retirement, and Host restoration. Viewing it clears unread
-attention and its “pending review” wording, while retaining “completed”.
+An unread settled conversation retains its coffee icon after browser/Web reconnection,
+idle native-process retirement, and Host restoration. Server #100 supersedes the
+original persistent-icon rule: viewing the latest completed reply hides the coffee
+reminder while retaining the native completed status.
 
 Waiting and running take display priority. A new admitted run replaces the prior
 completion; an explicit interruption removes it. Host restoration converts a
@@ -517,3 +519,42 @@ Acceptance: `test/host-server.test.ts` drives public WS completion, reattachment
 idle retirement and a fresh Host; `test/sidebar-http.test.ts` verifies scoped
 persistence and reset; `test/local-first-app.test.ts` checks real controller icons
 and priority; `scripts/probe-completion-icon.mjs` verifies Chromium page reload.
+
+### Viewed completion acknowledgement — 2026-10-08 (Server #100)
+
+The coffee cup means an unread completed run, rather than permanent completion.
+Host persists `completionId` and `completedAt` at a new settled boundary; duplicate
+settlement notifications retain that identity. A later run receives a new identity.
+Context reset and engine takeover remove the previous binding's completion metadata.
+Compatibility-native history captures its completion identity at the stable native
+history-read boundary, before asynchronous export. If completion changes during
+the read, history and identity are retried together; an older response cannot
+acknowledge a newer completed run.
+
+Browser read markers are account-scoped, bounded, disposable local metadata. They
+contain conversation and completion identities only, never transcript content or
+credentials. Acknowledgement survives reload in the same browser profile. Other
+browsers retain independent read state; clearing browser storage restores reminders.
+Independent per-completion storage keys prevent cross-tab writes from replacing
+one another; storage events refresh other visible tabs. Unavailable storage falls
+back to tab memory. Legacy summaries lacking completion
+identity use their native update timestamp until a new lifecycle boundary is recorded.
+
+A marker is written only for the attached active conversation while the document
+is visible, the Agent is idle, and the reader is at the latest visible tail. Indexed
+history must be current, settled, reconciled after the completion timestamp, outside
+older-history mode, and actually rendered through its latest entity revisions. A paged final reply
+must display its latest content segment, rather than an older segment with the
+same entity revision.
+Compatibility-native history must carry the matching completion identity, or a
+live settlement must pass a fence after pending native message renders and consume
+the opened replay boundary. Earlier replayed runs cannot acknowledge a later
+buffered completion. Selecting a
+cached preview, hidden tabs, old pages and delayed responses are not read receipts.
+Waiting and running indicators retain priority. Read state never changes run status,
+sidebar order, pinning, native session lifetime, or business acceptance.
+
+Acceptance: `test/completion-reads.test.ts`, `test/local-first-app.test.ts`,
+`test/host-server.test.ts`, `test/sidebar-http.test.ts`, and the real Chromium
+`probe-completion-icon.mjs` cover scoped read persistence, stale-response rejection,
+hidden tabs, latest-tail viewing, subsequent completion and lifecycle restoration.

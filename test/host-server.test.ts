@@ -626,6 +626,27 @@ describe("Host WebSocket seam", () => {
     other.close();
   });
 
+  it('labels the successful history reread with the completion that finished during native loading',async()=>{
+    const root=mkdtempSync(join(tmpdir(),'coffee-completion-read-race-'));
+    const workspaces=new Workspaces(join(root,'projects')),task=await workspaces.createChatConversation('read-race'),factory=new FakeFactory();
+    const pi=await factory.create({sessionId:task.id}) as FakePiSession;
+    let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),reading=new Promise<void>(resolve=>{entered=resolve;});
+    const original=pi.getHistory.bind(pi),spy=vi.spyOn(pi,'getHistory').mockImplementationOnce(async()=>{const old=await original();entered();await gate;return old;});
+    server=new HostServer({port:0,host:'127.0.0.1',factory,workspaces});let socket:WebSocket|undefined;
+    try{
+      await server.start();socket=await connect(server.address().port);const frames=new FrameQueue(socket);
+      socket.send(encodeFrame({v:1,type:'open',sessionId:task.id}));await reading;
+      pi.finish('completed-during-read');release();
+      const opened=await frames.next();expect(opened.type).toBe('opened');
+      const history=await frames.next();expect(history.type).toBe('history');
+      if(history.type!=='history')throw Error('Expected history');
+      const completed=(await workspaces.runStatuses()).get(task.id)!;
+      expect(completed).toMatchObject({runStatus:'settled',completionId:expect.any(String)});
+      expect(history.completionId).toBe(completed.completionId);
+      expect(history.entries).toContainEqual(expect.objectContaining({kind:'assistant',text:'echo: completed-during-read'}));
+    }finally{release();spy.mockRestore();socket?.close();await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+  });
+
   it('retains completed run status through browser reattachment, idle retirement and Host restart',async()=>{
     const root=mkdtempSync(join(tmpdir(),'coffee-completion-'));
     const factory=new FakeFactory();const workspaceRoot=join(root,'projects');
@@ -638,12 +659,14 @@ describe("Host WebSocket seam", () => {
       socket.send(encodeFrame({v:1,type:'prompt',requestId:'complete-1',text:'synthetic completion'}));
       for(let i=0;i<5;i++)await frames.next();
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      const completed=(await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)!;
+      expect(completed).toMatchObject({runStatus:'settled',running:false,completionId:expect.any(String),completedAt:expect.any(String)});
+      const completionId=completed.completionId;
       socket.close();await once(socket,'close');
       await waitFor(()=>factory.sessions.get(c.id)!.stopped);
       socket=await connect(server!.address().port);frames=new FrameQueue(socket);
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false,completionId});
       socket.send(encodeFrame({v:1,type:'open',sessionId:c.id}));await frames.next();await frames.next();
       frames.discardSessions();
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
@@ -651,7 +674,7 @@ describe("Host WebSocket seam", () => {
       socket.close();await once(socket,'close');await server!.close();
       await start(new Workspaces(workspaceRoot));socket=await connect(server!.address().port);frames=new FrameQueue(socket);
       socket.send(encodeFrame({v:1,type:'list_sessions'}));
-      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false});
+      expect((await frames.nextSessions(frame=>frame.sessions.some(s=>s.id===c.id&&s.runStatus==='settled'))).sessions.find(s=>s.id===c.id)).toMatchObject({runStatus:'settled',running:false,completionId});
     }finally{socket?.close();await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 

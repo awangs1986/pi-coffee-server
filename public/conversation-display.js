@@ -1,8 +1,8 @@
 // One owner chooses the visible projection. Indexed and compatibility-native
 // histories are different sources; neither may repaint a later selection.
 export class ConversationDisplay {
-  constructor({repository,view,status,renderNative,onIndex=()=>{}}) {
-    Object.assign(this,{repository,view,status,renderNative,onIndex});this.generation=0;this.recent=[];this.id=null;this.scope=null;this.mode='preview';this.hasIndex=false;
+  constructor({repository,view,status,renderNative,onIndex=()=>{},onState=()=>{}}) {
+    Object.assign(this,{repository,view,status,renderNative,onIndex,onState});this.generation=0;this.recent=[];this.id=null;this.scope=null;this.mode='preview';this.hasIndex=false;
   }
   select(id) {
     this.generation++;this.unsubscribe?.();this.unsubscribe=null;
@@ -21,6 +21,7 @@ export class ConversationDisplay {
   }
   update(state,details) {
     if(state.conversationId!==this.id||this.mode==='native')return;
+    this.onState(state);
     const failed=!['cached','current','syncing'].includes(state.status);
     const status=details.reason==='local'?'syncing':failed?(state.status==='timeout'?'timeout':'error'):state.status==='syncing'?'syncing':state.sourceFreshness==='current'?'idle':'synced';
     const message=state.status==='not_found'?'对话不存在或当前账号无权访问':failed?'同步暂时失败，仍可阅读本地内容':state.sourceFreshness==='reconciling'?'对话副本已同步，原生历史核对中':state.sourceFreshness!=='current'?'对话副本已同步，原生历史尚未核对':undefined;
