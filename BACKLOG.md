@@ -544,3 +544,12 @@ Owner selected per-current-Pi-Chat coordination of existing conversations. [Cont
   persistent-tracking implementation and real browser acceptance remain pending.
 
 - 2026-10-08: [Server #100](https://github.com/awangs1986/pi-coffee-server/issues/100) changes the sidebar coffee cup to an unread-completion reminder. Actual latest-reply viewing clears a scoped Browser receipt; native completed status remains durable. [Current contract](docs/spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100).
+## Planned Codex MISHU main secretary (2026-10-07)
+
+Owner requested [Codex source support](docs/spec/mishu-codex-secretary.md), so a user
+can select an existing Codex Work without a Pi secretary process. Shared Host
+coordination, exact source-user-run authorization, engine-native tool registration,
+mechanically tool-free report runs and original-output recovery are separate gates.
+[Approved tasks #85–#91](docs/development/mishu-codex-tickets.md) preserve #64/PR #78 as the
+unmerged tracking prerequisite, not an already deployed baseline. Source Codex
+support does not confer durable dispatch/recovery parity on non-Pi targets.

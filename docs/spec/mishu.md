@@ -7,6 +7,16 @@ Owner decision, 2026-10-05: fork `awangs/MISHU` into the independently maintaine
 exception to the Pi plugin monorepo source rule. The owner selected coordination
 of **existing conversations**, with independent settings for **the current Pi Chat**.
 
+## Planned Codex source extension (2026-10-07)
+
+The owner requested [Codex as the main MISHU secretary](mishu-codex-secretary.md).
+This planned extension explicitly selects an existing Codex Work; ordinary Chat
+remains Pi-only. Shared Host business state is separate from source-engine native
+tools, role context and report capabilities. The Pi-only descriptions below remain
+the current implementation, not a prohibition on the planned Codex source.
+No Pi fallback, unverified all-tool report isolation or target capability parity
+is implied. See C01–C12 and the capability-gated delivery graph.
+
 ## User flow
 
 1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前 Chat）**.
