@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-const probes=['probe-conversation-models.mjs','probe-completion-icon.mjs','probe-sidebar-activity.mjs','probe-sidebar-scroll.mjs','probe-streaming-responsiveness.mjs'];
+const probes=['probe-conversation-models.mjs','probe-completion-icon.mjs','probe-sidebar-activity.mjs','probe-sidebar-scroll.mjs','probe-streaming-responsiveness.mjs','probe-codex-chat.mjs'];
 if(process.argv.includes('--list'))console.log(JSON.stringify(probes));
 else {
  const base=process.env.PI_COFFEE_CHECK_TMP_ROOT||join(homedir(),'.cache','pi-coffee','checks');await mkdir(base,{recursive:true,mode:0o700});const root=await mkdtemp(join(base,'browser-'));

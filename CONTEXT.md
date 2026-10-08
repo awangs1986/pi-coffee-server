@@ -51,9 +51,10 @@ identity. [Work takeover](docs/spec/agent-takeover.md) may replace the active na
 binding while retaining prior history segments. A [Fork](docs/spec/conversation-fork.md)
 creates a different Conversation and independent directory.
 
-**Chat**: the default new Conversation, Pi-only, without a repository. Ordinary
-Chat has zero system instructions and no automatic project, Host or runner
-guidance, including after context reset. Explicit user requests and explicitly
+**Chat**: the default new Conversation, Pi by default or available Codex, without
+a repository. Ordinary Pi Chat has zero system instructions. Codex preserves its
+native guidance and Web question bridge. Neither receives automatic Work project,
+Host or runner guidance, including after context reset. Explicit user requests and explicitly
 selected MISHU context are separate. See [the zero-system boundary](docs/spec/session-environment.md#chat-zero-system-boundary--2026-10-05).
 
 **Work**: a project Conversation with an independent Git clone. Engine selection

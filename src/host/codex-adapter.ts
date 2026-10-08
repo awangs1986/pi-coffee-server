@@ -51,6 +51,8 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
   instructions?:()=>Promise<string|undefined>;
+  /** Host-proven empty Chat only; revoked durably before any prompt admission. */
+  allowEmptyRecovery?:()=>Promise<boolean>;
   /** The user's working directory; also the `thread/list` filter. */
   cwd: string;
   /** `codex` executable; `codex` on PATH by default. */
@@ -207,6 +209,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     try{
       const saved=JSON.parse(await readFile(this.contextFile(id),'utf8'));
       return {preset:saved.preset==='maximum'?'maximum':'272k',
+        ...(typeof saved.emptyContext==='boolean'?{emptyContext:saved.emptyContext}:{}),
         ...(typeof saved.model==='string' && saved.model?{model:saved.model}:{}),
         ...(typeof saved.reasoningEffort==='string' && saved.reasoningEffort?{reasoningEffort:saved.reasoningEffort}:{})};
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k'};}
@@ -310,9 +313,16 @@ export class CodexSessionFactory implements PiSessionFactory {
     };
     // Check metadata before resuming: a caller-supplied UUID may name another
     // user's thread in the shared native store. Listing by cwd is not authorization.
-    let response: Obj | undefined;
+    let response: Obj | undefined,recoveringEmpty=false;
+    const missingEmpty=async(error:unknown)=>{
+      if(!options.requireExisting&&!mapping.has(options.sessionId))return false;
+      const message=error instanceof Error?error.message:'';
+      if(!/^(?:thread not loaded:|no rollout found for thread id|no such thread\b)/i.test(message)&&message!==`invalid paginated history lineage for ${known}: missing source rollout`)return false;
+      return await this.options.allowEmptyRecovery?.()===true;
+    };
     if (UUID_LIKE.test(known)) {
-      const owned = await this.ownsThread(server, known).catch((error) => {
+      const owned = await this.ownsThread(server, known).catch(async(error) => {
+        if(await missingEmpty(error)){recoveringEmpty=true;return undefined;}
         if (options.requireExisting) throw new Error("Native conversation is unavailable. Its binding and local files were retained; create a new task if the native history was never saved.");
         if (mapping.has(options.sessionId)) throw error;
         return undefined; // A newly generated Host id has no native thread yet.
@@ -323,21 +333,28 @@ export class CodexSessionFactory implements PiSessionFactory {
       if (owned) response = await server.request("thread/resume", { threadId: known, ...common,
         ...(preferences.model?{model:preferences.model}:{}),
         config:{...common.config,...(preferences.reasoningEffort?{model_reasoning_effort:preferences.reasoningEffort}:{})},
-      }) as Obj;
+      }).catch(async error=>{if(await missingEmpty(error)){recoveringEmpty=true;return undefined;}throw error;}) as Obj|undefined;
     }
     const resumed=Boolean(response);
     if (!response) {
-      if (options.requireExisting) throw new Error("Native conversation is unavailable; no replacement was created");
+      if (options.requireExisting&&!recoveringEmpty) throw new Error("Native conversation is unavailable; no replacement was created");
+      const initialModel=recoveringEmpty?preferences.model??this.options.model:this.options.model;
+      const initialEffort=recoveringEmpty?preferences.reasoningEffort??this.options.reasoningEffort:this.options.reasoningEffort;
       response = await server.request("thread/start", { ...common, threadSource: null,
-        ...(this.options.model?{model:this.options.model}:{}),
-        config:{...common.config,...(this.options.reasoningEffort?{model_reasoning_effort:this.options.reasoningEffort}:{})},
+        ...(initialModel?{model:initialModel}:{}),
+        config:{...common.config,...(initialEffort?{model_reasoning_effort:initialEffort}:{})},
       }) as Obj;
       const thread = response.thread as Obj;
       if (typeof thread.id === "string" && thread.id !== options.sessionId) await this.remember(options.sessionId, thread.id);
+      await this.savePreferences(String(thread.id),{...preferences,emptyContext:true,
+        ...(typeof response.model==='string'?{model:response.model}:initialModel?{model:initialModel}:{}),
+        ...(typeof response.reasoningEffort==='string'?{reasoningEffort:response.reasoningEffort}:initialEffort?{reasoningEffort:initialEffort}:{}),
+      });
     }
     const thread = response.thread as Obj;
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
+      freshEmpty:!resumed||preferences.emptyContext===true&&(!this.options.allowEmptyRecovery||await this.options.allowEmptyRecovery()),
       cwd: this.options.cwd,
       preset,
       developerInstructions,
@@ -509,11 +526,13 @@ function nativeThreadConfig(preset:ContextPreset):Obj {
   return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95),'features.default_mode_request_user_input':true};
 }
 interface CodexPreferences {
+  emptyContext?:boolean;
   preset:ContextPreset;
   model?:string;
   reasoningEffort?:string;
 }
 interface CodexSessionSettings {
+  freshEmpty?:boolean;
   developerInstructions?:string;
   preset:ContextPreset;
   sandbox?:string;
@@ -547,6 +566,7 @@ class CodexSession implements PiSession {
   private activeTurnId?: string;
   private streaming = false;
   private messageCount = 0;
+  private nativeInputSeen=false;
   private tokenUsage?: Obj;
   /** agentMessage items that streamed deltas; the completed item must not be re-emitted as text. */
   private readonly streamedItems = new Set<string>();
@@ -614,6 +634,8 @@ class CodexSession implements PiSession {
   }
 
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    this.nativeInputSeen=true;
+    await this.updatePreferences({});
     if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
     const result = await this.server.request("turn/start", {
       threadId: this.threadId,
@@ -699,7 +721,8 @@ class CodexSession implements PiSession {
         // first user turn. Only this explicit native response means empty;
         // transport/store errors and later-page failures must still surface.
         const unmaterialized = `thread ${this.threadId} is not materialized yet; thread/turns/list is unavailable before first user message`;
-        if (page === 0 && error instanceof Error && error.message === unmaterialized) {
+        const emptyLineage=`invalid paginated history lineage for ${this.threadId}: missing source rollout`;
+        if (page === 0 && this.settings.freshEmpty&&!this.nativeInputSeen&&error instanceof Error && (error.message === unmaterialized||error.message===emptyLineage)) {
           return { data: [], nextCursor: null };
         }
         throw error;
@@ -732,7 +755,7 @@ class CodexSession implements PiSession {
 
   private updatePreferences(change:{model?:string;reasoningEffort?:string}):Promise<void>{
     const write=this.preferenceWrites.then(async()=>{
-      const next={preset:this.preset,model:this.model,reasoningEffort:this.effort,...change};
+      const next={preset:this.preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
       await this.settings.savePreferences(this.threadId,next);
       this.model=next.model;this.effort=next.reasoningEffort;
     });
@@ -757,8 +780,9 @@ class CodexSession implements PiSession {
     const thread=response.thread as Obj;
     const id=String(thread.id);
     if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
+      this.settings.freshEmpty=history.entries.length===0;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
-    await this.settings.savePreferences(id,{preset,model:this.model,reasoningEffort:this.effort});this.preset=preset;this.tokenUsage=undefined;
+    await this.settings.savePreferences(id,{preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
     this.absorbThread(thread);
   }
 
