@@ -21,3 +21,9 @@ Advance the formal Server version from 0.11 to 0.12 with the native version comm
 Merge/release Pi packages and current MISHU first, publish their immutable artifacts and verify hashes, then merge this consumer. Never merge the obsolete MISHU 0.1.7 candidate over manager.3. Source updates and formal version preparation do not activate services or global terminal runtime. Later production activation needs an authorized idle maintenance window, preserved task/config data, health/asset identity and rollback. Real-model autonomy, semantic compression fidelity and external-language/platform acceptance remain separate.
 
 The official Web 0.37 package pins an affected MCP SDK. A scoped override selects the compatible official patched SDK 1.31.0; this preserves upstream schemas/executors and removes GHSA-6qxp-vccf-f47h. Verify the actual lock audit and native Web fixture before publication.
+
+The final check exposed the existing startup capacity fixture's 20-second wait
+expiring during sequential initialization of 256 scopes. Its bounded-discovery
+phase now permits 60 seconds within the unchanged outer 90-second probe. Scope,
+path safety, unsupported-store preservation, no-replay and report assertions
+remain intact. Preserve the failed run and successful isolated probe privately.
