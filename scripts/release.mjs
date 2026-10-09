@@ -25,7 +25,7 @@ try{
  }else if(command==='activate-browser'){
   const commit=take('--commit');if(!/^[a-f0-9]{40}$/.test(commit))throw Error('Invalid release');
   const directory=join(root,commit+'-browser'),manifest=await load(join(directory,'release.json'));
-  const files=await artifacts(join(directory,'public'));if(manifest.sourceCommit!==commit||releaseVersion(manifest.version)==='unknown'||JSON.stringify(files)!==JSON.stringify(manifest.assets))throw Error('Staged bytes changed');
+  const files=await artifacts(join(directory,'public'));if(manifest.sourceCommit!==commit||JSON.stringify(files)!==JSON.stringify(manifest.assets))throw Error('Staged bytes changed');
   if(!config.expectedAssets||!Object.keys(config.expectedAssets).length)throw Error('Provide the expected active asset hashes');
   const publicRoot=resolve(config.activePublic);
   const validateBaseline=async()=>{for(const [name,hash] of Object.entries(config.expectedAssets)){if(name.startsWith('/')||name.split('/').some(s=>s==='..'||s==='.')||!/^[a-f0-9]{64}$/.test(hash))throw Error('Invalid baseline');if(sha256(await readFile(join(publicRoot,name)))!==hash)throw Error('Active deployment changed');}};
@@ -44,7 +44,7 @@ try{
    for(const name of names){const target=join(publicRoot,name);await mkdir(dirname(target),{recursive:true});const temp=target+'.'+randomUUID();await cp(join(directory,'public',name),temp);await chmod(temp,0o644);await rename(temp,target);}
    const identity={sourceCommit:commit,version:releaseVersion(manifest.version),backendVersion:releaseVersion(config.backendVersion),hostVersion:releaseVersion(config.hostVersion),backendCommit:config.backendCommit||'unknown',hostCommit:config.hostCommit||'unknown'};
    await save(join(publicRoot,'release-manifest.json'),identity);await chmod(join(publicRoot,'release-manifest.json'),0o644);
-   for(const [name,hash] of Object.entries(files)){const url=new URL(name.split('/').map(encodeURIComponent).join('/'),baseUrl.href.endsWith('/')?baseUrl:new URL(baseUrl.href+'/'));const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok||sha256(Buffer.from(await response.arrayBuffer()))!==hash)throw Error('Served assets differ');}
+   for(const [name,hash] of Object.entries(files)){const url=new URL(name.split('/').map(encodeURIComponent).join('/'),baseUrl.href.endsWith('/')?baseUrl:new URL(baseUrl.href+'/'));const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(10000)});const expected=name==='release-manifest.json'?sha256(Buffer.from(JSON.stringify(identity,null,2)+'\n')):hash;if(!response.ok||sha256(Buffer.from(await response.arrayBuffer()))!==expected)throw Error('Served assets differ');}
    await health();if(await service()!==before)throw Error('Service changed during activation');
    const active={state:'active',role:'browser',...identity,backup,serviceRestarted:false};await save(join(state,'current.json'),active);console.log(JSON.stringify(active));
   }catch(error){
@@ -58,6 +58,7 @@ try{
   const verification=await load(resolve(take('--verification')));await requireVerification(source,identity,verification,{fixture:args.includes('--fixture')});
   const version=await checkedReleaseVersion(source);
   const directory=join(root,commit+'-'+role),publicRoot=join(source,'dist/public'),assets=await artifacts(publicRoot);
+  const browserIdentity=await load(join(publicRoot,'release-manifest.json'));if(browserIdentity.sourceCommit!==commit||browserIdentity.version!==version)throw Error('Built Browser identity differs from source version/commit');
   const dependencies=role==='browser'?null:await dependencyArtifacts(join(source,'node_modules'));
   if(role!=='browser'&&JSON.stringify(dependencies)!==JSON.stringify(verification.dependencies))throw Error('Dependencies changed after verification');
   const packageMetadata=async base=>{const hashes={};for(const name of ['package.json','package-lock.json','VERSION'])hashes[name]=sha256(await readFile(join(base,name)));return hashes;};

@@ -1,3 +1,6 @@
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {checkedReleaseVersion} from './lib/release-version.mjs';
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,3 +24,8 @@ for (const [source, target] of vendor) {
   // Keep the source public/ usable for the vitest Web Server too.
   await writeFile(resolve(root, "public", target), moduleText);
 }
+
+// This is a verified build artifact for both complete Web and Browser-only releases.
+const version=await checkedReleaseVersion(root);
+const commit=await promisify(execFile)('git',['rev-parse','HEAD'],{cwd:root}).then(r=>r.stdout.trim()).catch(()=>'unknown');
+await writeFile(resolve(root,'dist/public/release-manifest.json'),JSON.stringify({sourceCommit:commit,version})+'\n');
