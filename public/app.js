@@ -145,6 +145,8 @@ function restoreComposerDraft(){
   renderAttachments();autoGrow();refreshComposer();
 }
 function clearAttachmentDrafts(){
+  // Pending Send is account-owned too; changing identity must never promote it.
+  queuedPrompt=null;
   attachmentDrafts.clear();draftFiles=[];filesAwaitingTransfer=[];attachments=[];
   resetTransfers();decodingFiles.clear();
 }
