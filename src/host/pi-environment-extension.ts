@@ -98,8 +98,8 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
     runId=nextDispatch?.hash===createHash('sha256').update(event.prompt).digest('hex')?nextDispatch.id:randomUUID();nextDispatch=undefined;
     try{pi.appendEntry('coffee-native-run',{version:1,runId,baselineId:ctx.sessionManager.getLeafId()});}catch{runId=undefined;}
   });
-  pi.on("agent_settled",()=>{
-    if(runId){try{pi.appendEntry('coffee-native-settled',{version:1,runId});}catch{/* Missing audit remains uncertain; observation never interrupts native work. */}runId=undefined;}reportOnly=false;
+  pi.on("agent_settled",event=>{
+    if(runId){try{pi.appendEntry('coffee-native-settled',{version:1,runId,...(typeof event.aborted==='boolean'?{aborted:event.aborted}:{})});}catch{/* Missing audit remains uncertain; observation never interrupts native work. */}runId=undefined;}reportOnly=false;
   });
   pi.on("before_agent_start", event => ({
     systemPrompt: process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? '' : contains(event.systemPrompt) ? event.systemPrompt : append(event.systemPrompt),

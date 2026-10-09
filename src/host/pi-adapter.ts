@@ -260,19 +260,22 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       if(marker&&markers.filter(e=>e.data.runId===marker.data.runId).length!==1)return unknown;
       if(!marker||typeof marker.data.runId!=='string'||marker.parentId!==marker.data.baselineId||(marker.data.baselineId!==null&&!byId.has(marker.data.baselineId)))return {...unknown,reason:'This run has no provable native correlation marker'};
       const report=marker.data.origin==='task-report';
-      const start=branch.indexOf(marker),range=[];let settled=false,inputSeen=false,closedByBoundary=false;
+      const start=branch.indexOf(marker),range=[];let settled=false,inputSeen=false,closedByBoundary=false,aborted:boolean|undefined;
       for(const e of branch.slice(start+1)){
         if(e.type==='custom'&&e.customType==='coffee-native-run'){closedByBoundary=true;break;}
         if(report&&e.type==='custom_message'&&e.customType==='coffee-task-report'&&e.details?.processingId===marker.data.runId){inputSeen=true;continue;}
         if(e.type==='message'&&e.message?.role==='user'){if(inputSeen||report){closedByBoundary=true;break;}inputSeen=true;continue;}
-        if(e.type==='custom'&&e.customType==='coffee-native-settled'&&e.data?.runId===marker.data.runId){settled=true;break;}
+        if(e.type==='custom'&&e.customType==='coffee-native-settled'&&e.data?.runId===marker.data.runId){
+          if(e.data.aborted!==undefined&&typeof e.data.aborted!=='boolean')return unknown;
+          settled=true;aborted=e.data.aborted;break;
+        }
         range.push(e);
       }
       if(!inputSeen)return unknown;
       const messages=range.filter(e=>e.type==='message'&&e.message?.role==='assistant');
       const entries=messages.map(e=>({id:e.id,revision:sourceHash(JSON.stringify(e.message)),text:Array.isArray(e.message.content)?e.message.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):''})).filter(e=>e.text);
       const final=messages.at(-1)?.message;
-      return {supported:true,freshness:'current',runId:marker.data.runId,binding:`pi:${sessionId}:${source.identity}`,watermark:sourceHash(JSON.stringify([marker.id,entries,settled])),state:settled||report&&final?.stopReason==='stop'?(final?.stopReason==='stop'&&entries.length?'reply-available':'incomplete'):closedByBoundary?'uncertain':'running',entries};
+      return {supported:true,freshness:'current',runId:marker.data.runId,binding:`pi:${sessionId}:${source.identity}`,watermark:sourceHash(JSON.stringify([marker.id,entries,settled,...(aborted===undefined?[]:[aborted])])),state:aborted===true?'incomplete':settled||report&&final?.stopReason==='stop'?(final?.stopReason==='stop'&&entries.length?'reply-available':'incomplete'):closedByBoundary?'uncertain':'running',entries};
     }catch{return unknown;}
   }
 

@@ -7,6 +7,29 @@ import type { ServerFrame } from "../src/shared/protocol.js";
 import { appendExtensionArgs, appendSkillArgs, buildHostChildEnv, extensionPathsFromArgs, HOST_STRIPPED_ENV_KEYS, projectExtensions, projectHistory, RpcPiSessionFactory } from "../src/host/pi-adapter.js";
 
 describe("original Pi RPC adapter", () => {
+  it("preserves native aborted settlement without treating cancellation as process death", async () => {
+    const factory = new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),env:{FAKE_SETTLED_ABORTED:"1"}});
+    const registry = new HostSessionRegistry({factory,idleTimeoutMs:0});
+    const {session} = await registry.open("native-aborted-settlement");
+    const frames:ServerFrame[]=[];session.attach({send:frame=>frames.push(frame)});
+    try {
+      session.reservePrompt("cancelled-run");await session.prompt("cancelled-run","native cancelled fixture");
+      await waitFor(()=>frames.some(f=>f.type==="event" && isEvent(f.event,"agent_settled")));
+      expect(frames).toContainEqual(expect.objectContaining({type:"event",event:{type:"agent_settled",aborted:true}}));
+      expect(frames.some(f=>f.type==="error" && f.fatal)).toBe(false);
+      expect(session.isBusy).toBe(false);
+    }finally{await registry.close();}
+  });
+  it("does not mark a detached cancelled Pi run as unread completed work", async () => {
+    const factory=new RpcPiSessionFactory({cliPath:resolve("test/fixtures/fake-pi-rpc.mjs"),env:{FAKE_SETTLED_ABORTED:"1"}});
+    const registry=new HostSessionRegistry({factory,idleTimeoutMs:0});
+    const {session}=await registry.open("detached-native-cancel");
+    try{
+      session.reservePrompt("cancelled-detached");await session.prompt("cancelled-detached","cancelled fixture");
+      await waitFor(()=>session.currentCursor>=4 && !session.isBusy);
+      expect(session.attention).toBeUndefined();
+    }finally{await registry.close();}
+  });
   it("reports Pi death after prompt acknowledgement and permits explicit reopening without replay", async () => {
     const sessionDir=mkdtempSync(join(tmpdir(),"coffee-pi-crash-"));
     const factory = new RpcPiSessionFactory({cliPath: resolve("test/fixtures/fake-pi-rpc.mjs"), cwd: process.cwd(),sessionDir});

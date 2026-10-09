@@ -627,7 +627,7 @@ it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch pe
  }finally{socket.close();targetSocket?.close();finishSource();finishTarget();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
 
-it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as const)('persists a native on-demand report identity without replay (%s)',async(mode)=>{
+it.each(['normal','lost-ack','cancelled-settled','promise','tool-attempt','tool-only','revoked'] as const)('persists a native on-demand report identity without replay (%s)',async(mode)=>{
  let calls=0,foregroundCalls=0,taskId='',privatePath='',reply:()=>void=()=>{};const requests:any[]=[];
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));calls++;const foreground=raw.includes('FOREGROUND_READ_REQUEST');if(foreground)foregroundCalls++;
@@ -666,14 +666,14 @@ it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as 
   for(const action of ['send','setup','disable','tasks','directory'])expect((await req({action})).status).toBe(409);
   socket.send(JSON.stringify({v:1,type:'prompt',requestId:'bad-steer',mode:'steer',text:'Do not mix me into report'}));
   await expect.poll(()=>frames.some(f=>f.type==='error'&&f.requestId==='bad-steer'),{timeout:10000}).toBe(true);
-  const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');if(mode==='lost-ack')await mkdir(blockedWrite);
+  const blockedWrite=join(app.workspaces.root,'.coffee','mishu','state.json.tmp');if(mode==='lost-ack'||mode==='cancelled-settled')await mkdir(blockedWrite);
   if(mode==='revoked')expect((await app.call({action:'archive',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
   reply();await expect.poll(()=>frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);
   if(mode==='provider-error'){
    await expect.poll(async()=>{const state=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));return state.chats[source.id].taskJournal.tasks[0].reports?.[0]?.state;},{timeout:10000}).toBe('uncertain');
    for(let n=0;n<5;n++)await req({action:'status'});await new Promise(r=>setTimeout(r,250));expect(requests).toHaveLength(2);return;
   }
-  if(mode==='lost-ack'){
+  if(mode==='lost-ack'||mode==='cancelled-settled'){
    await expect.poll(async()=>((await(await req({action:'status'})).json()).tracking.error),{timeout:10000}).toContain('persistence failed');
    await rm(blockedWrite,{recursive:true});
   }
@@ -685,18 +685,21 @@ it.each(['normal','lost-ack','promise','tool-attempt','tool-only','revoked'] as 
   }
   if(mode==='revoked')expect((await app.call({action:'restore',id:target.id},'owner','host-test','/api/workspace')).status).toBe(200);
   socket.close();await app.host.close();hosts.splice(hosts.indexOf(app.host),1);
-  if(mode==='lost-ack'){
+  if(mode==='lost-ack'||mode==='cancelled-settled'){
    const migrationFile=join(app.workspaces.root,'.coffee','mishu','state.json'),migration=JSON.parse(await readFile(migrationFile,'utf8'));migration.version=1;await writeFile(migrationFile,JSON.stringify(migration));
    const stored=(await SessionManager.listAll(join(app.root,'sessions'))).find(s=>s.id===source.id)!;
    const rows=(await readFile(stored.path,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
-   await writeFile(stored.path,rows.filter(row=>!(row.type==='custom'&&row.customType==='coffee-native-settled')).map(row=>JSON.stringify(row)).join('\n')+'\n');
+   const lastSettled=rows.filter(row=>row.type==='custom'&&row.customType==='coffee-native-settled').at(-1);
+   const changed=mode==='cancelled-settled'?rows.map(row=>row===lastSettled?{...row,data:{...row.data,aborted:true}}:row):rows.filter(row=>!(row.type==='custom'&&row.customType==='coffee-native-settled'));
+   await writeFile(stored.path,changed.map(row=>JSON.stringify(row)).join('\n')+'\n');
   }
   await rm(join(app.workspaces.root,'.coffee','conversation-index'),{recursive:true,force:true});
   const resumed=await start(app.root,undefined,true),rt=(await resumed.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN;
   const result=await(await resumed.call({...base,operation:'get',taskId},'owner',rt,'/api/mishu/runtime')).json();
-  const report=result.task.reports[0];expect(report.state).toBe(mode==='revoked'?'cancelled':mode==='promise'||mode==='tool-only'?'uncertain':'committed');
+  const report=result.task.reports[0];expect(report.state).toBe(mode==='revoked'?'cancelled':mode==='promise'||mode==='tool-only'||mode==='cancelled-settled'?'uncertain':'committed');
   expect(result.task.acceptance).toBe('pending');
-  if(mode!=='promise'&&mode!=='tool-only'&&mode!=='revoked'){
+  if(mode==='cancelled-settled'){expect(result.task.notification?.state).not.toBe('committed');expect(report.outputs??[]).toHaveLength(0);expect(calls).toBe(1);}
+  if(mode!=='promise'&&mode!=='tool-only'&&mode!=='revoked'&&mode!=='cancelled-settled'){
    expect(result.task.notification).toMatchObject({state:'committed',reportId:report.id});
    expect(report.outputs.length).toBeGreaterThan(0);
    const read=new RpcPiSessionFactory({sessionDir:join(app.root,'sessions')});
