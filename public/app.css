@@ -1197,3 +1197,8 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .stats-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 .stats-actions button { padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); cursor: pointer; font: inherit; font-size: 12px; }
 .stats-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.mishu-setup-card { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); width:min(560px,calc(100vw - 32px)); }
+.mishu-setup-body { overflow:auto; min-height:0; white-space:pre-wrap; }
+.mishu-setup-footer { display:flex; flex-shrink:0; justify-content:flex-end; gap:12px; padding-top:16px; }
+.mishu-contact { display:flex; align-items:flex-start; gap:10px; padding:10px 0; }
+.mishu-contact input { flex-shrink:0; width:auto; }

@@ -98,6 +98,7 @@ export interface AgentRunEvidence {
 }
 
 export interface AgentSessionFactory {
+  mishuSourceCapabilities?(id:string):Promise<import("./mishu-source.js").MishuSourceCapabilities>;
   contextResetEngines?():AgentEngine[];
   /** True only when prompt correlation is persisted and passively recoverable. */
   supportsDispatchCorrelation?(sessionId:string):Promise<boolean>;

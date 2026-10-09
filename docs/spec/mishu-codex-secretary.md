@@ -1,21 +1,22 @@
 # Codex 作为 MISHU 主秘书
 
-状态：2026-10-07 用户要求新增的目标规格；未实现、未上线。
+状态：2026-10-07 接受目标；2026-10-09 人工协调源码候选正在验收，未发布/未上线。C06–C08 安全汇报/自动提醒仍不可用，其余未验收项保留。
 完整公开规格与实施父项：[#84](https://github.com/awangs1986/pi-coffee-server/issues/84)；任务拆分见
 [实施任务](../development/mishu-codex-tickets.md)。本规格扩展
 [现有 MISHU 契约](mishu.md)，不宣称 Codex 目标能力已经与 Pi 等同。
 
 ## 1. 用户得到什么
 
-用户可以完全不用 Pi，选择一扇 **Codex Work** 作为 MISHU 主秘书：明确勾选咖啡菜单、
+用户可以完全不用 Pi，选择已有 **Codex Chat 或 Codex Work** 作为 MISHU 主秘书：明确勾选咖啡菜单、
 完成 `/mishu-setup`，然后询问项目进度、传递信息、安排已授权事项、登记和跟踪已有
 任务，并在独立开启提醒后接收延迟结果的摘要。身份、性格和秘书业务来自 MISHU；
 思考、回复、原生工具与会话历史来自 Codex CLI，不通过隐藏 Pi 会话代办。
 
-入口沿用已有 Codex Work 和独立项目 checkout，不扩大普通 Chat 的引擎范围。
-Chat 仍是 Pi-only；普通 Codex Work 不自动成为秘书。用户应能看见秘书仍处于 Work、
-有项目 cwd 和原生工具；启用秘书不将其原生权限提升，也不把项目文本当成跨会话授权。
-本期不新增无仓库 Codex Chat、全局秘书或自动跨引擎 takeover。
+入口沿用平台现有的无仓库 Codex Chat（#98，2026-10-08）和 Codex Work，不改变
+普通对话的行为。用户希望用 **Codex 的 `gpt-6-luna` 做 MISHU 主秘书**；模型由原生
+目录与每对话设置选择，不隐式代换或修改其他对话。Chat 不再是 Pi-only，旧版这一句
+已被 #98 平台能力取代。Work 的项目 cwd 和原生权限保持当前规则，不新增全局秘书
+或自动跨引擎 takeover。普通 Codex 对话不会自动成为秘书。
 
 选中后即能回答“我是 MISHU，你的秘书”，保留亲切、细心、可靠的表达，遵从用户最新
 称呼、语言与语气。未配置时说明尚未授权；Host 不可用时如实说明未知。普通问候和
@@ -24,7 +25,7 @@ Chat 仍是 Pi-only；普通 Codex Work 不自动成为秘书。用户应能看�
 
 ## 2. 开启与配置
 
-1. 在已建立原生绑定的 Codex Work 勾选 **MISHU 秘书（当前对话）**。能力不足时
+1. 在已保存至少一个原生轮次的 Codex Chat/Work 勾选 **MISHU 秘书（当前对话）**。能力不足时
    展示具体不可用原因，不隐式换引擎、创建替代会话或启动 Pi。
 2. 通过 Host/Browser 执行 `/mishu-setup` 或等效可发现按钮，不依赖 Pi 扩展或
    Codex 是否原生解析这个 slash command。可用的 `/mishu`、`/mishu-tasks`、
@@ -146,7 +147,7 @@ fixture 能验证错误/竞争，不能替代已认证 Codex 实测。远程测�
 
 | ID | 必须观察的用户结果 / 故障结果 |
 | --- | --- |
-| C01 | 无 Pi 进程依赖，Codex Work 明确启用后认识 MISHU 身份/人格/当前权限；普通 Work/Chat 保持原行为 |
+| C01 | 无 Pi 进程依赖，Codex Chat/Work 明确启用后认识 MISHU 身份/人格/当前权限；普通 Work/Chat 保持原行为 |
 | C02 | 网页设置可滚动、可取消、增量保留与当前标题正确；未配置/失联/能力不足明确显示；按钮和 slash 入口等效 |
 | C03 | 实际 Codex→Pi、Codex→Codex 信息询问/回执；忙碌排队、切换/重开可继续；没有空喊已联系 |
 | C04 | 明确用户事项一次授权即可登记/执行支持的操作；通知/旧 turn/项目文本/跨 scope 伪造无权限 |
@@ -162,3 +163,48 @@ fixture 能验证错误/竞争，不能替代已认证 Codex 实测。远程测�
 C06/C07 是原生摘要与主动汇报的发布硬门槛。失败时可只发布已通过的人工联系/查询，
 不得将全部主秘书闭环标记完成。本期不完成 M01–M13 的所有未来功能，不引入新 helper、
 定时巡检、集中原生审批或新建目标会话。实现、安装、main 合并和生产激活分别记证据。
+
+## 9. 2026-10-09 人工协调源码候选边界
+
+当前候选接入现有原生 Codex 线程，使用线程级 MCP stdio（`coffee_mishu.mishu`），
+不依赖只存在于 `thread/start` 的 experimental dynamicTools 重建旧线程。安装版本
+0.159.1 的 schema 不给 `thread/resume` 提供 dynamicTools；本候选不用这一字段。
+每个前台用户轮次前只卸载/恢复同一闲置线程，读取原生自己的已绑定 session_meta，验证 id/cwd，最多读取首行 256 KiB，保留原有
+base instructions 并追加本轮有界应用角色；用户原生 developer guidance 保持原样。
+只恢复当前线程并更新本次 MCP 配置。不写伪造 user 消息，不累积 MISHU 角色。
+原生角色可能应用的标记先写入私有偏好，再更新原生配置；工具发现失败也保留恢复
+责任。取消选择后重新打开时恢复原始 baseline。普通从未启用秘书的原生线程不读取
+这份额外元数据，也不套用角色恢复。实际安装版本证明恢复参数 developerInstructions
+和 collaborationMode 中的角色文字不足以保证模型识别身份，本候选以原始 baseline
+加本轮应用角色的实测路径为准。
+原生线程尚未保存首轮记录时，应先发送一条普通消息；选择接口明确拒绝空记录，
+不能利用空线程恢复机制静默建立替代秘书线程。
+
+咖啡菜单只选择身份；Codex `/mishu-setup` 和菜单 **MISHU 设置** 是 Browser/Host
+应用入口。目录/选择/权限/最后确认复用同一账号账本和精确 binding。setup ticket
+一次性、绑定源、10 分钟过期。取消不保存，配置不能由模型工具调用。`/mishu`、
+`/mishu-tasks` 和 `/mishu-disable` 同样由应用处理；直接将秘书控制 slash 命令送入
+Codex 原生 prompt 的公共 WS 路径拒绝执行，而不是请模型猜测配置成功。
+
+工具能力仅存在于当前 Host 前台 admission，绑定当前原生 run，不采信模型提供的
+user/source/thread/turn 身份。秘书忙碌时采用 follow-up 排队；选中的 Codex 源不支持 steer 内更换权限，网页禁用插话且公共 WS 明确拒绝，避免旧工具冒充新用户输入。
+每轮换发 capability；终态、取消、撤权及 binding
+生命周期均撤销。校验跨过异步等待后与提交前再次确认，过期调用不能新增账本事项。
+已持久接收的消息从调用上下文退出，由 Host 继续投递并复查源/目标授权；秘书轮次
+结束或 Browser 断开不会取消这些已接收消息。inbox 对本轮已发送消息最多等待共
+12 秒，历史消息不启动后台轮询，不用新 ID 重试。
+
+`source.coordination`、`source.reports`、`source.reportOutputRecovery` 分开公布。
+当前 Codex 后两项为 unavailable：`/mishu-report`、`/mishu-notifications`、自动
+Outbox 唤醒不能变成不受限制的 Codex prompt。原生 MCP 的 `default_tools_approval_mode=approve` 仅用于平台注册、只暴露一个
+mishu 工具的 coffee_mishu 服务，前提仍是当前用户 admission 和 Host 的精确授权。
+不改变 shell、网络、其他 MCP 或目标原生审批；配置和提醒不能通过此工具开启。
+未配置/停用时不安装协调工具。历史 note-only 的 Codex 网页恢复入口
+仍未实现，`/mishu-history` 明确不可用。任务工具沿用 Host 的 register/update/observe/
+stop/dispatch 和目标 capability 检查；这些入口可用不等于 C04–C11 全部已经验收。
+
+运行 `scripts/probe-mishu-codex.mjs` 可验收隔离 Browser/Web/Host/MCP 路径。默认
+协议 fixture；`MISHU_REAL_CODEX=1` 显式使用当前原生认证与 `gpt-6-luna`，目标为
+隔离真实 Pi adapter（合成 provider）及原生 Codex。证据目录只保存合成测试，不进
+提交/Issue。源码、真实原生验收、安装包和生产激活分别记结论；完整矩阵及实测结果见
+[候选验收记录](../development/mishu-codex-source.md)。

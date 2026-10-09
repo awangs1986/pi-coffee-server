@@ -1,4 +1,4 @@
-# MISHU for an explicitly enabled Pi Chat
+# MISHU for explicitly enabled secretary conversations
 
 Tracking: [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
@@ -7,19 +7,19 @@ Owner decision, 2026-10-05: fork `awangs/MISHU` into the independently maintaine
 exception to the Pi plugin monorepo source rule. The owner selected coordination
 of **existing conversations**, with independent settings for **the current Pi Chat**.
 
-## Planned Codex source extension (2026-10-07)
+## Codex source candidate (2026-10-09)
 
-The owner requested [Codex as the main MISHU secretary](mishu-codex-secretary.md).
-This planned extension explicitly selects an existing Codex Work; ordinary Chat
-remains Pi-only. Shared Host business state is separate from source-engine native
-tools, role context and report capabilities. The Pi-only descriptions below remain
-the current implementation, not a prohibition on the planned Codex source.
-No Pi fallback, unverified all-tool report isolation or target capability parity
-is implied. See C01–C12 and the capability-gated delivery graph.
+The owner requested [Codex Luna as the main MISHU secretary](mishu-codex-secretary.md).
+Repository-free Codex Chat already exists (#98); this candidate supports explicitly
+selected existing Codex Chat/Work through native MCP, scoped Host grants and
+Browser setup controls. Current Pi flows below remain valid. Native report-only
+isolation and original-report output recovery remain unavailable for Codex;
+automatic reminders and historical grant recovery are not claimed. No Pi fallback
+or target capability parity is implied. See C01–C12 and [candidate evidence](../development/mishu-codex-source.md).
 
 ## User flow
 
-1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前 Chat）**.
+1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前对话）**.
    The idle Chat reconnects with the installed plugin; other tasks continue.
    The Chat recognizes its MISHU secretary role even before setup and explains
    that coordination is disabled. Selection does not authorize cross-conversation access.

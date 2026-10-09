@@ -43,11 +43,11 @@ the selected CLI's supported native transport. Pi uses RPC, Codex uses app-serve
 Claude uses stream-json, and Cursor/Grok use ACP over local stdio. Pi Harness,
 LSP and Handoff policy remain Pi-only.
 
-**MISHU Secretary Source (planned extension)**: an explicitly selected Pi Chat or
-Codex Work that uses the same scoped Host coordination ledger. Current executable
-source support remains Pi Chat; [the Codex target contract](docs/spec/mishu-codex-secretary.md)
-adds a separate native source Adapter, not general Codex Chat or target capability parity.
-Selection, contact grants and notification enablement remain distinct.
+**MISHU Secretary Source**: an explicitly selected Pi Chat or, in the Codex source
+candidate, existing Codex Chat/Work using its native model (owner preference Luna).
+Host coordination is shared; source role/tool access, report isolation and original
+output recovery have separate capabilities. Codex reports remain unavailable;
+source support does not imply target dispatch/recovery parity. See [the source contract](docs/spec/mishu-codex-secretary.md).
 
 ## Task, execution and history
 
@@ -100,7 +100,7 @@ artifact. Harness, LSP and Handoff have canonical directories in `pi-coffee`;
 official web/subagent packages remain upstream. Native upstream activation and
 readiness rules determine optional-tool availability.
 
-**MISHU**: an explicitly selected Pi Chat secretary with exact, authorized
+**MISHU**: an explicitly selected secretary conversation (Pi Chat, or candidate Codex Chat/Work) with exact, authorized
 Conversation contacts. Its independent plugin and Host coordinator currently
 provide scoped message/receipt handling. Persistent event-driven tracking and
 automatic delayed-result reporting remain [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64),

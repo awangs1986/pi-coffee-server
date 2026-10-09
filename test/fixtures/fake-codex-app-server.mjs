@@ -1,6 +1,7 @@
 import './github-env-probe.mjs';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, watch } from "node:fs";
 import { join } from "node:path";
+import {spawn} from "node:child_process";
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
 
@@ -19,7 +20,7 @@ mkdirSync(home, { recursive: true });
 appendFileSync(join(home, "started-pids"), process.pid + "\n");
 const store = join(home, "fake-threads.json");
 const threads = existsSync(store) ? JSON.parse(readFileSync(store, "utf8")) : {};
-const save = () => writeFileSync(store, JSON.stringify(threads));
+const save = id => {if(threads[id]){const dir=join(home,'rollouts');mkdirSync(dir,{recursive:true});const file=join(dir,id+'.jsonl');if(!existsSync(file))writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id,cwd:threads[id].cwd,base_instructions:{text:threads[id].baseInstructions??'NATIVE_BASE_ORIGINAL'}}})+'\n');}const disk=existsSync(store)?JSON.parse(readFileSync(store,'utf8')):{};if(threads[id])disk[id]=threads[id];else delete disk[id];writeFileSync(store,JSON.stringify(disk));};
 let counter = 0;
 const uid = (prefix) => `${prefix}-${process.pid}-${++counter}`;
 const now = () => Math.floor(Date.now() / 1000);
@@ -55,7 +56,7 @@ function threadView(thread, withTurns) {
     id: thread.id, sessionId: thread.id, forkedFromId: null, parentThreadId: null, preview: thread.preview ?? "",
     ephemeral: false, historyMode: "paginated", modelProvider: "openai", model: thread.model ?? "gpt-fake",
     reasoningEffort: thread.effort ?? null, createdAt: thread.createdAt, updatedAt: thread.updatedAt, recencyAt: thread.updatedAt,
-    status: { type: active.has(thread.id) || thread.activeExternally || (process.env.FAKE_CODEX_BACKGROUND_FILE && existsSync(process.env.FAKE_CODEX_BACKGROUND_FILE)) ? "active" : "idle" }, path: null, cwd: thread.cwd, cliVersion: "fake", originator: "pi_coffee",
+    status: { type: active.has(thread.id) || thread.activeExternally || (process.env.FAKE_CODEX_BACKGROUND_FILE && existsSync(process.env.FAKE_CODEX_BACKGROUND_FILE)) ? "active" : "idle" }, path: join(home,"rollouts",thread.id+".jsonl"), cwd: thread.cwd, cliVersion: "fake", originator: "pi_coffee",
     source: thread.source ?? "appServer", threadSource: null, agentNickname: null, agentRole: null, gitInfo: null, name: thread.name ?? null,
     turns: withTurns ? thread.turns : [],
   };
@@ -69,7 +70,17 @@ async function askApproval(threadId, turnId, itemId, command) {
   });
 }
 
+async function mishuCall(config,input){
+  const child=spawn(config.command,config.args,{env:{...process.env,...config.env},stdio:['pipe','pipe','ignore']});
+  const lines=readline.createInterface({input:child.stdout});let next=0;const waiting=new Map();
+  lines.on('line',line=>{const message=JSON.parse(line),callback=waiting.get(message.id);if(callback){waiting.delete(message.id);callback(message.result);}});
+  const request=(method,params)=>new Promise(resolve=>{const id=++next;waiting.set(id,resolve);child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+  try{await request('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'fixture',version:'1'}});return await request('tools/call',{name:'mishu',arguments:input});}
+  finally{child.stdin.end();child.kill();lines.close();}
+}
+
 async function runTurn(thread, input, options) {
+  const guidance=[thread.baseInstructions,process.env.FAKE_DEVELOPER_INSTRUCTIONS].filter(Boolean).join('\n');writeFileSync(join(home,'fake-guidance.json'),JSON.stringify(guidance));
   const turnId = uid("turn");
   const state = { turnId, interrupted: false };
   active.set(thread.id, state);
@@ -81,25 +92,34 @@ async function runTurn(thread, input, options) {
   thread.updatedAt = now();
   if (options.model) thread.model = options.model;
   if (options.effort) thread.effort = options.effort;
-  save();
+  save(thread.id);
   notify("turn/started", { threadId: thread.id, turn: { ...turn, items: [] } });
   const user = { type: "userMessage", id: uid("item"), clientId: null, content: input };
   turn.items.push(user);
   notify("item/started", { item: user, threadId: thread.id, turnId, startedAtMs: Date.now() });
   notify("item/completed", { item: user, threadId: thread.id, turnId, completedAtMs: Date.now() });
 
+  if(text.startsWith('mishu-call:')||text.startsWith('mishu-hold:')){
+    const config=settings.get(thread.id)?.config?.mcp_servers?.coffee_mishu;
+    const input=JSON.parse(text.slice(text.indexOf(':')+1));
+    const tool={type:'mcpToolCall',id:uid('item'),server:'coffee_mishu',tool:'mishu',arguments:input,status:'inProgress'};
+    notify('item/started',{item:tool,threadId:thread.id,turnId});
+    const result=config?.enabled&&config.default_tools_approval_mode==='approve'?await mishuCall(config,input):{isError:true,content:[{type:'text',text:'MISHU tool absent'}]};
+    Object.assign(tool,{status:result.isError?'failed':'completed',result});turn.items.push(tool);notify('item/completed',{item:tool,threadId:thread.id,turnId});
+    if(text.startsWith('mishu-hold:'))await waitTrackingGate('allow-mishu-terminal');
+  }
   const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
   if(preparing&&process.env.FORK_POLICY_ASSERT){
     const policy=settings.get(thread.id);
     if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
-      turn.status='failed';turn.error={message:'Handoff attempted without native preparation restrictions'};active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn});return;
+      turn.status='failed';turn.error={message:'Handoff attempted without native preparation restrictions'};active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn});return;
     }
   }
   if (text.startsWith("fail")) {
     turn.status = "failed";
     turn.error = { message: "fake upstream failure", codexErrorInfo: null, additionalDetails: null, misalignment: null };
     active.delete(thread.id);
-    save();
+    save(thread.id);
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
@@ -107,13 +127,13 @@ async function runTurn(thread, input, options) {
   let questionAnswer='';
   if(text==='ask async structured'||text==='ask async failure'||text==='ask async batch'){
     const item={type:'agentMessage',id:'async-question-'+turnId,text:'Choose a color',delivery:'async',questions:[{title:'Choose a color',options:['Blue','Red']}]};
-    turn.items.push(item);save();
+    turn.items.push(item);save(thread.id);
     notify('item/started',{threadId:thread.id,turnId,item});
     notify('item/completed',{threadId:thread.id,turnId,item});
     if(text==='ask async batch'){
       await new Promise(resolve=>setTimeout(resolve,5));
       const second={...item,id:item.id+'-second',text:'Pick size',questions:[{title:'Pick size',options:['Small','Large']}]};
-      turn.items.push(second);save();notify('item/completed',{threadId:thread.id,turnId,item:second});
+      turn.items.push(second);save(thread.id);notify('item/completed',{threadId:thread.id,turnId,item:second});
     }
   }
   if(text==='ask structured'){
@@ -157,12 +177,12 @@ async function runTurn(thread, input, options) {
   await new Promise((resolve) => setTimeout(resolve, 20));
   if(text==='ask async failure'){
     turn.status='failed';turn.error={message:'fixture failure during question pause'};
-    active.delete(thread.id);save();notify('turn/completed',{threadId:thread.id,turn:{...turn,items:[]}});return;
+    active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn:{...turn,items:[]}});return;
   }
   if (state.interrupted) {
     turn.status = "interrupted";
     active.delete(thread.id);
-    save();
+    save(thread.id);
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
@@ -182,7 +202,7 @@ async function runTurn(thread, input, options) {
   turn.status = ["failed","interrupted"].includes(process.env.TRACKING_END_STATUS)?process.env.TRACKING_END_STATUS:"completed";
   turn.completedAt = now();
   active.delete(thread.id);
-  save();
+  save(thread.id);
   // Codex refreshes the account meters as the turn's usage lands, before the turn closes.
   if (rateLimits) {
     rateLimits.primary.usedPercent += 10;
@@ -201,6 +221,7 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method, params = {} } = message;
+  const disk=existsSync(store)?JSON.parse(readFileSync(store,'utf8')):{};for(const [key,thread] of Object.entries(disk))if(!active.has(key))threads[key]=thread;
   const reply = (result) => send({ id, result });
   const fail = (text) => send({ id, error: { code: -32000, message: text } });
   switch (method) {
@@ -222,33 +243,38 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < all.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/start": {
+      if(params.config?.mcp_servers?.coffee_mishu&&!params.config.mcp_servers.coffee_mishu.command)return fail('failed to load configuration: invalid transport in `mcp_servers.coffee_mishu`');
       if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
+      writeFileSync(join(home,"fake-guidance.json"),JSON.stringify(params.developerInstructions??""));
       const thread = { id: randomUUID(), cwd: params.cwd, createdAt: now(), updatedAt: now(), turns: [], model: params.model ?? "gpt-fake", effort: params.config?.model_reasoning_effort };
       threads[thread.id] = thread;
       createdHere.add(thread.id);
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
-      save();
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config,developerInstructions:params.developerInstructions });
+      save(thread.id);
       reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null });
       return notify("thread/started", { thread: threadView(thread, false) });
     }
     case "thread/resume": {
+      if(params.config?.mcp_servers?.coffee_mishu&&!params.config.mcp_servers.coffee_mishu.command)return fail('failed to load configuration: invalid transport in `mcp_servers.coffee_mishu`');
       if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
+      writeFileSync(join(home,"fake-guidance.json"),JSON.stringify(params.developerInstructions??""));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       if(process.env.FAKE_CODEX_EMPTY_NOT_DURABLE&&!createdHere.has(thread.id)&&!thread.turns.length)return fail('no rollout found for thread id '+thread.id);
       // Native resume applies configuration overrides; ignoring them masks
       // accidental model resets when the Host is reconstructed.
+      if(params.baseInstructions!==undefined)thread.baseInstructions=params.baseInstructions;
       if (params.model) thread.model = params.model;
       if (params.config?.model_reasoning_effort) thread.effort = params.config.model_reasoning_effort;
-      save();
-      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config });
+      save(thread.id);
+      settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config,developerInstructions:params.developerInstructions });
       return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
     }
     case "thread/fork": {
       const source=threads[params.threadId];if(!source)return fail('no such thread');
-      const thread={...structuredClone(source),id:randomUUID(),cwd:params.cwd,createdAt:now(),updatedAt:now()};threads[thread.id]=thread;save();return reply({thread:threadView(thread,true)});
+      const thread={...structuredClone(source),id:randomUUID(),cwd:params.cwd,createdAt:now(),updatedAt:now()};threads[thread.id]=thread;save(thread.id);return reply({thread:threadView(thread,true)});
     }
     case "thread/read": {
       const thread = threads[params.threadId];
@@ -262,13 +288,13 @@ rl.on("line", (line) => {
     case "thread/name/set": {
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
-      thread.name = params.name; save();
+      thread.name = params.name; save(thread.id);
       reply({});
       return notify("thread/name/updated", { threadId: thread.id, threadName: params.name });
     }
     case "thread/delete": {
       if (!threads[params.threadId]) return fail("no such thread");
-      delete threads[params.threadId]; save();
+      delete threads[params.threadId]; save(params.threadId);
       reply({});
       return notify("thread/deleted", { threadId: params.threadId });
     }
@@ -290,6 +316,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
+    case "mcpServerStatus/list": if(existsSync(join(home,'mishu-inventory-unavailable')))return reply({data:[],nextCursor:null});return reply({data:settings.get(params.threadId)?.config?.mcp_servers?.coffee_mishu?.enabled?[{name:'coffee_mishu',tools:{mishu:{}},toolsError:null}]:[],nextCursor:null});
     case "config/read": return reply({config:{mcp_servers:{fixture_external:{command:"/bin/false",enabled:true}},model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
     case "skills/list": {
       if(params.forceReload!==true)return fail("skills discovery must refresh");
@@ -309,7 +336,7 @@ rl.on("line", (line) => {
       if (active.has(thread.id)) return fail("turn already active");
       const turnId = uid("turn-pre");
       reply({ turn: { id: turnId, items: [], itemsView: "notLoaded", status: "inProgress", error: null, startedAt: null, completedAt: null, durationMs: null } });
-      void runTurn(thread, params.input, { model: params.model, effort: params.effort });
+      void runTurn(thread, params.input, { model: params.model, effort: params.effort,collaborationMode:params.collaborationMode });
       return;
     }
     case "turn/steer": {
