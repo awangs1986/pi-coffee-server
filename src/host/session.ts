@@ -30,7 +30,7 @@ export interface HostSessionOptions {
   onHistory?: (id:string,history:PiHistory)=>Promise<void>;
   /** Record each Host-started turn before native delivery, including queued turns. */
   onEvent?: (id:string,event:JsonValue)=>void;
-  onCommand?:(id:string,requestId:string,state:"accepted"|"delivering"|"running"|"settled"|"uncertain"|"cancelled",mode?:string)=>Promise<unknown>;
+  onCommand?:(id:string,requestId:string,state:"accepted"|"delivering"|"running"|"settled"|"uncertain"|"cancelled",mode?:string,text?:string)=>Promise<unknown>;
   onRun?: (id:string,state:"running"|"interrupted",requestId?:string)=>Promise<void>;
   /** Called when a run starts or settles (the conversation list's running flag / counts change). */
   onLifecycle?: (session: HostSession) => void;
@@ -111,7 +111,7 @@ export class HostSession {
         if(promote&&queuedRequestId?.startsWith("mishu-dispatch-"))throw Error("Tracked assignments must remain serial; inspect their task record instead of promoting them");
         if(promote&&this.state.isStreaming){
           try {
-            if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering");
+            if(queuedRequestId)await this.onCommand?.(this.id,queuedRequestId,"delivering","steer",text);
             this.assertDelivery(generation);
             if(queuedRequestId)this.runCommands.add(queuedRequestId);
             await this.deliverWithRunnerGuidance(text,value=>this.ready().steer(value,images),generation);
@@ -234,6 +234,8 @@ export class HostSession {
   /** Host-controlled run classification; never populated from model fields. */
   setReportOrigin(){if(!this.activeRequestId)throw Error('Report requires reserved command');this.reportOrigin=true;}
   get isReportRun(){return this.reportOrigin;}
+  /** Host request currently owning the native run (undefined when idle). */
+  get currentRequestId(){return this.activeRequestId;}
   private contextChanging=false;
   private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get isTransitioning():boolean {return this.contextChanging||this.compacting;}
@@ -269,7 +271,7 @@ export class HostSession {
     if (this.activeRequestId !== requestId) throw new Error("Prompt was not reserved");
     const generation=this.deliveryGeneration;
     try {
-      await this.onCommand?.(this.id,requestId,"delivering");this.assertDelivery(generation);this.runCommands.add(requestId);
+      await this.onCommand?.(this.id,requestId,"delivering","prompt",text);this.assertDelivery(generation);this.runCommands.add(requestId);
       await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images,requestId.startsWith("mishu-dispatch-")?{runId:requestId}:undefined),generation);
     } catch (error) {
       if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
@@ -301,7 +303,7 @@ export class HostSession {
     try {
       this.assertDelivery(generation);
       if (mode === "steer") {
-        if(requestId)await this.onCommand?.(this.id,requestId,"delivering");
+        if(requestId)await this.onCommand?.(this.id,requestId,"delivering","steer",text);
         this.assertDelivery(generation);
         if(requestId)this.runCommands.add(requestId);
         await this.deliverWithRunnerGuidance(text,value=>this.ready().steer(value,images),generation);
@@ -313,11 +315,13 @@ export class HostSession {
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
     if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
     const queued=this.inputs.items.find(item=>item.id===action.id);
-    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited or promoted; stop the task and inspect its original dispatch');
+    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited, promoted or moved; stop the task and inspect its original dispatch');
     const command=action.action==='cancel'?queued?.requestId:undefined;
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
-  async abort(): Promise<void> {
+  async abort(expectedRequestId?:string): Promise<void> {
+    if(expectedRequestId!==undefined&&this.activeRequestId!==expectedRequestId)throw Error('Target run changed; nothing stopped');
+    if(expectedRequestId!==undefined){if(!this.pi||!this.started)throw Error('Session is not ready');await this.pi.abort();return;}
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     // Fence every suspended pre-native send before calling the adapter. Neither
     // a queued ledger write nor a slow native delivery response may delay Stop.

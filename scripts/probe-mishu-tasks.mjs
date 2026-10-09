@@ -42,7 +42,7 @@ try{
  await page.locator('#brand-menu-btn').click();await page.locator('#mishu-toggle:not([disabled])').waitFor();await page.screenshot({path:join(root,'01-menu.png')});const selectedResponse=page.waitForResponse(r=>r.url().endsWith('/api/mishu')&&r.request().postDataJSON()?.action==='select');await page.locator('#mishu-toggle').click();const selected=await selectedResponse;if(!selected.ok())throw Error('Selection failed '+JSON.stringify(await selected.json()));
  await page.locator('#prompt').fill('/mishu-setup');await page.locator('#send').click();
  await page.locator('#ui-options .ui-option').filter({hasText:target.id}).click();await page.screenshot({path:join(root,'02-target-selection.png')});await page.locator('#ui-options .ui-option').filter({hasText:'完成选择'}).click();
- await page.locator('#ui-options .ui-option').filter({hasText:'仅信息通知'}).click();await page.screenshot({path:join(root,'03-confirm-setup.png')});await page.locator('#ui-ok').click();
+ await page.locator('#ui-options .ui-option').filter({hasText:'仅信息通知'}).click();await page.locator('#ui-options .ui-option').filter({hasText:'仅查看已选择的联系对象'}).click();await page.screenshot({path:join(root,'03-confirm-setup.png')});await page.locator('#ui-ok').click();
  await page.locator('#ui-modal').waitFor({state:'hidden'});await page.locator('#prompt').fill('请记住选中的对话负责验证合成构建，仅记录简报。');await page.locator('#send').click();
  await page.getByText('BRIEF_BROWSER_OK：已记录，尚未开始观察。',{exact:false}).first().waitFor({timeout:30000});
  const env=(await host.mishuRuntime('owner',source.id)).env;

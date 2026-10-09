@@ -555,3 +555,5 @@ mechanically tool-free report runs and original-output recovery are separate gat
 [Approved tasks #85–#91](docs/development/mishu-codex-tickets.md) preserve #64/PR #78 as the
 unmerged tracking prerequisite, not an already deployed baseline. Source Codex
 support does not confer durable dispatch/recovery parity on non-Pi targets.
+
+- 2026-10-09: MISHU manager review repair candidate preserves native Codex/Luna, atomic setup authorization, exact quick-action identity and durable watch/dedup recovery. [Evidence and remaining boundaries](docs/development/mishu-manager-repairs.md); source publication and production activation remain separate.

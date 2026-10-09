@@ -160,7 +160,9 @@ export interface RateLimits {
 export type PromptMode = "prompt" | "steer" | "follow_up";
 
 export interface QueueItem {readOnly?:boolean;id:string;requestId?:string;revision:number;text:string;status:"pending"|"sending"|"failed";imageCount:number;error?:string;}
-export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote";text?:string;}
+export interface QueueAction {id:string;revision:number;action:"cancel"|"edit"|"promote"|"move";text?:string;
+  /** move only: new position among pending rows. */
+  to?:"front"|"back";}
 
 export type AckOperation =
   | "queue_action"
@@ -264,6 +266,7 @@ export type ClientFrame = (
     }) & {conversationId?:string;bindingEpoch?:string};
 
 export type ServerFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"mishu_watch";panel?:{counts:Record<string,number>;items:{key:string;kind:string;conv?:string;text:string;link?:string;priority:number}[]};notice?:{text:string;link?:string;conv?:string;kind:string}}
   | {v:typeof PROTOCOL_VERSION;type:"sync_changed";sessionId:string;conversationId:string;bindingEpoch:string;headRevision:string;sourceFreshness:"unknown"|"reconciling"|"current"}
   | {v:typeof PROTOCOL_VERSION;type:"queue_state";sessionId:string;items:QueueItem[]}
   | {
@@ -484,11 +487,12 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     }
     case "get_queue": return {v:PROTOCOL_VERSION,type:"get_queue"};
     case "queue_action": {
-      if(!['cancel','edit','promote'].includes(String(value.action)))throw new ProtocolError('invalid_field','Invalid queue action');
+      if(!['cancel','edit','promote','move'].includes(String(value.action)))throw new ProtocolError('invalid_field','Invalid queue action');
+      if(value.action==='move'&&!['front','back'].includes(String(value.to)))throw new ProtocolError('invalid_field','Invalid queue position');
       if(!Number.isSafeInteger(value.revision)||Number(value.revision)<1)throw new ProtocolError('invalid_field','Invalid queue revision');
       const text=value.action==='edit'?requiredString(value.text,'text',MAX_PROMPT_CHARS):undefined;
       if(text!==undefined&&!text.trim())throw new ProtocolError('invalid_field','Empty queue text');
-      return {v:PROTOCOL_VERSION,type:'queue_action',requestId:requiredString(value.requestId,'requestId',256),id:requiredString(value.id,'id',256),revision:Number(value.revision),action:value.action as QueueAction['action'],...(text!==undefined?{text}:{})};
+      return {v:PROTOCOL_VERSION,type:'queue_action',requestId:requiredString(value.requestId,'requestId',256),id:requiredString(value.id,'id',256),revision:Number(value.revision),action:value.action as QueueAction['action'],...(text!==undefined?{text}:{}),...(value.action==='move'?{to:value.to as 'front'|'back'}:{})};
     }
     case "prompt":
       return parsePrompt(value);

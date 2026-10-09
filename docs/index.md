@@ -1,11 +1,14 @@
 # PI Coffee documentation map
 
+- MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Preserves Codex/Luna native coordination; source merge does not activate production.
+
 - Local file download links: [current delivery contract](spec/task-storage.md#local-file-link-delivery--2026-10-08-server-102), [Server #102](https://github.com/awangs1986/pi-coffee-server/issues/102). Ordinary local files use authorized download; embedded images retain bounded preview.
 
 - Repository-free Codex Chat: [current contract](spec/native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98), [Server #98](https://github.com/awangs1986/pi-coffee-server/issues/98). Pi remains the default; Codex preserves native model selection, scoped files and upgrade-safe context reset without Work guidance. Source acceptance and production activation are separate.
 
 - Streaming browser responsiveness: [Word discovery contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and regression evidence](reviews/streaming-browser-freeze-20261007.md), [Server #96](https://github.com/awangs1986/pi-coffee-server/issues/96). Dense historical text must not block live replies or browser interaction during file-link discovery.
 
+- MISHU manager candidate (P1–P9: watch, rules, to-do, overview/events/peek, keyword replies, Host-issued authorization, receipt rotation): [contract](spec/mishu.md#manager-p1p9-2026-10-09-candidate), [implementation, rules.json and deployment](development/mishu-manager.md). Requires `pi-coffee-mishu@0.3.0-manager.2`.
 - MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
 - Planned Codex main secretary: [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [approved Issues #85–#91](development/mishu-codex-tickets.md), [public SPEC #84](https://github.com/awangs1986/pi-coffee-server/issues/84). Explicitly selected Codex Work; ordinary Chat stays Pi-only. This is a new requirement, not implementation or production evidence.
 
