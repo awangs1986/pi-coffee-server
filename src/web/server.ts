@@ -1,3 +1,4 @@
+import {githubSecret} from '../shared/github-credentials.js';
 import {readReleaseCommit,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
@@ -64,6 +65,7 @@ export class WebServer {
   private readonly githubOAuth?:GitHubOAuth;
   private readonly defaultUser?:string;
   private readonly allowUnauthenticated: boolean;
+  private githubRefreshRequests=0;
   private readonly githubRefreshes=new Map<string,Promise<unknown>>();
   private readonly assets = new Map<string, CachedAsset>();
   private readonly transferByScope = new Map<string, string>();
@@ -157,14 +159,16 @@ export class WebServer {
       if(!allowed||request.headers.origin||request.headers.cookie){json(response,401,{error:'Host authorization required'});return;}
       if(request.method!=='POST'){json(response,405,{error:'Use POST'});return;}
       if(!this.githubOAuth){json(response,503,{error:'github_refresh_unavailable'});return;}
+      if(this.githubRefreshRequests>=32){json(response,503,{error:'github_refresh_unavailable'});return;}
+      this.githubRefreshRequests++;
       try {
-        const input=await readJson(request,8192);
-        if(typeof input.refreshToken!=='string'||input.refreshToken.length>4096||!input.refreshToken||/\s/.test(input.refreshToken)){json(response,400,{error:'Invalid refresh request'});return;}
+        const input=await readJson(request,8192,10000);
+        if(!githubSecret(input.refreshToken)){json(response,400,{error:'Invalid refresh request'});return;}
         const key=createHash('sha256').update(input.refreshToken).digest('hex');
         let pending=this.githubRefreshes.get(key);
         if(!pending){if(this.githubRefreshes.size>=32){json(response,503,{error:'github_refresh_unavailable'});return;}pending=this.githubOAuth.refresh(input.refreshToken);this.githubRefreshes.set(key,pending);void pending.finally(()=>this.githubRefreshes.delete(key)).catch(()=>undefined);}
         json(response,200,await pending);
-      }catch(error){const reconnect=error instanceof Error&&error.message==='github_reconnect_required';json(response,reconnect?409:503,{error:reconnect?'github_reconnect_required':'github_refresh_unavailable'});}return;
+      }catch(error){const reconnect=error instanceof Error&&error.message==='github_reconnect_required';json(response,reconnect?409:503,{error:reconnect?'github_reconnect_required':'github_refresh_unavailable'});}finally{this.githubRefreshRequests--;}return;
     }
     if (path === "/healthz") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
