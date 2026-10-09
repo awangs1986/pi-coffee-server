@@ -76,7 +76,7 @@ authenticated Browser probe then passed: original gpt-6-luna thread, Pi/Codex
 contacts, receipt reads, explicit visibility, v2 authorized execution, refresh and
 responsive/cancelable setup at desktop/mobile/short viewport sizes.
 
-A no-model metadata-only cycling probe did not reproduce the original full-query
+A no-model metadata-only cycling probe did not reproduce the original complete-inventory
 timeout. The upstream internal blocking cause is therefore not established; the
 fix removes an unnecessary readiness dependency rather than claiming all native
 MCP failures impossible. Existing timeout, missing-tool rejection, token/binding

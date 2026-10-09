@@ -742,8 +742,11 @@ for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const p of req)raw+=p;const body=JSON.parse(raw);requests.push(body);
   const send=(content:string)=>{if(res.writableEnded)return;const f={id:'auto',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...f,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...f,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
-  if(raw.includes('自动测试目标'))finishTarget=()=>send('LATE_AUTOMATIC_FACT');
-  else if(raw.includes('FOREGROUND_BUSY')&&!raw.includes('<task-facts>'))finishForeground=()=>send('FOREGROUND_DONE');
+  // Watch summaries can quote target titles. Only the actor's exact direct
+  // message selects the synthetic response channel, never quoted context.
+  const direct=body.messages.filter((m:any)=>m.role==='user').map((m:any)=>typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):'').filter((text:string)=>text==='自动测试目标'||text==='FOREGROUND_BUSY').at(-1);
+  if(!raw.includes('<task-facts>')&&direct==='自动测试目标')finishTarget=()=>send('LATE_AUTOMATIC_FACT');
+  else if(!raw.includes('<task-facts>')&&direct==='FOREGROUND_BUSY')finishForeground=()=>send('FOREGROUND_DONE');
   else if(mode==='provider-error'){res.writeHead(404,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'synthetic model_not_found',code:'model_not_found'}}));}
   else {finishReport=()=>send('进展：LATE_AUTOMATIC_FACT 已完成。\n限制：只验证合成数据，未验收。\n下一步：请查看目标结果。\n来源：Late synthetic task');if(mode!=='lost-ack')finishReport();}
  });
