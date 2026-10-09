@@ -185,3 +185,8 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [Codex Luna MISHU source candidate and acceptance](development/mishu-codex-source.md): existing Codex Chat/Work native foreground coordination; explicit Browser setup, per-run grants and revocation. Report isolation/output recovery and automatic reminders remain unavailable; production activation is separate.
 
 - Conversation-scoped unsent attachment drafts: [ownership and send boundary](spec/task-storage.md#conversation-scoped-attachment-drafts-2026-10-09), [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104). Switching preserves originals within the owning account/task and immediately renders the destination draft.
+
+- 2026-10-09: [Server #105](https://github.com/awangs1986/pi-coffee-server/issues/105)
+  adds browser-independent GitHub OAuth renewal for selected-account forge APIs
+  and managed native Git/gh. See [account authorization contract](spec/github-accounts.md#automatic-oauth-renewal-2026-10-09-server-105).
+  Production activation and real reauthorization evidence remain in the Issue.

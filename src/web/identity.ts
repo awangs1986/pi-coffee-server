@@ -1,5 +1,5 @@
 import {conversationReturnTo} from './conversation-route.js';
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export interface UserRoute { hostUrl: string; hostToken: string; user?:string }
@@ -58,6 +58,12 @@ export class Identity {
       urls.add(url);tokens.add(route.hostToken);
     }
     return routes;
+  }
+  /** Service-only reverse OAuth exchange; no browser session can use this grant. */
+  authorizesHost(req:IncomingMessage):boolean {
+    const token=req.headers.authorization?.replace(/^Bearer /,''),user=req.headers['x-pi-coffee-user'];
+    if(!token||user!==undefined&&typeof user!=='string')return false;
+    try{return Object.values(this.routes()).some(route=>route.user===user&&timingSafeEqual(createHash('sha256').update(route.hostToken).digest(),createHash('sha256').update(token).digest()));}catch{return false;}
   }
   private async user(token: string) {
     const res = await this.request(`${this.options.giteaUrl.replace(/\/$/,'')}/api/v1/user`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000), redirect: 'error' });

@@ -8,3 +8,4 @@ await cp(resolve(root, "src/host/import-zip.py"), resolve(root, "dist/src/host/i
 await cp(resolve(root, 'src/host/github-tools.mjs'), resolve(root, 'dist/src/host/github-tools.mjs'));
 
 await cp(resolve(root, 'src/host/mishu-mcp.mjs'), resolve(root, 'dist/src/host/mishu-mcp.mjs'));
+await cp(resolve(root, 'src/host/github-token.mjs'), resolve(root, 'dist/src/host/github-token.mjs'));
