@@ -14,7 +14,7 @@ async function fixture(backend=false){
  git('init','-q','-b','main');await writeFile(join(repo,'.gitignore'),'dist/\nnode_modules\n');await writeFile(join(repo,'source.txt'),'fixture');
  if(backend){await mkdir(join(repo,'node_modules','.bin'),{recursive:true});await mkdir(join(repo,'node_modules','fixture'));const bin=join(repo,'node_modules','fixture','cli.js');await writeFile(bin,'#!/usr/bin/env node\nconsole.log("retained binary");\n');await chmod(bin,0o755);await symlink('../fixture/cli.js',join(repo,'node_modules','.bin','fixture'));}
  git('add','.');git('commit','-qm','source');
- await mkdir(join(repo,'dist','public'),{recursive:true});await writeFile(join(repo,'dist','public','app.js'),'window.fixture="new";\n');
+ await mkdir(join(repo,'dist','public'),{recursive:true});await writeFile(join(repo,'dist','public','app.js'),'window.fixture="new";\n');await writeFile(join(repo,'dist','public','release-manifest.json'),JSON.stringify({sourceCommit:git('rev-parse','HEAD'),version:'0.11'})+'\n');
  const plan=join(root,'plan.json'),receipt=join(root,'receipt.json');await writeFile(plan,JSON.stringify({steps:[{name:'check',argv:[process.execPath,'-e','process.exit(0)']}]}));
  await exec(process.execPath,[resolve('scripts/verify.mjs'),'--repo',repo,'--plan',plan,'--receipt',receipt]);
  const config=join(root,'config.json'),active=join(root,'active');await mkdir(active);await writeFile(join(active,'app.js'),'window.fixture="old";\n');
@@ -125,4 +125,13 @@ it('refuses dependencies replaced by a root symlink outside the release',async()
   await rename(join(f.repo,'node_modules'),join(f.root,'shared-dependencies'));await symlink(join(f.root,'shared-dependencies'),join(f.repo,'node_modules'));
   await expect(exec(process.execPath,[resolve('scripts/release.mjs'),'stage','--fixture','--role','host','--source',f.repo,'--commit',f.commit,'--verification',f.receipt,'--config',f.config])).rejects.toThrow();
  }finally{await rm(f.root,{recursive:true,force:true});}
+});
+
+it('exposes the staged complete Web release and its Browser asset version through HTTP',async()=>{
+ const {WebServer}=await import('../src/web/server.js'),{HostServer}=await import('../src/host/server.js');const f=await fixture(true);let web:InstanceType<typeof WebServer>|undefined,host:InstanceType<typeof HostServer>|undefined;
+ try{
+  await exec(process.execPath,[resolve('scripts/release.mjs'),'stage','--fixture','--role','web','--source',f.repo,'--commit',f.commit,'--verification',f.receipt,'--config',f.config]);const config=JSON.parse(await readFile(f.config,'utf8')),candidate=join(config.releaseRoot,f.commit+'-web'),factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No native');}};
+  host=new HostServer({port:0,token:'fixture',factory,releaseDir:candidate});await host.start();web=new WebServer({port:0,hostUrl:`ws://127.0.0.1:${host.address().port}/host`,hostToken:'fixture',releaseDir:candidate,publicDir:join(candidate,'dist','public')});await web.start();
+  const r=await fetch(`http://127.0.0.1:${web.address().port}/api/release`);expect(await r.json()).toMatchObject({webVersion:'0.11',frontendVersion:'0.11',hostVersion:'0.11',webBackendCommit:f.commit,frontendCommit:f.commit,hostBackendCommit:f.commit});
+ }finally{await web?.close();await host?.close();await rm(f.root,{recursive:true,force:true});}
 });
