@@ -1,5 +1,6 @@
 # PI Coffee documentation map
 
+- MISHU manager candidate (P1–P9: watch, rules, to-do, overview/events/peek, keyword replies, Host-issued authorization, receipt rotation): [contract](spec/mishu.md#manager-p1p9-2026-10-09-candidate), [implementation, rules.json and deployment](development/mishu-manager.md). Requires `pi-coffee-mishu@0.3.0-manager.1`.
 - MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
 
 - MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
