@@ -204,16 +204,20 @@ it.each(['codex','claude','cursor','grok'] as const)('relays to the existing %s 
  await setupThroughChat(app,source.id,target.id,true);
  const message={action:'send',targetId:target.id,binding:choice.binding,messageId:'native-message',kind:'information-only',text:'Reply with the fixture marker'};
  expect((await req(message)).status).toBe(200);
- await expect.poll(async()=>(await (await req({action:'inbox'})).json()).messages[0],{timeout:10000}).toMatchObject({state:'settled',result:expect.stringContaining(engine==='claude'?'Claude':engine==='codex'?'native':'Cursor')});
+ // Native startup, durable admission and reply collection are not a 10s latency SLO.
+ await expect.poll(async()=>(await (await req({action:'inbox'})).json()).messages[0],{timeout:20000}).toMatchObject({state:'settled',result:expect.stringContaining(engine==='claude'?'Claude':engine==='codex'?'native':'Cursor')});
  expect((await app.workspaces.lookup(target.id))!.nativeBinding!.id).toBe(original);
 
  socket.close();
-},30000);
+},60000);
 
 async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:string,targetId:string,allow:boolean,exclusive=false,viewAll=true){
  const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
- const frames:any[]=[];let chosen=false;
- socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
+ const frames:any[]=[];let chosen=false;const setupRequestId='explicit-setup-'+randomUUID(),answered=new Set<string>();
+ socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;
+  // Reconnects can replay old dialogs; answer each dialog only for this explicit command.
+  if(f.requestId!==setupRequestId||e?.type!=='extension_ui_request'||!['select','confirm'].includes(e.method)||answered.has(e.id))return;
+  answered.add(e.id);
   if(e.method==='select'){
    const target=e.options.find((v:string)=>v.includes(targetId));
    const unwanted=exclusive?e.options.find((v:string)=>v.startsWith('✓')&&!v.includes(targetId)):undefined;
@@ -227,9 +231,10 @@ async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:s
   await expect.poll(()=>frames.some(f=>f.type==='opened'||f.type==='error'),{timeout:10000}).toBe(true);
   expect(frames.find(f=>f.type==='opened'||f.type==='error')).toMatchObject({type:'opened'});
   frames.length=0; // Exclude prior command notifications replayed on reconnect.
-  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'explicit-setup-'+randomUUID(),text:'/mishu-setup'}));
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:setupRequestId,text:'/mishu-setup'}));
   // An already-enabled Chat must wait for this setup's completion, not old status.
-  await expect.poll(()=>frames.some(f=>f.event?.method==='notify'&&String(f.event.message).startsWith('MISHU 已启用，可联系')),{timeout:10000}).toBe(true);
+  // Keep real errors visible; allow native command/dialog persistence the same 20s as native completion.
+  await waitForNativeFrame(socket,frames,0,f=>f.requestId===setupRequestId&&f.event?.method==='notify'&&String(f.event.message).startsWith('MISHU 已启用，可联系'),20000,'MISHU setup completion');
   expect(await (await app.call({action:'status',id:sourceId})).json()).toMatchObject({enabled:true});
  }finally{socket.close();}
 }
@@ -759,7 +764,7 @@ for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-
  await app.call({action:'select',id:source.id,selected:true});await setupThroughChat(app,source.id,target.id,true);
  const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
  const sockets:WebSocket[]=[];
- async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
+ async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(e?.type==='extension_ui_request'&&e.method==='confirm'&&['开启事件提醒？','关闭事件提醒？'].includes(e.title))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
  try{
   const src=await open(source.id),dst=await open(target.id);
   if(mode!=='disabled'){src.ws.send(JSON.stringify({v:1,type:'prompt',requestId:randomUUID(),text:'/mishu-notifications'}));await expect.poll(async()=> (await(await app.call({action:'status',id:source.id})).json()).notifications.enabled,{timeout:10000}).toBe(true);await expect.poll(()=>src.frames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);}
@@ -925,7 +930,7 @@ it.each([{outcome:'completed',progress:false},{outcome:'completed',progress:true
  const project=await app.workspaces.registerProject('synthetic-codex-final',remote),target=await app.workspaces.createConversation(project.id,undefined,undefined,'codex');
  await mkdir(join(app.root,'pi-home'),{recursive:true});await writeFile(join(app.root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(app.root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
  const sockets:WebSocket[]=[];
- async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(id===source.id&&e?.type==='extension_ui_request'&&e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
+ async function open(id:string){const frames:any[]=[];const ws=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});sockets.push(ws);ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type==='extension_ui_request'&&e.method==='select'&&e.title.startsWith('MISHU：事件提醒'))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value:'开启事件提醒'}));if(id===source.id&&e?.type==='extension_ui_request'&&e.method==='confirm'&&['开启事件提醒？','关闭事件提醒？'].includes(e.title))ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));});await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);return {ws,frames};}
  try{
   const dst=await open(target.id);dst.ws.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-target',text:'run delayed final tracking'+(progress?' with progress':'')+(truncated?' '+ 'x'.repeat(4100)+' FINAL_LIMITATION_MUST_BE_READ':'')}));
   await expect.poll(()=>dst.frames.some(f=>f.event?.type==='extension_ui_request'),{timeout:10000}).toBe(true);
