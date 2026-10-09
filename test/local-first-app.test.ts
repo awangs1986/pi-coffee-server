@@ -688,3 +688,36 @@ it('clears previous-account sidebar metadata immediately while the next workspac
  expect(document.querySelector('[data-session-id="c"]')).toBeNull();
  expect(document.querySelector('#session-list')?.textContent).not.toContain('Conversation');
 });
+
+// Attachment drafts use the same real controller boundary as text drafts.
+const attachmentNames=()=>[...document.querySelectorAll('#attachments .upload-name')].map(n=>n.textContent);
+function chooseAttachment(name:string){
+ const input=document.querySelector<HTMLInputElement>('#file')!;
+ Object.defineProperty(input,'files',{configurable:true,value:[new File(['synthetic'],name,{type:'text/plain'})]});
+ input.dispatchEvent(new Event('change'));
+}
+it.each(['pi','codex'] as const)('keeps unsent attachments and text with their original %s conversation, including immediate selection',async engine=>{
+ const app=await setup(engine);await app.select('a');draft('A draft');chooseAttachment('a.txt');
+ expect(attachmentNames()).toEqual(['a.txt']);
+ const switchToB=app.select('b');expect(attachmentNames()).toEqual([]);await switchToB;
+ draft('B draft');chooseAttachment('b.txt');await app.select('a');
+ expect(prompt().value).toBe('A draft');expect(attachmentNames()).toEqual(['a.txt']);
+ document.querySelector<HTMLButtonElement>('#attachments .attachment-remove')!.click();
+ await app.select('b');expect(attachmentNames()).toEqual(['b.txt']);expect(prompt().value).toBe('B draft');
+ await app.select('a');expect(attachmentNames()).toEqual([]);
+ expect(allFrames.filter(f=>['prompt','steer','follow_up'].includes(f.type))).toEqual([]);
+ expect(vi.mocked(fetch).mock.calls.some(([url])=>String(url).includes('/prepare-upload'))).toBe(false);
+});
+it('isolates the new-task attachment draft and removes all account-owned drafts on logout',async()=>{
+ const app=await setup();await app.select('a');chooseAttachment('a.txt');
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await tick();
+ expect(attachmentNames()).toEqual([]);draft('New draft');chooseAttachment('new.txt');await app.select('a');expect(attachmentNames()).toEqual(['a.txt']);
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await tick();expect(attachmentNames()).toEqual(['new.txt']);expect(prompt().value).toBe('New draft');
+ window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'identity:logout'}));await tick();expect(attachmentNames()).toEqual([]);
+ await app.select('a');expect(attachmentNames()).toEqual([]);
+});
+it('clears both active and saved attachment drafts when authentication changes users',async()=>{
+ const app=await setup();await app.select('a');chooseAttachment('alice-a.txt');await app.select('b');chooseAttachment('alice-b.txt');
+ app.network.user='another-synthetic-user';app.sockets.at(-1)!.onclose({code:1006});await tick(2000);
+ expect(attachmentNames()).toEqual([]);app.sockets.at(-1)!.receive({type:'sessions',sessions:app.conversations});await tick();await app.select('a');expect(attachmentNames()).toEqual([]);await app.select('b');expect(attachmentNames()).toEqual([]);
+});

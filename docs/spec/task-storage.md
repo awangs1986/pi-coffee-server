@@ -141,3 +141,36 @@ actual Chromium download bytes over synthetic HTTP while retaining image preview
 Live diagnosis separately confirmed a real authorized binary download succeeds
 and the incorrectly bound preview returns 413; user file contents are not stored
 in repository evidence.
+
+## Conversation-scoped attachment drafts (2026-10-09)
+
+[Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104)
+fixes attachment loss and stale composer chips during conversation selection.
+Unsent original browser File references and image inputs belong to the authenticated
+account and selected Conversation. The new-task draft has its own separate key.
+Switching immediately renders the destination draft; returning restores its original
+files and text. Remove and accepted Send clear that draft rather than reviving it
+on the next visit. Task creation consumes the new-task draft, without adopting it
+into another new task.
+
+Drafts are disposable page memory, never browser-persisted copies of file contents,
+Host artifacts or model context. Logout, identity revocation/account change and
+page reload discard them. Inactive file-backed image previews are regenerated from
+the retained originals; large base64 previews are not held for every visited task.
+Pending image encoding is shared for that original File, while each callback checks
+its account, selection occurrence and file membership before applying. Restored
+images remain unsendable until decoding settles and never appear twice.
+
+An upload whose prompt has not been submitted returns to an explicit browser draft
+when the user switches away. The old request is cancelled; late progress/completion
+cannot alter the newly selected conversation. Returning retains the original file
+and text, requires a new explicit Send, and obtains the owning task's current grant.
+Saved drafts contain neither old upload endpoints/tokens nor VM paths. Already
+admitted uncertain prompts retain the existing scoped outbox/manual-restore behavior;
+conversation selection never automatically retries their execution.
+
+Regression acceptance uses the real controller DOM for Pi and Codex file removal,
+new-task drafts, logout and account changes. A real Chromium HTTP/WS/transfer probe
+additionally verifies immediate switching, return, delayed image decoding, upload
+cancellation, no pre-Send transfer/prompt, no automatic replay, and explicit Send
+through the original task's grant. No production transcripts or user files are used.

@@ -358,3 +358,13 @@ operation controls. Codex defaults remain unrestricted with native approval set
 to never, and the existing Work environment instruction asks for user consent
 before dangerous operations. Repository-free Chat retains its zero-custom-prompt
 contract. File transfer retains its reachable LAN bind and scoped grants.
+
+## Composer attachment ownership (2026-10-09)
+
+Selection saves unsent original Files beside the account/Conversation's text draft
+and renders the selected draft synchronously, before authentication/history arrive.
+The new-task draft stays separate. Pending decode/upload results cannot repopulate
+a different selection or a removed attachment. Returning never automatically sends
+or resumes an abandoned prompt. Identity changes clear both active and saved drafts.
+See the [attachment contract](task-storage.md#conversation-scoped-attachment-drafts-2026-10-09)
+and [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104).
