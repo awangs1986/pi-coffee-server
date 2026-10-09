@@ -735,6 +735,7 @@ export class HostServer {
       if (slot.status !== "fulfilled") continue;
       await slot.value.index?.close();
       await slot.value.factory.close?.().catch(() => undefined);
+      await slot.value.githubAccounts?.close();
     }
     this.wsServer.close();
     await httpClosed;

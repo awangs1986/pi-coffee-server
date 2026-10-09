@@ -1,3 +1,4 @@
+import {githubSecret} from '../shared/github-credentials.js';
 import {readReleaseCommit,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
@@ -6,7 +7,7 @@ import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json } from "../shared/http.js";
 import { Identity, type IdentityOptions } from "./identity.js";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
@@ -64,6 +65,8 @@ export class WebServer {
   private readonly githubOAuth?:GitHubOAuth;
   private readonly defaultUser?:string;
   private readonly allowUnauthenticated: boolean;
+  private githubRefreshRequests=0;
+  private readonly githubRefreshes=new Map<string,Promise<unknown>>();
   private readonly assets = new Map<string, CachedAsset>();
   private readonly transferByScope = new Map<string, string>();
   private readonly transferByUpload = new Map<string, string>();
@@ -150,6 +153,23 @@ export class WebServer {
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    if(path==='/internal/github-refresh') {
+      const bearer=request.headers.authorization?.replace(/^Bearer /,'');
+      const allowed=this.identity?this.identity.authorizesHost(request):Boolean(this.hostToken&&bearer&&timingSafeEqual(createHash('sha256').update(this.hostToken).digest(),createHash('sha256').update(bearer).digest()));
+      if(!allowed||request.headers.origin||request.headers.cookie){json(response,401,{error:'Host authorization required'});return;}
+      if(request.method!=='POST'){json(response,405,{error:'Use POST'});return;}
+      if(!this.githubOAuth){json(response,503,{error:'github_refresh_unavailable'});return;}
+      if(this.githubRefreshRequests>=32){json(response,503,{error:'github_refresh_unavailable'});return;}
+      this.githubRefreshRequests++;
+      try {
+        const input=await readJson(request,8192,10000);
+        if(!githubSecret(input.refreshToken)){json(response,400,{error:'Invalid refresh request'});return;}
+        const key=createHash('sha256').update(input.refreshToken).digest('hex');
+        let pending=this.githubRefreshes.get(key);
+        if(!pending){if(this.githubRefreshes.size>=32){json(response,503,{error:'github_refresh_unavailable'});return;}pending=this.githubOAuth.refresh(input.refreshToken);this.githubRefreshes.set(key,pending);void pending.finally(()=>this.githubRefreshes.delete(key)).catch(()=>undefined);}
+        json(response,200,await pending);
+      }catch(error){const reconnect=error instanceof Error&&error.message==='github_reconnect_required';json(response,reconnect?409:503,{error:reconnect?'github_reconnect_required':'github_refresh_unavailable'});}finally{this.githubRefreshRequests--;}return;
+    }
     if (path === "/healthz") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ ok: true, role: "web" }));
@@ -196,7 +216,7 @@ export class WebServer {
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user};
         if(path==='/auth/github/callback'){
           if(request.method!=='GET'||!this.githubOAuth){json(response,400,{error:'GitHub OAuth is not configured'});return;}
-          await this.githubOAuth.callback(request,response,user,async token=>{const r=await this.hostApi(route,'/api/github-accounts','POST',{action:'bind',token});if(!r.ok)throw Error('Host rejected authorization');});return;
+          await this.githubOAuth.callback(request,response,user,async credentials=>{const r=await this.hostApi(route,'/api/github-accounts','POST',{action:'bind',...credentials});if(!r.ok)throw Error('Host rejected authorization');});return;
         }
         if(request.method!=='POST'){json(response,405,{error:'Use POST'});return;}
         if(!(this.identity?this.identity.originAllowed(request):this.auth!.originAllowed(request))){json(response,403,{error:'Invalid origin'});return;}

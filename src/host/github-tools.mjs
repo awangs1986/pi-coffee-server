@@ -1,3 +1,4 @@
+import {githubToken} from './github-token.mjs';
 // Invoked only by task-local Git/gh wrappers. Read credentials afresh on each call.
 import {readFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';
@@ -106,14 +107,12 @@ try {
     }
     const result=spawnSync(program,[...identity,...args],{env,stdio:'inherit'});process.exit(result.status??1);
   }
-  const state=JSON.parse(readFileSync(file,'utf8'));
-  const account=state.version===1&&state.accounts.find(a=>a.id===id);
-  if(!account?.token)throw Error();
+  const token=await githubToken(file,id);
   if(mode==='credential'||mode==='gitea'){
-    process.stdout.write('username=x-access-token\npassword='+account.token+'\n\n');
+    process.stdout.write('username=x-access-token\npassword='+token+'\n\n');
   }else if(mode==='gh'){
     if(args.includes('auth')&&!(args.length===2&&args[0]==='auth'&&args[1]==='status')){process.stderr.write('Manage GitHub authorization in PI Coffee, not gh auth.\n');process.exit(1);}
-    const env={...process.env,GH_TOKEN:account.token,GITHUB_TOKEN:account.token,GH_HOST:'github.com'};
+    const env={...process.env,GH_TOKEN:token,GITHUB_TOKEN:token,GH_HOST:'github.com'};
     const result=spawnSync(program,args,{env,stdio:'inherit'});process.exit(result.status??1);
   }else throw Error();
 }catch{process.stderr.write('GitHub authorization is missing or disconnected. Connect/select an account in PI Coffee.\n');process.exit(1);}
