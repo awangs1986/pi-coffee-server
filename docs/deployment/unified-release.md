@@ -4,6 +4,10 @@
 
 For checked staging and compatible Browser-only activation, use [the repository-owned tools](../development/verification-and-release.md). CLI status and `/api/release` distinguish source, frontend and backend identities; staging never restarts Host/Web.
 
+Before publishing an update, apply the [formal version policy](versioning.md)
+and keep the version bump with its source changes. Record each actually deployed
+Browser/Web/Host version and SHA, including partial rollout.
+
 1. Fetch GitHub and Gitea and read the reconciliation matrix. Build from the authoritative GitHub main commit, keeping both histories and previous release directories.
 2. Run `npm ci && npm run check`. In minimal environments, ensure child login shells also have the Node binary directory in PATH.
 3. Start Web with `node dist/src/main.js web` (the compatible `dist/src/web/main.js` entrypoint also accepts existing route-file deployments). Start Host with `node dist/src/main.js host`. Host and Web use the same Git revision even when installed on different machines.

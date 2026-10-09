@@ -1,6 +1,6 @@
 {
   "name": "pi-coffee-server",
-  "version": "0.1.0",
+  "version": "0.11.0",
   "private": true,
   "description": "PI Coffee: Browser, Web gateway and native Agent Host",
   "type": "module",
@@ -24,7 +24,8 @@
     "check:release": "node scripts/verify.mjs --require-review .coffee-verification/review.json",
     "verify:fresh": "node scripts/verify-fresh.mjs",
     "test:tools": "vitest run test/developer-verification.test.ts test/developer-lint.test.ts test/developer-publish.test.ts test/developer-release.test.ts test/developer-fresh.test.ts test/release-status-http.test.ts",
-    "test:sidebar": "vitest run test/shell-logic.test.ts test/local-first-app.test.ts test/sidebar-interaction.test.ts test/sidebar-http.test.ts test/native-agents.test.ts"
+    "test:sidebar": "vitest run test/shell-logic.test.ts test/local-first-app.test.ts test/sidebar-interaction.test.ts test/sidebar-http.test.ts test/native-agents.test.ts",
+    "version:release": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.0.2",

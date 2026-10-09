@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {checkedReleaseVersion,releaseVersion} from './lib/release-version.mjs';
 // Per-machine local staging. Browser activation is separate; never restarts a unit.
 import {readFile,mkdir,writeFile,rename,readdir,cp,rm,chmod,lstat} from 'node:fs/promises';
 import {resolve,join,dirname} from 'node:path';
@@ -19,12 +20,12 @@ try{
  await mkdir(root,{recursive:true,mode:0o755});await mkdir(state,{recursive:true,mode:0o700});
  if(command==='status'){
   let active=null;try{active=await load(join(state,'current.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
-  const staged=[];for(const name of (await readdir(root)).sort())if(/^[a-f0-9]{40}-(browser|web|host)$/.test(name)){const item=await load(join(root,name,'release.json'));if(item.sourceCommit!==active?.sourceCommit||item.role!==active?.role)staged.push({sourceCommit:item.sourceCommit,role:item.role,state:'staged'});}
+  const staged=[];for(const name of (await readdir(root)).sort())if(/^[a-f0-9]{40}-(browser|web|host)$/.test(name)){const item=await load(join(root,name,'release.json'));if(item.sourceCommit!==active?.sourceCommit||item.role!==active?.role)staged.push({sourceCommit:item.sourceCommit,version:releaseVersion(item.version),role:item.role,state:'staged'});}
   console.log(JSON.stringify({active,staged}));
  }else if(command==='activate-browser'){
   const commit=take('--commit');if(!/^[a-f0-9]{40}$/.test(commit))throw Error('Invalid release');
   const directory=join(root,commit+'-browser'),manifest=await load(join(directory,'release.json'));
-  const files=await artifacts(join(directory,'public'));if(manifest.sourceCommit!==commit||JSON.stringify(files)!==JSON.stringify(manifest.assets))throw Error('Staged bytes changed');
+  const files=await artifacts(join(directory,'public'));if(manifest.sourceCommit!==commit||releaseVersion(manifest.version)==='unknown'||JSON.stringify(files)!==JSON.stringify(manifest.assets))throw Error('Staged bytes changed');
   if(!config.expectedAssets||!Object.keys(config.expectedAssets).length)throw Error('Provide the expected active asset hashes');
   const publicRoot=resolve(config.activePublic);
   const validateBaseline=async()=>{for(const [name,hash] of Object.entries(config.expectedAssets)){if(name.startsWith('/')||name.split('/').some(s=>s==='..'||s==='.')||!/^[a-f0-9]{64}$/.test(hash))throw Error('Invalid baseline');if(sha256(await readFile(join(publicRoot,name)))!==hash)throw Error('Active deployment changed');}};
@@ -41,7 +42,7 @@ try{
    await validateBaseline();
    mutated=true;
    for(const name of names){const target=join(publicRoot,name);await mkdir(dirname(target),{recursive:true});const temp=target+'.'+randomUUID();await cp(join(directory,'public',name),temp);await chmod(temp,0o644);await rename(temp,target);}
-   const identity={sourceCommit:commit,backendCommit:config.backendCommit||'unknown',hostCommit:config.hostCommit||'unknown'};
+   const identity={sourceCommit:commit,version:releaseVersion(manifest.version),backendVersion:releaseVersion(config.backendVersion),hostVersion:releaseVersion(config.hostVersion),backendCommit:config.backendCommit||'unknown',hostCommit:config.hostCommit||'unknown'};
    await save(join(publicRoot,'release-manifest.json'),identity);await chmod(join(publicRoot,'release-manifest.json'),0o644);
    for(const [name,hash] of Object.entries(files)){const url=new URL(name.split('/').map(encodeURIComponent).join('/'),baseUrl.href.endsWith('/')?baseUrl:new URL(baseUrl.href+'/'));const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok||sha256(Buffer.from(await response.arrayBuffer()))!==hash)throw Error('Served assets differ');}
    await health();if(await service()!==before)throw Error('Service changed during activation');
@@ -55,18 +56,19 @@ try{
   if(!/^[a-f0-9]{40}$/.test(commit)||identity.commit!==commit||!['browser','web','host'].includes(role))throw Error('Choose the checked source commit');
   if((await exec('/usr/bin/git',['status','--porcelain'],{cwd:source})).stdout.trim())throw Error('Commit the exact source before staging');
   const verification=await load(resolve(take('--verification')));await requireVerification(source,identity,verification,{fixture:args.includes('--fixture')});
+  const version=await checkedReleaseVersion(source);
   const directory=join(root,commit+'-'+role),publicRoot=join(source,'dist/public'),assets=await artifacts(publicRoot);
   const dependencies=role==='browser'?null:await dependencyArtifacts(join(source,'node_modules'));
   if(role!=='browser'&&JSON.stringify(dependencies)!==JSON.stringify(verification.dependencies))throw Error('Dependencies changed after verification');
-  const packageMetadata=async base=>{const hashes={};for(const name of ['package.json','package-lock.json'])hashes[name]=sha256(await readFile(join(base,name)));return hashes;};
+  const packageMetadata=async base=>{const hashes={};for(const name of ['package.json','package-lock.json','VERSION'])hashes[name]=sha256(await readFile(join(base,name)));return hashes;};
   const metadata=role==='browser'?null:await packageMetadata(source);
-  const manifest={formatVersion:1,sourceCommit:commit,sourceTree:identity.tree,role,state:'staged',assets,...(role==='browser'?{}:{runtime:verification.artifacts,dependencies,metadata})};
+  const manifest={formatVersion:1,version,sourceCommit:commit,sourceTree:identity.tree,role,state:'staged',assets,...(role==='browser'?{}:{runtime:verification.artifacts,dependencies,metadata})};
   let existing;try{existing=await load(join(directory,'release.json'));}catch(error){if(error.code!=='ENOENT')throw error;}
   if(existing){if(JSON.stringify(existing)!==JSON.stringify(manifest)||JSON.stringify(await artifacts(join(directory,'public')))!==JSON.stringify(assets)||(role!=='browser'&&(JSON.stringify(await artifacts(join(directory,'dist')))!==JSON.stringify(manifest.runtime)||JSON.stringify(await dependencyArtifacts(join(directory,'node_modules')))!==JSON.stringify(dependencies)||JSON.stringify(await packageMetadata(directory))!==JSON.stringify(metadata))))throw Error('Immutable release differs');}
   else{
    const pending=directory+'.'+randomUUID();await mkdir(pending,{mode:0o755});
-   try{await cp(publicRoot,join(pending,'public'),{recursive:true});if(role!=='browser'){for(const file of ['dist','node_modules','package.json','package-lock.json'])await cp(join(source,file),join(pending,file),{recursive:true,verbatimSymlinks:true});}if(JSON.stringify(await artifacts(join(pending,'public')))!==JSON.stringify(assets)||(role!=='browser'&&(JSON.stringify(await artifacts(join(pending,'dist')))!==JSON.stringify(manifest.runtime)||JSON.stringify(await dependencyArtifacts(join(pending,'node_modules')))!==JSON.stringify(dependencies)||JSON.stringify(await packageMetadata(pending))!==JSON.stringify(metadata))))throw Error('Source artifacts changed during staging');await save(join(pending,'release.json'),manifest);await rename(pending,directory);}catch(error){await rm(pending,{recursive:true,force:true});throw error;}
+   try{await cp(publicRoot,join(pending,'public'),{recursive:true});if(role!=='browser'){for(const file of ['dist','node_modules','package.json','package-lock.json','VERSION'])await cp(join(source,file),join(pending,file),{recursive:true,verbatimSymlinks:true});}if(JSON.stringify(await artifacts(join(pending,'public')))!==JSON.stringify(assets)||(role!=='browser'&&(JSON.stringify(await artifacts(join(pending,'dist')))!==JSON.stringify(manifest.runtime)||JSON.stringify(await dependencyArtifacts(join(pending,'node_modules')))!==JSON.stringify(dependencies)||JSON.stringify(await packageMetadata(pending))!==JSON.stringify(metadata))))throw Error('Source artifacts changed during staging');await save(join(pending,'release.json'),manifest);await rename(pending,directory);}catch(error){await rm(pending,{recursive:true,force:true});throw error;}
   }
-  console.log(JSON.stringify({state:'staged',sourceCommit:commit,role}));
+  console.log(JSON.stringify({state:'staged',sourceCommit:commit,version,role}));
  }else throw Error('Unknown release action');
 }catch{console.error('Release refused: inspect configuration, checked source and immutable artifacts. No service was restarted.');process.exitCode=1;}

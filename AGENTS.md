@@ -20,6 +20,7 @@ For verification/publication/activation tooling, use [the workflow](docs/develop
 - Select the authenticated user's scope for every HTTP and WebSocket operation. Browser disconnects preserve running sessions.
 - Use the red → green loop at public HTTP/WS and browser-controller seams. Run `npm run check`.
 - Preserve the acceptance matrix in [the reconciliation report](docs/reviews/repository-unification-20260927.md): a model reply alone does not verify the workbench.
+- Before publishing a Server update, advance its [formal release version](docs/deployment/versioning.md) and keep VERSION/package metadata synchronized.
 - Push GitHub main first, then fast-forward Gitea main to the identical commit. Fetch and verify both remote SHAs. Deploy from that commit and record the release identity and served asset probe.
 - Keep credentials, cookies, snapshots and user transcripts out of commits and Issues.
 - Record scope, failures and acceptance evidence in the corresponding Issue. A release is complete only when a fresh clone passes the documented check and the deployed application passes the relevant UI/API probe.

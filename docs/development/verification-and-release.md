@@ -123,6 +123,13 @@ Store per-machine configuration outside source:
 }
 ```
 
+The Server [formal version policy](../deployment/versioning.md) defines the
+release number and guarded increments. VERSION and npm metadata must agree.
+Stage records this number; `/api/release` reports `webVersion`, `hostVersion`
+and `frontendVersion` independently alongside the existing commit fields.
+For Browser-only activation, optional `backendVersion` and `hostVersion` in the
+operator configuration must come from actual running-service evidence.
+
 Supply verified backend/Host identities where available; unknown stays unknown.
 Observe baseline hashes immediately before activation. A changed baseline refuses
 an overwrite. Paths are per-machine operator configuration, never browser input.
