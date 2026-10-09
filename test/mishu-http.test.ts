@@ -202,7 +202,7 @@ it.each(['codex','claude','cursor','grok'] as const)('relays to the existing %s 
  const req=(input:unknown)=>app.call(input,'owner',runtime.env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
  const choice=(await (await req({action:'directory'})).json()).conversations.find((t:any)=>t.id===target.id);
  await setupThroughChat(app,source.id,target.id,true);
- const message={action:'send',targetId:target.id,binding:choice.binding,messageId:'native-message',kind:'authorized-execution',authorizationRef:'User requested this synthetic adapter validation',text:'Reply with the fixture marker'};
+ const message={action:'send',targetId:target.id,binding:choice.binding,messageId:'native-message',kind:'information-only',text:'Reply with the fixture marker'};
  expect((await req(message)).status).toBe(200);
  await expect.poll(async()=>(await (await req({action:'inbox'})).json()).messages[0],{timeout:10000}).toMatchObject({state:'settled',result:expect.stringContaining(engine==='claude'?'Claude':engine==='codex'?'native':'Cursor')});
  expect((await app.workspaces.lookup(target.id))!.nativeBinding!.id).toBe(original);
@@ -210,17 +210,17 @@ it.each(['codex','claude','cursor','grok'] as const)('relays to the existing %s 
  socket.close();
 },30000);
 
-async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:string,targetId:string,allow:boolean,exclusive=false){
+async function setupThroughChat(app:Awaited<ReturnType<typeof start>>,sourceId:string,targetId:string,allow:boolean,exclusive=false,viewAll=true){
  const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});
  const frames:any[]=[];let chosen=false;
  socket.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
   if(e.method==='select'){
    const target=e.options.find((v:string)=>v.includes(targetId));
    const unwanted=exclusive?e.options.find((v:string)=>v.startsWith('✓')&&!v.includes(targetId)):undefined;
-   const value=unwanted??(e.title.includes('消息权限')?e.options[allow?1:0]:chosen||target?.startsWith('✓')?e.options.find((v:string)=>v.startsWith('完成选择')):target);
+   const value=e.title.includes('查看范围')?e.options[viewAll?1:0]:unwanted??(e.title.includes('消息权限')?e.options[allow?1:0]:chosen||target?.startsWith('✓')?e.options.find((v:string)=>v.startsWith('完成选择')):target);
    if(!unwanted&&!e.title.includes('消息权限'))chosen=true;
    socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,value}));
-  }else if(e.method==='confirm')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,confirmed:true}));
+  }else if(e.method==='confirm')socket.send(JSON.stringify({v:1,type:'ui_response',requestId:'answer-'+e.id,id:e.id,confirmed:String(e.title).includes('所有对话')?viewAll:true}));
  });
  try{
   await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:sourceId,nativeProtocol:1}));
@@ -572,7 +572,7 @@ it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch pe
  const token=(await app.host.mishuRuntime('owner',source.id)).env.PI_COFFEE_MISHU_TOKEN,req=(body:unknown)=>app.call(body,'owner',token,'/api/mishu/runtime');
  const contact=(await(await req({action:'directory'})).json()).configuredTargets[0],base={action:'tasks',version:1};
  const brief=await(await req({...base,operation:'register',operationId:'dispatch-brief',targetId:target.id,binding:contact.binding,purpose:'Run check',scope:'Synthetic isolated task',summary:'Requested',nextStep:'Deliver'})).json();
- const command={...base,operation:'dispatch',taskId:brief.task.taskId,expectedRevision:1,messageId:'first-model-id',text:'DISPATCH_SYNTHETIC_WORK',authorizationRef:'User explicitly requested the synthetic check'};
+ const command:Record<string,unknown>={...base,version:2,operation:'dispatch',taskId:brief.task.taskId,expectedRevision:1,messageId:'first-model-id',text:'DISPATCH_SYNTHETIC_WORK',authorization:{quote:'perform two independent isolated checks'}};
  expect((await req(command)).status).toBe(409);
  const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
  let targetSocket:WebSocket|undefined;const targetFrames:any[]=[];
@@ -615,7 +615,9 @@ it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch pe
  if(mode==='normal'){
   const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'new-user-repeat',text:'Repeat the first isolated check once more'}));await expect.poll(()=>sourceCalls,{timeout:10000}).toBe(2);
   const current=(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task;
-  replayCommand={...command,expectedRevision:current.revision,messageId:'legitimate-repeat',retryOf:result.assignment.id};
+  // The previous run's quote is not authority for this new run.
+  expect((await req({...command,expectedRevision:current.revision,messageId:'stale-quote',retryOf:result.assignment.id})).status).toBe(409);
+  replayCommand={...command,expectedRevision:current.revision,messageId:'legitimate-repeat',retryOf:result.assignment.id,authorization:{quote:'Repeat the first isolated check'}};
   const repeat=await req(replayCommand);expect(repeat.status,await repeat.clone().text()).toBe(200);const repeated=await repeat.json();expect(repeated.assignment.retryOf).toBe(result.assignment.id);replayId=repeated.assignment.id;expect(replayId).not.toBe(result.assignment.id);
   await expect.poll(()=>targetCalls,{timeout:10000}).toBe(3);finishTarget();await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.task.taskId})).json()).task.observation,{timeout:10000}).toBe('reply-available');finishSource();await expect.poll(()=>frames.slice(offset).some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);expectedCalls=3;
  }
@@ -1125,3 +1127,124 @@ it('revokes the old observation at accepted Work takeover before preparation can
  // Source Chat itself is not eligible for a Work takeover.
  expect((await app.call({action:'takeover',id:source.id,engine:'codex',expectedEngine:'pi',acceptDrift:true},'owner','host-test','/api/workspace')).status).toBe(409);
 },30000);
+
+it('manager view splits overview/peek by authorization, answers keywords without a model and rotates receipts',async()=>{
+ const app=await start(),source=await app.workspaces.createChatConversation(),contact=await app.workspaces.createChatConversation(),other=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});
+ await setupThroughChat(app,source.id,contact.id,false,false,false);
+ const runtime=await app.host.mishuRuntime('owner',source.id),req=(body:unknown)=>app.call(body,'owner',runtime.env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const status=await(await req({action:'status'})).json();
+ expect(status.manager).toMatchObject({version:1,viewAll:false,grant:{active:false}});
+ // Contacts-only overview never lists the secretary itself or unselected conversations.
+ let overview=await(await req({action:'overview',version:1})).json();
+ expect(overview.conversations.map((c:any)=>c.id)).toEqual([contact.id]);
+ expect(overview.conversations[0]).toMatchObject({contactable:true,link:'/conversations/'+contact.id});
+ expect(Object.keys(overview.conversations[0])).not.toContain('text');
+ expect((await req({action:'peek',version:1,targetId:other.id})).status).toBe(409);
+ expect((await req({action:'events',version:1})).status).toBe(200);
+ // Peek is bounded: ≤10 entries, ≤600 chars each, ≤6000 total, untrusted.
+ const slot=await (app.host as any).slots.get('owner');
+ const long='SECRET-TAIL '.repeat(1000);
+ slot.mishu.attachIndex({page:async()=>({sourceFreshness:'current',entries:Array.from({length:30},(_,i)=>({kind:i%3===0?'tool':i%2?'assistant':'user',text:long+i}))})});
+ const peek=await(await req({action:'peek',version:1,targetId:contact.id,n:50})).json();
+ expect(peek.untrusted).toBe(true);
+ expect(peek.entries.length).toBeLessThanOrEqual(10);
+ expect(peek.entries.every((e:any)=>['user','assistant'].includes(e.role)&&e.text.length<=600&&e.truncated)).toBe(true);
+ expect(peek.entries.reduce((n:number,e:any)=>n+e.text.length,0)).toBeLessThanOrEqual(6000);
+ // The model cannot call quick or clear the to-do panel.
+ expect((await req({action:'quick',version:1,text:'进度'})).status).toBe(409);
+ expect((await req({action:'panel',version:1,op:'ack',key:'x'})).status).toBe(409);
+ // View-all widens the read-only overview without making others contactable.
+ await setupThroughChat(app,source.id,contact.id,false,false,true);
+ overview=await(await req({action:'overview',version:1})).json();
+ expect(overview.conversations.map((c:any)=>c.id).sort()).toEqual([contact.id,other.id].sort());
+ expect(overview.conversations.find((c:any)=>c.id===other.id).contactable).toBe(false);
+ expect((await req({action:'peek',version:1,targetId:other.id,n:1})).status).toBe(200);
+ expect((await req({action:'queue',version:1,targetId:other.id,op:'cancel',id:'x',revision:0,authorization:{quote:'x'}})).status).toBe(409);
+ // A keyword prompt is answered by the Host through the plugin input hook; no provider exists, so a model turn would fail.
+ const socket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}});const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
+  socket.send(JSON.stringify({v:1,type:'prompt',requestId:'quick-progress',text:'进度'}));
+  await expect.poll(()=>JSON.stringify(frames).includes('mishu-quick'),{timeout:10000}).toBe(true);
+  const quick=frames.find(f=>JSON.stringify(f).includes('mishu-quick'));
+  expect(JSON.stringify(quick)).toContain('运行中');
+  expect(frames.some(f=>f.type==='error'&&f.requestId==='quick-progress')).toBe(false);
+  const offset=frames.length;socket.send(JSON.stringify({v:1,type:'prompt',requestId:'quick-confirm',text:'确认 ZZZZ'}));
+  await expect.poll(()=>JSON.stringify(frames.slice(offset)).includes('确认码无效'),{timeout:10000}).toBe(true);
+  const after=await(await req({action:'status'})).json();expect(after.manager.stats.tier1Replies).toBeGreaterThanOrEqual(1);
+ }finally{socket.close();}
+ // Receipt rotation: archive old terminal receipts, keep idempotency for archived message IDs.
+ slot.mishu.receiptLimits={live:3,keep:1,assignmentsLive:500,assignmentsKeep:400,indexEntries:20000,indexMs:30*24*3600*1000};
+ const directory=await(await req({action:'directory'})).json(),binding=directory.configuredTargets.find((t:any)=>t.id===contact.id).binding;
+ const send=(n:number,text='ROTATION_MARKER '+n)=>req({action:'send',targetId:contact.id,binding,messageId:'rot-'+n,kind:'information-only',text});
+ for(let n=1;n<=5;n++){const sent=await send(n);expect(sent.status,await sent.clone().text()).toBe(200);await expect.poll(async()=>(await(await req({action:'inbox'})).json()).messages.find((m:any)=>m.messageId==='rot-'+n)?.state,{timeout:10000}).toBe('settled');}
+ const stored=JSON.parse(await readFile(join(app.workspaces.root,'.coffee','mishu','state.json'),'utf8'));
+ expect(stored.chats[source.id].messages.length).toBeLessThan(5);
+ const archived=await readFile(join(app.workspaces.root,'.coffee','mishu','receipts','receipts-'+source.id+'.jsonl'),'utf8');
+ expect(archived).toContain('"messageId":"rot-1"');expect(archived).not.toContain('"text":');
+ const replay=await send(1);expect(replay.status).toBe(200);expect(await replay.json()).toMatchObject({messageId:'rot-1',archived:true});
+ expect((await send(1,'changed content')).status).toBe(409);
+},60000);
+
+async function managerRegression(){
+ const app=await start(),source=await app.workspaces.createChatConversation(),target=await app.workspaces.createChatConversation();
+ await app.call({action:'select',id:source.id,selected:true});
+ const slot=await (app.host as any).slots.get('owner'),m=slot.mishu;
+ const runtime=await app.host.mishuRuntime('owner',source.id),req=(body:unknown)=>app.call(body,'owner',runtime.env.PI_COFFEE_MISHU_TOKEN,'/api/mishu/runtime');
+ const directory=await(await req({action:'directory'})).json(),contact=directory.conversations.find((c:any)=>c.id===target.id);
+ const setup=async(viewAll:boolean)=>{m.beginSetup(source.id,'synthetic-setup');return req({action:'setup',targets:[{id:contact.id,binding:contact.binding}],allowInstructions:true,viewAll});};
+ expect((await setup(false)).status).toBe(200);
+ return {app,source,target,slot,m,req,setup};
+}
+it('manager regression: failed setup cannot persist expanded read authorization',async()=>{
+ const {app,source,m,req,setup}=await managerRegression();
+ const root=join(app.workspaces.root,'.coffee','mishu'),before=await readFile(join(root,'state.json'),'utf8');
+ await m.tail;const save=m.save.bind(m);m.save=async()=>{throw Error('Synthetic persistence failure');};
+ expect((await setup(true)).status).toBe(409);m.save=save;
+ expect((await(await req({action:'status'})).json()).manager.viewAll).toBe(false);
+ expect(await readFile(join(root,'state.json'),'utf8')).toBe(before);
+ expect(JSON.parse(before).chats[source.id].targets).toHaveLength(1);
+});
+it('manager regression: replaced contact binding cannot leak approval text through status',async()=>{
+ const {app,target,m,req}=await managerRegression();
+ m.watch.event(target.id,{type:'extension_ui_request',id:'synthetic-approval',method:'confirm',title:'PRIVATE_REPLACEMENT_APPROVAL'});await m.watch.flush();
+ // Change only the native identity; retain the same platform conversation ID.
+ const lookup=app.workspaces.lookup.bind(app.workspaces);
+ app.workspaces.lookup=async(id:string)=>{const row=await lookup(id);return row&&id===target.id?{...row,nativeBinding:{...row.nativeBinding,id:'replacement-context'}} as any:row;};
+ const response=await req({action:'status',digest:true});expect(response.status).toBe(200);
+ expect(JSON.stringify(await response.json())).not.toContain('PRIVATE_REPLACEMENT_APPROVAL');
+});
+it.each(['new-run','reconfigure','revoked-during-check'] as const)('manager regression: a stop confirmation cannot survive %s',async(mode)=>{
+ const {source,target,m,req,setup}=await managerRegression();
+ let requestId='old-run';const aborted:string[]=[];
+ const live={get currentRequestId(){return requestId;},isStreaming:true,isTransitioning:false,queueFrame:{items:[]},abort:async()=>{aborted.push(requestId);}};
+ const get=m.registry.get.bind(m.registry);m.registry.get=(id:string)=>id===target.id?live:get(id);
+ m.quickRows=async()=>[{id:target.id,title:'Synthetic target',engine:'pi',state:'running',queued:0,approvals:0,contactable:true,link:'/conversations/'+target.id}];
+ const quick=async(text:string)=>{m.beginQuick(source.id,'user-'+randomUUID(),text);return (await req({action:'quick',version:1,text})).json();};
+ await quick('进度');const pending=await quick('停 1'),code=/确认 ([A-Z0-9]{4})/.exec(pending.text)![1];
+ if(mode==='new-run')requestId='new-run';else if(mode==='reconfigure')expect((await setup(false)).status).toBe(200);else {const authorize=m.authorize.bind(m);m.authorize=async(...args:unknown[])=>{expect((await setup(false)).status).toBe(200);return authorize(...args);};}await quick('确认 '+code);expect(aborted).toEqual([]);
+});
+
+it('manager regression: cancel confirmation only affects unchanged originally shown queue rows',async()=>{
+ const {source,target,m,req}=await managerRegression();
+ let items=[{id:'edit',revision:1,status:'queued',readOnly:false},{id:'keep',revision:1,status:'queued',readOnly:false}];const cancelled:string[]=[];
+ const live={queueFrame:{get items(){return items;}},changeQueue:async({id}:any)=>{cancelled.push(id);}};
+ const get=m.registry.get.bind(m.registry);m.registry.get=(id:string)=>id===target.id?live:get(id);
+ m.quickRows=async()=>[{id:target.id,title:'Synthetic queue',engine:'pi',state:'running',queued:items.length,approvals:0,contactable:true,link:'/conversations/'+target.id}];
+ const quick=async(text:string)=>{m.beginQuick(source.id,'user-'+randomUUID(),text);return (await req({action:'quick',version:1,text})).json();};
+ await quick('进度');const pending=await quick('取消 1'),code=/确认 ([A-Z0-9]{4})/.exec(pending.text)![1];
+ items=[{...items[0],revision:2},items[1],{...items[0],id:'new'}];
+ await quick('确认 '+code);expect(cancelled).toEqual(['keep']);
+});
+
+it('manager regression: failed steering cannot authorize work through the original foreground grant',async()=>{
+ const {source,target,m,req}=await managerRegression();
+ const get=m.registry.get.bind(m.registry);m.registry.get=(id:string)=>id===source.id?{currentRequestId:'original-user-request',isReportRun:false}:get(id);
+ await m.command(source.id,'original-user-request','delivering','prompt','查看当前进度');
+ await m.command(source.id,'rejected-steer','delivering','steer','删除隔离测试文件');
+ await m.command(source.id,'rejected-steer','uncertain');
+ const contact=(await(await req({action:'directory'})).json()).configuredTargets.find((c:any)=>c.id===target.id);
+ const sent=await req({action:'send',version:2,targetId:target.id,binding:contact.binding,messageId:'failed-steer-proof',kind:'authorized-execution',text:'Must not execute',authorization:{quote:'删除隔离测试文件'}});
+ expect(sent.status).toBe(409);
+});

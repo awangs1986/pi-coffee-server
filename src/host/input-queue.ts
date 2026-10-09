@@ -51,6 +51,16 @@ export class InputQueue {
   if(action.action==='cancel'){
    this.rows=this.rows.filter(item=>item!==row);this.options.changed();this.wake();return;
   }
+  if(action.action==='move'){
+   // Reorders pending user rows only; Host notification rows keep their fairness slot.
+   // Never let a move overtake (or hide) a delivery whose outcome is uncertain.
+   if(row.status!=='pending'||this.rows.some(item=>!item.internal&&item!==row&&item.status==='failed'))throw Error('有一条指令发送结果不确定，请先处理它再调整顺序');
+   const others=this.rows.filter(item=>item!==row);
+   const pending=others.filter(item=>item.status!=='sending');
+   if(action.to==='front'){const first=pending.find(item=>!item.internal);const at=first?others.indexOf(first):others.length;others.splice(at,0,row);}
+   else others.push(row);
+   this.rows=others;this.options.changed();this.wake();return;
+  }
   if(this.sending)throw Error('另一条指令正在发送，请稍后重试');
   await this.deliver(row,true);
  }

@@ -15,14 +15,15 @@ export function initMishuCommands({context,request,dialogs,toast,onOpen=()=>{},o
    body.replaceChildren(node('p','选择已有对话。新对象限最近 72 小时；有效的旧对象可继续保留。'));const rows=new Map([...(data.conversations??[]),...(data.configuredTargets??[])].map(row=>[row.id,row]));const retained=new Set((data.configuredTargets??[]).map(row=>row.id));const selected=[];
    for(const row of rows.values()){const label=node('label',null,'mishu-contact'),input=node('input');input.type='checkbox';input.checked=retained.has(row.id);input.setAttribute('aria-label',row.title);label.append(input,node('span',`${row.title} · ${row.engine} · ${row.project}`));body.append(label);selected.push({row,input});}
    const permission=node('select');permission.setAttribute('aria-label','消息权限');for(const [value,title] of [['information','仅信息通知'],['execution','允许授权执行']]){const option=node('option',title);option.value=value;permission.append(option);}permission.value='information';body.append(node('p','消息权限'),permission);
+   const all=node('input');all.type='checkbox';all.checked=data.status?.manager?.viewAll===true;all.setAttribute('aria-label','查看全部对话');const allLabel=node('label');allLabel.append(all,node('span','查看全部对话（只读概况与摘录）'));body.append(allLabel);
    const next=node('button','完成选择');next.type='button';footer.prepend(next);
    next.onclick=()=>{
     if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}
     const targets=selected.filter(x=>x.input.checked).map(x=>({id:x.row.id,binding:x.row.binding}));if(!targets.length||targets.length>20){toast('请选择 1–20 个联系对象');return;}
-    const allowInstructions=permission.value==='execution';body.replaceChildren(node('p',selected.filter(x=>x.input.checked).map(x=>x.row.title).join('\n')),node('p',allowInstructions?'允许按你的明确指令转达执行任务。目标原生权限问题仍由你处理。':'仅信息通知，不要求目标修改或开工。'),node('p','自动提醒当前不可用；你可以回来询问进度和回执。'));next.textContent='确认启用';
+    const allowInstructions=permission.value==='execution',viewAll=all.checked;body.replaceChildren(node('p',selected.filter(x=>x.input.checked).map(x=>x.row.title).join('\n')),node('p',allowInstructions?'允许按你的明确指令转达执行任务。目标原生权限问题仍由你处理。':'仅信息通知，不要求目标修改或开工。'),node('p',viewAll?'允许查看全部对话概况与摘录；不能操作未选择的对话。':'仅查看联系对象。'),node('p','自动提醒当前不可用；你可以回来询问进度和回执。'));next.textContent='确认启用';
     next.onclick=async()=>{
      if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}for(const b of footer.querySelectorAll('button'))b.disabled=true;
-     try{await request({action:'setup_confirm',id:captured.id,ticket:data.ticket,targets,allowInstructions});if(epoch!==occurrence)return;close();toast('MISHU 已启用');onChanged(captured.id);}
+     try{await request({action:'setup_confirm',id:captured.id,ticket:data.ticket,targets,allowInstructions,viewAll});if(epoch!==occurrence)return;close();toast('MISHU 已启用');onChanged(captured.id);}
      catch(error){if(epoch===occurrence){body.append(node('p',error.message));next.disabled=true;footer.querySelectorAll('button')[1].disabled=false;}}
     };
    };

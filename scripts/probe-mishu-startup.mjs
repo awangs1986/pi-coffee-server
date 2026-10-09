@@ -15,7 +15,9 @@ const provider=createServer(async(req,res)=>{try{
  let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw),all=JSON.stringify(body.messages);
  const scope=/STARTUP_(default|alice|paused)/.exec(all)?.[1];if(!scope)throw Error('Unknown synthetic scope');
  if(all.includes('<task-facts>')){reportScopes.push(scope);send(res,'进展：STARTUP_'+scope+' 已完成。\n限制：合成验收，尚未用户验收。\n下一步：查看目标结果。\n来源：STARTUP_'+scope);return;}
- const latest=body.messages.filter(m=>m.role==='user'&&/DIRECT_TARGET_|FOREGROUND_BUSY_|TRACK_STARTUP_/.test(JSON.stringify(m))).at(-1);if(JSON.stringify(latest).includes('DIRECT_TARGET_')){targetCalls.push(scope);pendingTargets.set(scope,()=>send(res,'STARTUP_'+scope+' completed'));return;}
+ const userText=m=>typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.filter(p=>p.type==='text').map(p=>p.text).join('\n'):'';
+ // Match the synthetic actor's message, never marker names echoed in untrusted watch data.
+ const latest=body.messages.filter(m=>m.role==='user'&&/^(?:DIRECT_TARGET_|FOREGROUND_BUSY_|TRACK_STARTUP_)/.test(userText(m))).at(-1);if(JSON.stringify(latest).includes('DIRECT_TARGET_')){targetCalls.push(scope);pendingTargets.set(scope,()=>send(res,'STARTUP_'+scope+' completed'));return;}
  if(JSON.stringify(latest).includes('FOREGROUND_BUSY_')){pendingForeground.set(scope,()=>send(res,'Done'));return;}
  const last=body.messages.filter(m=>m.role==='tool').at(-1),data=last?JSON.parse(typeof last.content==='string'?last.content:last.content[0].text):undefined;
  let args;if(!data)args={action:'directory'};
@@ -39,7 +41,7 @@ async function stop(){for(const s of sockets.splice(0))s.close();if(child&&child
 async function open(scope,id){const frames=[];let setupTarget;
  const ws=new WebSocket(base.replace('http','ws')+'/host',{headers:{authorization:'Bearer synthetic-startup',...(scope?{'x-pi-coffee-user':scope}:{})}});sockets.push(ws);
  ws.on('message',raw=>{const f=JSON.parse(String(raw));frames.push(f);const e=f.event;if(e?.type!=='extension_ui_request')return;
- if(e.method==='select'){let value;if(e.title.startsWith('MISHU：事件提醒'))value='开启事件提醒';else if(e.title.includes('消息权限'))value=e.options[0];else {const target=e.options.find(x=>x.includes(setupTarget));value=target?.startsWith('✓')?e.options.find(x=>x.startsWith('完成选择')):target;}ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value}));}
+ if(e.method==='select'){let value;if(e.title.startsWith('MISHU：事件提醒'))value='开启事件提醒';else if(e.title.includes('查看范围'))value=e.options[0];else if(e.title.includes('消息权限'))value=e.options[0];else {const target=e.options.find(x=>x.includes(setupTarget));value=target?.startsWith('✓')?e.options.find(x=>x.startsWith('完成选择')):target;}ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,value}));}
  if(e.method==='confirm')ws.send(JSON.stringify({v:1,type:'ui_response',requestId:randomUUID(),id:e.id,confirmed:true}));
  });await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await wait(()=>frames.some(f=>f.type==='opened'),'Native open failed');
  return {frames,ws,setup:async target=>{setupTarget=target;return prompt('/mishu-setup');},prompt};

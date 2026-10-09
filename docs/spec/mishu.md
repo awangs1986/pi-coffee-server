@@ -916,3 +916,70 @@ Codex result preserves truncation through the automatic report input. Real Chrom
 probes separately cover desktop/mobile detail warnings and failed queued-stop retention.
 Checks using `MISHU_PLUGIN_ROOT` verify candidate source; they do not validate a new
 immutable package or change Server's consumed tracking.2 artifact.
+
+## Manager (P1–P9, 2026-10-09 candidate)
+
+Two tiers. Tier 1 is deterministic Host code with zero model tokens: an
+event-driven watch over all of one user's conversations (secretary Chats
+excluded), a strict `rules.json` engine, a persisted to-do panel (≤50 items),
+Web notices with cooldown/batch/hourly budget/quiet hours, and exact-keyword fast
+replies with one-time confirmation codes for stop/cancel. Tier 2 is the secretary
+model, woken only by non-keyword user messages, which receives a bounded digest
+(≤1500 chars, ≤20 lines) and to-do text (≤1200 chars) as untrusted data. The
+digest cursor commits only after a successful secretary run.
+
+Authorization: overview/events/peek are read-only and limited to currently valid
+configured bindings unless the user explicitly enables view-all. Setup has separate
+contacts, execution-mode and read-visibility selections followed by one final
+confirmation. Cancel/Escape at any step writes nothing. View-all and contacts are
+committed together in state.json; failure cannot expand access. Revoked bindings
+are also filtered out of model-facing to-do and digest data.
+
+Model execution uses version 2 authorization.quote through both Pi and the Codex
+MCP bridge. A live direct-user foreground admission is required. The quotation may
+come from the current or an earlier same-task user instruction recorded at actual
+native delivery (up to 200 request-bound entries, 4000 characters each). Merely
+queued/rejected/cancelled instructions and assistant/target output are not evidence;
+queue edits contribute only their final delivered text. Uncertain/cancelled delivery
+removes its proof. Same-task intent interpretation remains the native model's job:
+proof of an exact substring does not establish semantic scope, override a newer
+correction or authorize a different task. Explicit retryOf starts a repeated
+execution and requires current-turn evidence. Foreground credentials expire at run
+end; that is not expiry of the user's same-task instruction. Setup changes,
+deselection and source revocation clear recorded proof. The proof budget is explicit:
+older text outside this retained window is unavailable to v2 verification; it must
+not be fabricated from an assistant summary. Existing unmet task-scoped durable
+authorization requirements remain visible in the complete-secretary contract.
+
+Quick stop/cancel confirmations bind the source/target native identities, exact
+run request ID or queue row IDs/revisions and the authorization generation.
+Reconfiguration, disable or revocation invalidates them, including actions already
+awaiting authorization. Stopping one confirmed run preserves unrelated queued input;
+cancel affects only the captured unchanged rows. It never silently retargets a new run.
+
+The journal seals torn segments before appending to a new segment, preserving the
+original partial bytes. Digest acknowledgment advances only to the last scanned
+event (at most 500 per digest), retaining unread backlog. All deadline-generated
+alerts obey the same watch scope as incoming events.
+
+Storage: state.json retains schema version 2 with validated optional manager and
+request-proof fields; these are one atomic authorization transaction. Older Hosts
+that do not understand these fields reject the state instead of silently granting
+access. Do not roll back by restoring older authorization snapshots. The unmerged
+manager.1 manager.json file is not imported as authorization. Watch data and
+receipts remain separate derived/evidence stores. Receipts beyond 500 rotate their
+bodies (20000/30-day retention); independent identities.sqlite tombstones retain
+execution deduplication without that expiry. Legacy archive read/corruption errors
+fail closed; a torn tail is preserved in a recovery file before safe appending.
+
+Codex Chat/Work preserves the existing native foreground token and original thread.
+Its tool bridge exposes overview/events/peek/panel-list/queue and v2 quoting; its
+Browser setup includes the same explicit view-all choice. Pi-only keyword input
+interception remains Pi-only. Codex reports, automatic wake-ups and native report
+recovery remain unavailable until separately verified. Ordinary unselected native
+sessions retain their original guidance.
+
+The queue_action protocol gains move (to: front|back); mishu_watch frames are
+ignored by older clients. Source, artifact installation, Browser acceptance and
+production activation remain separate. See [implementation](../development/mishu-manager.md)
+and [repair evidence](../development/mishu-manager-repairs.md).
