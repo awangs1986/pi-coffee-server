@@ -8,7 +8,8 @@ try{await access(destination);throw Error('Choose a new directory; existing runt
 await mkdir(destination,{recursive:true,mode:0o700});
 const manifest=JSON.parse(await readFile(join(source,'package.json'),'utf8'));
 const names=['@earendil-works/pi-coding-agent','@earendil-works/pi-agent-core','@earendil-works/pi-ai','@earendil-works/pi-tui','typebox','pi-coffee-harness','pi-coffee-lsp','context-handoff','pi-web-access','pi-subagents'];
-await cp(join(source,'vendor'),join(destination,'vendor'),{recursive:true});
+// Older source trees used vendored file dependencies; immutable package artifacts need no vendor directory.
+if(names.some(name=>manifest.dependencies[name]?.startsWith('file:vendor/')))await cp(join(source,'vendor'),join(destination,'vendor'),{recursive:true});
 await writeFile(join(destination,'package.json'),JSON.stringify({name:'coffee-reviewed-terminal',private:true,type:'module',dependencies:Object.fromEntries(names.map(n=>[n,manifest.dependencies[n]])),overrides:manifest.overrides},null,2)+'\n');
 execFileSync('npm',['install','--ignore-scripts','--no-fund'],{cwd:destination,stdio:'inherit'});
 await mkdir(join(destination,'scripts'));

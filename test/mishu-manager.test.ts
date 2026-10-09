@@ -81,6 +81,17 @@ describe('watchdog',()=>{
   const watch=new MishuWatch({root,now:c.now,timers:c.timers,onNotice:n=>notices.push(n),catalog:async()=>[{id:'conv-a',title:'修复登录',engine:'codex',project:'web',running:false,queued:0},{id:'sec',title:'秘书',engine:'pi',project:'Chat',running:false,queued:0}],isExcluded:id=>id==='sec',...extra});
   await watch.start();return {watch,c,notices,root};
  }
+ it('records aborted Pi settlement as interrupted rather than completed work',async()=>{
+  const {watch}=await watchOf();
+  try{
+   watch.event('conv-a',{type:'agent_start'});
+   watch.event('conv-a',{type:'agent_settled',aborted:true});await watch.flush();
+   expect((await watch.snapshot()).find(s=>s.id==='conv-a')?.state).toBe('errored');
+   const events=(await watch.journal.read(0,100)).events;
+   expect(events.some(e=>e.kind==='run.interrupted')).toBe(true);
+   expect(events.some(e=>e.kind==='run.completed')).toBe(false);
+  }finally{await watch.close();}
+ });
  it('opens and closes panel items from approval, error and completion events',async()=>{
   const {watch,notices}=await watchOf();
   watch.event('conv-a',{type:'agent_start'});

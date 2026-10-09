@@ -170,7 +170,7 @@ export class MishuWatch {
    const active=['running','stuck','waiting'].includes(c.state)||c.runError;
    const status=String(e.status??'');
    await this.closeApprovals(c);
-   if(type==='run_completed'&&status==='interrupted'){c.state='errored';c.lastError='运行中断';await this.emit(c,'run.interrupted',{});}
+   if((type==='run_completed'&&status==='interrupted')||(type==='agent_settled'&&e.aborted===true)){c.state='errored';c.lastError='运行中断';await this.emit(c,'run.interrupted',{});}
    else if(type==='run_completed'&&status==='failed'&&!c.runError){c.state='errored';c.lastError=templateValue(e.error??'运行失败',300);c.runError=true;await this.emit(c,'run.errored',{error:c.lastError});}
    else if(active&&!c.runError){c.state='idle';c.lastCompletedAt=now;this.closeWhere(i=>i.kind==='stuck'&&i.conv===id);await this.emit(c,'run.completed',{});}
    else if(!c.runError&&c.state!=='errored')c.state='idle';

@@ -24,6 +24,7 @@
 - Unread completed-task coffee icon: [current read acknowledgement](spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100), [Server #100](https://github.com/awangs1986/pi-coffee-server/issues/100). Supersedes the persistent icon in [Server #79](https://github.com/awangs1986/pi-coffee-server/issues/79); native settlement remains separate from read state and business acceptance.
 
 - Immediate per-Conversation model display: [contract](spec/conversation-switching.md#last-confirmed-model-display-2026-10-06-server-68), [Server #68](https://github.com/awangs1986/pi-coffee-server/issues/68). Cached metadata is display-only; native settings remain authoritative.
+- Native runtime upgrade candidate: [Pi 1.0.4 / current-plugin compatibility and Azure migration](deployment/pi-104-upgrade.md), [Server #67](https://github.com/awangs1986/pi-coffee-server/issues/67). PR delivery is separate from merge, immutable plugin releases and production activation.
 
 - Current project terms and boundaries: [CONTEXT.md](../CONTEXT.md); [2026-10-06 freshness audit](reviews/spec-freshness-20261006.md), [Server #66](https://github.com/awangs1986/pi-coffee-server/issues/66). Ordinary Chat is zero-system; five Work engines retain distinct capabilities; MISHU persistent follow-up remains #64.
 
@@ -194,3 +195,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [Formal Web/Host release versions](deployment/versioning.md): owner-defined small
   +0.01 / large +0.10 increments, actual component deployment and source SHA;
   [Server #106](https://github.com/awangs1986/pi-coffee-server/issues/106).
+
+- Native Pi 1.1 / formal v0.12 candidate: [compatibility and release gate](deployment/pi-110-upgrade.md), [Server #67](https://github.com/awangs1986/pi-coffee-server/issues/67). Supersedes the unmerged 1.0.4 candidate; retains current MISHU manager and guarded release flow.
