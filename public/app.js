@@ -1,5 +1,6 @@
 import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
+import {initMishuCommands} from './mishu-commands.js';
 import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
 import {createConversationNavigation,conversationHref} from './conversation-navigation.js';
@@ -236,7 +237,7 @@ function showRecentThread(id){
   });
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;
 // Unacknowledged requests stay in this tab, scoped to their owner and task.
 // Never infer acceptance from matching history text or resend automatically.
 const promptOutbox=new Map();
@@ -273,7 +274,7 @@ const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:v
 const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeoverControls.busy(activeId)||forkControls.busy(activeId)));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code",cursor:"Cursor",grok:"Grok Build"})[value] || value;
-const supports=(name)=>capabilities ? capabilities[name]===true : engine==="pi";
+const supports=(name)=>name==='steer'&&engine==='codex'&&mishuControls?.isSelected()?false:capabilities ? capabilities[name]===true : engine==="pi";
 async function loadEngines(){
   let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];chatEngines=Array.isArray(data.chatEngines)?data.chatEngines.filter(id=>['pi','codex'].includes(id)):['pi'];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;contextResetEngines=Array.isArray(data.contextResetEngines)?data.contextResetEngines.filter(id=>['pi','codex'].includes(id)):['pi'];forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
   engineAvailability=available;renderProjectContext();loadDraftModels();
@@ -1356,6 +1357,8 @@ function refreshComposer() {
   renderProjectContext();
   renderAgentTrigger();
   ui.stop.classList.toggle('hidden', !(connected && (streaming || compacting)));
+  for(const option of ui.mode.options)option.disabled=!supports(option.value==='steer'?'steer':'followUp');
+  if(ui.mode.selectedOptions[0]?.disabled)ui.mode.value=supports('followUp')?'follow_up':'steer';
   ui.modeWrap.classList.toggle('hidden', !(connected && !compacting && streaming && (supports("steer") || supports("followUp"))));
   ui.pluginsBtn.classList.toggle("hidden",!supports("extensions"));ui.statsWrap.classList.toggle("hidden",!supports("stats"));
   ui.send.title = uploadsBusy() ? '等待文件传输完成' : streaming && !supports('steer') && !supports('followUp') ? '等待当前轮次结束，或先停止' : streaming ? (ui.mode.value === 'steer' ? '插话：在当前工具调用后打断' : '排队：等这轮结束后发送') : '发送';
@@ -1725,6 +1728,7 @@ function handleFrame(frame, ws) {
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
+      void mishuControls?.refresh().then(refreshComposer);
       restoreModelPreview();
       if(modelPreview&&modelPreview.engine!==engine){conversationModels.delete(activeId);modelPreview=null;}
       if(syncedView.active!==activeId){resetThread();selectConversationView(activeId);}
@@ -2376,7 +2380,8 @@ function slashItems() {
   const value = ui.prompt.value;
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
-  return [SSHME_COMMAND,...commands.filter(c=>c.name.toLowerCase()!=='sshme')].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
+  const mishuItems=currentTask()?.engine==='codex'?[{name:'mishu-setup',invocation:'/mishu-setup',description:'配置 MISHU 联系对象与权限',source:'web'},{name:'mishu-tasks',invocation:'/mishu-tasks',description:'查看 MISHU 跟踪事实',source:'web'},{name:'mishu',invocation:'/mishu',description:'查看秘书身份和当前状态',source:'web'},{name:'mishu-disable',invocation:'/mishu-disable',description:'停用秘书协调',source:'web'}]:[];
+  return [SSHME_COMMAND,...mishuItems,...commands.filter(c=>c.name.toLowerCase()!=='sshme')].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
@@ -2890,6 +2895,7 @@ $('#composer').addEventListener('submit', (event) => {
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
 function submitPrompt(text, images) {
+  if(mishuCommands?.handle(text)){ui.prompt.value='';autoGrow();return true;}
   if(activeId&&!historyReady)return false;
   if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return false;
   if(compacting){toast('请等待压缩完成，或先停止');return false;}
@@ -2936,8 +2942,10 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
-mishuControls=initMishuControls({button:$('#mishu-toggle'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
-  request:async body=>{const response=await fetch('/api/mishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;},
+const mishuRequest=async body=>{const response=await fetch('/api/mishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
+mishuCommands=initMishuCommands({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}),request:mishuRequest,dialogs,configureButton:$('#mishu-configure'),onOpen:closeBrandMenu,onChanged:()=>void mishuControls.refresh(),toast});
+mishuControls=initMishuControls({button:$('#mishu-toggle'),configureButton:$('#mishu-configure'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
+  request:mishuRequest,
   busyChanged:(busy,id)=>{if(busy)mishuChangingId=id;else if(mishuChangingId===id)mishuChangingId=null;refreshComposer();},
   changed:id=>{closeBrandMenu();if(activeId===id)connect();},toast:message=>toast(message)});
 const githubAccountManager=initGitHubAccounts({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},projects:()=>workspaceState?.projects??[],bind:async(projectId,accountId)=>{await workspaceApi({action:'github_bind',projectId,accountId});await loadWorkspace();}});

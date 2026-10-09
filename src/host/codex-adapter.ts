@@ -1,10 +1,12 @@
+import {fileURLToPath} from "node:url";
+import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
 import { createHash, randomUUID } from "node:crypto";
 import type { ContextPreset } from "../shared/protocol.js";
 import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type {
   CommandInfo,
@@ -74,6 +76,7 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
   args?: string[];
   env?: Record<string, string>;
   envForSession?:()=>Promise<Record<string,string>>;
+  mishuContext?:()=>Promise<MishuSourceContext|undefined>;
   /** Where PI Coffee session ids that predate their Codex thread are remembered (keep it beside the session store, not in the agent's cwd). */
   mappingFile?: string;
   /** Stop the user's app-server after this long with no open session; 0 keeps it for the Host's lifetime. */
@@ -114,6 +117,8 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   /** Whether this user's app-server process is currently up (diagnostics and tests). */
+  async mishuSourceCapabilities(){return {coordination:this.options.mishuContext&&!this.options.preparation?'supported' as const:'unavailable' as const,reports:'unavailable' as const,reportOutputRecovery:'unavailable' as const,reason:'Codex 全工具禁用和原生汇报输出恢复尚未验证；可人工联系和查询，自动提醒不可用'};}
+
   get serverRunning(): boolean {
     return this.server?.alive === true;
   }
@@ -211,6 +216,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       const saved=JSON.parse(await readFile(this.contextFile(id),'utf8'));
       return {preset:saved.preset==='maximum'?'maximum':'272k',
         ...(typeof saved.emptyContext==='boolean'?{emptyContext:saved.emptyContext}:{}),
+        ...(saved.mishuRole===true?{mishuRole:true}:{}),
         ...(typeof saved.model==='string' && saved.model?{model:saved.model}:{}),
         ...(typeof saved.reasoningEffort==='string' && saved.reasoningEffort?{reasoningEffort:saved.reasoningEffort}:{})};
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k'};}
@@ -331,7 +337,9 @@ export class CodexSessionFactory implements PiSessionFactory {
       if (owned === false) throw new Error("No such conversation");
       // Deployment defaults only seed new threads. A resumed thread keeps its
       // native selection, unless a confirmed browser choice is pending for it.
+      const originalBase=owned&&preferences.mishuRole&&this.options.mishuContext?await originalCodexBase(server,known,this.options.cwd):undefined;
       if (owned) response = await server.request("thread/resume", { threadId: known, ...common,
+        ...(originalBase===undefined?{}:{baseInstructions:originalBase}),
         ...(preferences.model?{model:preferences.model}:{}),
         config:{...common.config,...(preferences.reasoningEffort?{model_reasoning_effort:preferences.reasoningEffort}:{})},
       }).catch(async error=>{if(await missingEmpty(error)){recoveringEmpty=true;return undefined;}throw error;}) as Obj|undefined;
@@ -362,6 +370,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       sandbox:this.options.sandbox,
       preparation:this.options.preparation,
       preparationConfig,
+      mishuContext:this.options.preparation?undefined:this.options.mishuContext,
       savePreferences:(id,values)=>this.savePreferences(id,values),
       rebind:async(id)=>{await this.remember(options.sessionId,id);await this.options.onBound?.(options.sessionId,id);},
       model: typeof response.model === "string" ? response.model : resumed?preferences.model:this.options.model,
@@ -515,6 +524,21 @@ export class CodexSessionFactory implements PiSessionFactory {
 
 // Native restrictions apply before the model sees inherited history. Native
 // read-only/no-network remains a backstop even if a future tool is introduced.
+async function originalCodexBase(server:CodexAppServer,id:string,cwd:string):Promise<string> {
+ const metadata=await server.request('thread/read',{threadId:id,includeTurns:false},10000) as Obj,thread=metadata.thread as Obj;
+ if(thread?.id!==id||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(cwd)||typeof thread.path!=='string')throw Error('Native secretary original instructions unavailable; no replacement or role imitation');
+ const file=await open(thread.path,'r');
+ try {
+  const bytes=Buffer.alloc(256*1024),read=await file.read(bytes,0,bytes.length,0),end=bytes.subarray(0,read.bytesRead).indexOf(10);
+  if(end<0)throw Error('Native secretary instruction metadata unavailable or exceeds bound');
+  const meta=JSON.parse(bytes.subarray(0,end).toString('utf8'));
+  if(meta.type!=='session_meta'||meta.payload?.id!==id||resolve(meta.payload?.cwd??'')!==resolve(cwd)||typeof meta.payload?.base_instructions?.text!=='string')throw Error('Native secretary original instruction identity mismatch');
+  // This marker is owned by this Adapter. The immutable first native metadata
+  // normally has only the original baseline; never accumulate application roles.
+  return meta.payload.base_instructions.text.split('\n\n<pi_coffee_mishu_role>\n')[0];
+ }finally{await file.close();}
+}
+
 function forkPreparationConfig():Obj {
  return {web_search:'disabled',...Object.fromEntries([
   'shell_tool','unified_exec','apply_patch_freeform','js_repl','multi_agent','collab',
@@ -527,6 +551,7 @@ function nativeThreadConfig(preset:ContextPreset):Obj {
   return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95),'features.default_mode_request_user_input':true};
 }
 interface CodexPreferences {
+  mishuRole?:boolean;
   emptyContext?:boolean;
   preset:ContextPreset;
   model?:string;
@@ -535,6 +560,8 @@ interface CodexPreferences {
 interface CodexSessionSettings {
   freshEmpty?:boolean;
   developerInstructions?:string;
+  mishuContext?:()=>Promise<MishuSourceContext|undefined>;
+  mishuRoleApplied?:boolean;
   preset:ContextPreset;
   sandbox?:string;
   preparation?:boolean;
@@ -636,14 +663,44 @@ class CodexSession implements PiSession {
     return input;
   }
 
+  private async refreshMishuContext():Promise<Obj> {
+    if(!this.settings.mishuContext)return {};
+    const context=await this.settings.mishuContext();
+    if(!context){this.settings.mishuRoleApplied=false;return {};}
+    const original=await originalCodexBase(this.server,this.threadId,this.cwd);
+    const baseInstructions=original+'\n\n<pi_coffee_mishu_role>\n'+context.instructions+'\n</pi_coffee_mishu_role>';
+    const background=await this.backgroundState();
+    if(!background.known||background.active)throw Error('MISHU context refresh requires an idle native thread');
+    const config:Obj={...nativeThreadConfig(this.preset),...this.settings.preparationConfig,
+      ...(this.effort?{model_reasoning_effort:this.effort}:{}),
+      mcp_servers:{coffee_mishu:context.endpoint&&context.token?{command:process.execPath,args:[fileURLToPath(new URL('./mishu-mcp.mjs',import.meta.url))],env:{PI_COFFEE_MISHU_URL:context.endpoint,PI_COFFEE_MISHU_TOKEN:context.token,PI_COFFEE_MISHU_CONTEXT:context.instructions},enabled:true,default_tools_approval_mode:'approve'}:{command:process.execPath,args:[fileURLToPath(new URL('./mishu-mcp.mjs',import.meta.url))],enabled:false}}};
+    // Resume ignores overrides while a thread remains subscribed. Unload only
+    // this idle thread, preserve its binding and native model, then refresh.
+    this.settings.mishuRoleApplied=true;await this.updatePreferences({});
+    await this.server.request('thread/unsubscribe',{threadId:this.threadId});
+    const result=await this.server.request('thread/resume',{threadId:this.threadId,cwd:this.cwd,
+      ...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),
+      baseInstructions,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})}) as Obj;
+    if((result.thread as Obj)?.id!==this.threadId)throw Error('Native secretary binding changed; no replacement accepted');
+    if(context.token){
+      const inventory=await this.server.request('mcpServerStatus/list',{threadId:this.threadId,serverName:'coffee_mishu'},15000) as Obj;
+      const row=(inventory.data as Obj[]|undefined)?.find(row=>row.name==='coffee_mishu');
+      if(!row||(row.tools as Obj)?.mishu===undefined||row.toolsError)throw Error('Native MISHU tool connection unavailable');
+    }
+    this.settings.mishuRoleApplied=true;return {};
+  }
+
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+
+    if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
+    const sourceOverrides=await this.refreshMishuContext();
     this.nativeInputSeen=true;
     await this.updatePreferences({});
-    if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
     const result = await this.server.request("turn/start", {
       threadId: this.threadId,
       input: await this.input(text, images),
       ...this.turnOverrides(),
+      ...sourceOverrides,
       ...(this.settings.preparation?{sandboxPolicy:{type:'readOnly',networkAccess:false},approvalPolicy:'never'}:{}),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
@@ -758,7 +815,7 @@ class CodexSession implements PiSession {
 
   private updatePreferences(change:{model?:string;reasoningEffort?:string}):Promise<void>{
     const write=this.preferenceWrites.then(async()=>{
-      const next={preset:this.preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
+      const next={mishuRole:this.settings.mishuRoleApplied===true,preset:this.preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
       await this.settings.savePreferences(this.threadId,next);
       this.model=next.model;this.effort=next.reasoningEffort;
     });
@@ -785,7 +842,7 @@ class CodexSession implements PiSession {
     if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
       this.settings.freshEmpty=history.entries.length===0;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
-    await this.settings.savePreferences(id,{preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
+    await this.settings.savePreferences(id,{mishuRole:this.settings.mishuRoleApplied===true,preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
     this.absorbThread(thread);
   }
 

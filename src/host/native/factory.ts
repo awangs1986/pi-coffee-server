@@ -29,6 +29,15 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  async mishuSourceCapabilities(id:string):Promise<import('../mishu-source.js').MishuSourceCapabilities> {
+    const task=await this.options.workspaces.lookup(id),engine=task?.engine??'pi';
+    if(engine==='pi'&&task?.workspaceKind==='chat')return {coordination:'supported',reports:'supported'};
+    if(engine==='codex'&&task){
+      const factory=await this.codexFactory(id,task.cwd);
+      if(factory?.mishuSourceCapabilities)return factory.mishuSourceCapabilities(id);
+    }
+    return {coordination:'unavailable',reports:'unavailable',reason:'This Agent has no configured native MISHU source bridge'};
+  }
   contextResetEngines():AgentEngine[]{
     return CHAT_ENGINES.filter(engine=>engine==='pi'?Boolean(this.options.pi.resetNative):Boolean(this.options.codex&&this.options.codexSessionFactory));
   }

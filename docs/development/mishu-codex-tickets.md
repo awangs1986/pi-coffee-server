@@ -1,9 +1,9 @@
 # Codex 主秘书：to-tickets 拆分草稿
 
-状态：2026-10-07 用户确认采用七票拆分；已发布父项 [#84](https://github.com/awangs1986/pi-coffee-server/issues/84) 及 #85–#91，并建立原生子任务/阻塞关系。仅任务发布，未实现/未部署。
+状态：2026-10-07 用户确认采用七票拆分；已发布父项 [#84](https://github.com/awangs1986/pi-coffee-server/issues/84) 及 #85–#91，并建立原生子任务/阻塞关系。历史状态为仅任务发布；2026-10-09 人工协调源码候选见[验收记录](mishu-codex-source.md)，未部署。
 契约：[Codex 主秘书目标规格与 C01–C12](../spec/mishu-codex-secretary.md)。
 Tracker：GitHub `awangs1986/pi-coffee-server`，任务已使用 `enhancement` / `ready-for-agent`。
-不修改或关闭 #64，不把已存在 PR #78/插件 PR #4 自动合并，不启动实现或部署。
+保持 #64 与公开票的独立状态。用户后来授权实现后，候选从当前 GitHub main 正常合并已发布跟踪修复和 Codex 规格；插件制品更新与生产部署仍分别验收。
 
 ## 实施顺序
 

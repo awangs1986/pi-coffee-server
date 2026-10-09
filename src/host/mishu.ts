@@ -1,3 +1,5 @@
+import {AsyncLocalStorage} from "node:async_hooks";
+import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
 import {historyOperation,type HistoricalNote} from './mishu-history.js';
 import {readMishuState,diagnoseMishuState,validateMishuState,MAX_MISHU_STATE_BYTES,MishuStateError} from './mishu-state.js';
 import {prepareAssignment,type Assignment} from './mishu-dispatch.js';
@@ -48,7 +50,62 @@ export class MishuCoordinator {
  endReport(id:string,requestId:string){if(this.reportWindows.get(id)===requestId)this.reportWindows.delete(id);}
  private deliveries=new Set<Promise<void>>();
  private closing=false;
- constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>){ }
+ private foreground=new Map<string,string>();
+ private codexTokens=new Map<string,{id:string;requestId:string;binding:string;nativeTurn?:string}>();
+ private codexInvocation=new AsyncLocalStorage<string>();
+ private setupTickets=new Map<string,{id:string;binding:string;expires:number}>();
+ constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>,private capabilities?:(id:string)=>Promise<MishuSourceCapabilities>){ }
+ private revokeCodexTokens(id:string){for(const [token,value] of this.codexTokens)if(value.id===id){this.codexTokens.delete(token);this.tokens.delete(token);}}
+ private async checkCodexInvocation(){
+  const token=this.codexInvocation.getStore();if(!token)return;
+  const call=this.codexTokens.get(token);
+  if(!call||this.foreground.get(call.id)!==call.requestId)throw Error('Secretary foreground admission expired');
+  const task=await this.workspaces.lookup(call.id);
+  if(!task||binding(task)!==call.binding)throw Error('Secretary source binding changed');
+  const evidence=await this.registry!.readRunEvidence(call.id);
+  if(evidence.freshness!=='current'||evidence.state!=='running'||!evidence.runId||!this.registry!.get(call.id)?.isBusy)throw Error('Secretary tools require the current native user turn');
+  if(call.nativeTurn&&call.nativeTurn!==evidence.runId)throw Error('Secretary native turn changed');
+  if(this.codexTokens.get(token)!==call||this.foreground.get(call.id)!==call.requestId)throw Error('Secretary foreground admission expired during validation');
+  call.nativeTurn=evidence.runId;
+ }
+ async sourceContext(id:string,url:string){
+  const status=await this.status(id);if(!status.selected)return undefined;
+  this.revokeCodexTokens(id);
+  const instructions=secretaryInstructions(status),requestId=this.foreground.get(id);
+  if(!status.enabled||!requestId)return {instructions};
+  const token=randomBytes(32).toString('hex'),task=await this.source(id);
+  this.tokens.set(token,id);this.codexTokens.set(token,{id,requestId,binding:binding(task)});
+  return {instructions,endpoint:url,token};
+ }
+ async validateSteer(id:string){
+  const task=await this.workspaces.lookup(id);if(task?.engine!=='codex')return;
+  await this.tail;await this.load();if(this.state.chats[id]?.selected)throw Error('MISHU 的当前原生工具授权不支持插话切换；请排队消息或等待本轮结束');
+ }
+ async browserInspect(id:string,action:string){
+  const task=await this.source(id);if(task.engine!=='codex')throw Error('Use native Pi controls for this source');
+  if(action==='disable')return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;this.revokeCodexTokens(id);}return {enabled:false};},true,true);
+  if(action==='tasks'){const status=await this.status(id);if(!status.enabled)throw Error('Run /mishu-setup first');return this.tasks(id,{version:1,operation:'list',limit:50,offset:0});}
+  return this.status(id);
+ }
+ async browserSetup(id:string){
+  const task=await this.source(id);if(task.engine!=='codex')throw Error('Pi setup uses the native /mishu-setup command');
+  const status=await this.status(id);if(!status.selected)throw Error('Select MISHU first');
+  if(this.registry?.get(id)?.isBusy||this.locks.has(id))throw Error('Wait for this conversation to finish');
+  const directory=await this.directory(id),ticket=randomBytes(32).toString('hex');
+  for(const [key,value] of this.setupTickets)if(value.expires<Date.now()||value.id===id)this.setupTickets.delete(key);
+  if(this.setupTickets.size>=200)throw Error('Too many pending setup windows');
+  this.setupTickets.set(ticket,{id,binding:binding(task),expires:Date.now()+10*60000});return {...directory,ticket,status};
+ }
+ async browserConfirm(id:string,input:Record<string,unknown>){
+  const ticket=typeof input.ticket==='string'?input.ticket:'',permit=this.setupTickets.get(ticket),task=await this.source(id);
+  this.setupTickets.delete(ticket);
+  if(!permit||permit.id!==id||permit.binding!==binding(task)||permit.expires<Date.now())throw Error('Setup expired or binding changed; open setup again');
+  if(this.registry?.get(id)?.isBusy||this.locks.has(id))throw Error('Wait for this conversation to finish');
+  this.locks.add(id);const token=randomBytes(32).toString('hex');this.tokens.set(token,id);this.beginSetup(id,ticket);
+  try{return await this.runtime(token,{action:'setup',targets:input.targets,allowInstructions:input.allowInstructions});}
+  finally{this.endSetup(id,ticket);this.tokens.delete(token);this.locks.delete(id);}
+ }
+
  attach(registry:HostSessionRegistry){
   this.registry=registry;
   const recovery=this.tail.then(async()=>{await this.load();for(const [id,c] of Object.entries(this.state.chats)){
@@ -77,8 +134,8 @@ export class MishuCoordinator {
    if(report?.state==='cancelled')this.cancelNotificationQueue(id);
   }
  }
- private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
- private async source(id:string){const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user');return c;}
+ private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
+ private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||!((c.workspaceKind==='chat'&&(c.engine??'pi')==='pi')||c.engine==='codex'))throw Error('MISHU requires an active Pi Chat or Codex conversation belonging to this user');if(c.engine==='codex'&&(await this.capabilities?.(id))?.coordination!=='supported')throw Error('Native Codex MISHU source bridge unavailable');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
   const currentBinding=c.sourceBinding===binding(task);
@@ -88,13 +145,15 @@ export class MishuCoordinator {
   const reports=tasks.flatMap(t=>t.reports??[]),budget=currentBinding?c.notificationBudget:undefined,remainingWakes=budget&&Date.now()-budget.startedAt<NOTIFICATION_LIMITS.budgetWindowMs?Math.max(0,NOTIFICATION_LIMITS.wakesPerWindow-budget.used):NOTIFICATION_LIMITS.wakesPerWindow;
   const backlog=tasks.filter(t=>t.notification?.automatic&&t.notification.state!=='committed'&&t.workState!=='stopped').length;
   const diagnostic=tasks.find(t=>t.workState!=='stopped'&&t.notificationError)?.notificationError??reports.find(r=>r.retryBlocked&&!['committed','cancelled'].includes(r.state))?.error??c.notificationError??(remainingWakes===0?'本小时自动汇报预算已用完；责任保留，预算恢复后继续。可用 /mishu-tasks 查看事实。':undefined);
-  return {notifications:{enabled:currentBinding&&c.enabled&&c.notifications===true,capacity:NOTIFICATION_LIMITS.outstanding,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。',error:currentBinding?diagnostic??this.notificationFailure:undefined},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:currentBinding?this.observationFailure:undefined}};
+  const source=task.engine==='codex'?await this.capabilities!(id):{coordination:'supported' as const,reports:'supported' as const};
+  return {source,notifications:{available:source.reports==='supported',reason:source.reason,enabled:source.reports==='supported'&&currentBinding&&c.enabled&&c.notifications===true,capacity:NOTIFICATION_LIMITS.outstanding,maxAttempts:1,limits:NOTIFICATION_LIMITS,backlog,uncertain:reports.filter(r=>r.state==='uncertain').length,remainingWakes,recovery:source.reports==='supported'?'/mishu-tasks 查看保留事实；/mishu-report 整理尚未投递的结果；不确定的汇报请核对原生历史，绝不重派目标。':'/mishu-tasks 查看保留事实；直接询问秘书以查询回执，不承诺自动汇报。',error:currentBinding?diagnostic??this.notificationFailure:undefined},selected:c.selected,enabled:c.enabled&&c.sourceBinding===binding(task),allowInstructions:currentBinding&&c.enabled&&c.allowInstructions,targets:currentBinding?targets:[],tracking:{watching:tasks.filter(t=>t.observation==='watching'||t.observation==='waiting').length,replies:tasks.filter(t=>t.observation==='reply-available').length,uncertain:tasks.filter(t=>t.observation==='uncertain').length,error:currentBinding?this.observationFailure:undefined}};
  }
  async select(id:string,selected:boolean){return this.change(async()=>{
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
+  if(selected&&task.engine==='codex'&&(!task.nativeBinding?.id||!(this.registry?.get(id)?.currentState.messageCount||task.nativeContextEmpty===false||(await this.registry!.list()).some(row=>row.id===id&&row.messageCount>0))))throw Error('先向 Codex 发一条消息建立原生记录，再勾选 MISHU；不会创建替代线程');
   this.locks.add(id);try {
   const c=this.config(id,task),live=this.registry?.get(id);if(live){const background=await live.backgroundState();if(!background.known||background.active>0)throw Error('Wait for this Chat background tasks to finish before changing MISHU');}
-  await this.registry?.stopIdle(id);
+  await this.registry?.stopIdle(id);this.revokeCodexTokens(id);this.foreground.delete(id);
   for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
   this.cancelObservations(c);c.selected=selected;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;c.enabled=false;c.allowInstructions=false;c.targets=[];c.sourceBinding=binding(task);this.state.chats[id]=c;
   return {selected:c.selected,enabled:false,allowInstructions:false,targets:[]};
@@ -105,9 +164,14 @@ export class MishuCoordinator {
   return {PI_COFFEE_MISHU_URL:url,PI_COFFEE_MISHU_TOKEN:token};
  }
  accepts(token:string){return this.tokens.has(token);}
- async runtime(token:string,input:Record<string,unknown>){const id=this.tokens.get(token);if(!id)throw Error('Invalid MISHU capability');
+ async runtime(token:string,input:Record<string,unknown>):Promise<unknown>{
+  if(this.codexTokens.has(token)&&this.codexInvocation.getStore()!==token)return this.codexInvocation.run(token,()=>this.runtime(token,input));
+  await this.checkCodexInvocation();
+  if(this.codexInvocation.getStore()&&(!['status','directory','send','inbox','tasks'].includes(String(input.action))||Object.keys(input).some(key=>['sourceId','user','userMessageId','sourceRunId','threadId','turnId'].includes(key))))throw Error('Secretary tools cannot configure grants or supply source authority');
+  const id=this.tokens.get(token);if(!id)throw Error('Invalid MISHU capability');
   const status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
   if(input.action==='status')return {...status,origin:this.registry?.get(id)?.isReportRun?'task-report':'user-intent'};
+  if((await this.source(id)).engine==='codex'&&['report','notifications'].includes(String(input.action)))throw Error('Codex 全工具禁用和原生汇报恢复尚未验证；自动提醒不可用，请人工查询任务和回执');
   if(input.action==='report'&&this.notificationWindows.has(id))return this.report(id,input);
   if(this.registry?.get(id)?.isReportRun)throw Error('Report runs cannot invoke coordination or capability-changing operations');
   if(input.action==='report')return this.report(id,input);
@@ -161,7 +225,7 @@ export class MishuCoordinator {
   }
  }
  async revokeConversation(id:string){
-  return this.change(async()=>{for(const [source,c] of Object.entries(this.state.chats))this.cancelObservations(c,source===id?new Set():new Set(c.targets.filter(t=>t.id!==id).map(t=>t.id)));},true,true);
+  return this.change(async()=>{this.revokeCodexTokens(id);this.foreground.delete(id);for(const [source,c] of Object.entries(this.state.chats))this.cancelObservations(c,source===id?new Set():new Set(c.targets.filter(t=>t.id!==id).map(t=>t.id)));},true,true);
  }
  private async auditTask(id:string,task:TaskBrief,registerRun?:string,journal?:TaskJournal){
   if(registerRun&&task.obligation)throw Error('This brief already names a native run; create a new brief for new observation consent');
@@ -298,6 +362,7 @@ export class MishuCoordinator {
   const ready:{id:string;reportId:string;requestId:string;taskId:string;title:string}[]=[];
   try{await this.change(async()=>{
    for(const [id,c] of Object.entries(this.state.chats)){
+    if((await this.workspaces.lookup(id))?.engine==='codex')continue;
     if(!c.selected||!c.enabled||!c.notifications||this.notificationQueued.has(id)||this.registry?.get(id)?.isReportRun)continue;
     const tasks=c.taskJournal?.tasks??[];c.notificationError=undefined;
     if(tasks.some(t=>t.reports?.some(r=>r.state==='processing')))continue;
@@ -384,7 +449,7 @@ export class MishuCoordinator {
   if(this.locks.has(sourceId)||(!admitted&&this.locks.has(targetId)))throw Error('Conversation lifecycle operation in progress');
   const target=await this.workspaces.lookup(targetId),configured=config.targets.find(t=>t.id===targetId);
   if(targetId===sourceId||!target||!visible(target)||!configured||configured.binding!==expected||binding(target)!==expected)throw Error('Target unavailable or binding changed; run setup again');
-  return target;
+  await this.checkCodexInvocation();return target;
  }
  private dispatch(sourceId:string,input:Record<string,unknown>){
   let created:Receipt|undefined;
@@ -404,6 +469,7 @@ export class MishuCoordinator {
    if(input.retryOf){const prior=c.assignments?.find(a=>a.id===input.retryOf);if(prior&&prior.state!=='cancelled'){const original=await this.registry!.readRunEvidence(task.targetId,prior.requestId);if(original.freshness!=='current'||!['reply-available','incomplete'].includes(original.state))throw Error('Original native outcome is unproven; no retry was admitted');}}
    if(c.messages.filter(m=>!['settled','cancelled','uncertain'].includes(m.state)).length>=20)throw Error('Wait for outstanding MISHU messages to settle');
    if(c.messages.length>=1000)throw Error('Receipt capacity reached');
+   await this.checkCodexInvocation();
    const a=result.assignment,previous={taskJournal:c.taskJournal,assignments:c.assignments,messages:c.messages},journal=structuredClone(c.taskJournal!);
    const updated=journal.tasks.find(t=>t.taskId===task.taskId)!;
    updated.assignment={...a};updated.obligation={runId:a.requestId,nativeBinding:'',watermark:'',state:'pending',generation:(task.obligation?.generation??0)+1};updated.observation='watching';updated.fact=undefined;updated.notification=undefined;updated.revision++;updated.updatedAt=a.createdAt;
@@ -412,7 +478,7 @@ export class MishuCoordinator {
    try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
    created=receipt;return {version:1,assignment:{...a},task:structuredClone(updated)};
   });this.tail=admission.catch(()=>undefined);
-  return admission.then(result=>{if(created){const work=this.deliver(sourceId,created);this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}return result;});
+  return admission.then(result=>{if(created){const work=this.codexInvocation.exit(()=>this.deliver(sourceId,created!));this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}return result;});
  }
  private async send(sourceId:string,input:Record<string,unknown>){
   if(!validId(input.messageId)||!validId(input.targetId)||typeof input.binding!=='string'||!['information-only','authorized-execution'].includes(String(input.kind))||typeof input.text!=='string'||!input.text.trim()||input.text.length>4000)throw Error('Message requires exact target, binding, stable messageId, kind and 1–4000 characters');
@@ -426,7 +492,7 @@ export class MishuCoordinator {
    if(c.messages.length>=1000)throw Error('MISHU receipt capacity reached; use another secretary Chat');
    const m:Receipt={messageId,targetId,binding:expected,kind,text,authorizationRef,requestId:'mishu-'+createHash('sha256').update(sourceId+':'+messageId).digest('hex'),fingerprint,state:'accepted',createdAt:new Date().toISOString()};c.messages.push(m);created=true;return m;
   });
-  if(created){const work=this.deliver(sourceId,receipt);this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}
+  if(created){const work=this.codexInvocation.exit(()=>this.deliver(sourceId,receipt));this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}
   return {messageId:receipt.messageId,targetId:receipt.targetId,state:receipt.state};
  }
  private syncAssignment(c:Config,m:Receipt){
@@ -443,7 +509,10 @@ export class MishuCoordinator {
   if(session.isBusy){this.locks.delete(m.targetId);locked=false;await session.enqueue('follow_up',text,undefined,m.requestId);}
   else {await session.preparePrompt(m.requestId);this.locks.delete(m.targetId);locked=false;await session.prompt(m.requestId,text);}
  }catch{await this.change(async()=>{if(m.state!=='cancelled'){m.state='uncertain';m.error='Delivery could not be confirmed. Inspect the target before sending a new message.';}this.syncAssignment(this.state.chats[sourceId],m);return undefined;});}finally{if(locked)this.locks.delete(m.targetId);}}
- async command(targetId:string,requestId:string,state:string,mode?:string){if(!requestId.startsWith('mishu-'))return;await this.change(async()=>{
+ async command(targetId:string,requestId:string,state:string,mode?:string){
+  if(state==='delivering'){this.revokeCodexTokens(targetId);if(!requestId.startsWith('mishu-')&&!requestId.startsWith('notification-'))this.foreground.set(targetId,requestId);else this.foreground.delete(targetId);}
+  if(['settled','uncertain','cancelled'].includes(state)&&this.foreground.get(targetId)===requestId){this.foreground.delete(targetId);this.revokeCodexTokens(targetId);}
+  if(!requestId.startsWith('mishu-'))return;await this.change(async()=>{
   for(const [source,c] of Object.entries(this.state.chats)){
    const m=c.messages.find(m=>m.requestId===requestId&&m.targetId===targetId);if(!m)continue;
    if(state==='delivering'){

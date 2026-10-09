@@ -221,6 +221,12 @@ export class HostServer {
     });
   }
 
+  async mishuSourceContext(user:string|undefined,id:string){
+    const slot=await this.slotFor(user),task=await slot.workspaces?.lookup(id);
+    if(task?.engine!=='codex'||!slot.mishu||!this.mishuExtension())return undefined;
+    const address=this.mishuHttp.address();if(!address||typeof address==='string')throw Error('MISHU local bridge unavailable');
+    return slot.mishu.sourceContext(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
+  }
   async mishuRuntime(user:string|undefined,id:string):Promise<{extensions:string[];env:Record<string,string>}> {
     const slot=await this.slotFor(user);if(!slot.mishu)return {extensions:[],env:{}};
     const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
@@ -253,13 +259,16 @@ export class HostServer {
       if(!slot.mishu||!this.mishuExtension()){json(res,503,{error:'MISHU plugin is not installed on this Host'});return;}
       try{
         const input=await readJson(req,32768);
-        if(typeof input.id!=='string'||!input.id||input.id.length>128)throw Error('Select a Pi Chat first');
+        if(typeof input.id!=='string'||!input.id||input.id.length>128)throw Error('Select a secretary conversation first');
         let result:unknown;
         if(input.action==='status')result=await slot.mishu.status(input.id);
         else if(input.action==='select'&&typeof input.selected==='boolean'){
           result=await slot.mishu.select(input.id,input.selected);
           for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
-        }else throw Error('Use /mishu-setup explicitly inside the selected Chat');
+        }else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
+        else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
+        else if(input.action==='inspect'&&['status','tasks','disable'].includes(String(input.operation)))result=await slot.mishu.browserInspect(input.id,String(input.operation));
+        else throw Error('Use /mishu-setup explicitly inside the selected conversation');
         json(res,200,result);
       }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
     }
@@ -569,7 +578,7 @@ export class HostServer {
       const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
-      const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks):undefined;
+      const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
       const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
@@ -1163,6 +1172,7 @@ class HostSocket implements SessionSink {
       // If nothing is running, treat it as a plain prompt so the message is
       // never silently parked.
       if (this.session.isStreaming) {
+        if(frame.mode==='steer')await this.mishu?.validateSteer(this.session.id);
         // Durable acceptance precedes ACK; native/queue events still follow it.
         await this.session.acceptCommand(frame.requestId,frame.mode);
         this.send({v:1,type:"ack",operation:frame.mode,requestId:frame.requestId});
@@ -1174,6 +1184,7 @@ class HostSocket implements SessionSink {
         return;
       }
     }
+    if((await this.workspaces?.lookup(this.session.id))?.engine==='codex'&&/^\/mishu(?:-|\s|$)/.test(frame.text.trim()))throw Error('Use the MISHU application controls in the Browser; this command is not a native Codex prompt');
     const session=this.session;
     await session.preparePrompt(frame.requestId);
     // Acknowledgement means the command crossed the seam and was accepted;
