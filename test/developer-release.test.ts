@@ -10,8 +10,9 @@ const exec=promisify(execFile);
 async function fixture(backend=false){
  const root=await mkdtemp(join(tmpdir(),'coffee-release-')),repo=join(root,'repo');await mkdir(repo);
  const git=(...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test',...args],{cwd:repo,encoding:'utf8'}).trim();
+ await writeFile(join(repo,'VERSION'),'0.11\n');await writeFile(join(repo,'package.json'),JSON.stringify({version:'0.11.0'}));await writeFile(join(repo,'package-lock.json'),JSON.stringify({version:'0.11.0',packages:{'':{version:'0.11.0'}}}));
  git('init','-q','-b','main');await writeFile(join(repo,'.gitignore'),'dist/\nnode_modules\n');await writeFile(join(repo,'source.txt'),'fixture');
- if(backend){await writeFile(join(repo,'package.json'),'{}');await writeFile(join(repo,'package-lock.json'),'{}');await mkdir(join(repo,'node_modules','.bin'),{recursive:true});await mkdir(join(repo,'node_modules','fixture'));const bin=join(repo,'node_modules','fixture','cli.js');await writeFile(bin,'#!/usr/bin/env node\nconsole.log("retained binary");\n');await chmod(bin,0o755);await symlink('../fixture/cli.js',join(repo,'node_modules','.bin','fixture'));}
+ if(backend){await mkdir(join(repo,'node_modules','.bin'),{recursive:true});await mkdir(join(repo,'node_modules','fixture'));const bin=join(repo,'node_modules','fixture','cli.js');await writeFile(bin,'#!/usr/bin/env node\nconsole.log("retained binary");\n');await chmod(bin,0o755);await symlink('../fixture/cli.js',join(repo,'node_modules','.bin','fixture'));}
  git('add','.');git('commit','-qm','source');
  await mkdir(join(repo,'dist','public'),{recursive:true});await writeFile(join(repo,'dist','public','app.js'),'window.fixture="new";\n');
  const plan=join(root,'plan.json'),receipt=join(root,'receipt.json');await writeFile(plan,JSON.stringify({steps:[{name:'check',argv:[process.execPath,'-e','process.exit(0)']}]}));
@@ -24,10 +25,10 @@ it('stages a verified browser release without activating it or changing current 
  const f=await fixture();
  try{
   const result=await exec(process.execPath,[resolve('scripts/release.mjs'),'stage','--fixture','--source',f.repo,'--commit',f.commit,'--verification',f.receipt,'--config',f.config]);
-  expect(JSON.parse(result.stdout)).toMatchObject({state:'staged',sourceCommit:f.commit});
+  expect(JSON.parse(result.stdout)).toMatchObject({state:'staged',version:'0.11',sourceCommit:f.commit});
   expect(await readFile(join(f.active,'app.js'),'utf8')).toBe('window.fixture="old";\n');
   const status=await exec(process.execPath,[resolve('scripts/release.mjs'),'status','--config',f.config]);
-  expect(JSON.parse(status.stdout)).toMatchObject({active:null,staged:[{sourceCommit:f.commit,state:'staged'}]});
+  expect(JSON.parse(status.stdout)).toMatchObject({active:null,staged:[{sourceCommit:f.commit,version:'0.11',state:'staged'}]});
  }finally{await rm(f.root,{recursive:true,force:true});}
 });
 
@@ -45,13 +46,13 @@ it('activates staged browser assets with a backup and verified HTTP bytes withou
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
  try{
   const address=server.address();if(!address||typeof address==='string')throw Error('No fixture listener');const base='http://127.0.0.1:'+address.port;
-  const config=JSON.parse(await readFile(f.config,'utf8'));Object.assign(config,{healthUrl:base+'/healthz',assetBaseUrl:base,expectedAssets:{'app.js':createHash('sha256').update('window.fixture="old";\n').digest('hex')}});await writeFile(f.config,JSON.stringify(config));
+  const config=JSON.parse(await readFile(f.config,'utf8'));Object.assign(config,{backendVersion:'0.10',hostVersion:'0.09',healthUrl:base+'/healthz',assetBaseUrl:base,expectedAssets:{'app.js':createHash('sha256').update('window.fixture="old";\n').digest('hex')}});await writeFile(f.config,JSON.stringify(config));
   await exec(process.execPath,[resolve('scripts/release.mjs'),'stage','--fixture','--source',f.repo,'--commit',f.commit,'--verification',f.receipt,'--config',f.config]);
   const run=await exec(process.execPath,[resolve('scripts/release.mjs'),'activate-browser','--commit',f.commit,'--config',f.config]);const active=JSON.parse(run.stdout);
-  expect(active).toMatchObject({state:'active',sourceCommit:f.commit,backendCommit:'5073c97',serviceRestarted:false});
+  expect(active).toMatchObject({state:'active',sourceCommit:f.commit,version:'0.11',backendVersion:'0.10',hostVersion:'0.09',backendCommit:'5073c97',serviceRestarted:false});
   expect(await readFile(join(active.backup,'app.js'),'utf8')).toBe('window.fixture="old";\n');
   expect(await (await fetch(base+'/app.js')).text()).toBe('window.fixture="new";\n');
-  expect(await (await fetch(base+'/release-manifest.json')).json()).toMatchObject({sourceCommit:f.commit,backendCommit:'5073c97'});
+  expect(await (await fetch(base+'/release-manifest.json')).json()).toMatchObject({sourceCommit:f.commit,version:'0.11',backendCommit:'5073c97',backendVersion:'0.10',hostVersion:'0.09'});
   expect(server.listening).toBe(true);
  }finally{await new Promise<void>(r=>server.close(()=>r()));await rm(f.root,{recursive:true,force:true});}
 });

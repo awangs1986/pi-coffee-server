@@ -379,8 +379,27 @@ function toggleBrandMenu() {
   const open = ui.brandMenu?.classList.contains('hidden');
   if (!open) { closeBrandMenu(); return; }
   void mishuControls.refresh();
+  void loadReleaseStatus();
   ui.brandMenu.classList.remove('hidden');
   ui.brandBtn?.setAttribute('aria-expanded', 'true');
+}
+
+let releaseStatusRequest=0;
+async function loadReleaseStatus(){
+  const target=$('#release-status');if(!target)return;
+  const request=++releaseStatusRequest,user=currentUser;
+  target.textContent='版本查询中…';target.removeAttribute('title');
+  try{
+    const response=await fetch('/api/release',{cache:'no-store',signal:AbortSignal.timeout(3000)});
+    if(!response.ok)throw Error('Unavailable');const data=await response.json();
+    if(request!==releaseStatusRequest||user!==currentUser)return;
+    const versions=[['Web',data.webVersion,data.webBackendCommit],['Host',data.hostVersion,data.hostBackendCommit],['页面',data.frontendVersion,data.frontendCommit]];
+    const commit=value=>typeof value==='string'&&/^[a-f0-9]{7,40}$/.test(value)?value.slice(0,7):'未标记';
+    target.replaceChildren(...versions.map(([name,version,sha])=>{
+      const row=document.createElement('div');row.textContent=name+' '+(typeof version==='string'&&/^(0|[1-9]\d{0,6})\.\d{2}$/.test(version)?'v'+version:'未标记')+' · '+commit(sha);return row;
+    }));
+    target.title=versions.map(([name,,sha])=>name+' '+commit(sha)).join('\n');
+  }catch{if(request===releaseStatusRequest&&user===currentUser)target.textContent='版本信息暂不可用';}
 }
 
 // ---------- Agent settings menu ----------

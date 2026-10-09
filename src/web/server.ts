@@ -1,5 +1,5 @@
 import {githubSecret} from '../shared/github-credentials.js';
-import {readReleaseCommit,releaseCommit} from '../shared/release.js';
+import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER } from "../shared/identity.js";
@@ -250,7 +250,8 @@ export class WebServer {
         if(request.method!=='GET'){json(response,405,{error:'Method not allowed'});return;}
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
         const upstream=await this.hostApi(route,'/api/release','GET');const body=upstream.ok?await upstream.json():{};
-        json(response,200,{webBackendCommit:await readReleaseCommit(this.releaseDir),frontendCommit:await readReleaseCommit(this.publicDir,'release-manifest.json'),hostBackendCommit:releaseCommit(body.hostBackendCommit)});
+        const backend=await readReleaseIdentity(this.releaseDir),frontend=await readReleaseIdentity(this.publicDir,'release-manifest.json');
+        json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion)});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
     if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {

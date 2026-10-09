@@ -64,3 +64,16 @@ it('refuses a final check performed before the accepted review',async()=>{
   const run=spawnSync(process.execPath,[resolve('scripts/publish.mjs'),'--repo',repo,'--expected',expected,'--fixture',...flags],{encoding:'utf8'});expect(run.status).toBe(1);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+it.each([['0.12',true],['0.21',true],['0.11',false],['0.13',false]])('checks the formal release increment before publishing %s',async(version,allowed)=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-version-publish-'));
+ try{
+  const repo=join(root,'repo'),forge=join(root,'forge.git');await mkdir(repo);
+  const git=(...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test',...args],{cwd:repo,encoding:'utf8'}).trim();
+  const metadata=async(v:string)=>{const npm='0.'+Number(v.split('.')[1])+'.0';await writeFile(join(repo,'VERSION'),v+'\n');await writeFile(join(repo,'package.json'),JSON.stringify({version:npm}));await writeFile(join(repo,'package-lock.json'),JSON.stringify({version:npm,packages:{'':{version:npm}}}));};
+  git('init','-q','-b','main');await metadata('0.11');git('add','.');git('commit','-qm','base');const expected=git('rev-parse','HEAD');git('init','--bare','-q',forge);git('remote','add','origin',forge);git('push','-q','origin','main');
+  await metadata(version);await writeFile(join(repo,'feature.txt'),'changed behavior');git('add','.');git('commit','-qm','update');
+  const result=spawnSync(process.execPath,[resolve('scripts/publish.mjs'),'--repo',repo,'--expected',expected,'--fixture','--check-version',...await approval(repo)],{encoding:'utf8'});expect(result.status).toBe(allowed?0:1);expect(execFileSync('git',['--git-dir',forge,'rev-parse','main'],{encoding:'utf8'}).trim()).toBe(allowed?git('rev-parse','HEAD'):expected);
+  if(!allowed)expect(result.stderr).toContain('release_version_required');
+ }finally{await rm(root,{recursive:true,force:true});}
+});

@@ -38,7 +38,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', lastSourceCheckAt:state.lastSourceCheckAt||'2026-10-03T00:00:00Z', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   class Socket {
@@ -55,6 +55,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
     let data: any = {};
     if (url === '/auth/me') {await network.authGate;data = { auth: true, user: network.user };}
     else if (url === '/api/me') data = null;
+    else if(url==='/api/release')data=network.release;
     else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude', 'cursor', 'grok'].map(id => ({ id, available: true })) };
     else if (url === '/api/workspace') {await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
     // Unknown read-only sync is held, never mistaken for a valid empty snapshot.
@@ -720,4 +721,9 @@ it('clears both active and saved attachment drafts when authentication changes u
  const app=await setup();await app.select('a');chooseAttachment('alice-a.txt');await app.select('b');chooseAttachment('alice-b.txt');
  app.network.user='another-synthetic-user';app.sockets.at(-1)!.onclose({code:1006});await tick(2000);
  expect(attachmentNames()).toEqual([]);app.sockets.at(-1)!.receive({type:'sessions',sessions:app.conversations});await tick();await app.select('a');expect(attachmentNames()).toEqual([]);await app.select('b');expect(attachmentNames()).toEqual([]);
+});
+
+it('shows the actually deployed Web/Host/browser versions in the compact Logo menu',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();await tick();const label=document.querySelector('#release-status')!;expect(label.textContent).toContain('Web v0.12');expect(label.textContent).toContain('Host v0.11');expect(label.textContent).toContain('页面 v0.13');expect(label.getAttribute('title')).toContain('aaaaaaa');
+ document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();app.network.release={webVersion:'<img src=x>',webBackendCommit:'/private/path',hostVersion:'unknown'};document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();await tick();expect(label.textContent).toContain('未标记');expect(label.querySelector('img')).toBeNull();expect(label.getAttribute('title')).not.toContain('/private');
 });

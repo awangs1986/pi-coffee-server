@@ -190,3 +190,7 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
   adds browser-independent GitHub OAuth renewal for selected-account forge APIs
   and managed native Git/gh. See [account authorization contract](spec/github-accounts.md#automatic-oauth-renewal-2026-10-09-server-105).
   Production activation and real reauthorization evidence remain in the Issue.
+
+- [Formal Web/Host release versions](deployment/versioning.md): owner-defined small
+  +0.01 / large +0.10 increments, actual component deployment and source SHA;
+  [Server #106](https://github.com/awangs1986/pi-coffee-server/issues/106).
