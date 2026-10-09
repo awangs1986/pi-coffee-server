@@ -48,7 +48,7 @@ was confirmed by rerunning the original failing startup command.
 Final merge gates (results recorded in private verification receipts):
 
 - `npm run check:release` after the final review receipt: lint, build, complete
-  Vitest suite and eight Chromium platform probes.
+  Vitest suite and nine Chromium platform probes (including current-main attachment drafts).
 - `node scripts/probe-mishu-codex.mjs`: synthetic native transport plus real
   Browser/Web/Host, setup cancellation/responsiveness, explicit visibility,
   v2 authorized execution and original-thread continuity.

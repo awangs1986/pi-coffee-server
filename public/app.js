@@ -124,14 +124,33 @@ const navigation=createConversationNavigation({onSelect:id=>id===null?applyNewSe
 function rememberTask(id){navigation.adopt(id);if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
 let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
 const textDrafts=new Map();
+const attachmentDrafts=new Map();
 const draftKey=()=>JSON.stringify([currentUser,activeId]);
-function saveTextDraft(){
+function saveComposerDraft(){
   restoreQueuedPrompt();
   const key=draftKey();textDrafts.delete(key);
+  // Preserve original browser Files, never another session's grants or upload paths.
+  const files=[...new Set([...draftFiles,...filesAwaitingTransfer,...uploads.filter(u=>u.state!=='cancelled').map(u=>u.file)])].filter(Boolean);
+  const images=attachments.filter(image=>!image.file);
+  if(files.length||images.length)attachmentDrafts.set(key,{files,images});else attachmentDrafts.delete(key);
   if(ui.prompt.value)textDrafts.set(key,ui.prompt.value);
   while(textDrafts.size>30 || [...textDrafts.values()].reduce((sum,text)=>sum+text.length,0)>4*1024*1024)textDrafts.delete(textDrafts.keys().next().value);
 }
-function restoreTextDraft(){ui.prompt.value=textDrafts.get(draftKey())||'';autoGrow();refreshComposer();}
+function restoreComposerDraft(){
+  ui.prompt.value=textDrafts.get(draftKey())||'';
+  const saved=attachmentDrafts.get(draftKey());
+  draftFiles=saved?.files.slice()||[];attachments=saved?.images.slice()||[];
+  // Encoded previews are disposable; restore their originals without keeping large base64 caches.
+  for(const file of draftFiles)file.__inlineAttached=false;
+  void decodeDraftImages(draftFiles);
+  renderAttachments();autoGrow();refreshComposer();
+}
+function clearAttachmentDrafts(){
+  // Pending Send is account-owned too; changing identity must never promote it.
+  queuedPrompt=null;
+  attachmentDrafts.clear();draftFiles=[];filesAwaitingTransfer=[];attachments=[];
+  resetTransfers();decodingFiles.clear();
+}
 // Async results belong to a selection occurrence, not merely the task's ID.
 function captureSelection({task=true}={}){
   const id=activeId,user=currentUser,epoch=taskSelectionEpoch,connection=connectionEpoch,ws=socket;
@@ -140,7 +159,7 @@ function captureSelection({task=true}={}){
 let statusRequest=null,changesRequest=null,detailRequestSeq=0;
 const dialogs=createDialogManager(ui.app,ui.prompt);
 let draftFiles = [];
-const decodingFiles=new Set();
+const decodingFiles=new Map();
 const imagesDecoding=()=>draftFiles.some(file=>decodingFiles.has(file));
 let draftContextPreset='272k', contextToApply=null, contextPending=null;
 let searchOpen = false, searchFilter = 'all';
@@ -1396,7 +1415,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1419,7 +1438,7 @@ function revokeCachedIdentity(){
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();ui.prompt.value='';
+  loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
@@ -1667,7 +1686,7 @@ async function openSession(id) {
     try {
       const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
       if(!isCurrent())return;
-      textDrafts.delete(draftKey());
+      textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
       id=c.id;activeId=id;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
     }catch(e){
       if(!isCurrent())return;
@@ -2455,23 +2474,34 @@ function normalizeTransferGrant(grant, fallbackSessionId) {
   return { ...grant, url, rawUrl: grant.url, sessionId: grant.sessionId || fallbackSessionId || activeId };
 }
 
+const imageEncodings=new WeakMap();
 async function addFiles(files) {
-  const epoch=taskSelectionEpoch;
-  // Reserve every original synchronously; decoding must not race Send or removal.
+  // Reserve originals synchronously; decoding must not race Send or removal.
   draftFiles.push(...files);
-  for(const file of files)if(file.type.startsWith('image/') && file.size<=INLINE_IMAGE_LIMIT)decodingFiles.add(file);
+  await decodeDraftImages(files);
+}
+async function decodeDraftImages(files) {
+  const epoch=taskSelectionEpoch,user=currentUser;
+  const images=files.filter(file=>file.type.startsWith('image/')&&file.size<=INLINE_IMAGE_LIMIT&&!attachments.some(image=>image.file===file));
+  for(const file of images)decodingFiles.set(file,(decodingFiles.get(file)||0)+1);
   renderAttachments();refreshComposer();
-  for(const file of files){
-    if(!decodingFiles.has(file))continue;
+  for(const file of images){
     try {
+      if(epoch!==taskSelectionEpoch||user!==currentUser||!draftFiles.includes(file))continue;
       if(attachments.length>=8){toast('最多 8 张内联图片，其余作为文件上传');continue;}
-      const image=await encodeImage(file);
-      if(epoch!==taskSelectionEpoch || !draftFiles.includes(file))continue;
-      Object.defineProperty(image,'file',{value:file});attachments.push(image);file.__inlineAttached=true;
-    } catch {if(epoch===taskSelectionEpoch && draftFiles.includes(file))toast('无法解码图片，将作为原始文件发送');}
-    finally {decodingFiles.delete(file);}
+      let encoding=imageEncodings.get(file);
+      if(!encoding){
+        encoding=encodeImage(file);imageEncodings.set(file,encoding);
+        void encoding.finally(()=>{if(imageEncodings.get(file)===encoding)imageEncodings.delete(file);}).catch(()=>{});
+      }
+      const image=await encoding;
+      if(epoch!==taskSelectionEpoch||user!==currentUser||!draftFiles.includes(file)||attachments.some(image=>image.file===file)||attachments.length>=8)continue;
+      if(!image.file)Object.defineProperty(image,'file',{value:file});
+      attachments.push(image);file.__inlineAttached=true;
+    } catch {if(epoch===taskSelectionEpoch&&user===currentUser&&draftFiles.includes(file))toast('无法解码图片，将作为原始文件发送');}
+    finally {const remaining=(decodingFiles.get(file)||0)-1;if(remaining>0)decodingFiles.set(file,remaining);else decodingFiles.delete(file);}
   }
-  if(epoch!==taskSelectionEpoch)return;
+  if(epoch!==taskSelectionEpoch||user!==currentUser)return;
   renderAttachments();refreshComposer();
 }
 function currentUpload(u){return u.epoch===taskSelectionEpoch && u.user===currentUser && u.taskId===activeId && uploads.includes(u) && u.state!=='cancelled';}
@@ -2936,7 +2966,7 @@ function submitPrompt(text, images) {
   attachments = [];
   uploads = uploads.filter((u) => u.state === 'uploading' || u.state === 'finishing');
   renderAttachments();
-  ui.prompt.value = '';textDrafts.delete(draftKey());
+  ui.prompt.value = '';textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
   ui.slash.classList.add('hidden');
   autoGrow();
   refreshComposer();
@@ -2976,7 +3006,7 @@ function applySessionSelection(id) {
   setSearchOpen(false);
   if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return false;}
   if (id === activeId && opened) return false;
-  saveVisiblePosition();saveTextDraft();disconnectExecution();
+  saveVisiblePosition();saveComposerDraft();disconnectExecution();
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
@@ -2993,7 +3023,7 @@ function applySessionSelection(id) {
   resetThread();
   selectConversationView(id);
   showRecentThread(id);
-  restoreTextDraft();
+  restoreComposerDraft();
   renderAgentSettings();
   renderProjectContext();
   renderHeader();
@@ -3002,7 +3032,7 @@ function applySessionSelection(id) {
 function newSession(focus = true) {navigation.select(null);if(focus)ui.prompt.focus();}
 function applyNewSession(focus = true) {
   closeMenu();sshmeDraftId=null;
-  saveVisiblePosition();saveTextDraft();disconnectExecution();
+  saveVisiblePosition();saveComposerDraft();disconnectExecution();
   skillPanel.close();resetSlashCommands();skillReloadScope=null;
   setSearchOpen(false);
   closeTaskDetails();
@@ -3019,7 +3049,7 @@ function applyNewSession(focus = true) {
   selectedChangedPath = null;
   lastChangeCardSignature = '';
   resetThread();
-  selectConversationView(null);restoreTextDraft();
+  selectConversationView(null);restoreComposerDraft();
   renderAgentSettings();
   renderHero();
   renderProjectContext();

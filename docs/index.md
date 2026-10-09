@@ -183,3 +183,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - MISHU unattended startup candidate: [saved-scope recovery and bounds](spec/mishu.md#unattended-scoped-startup-recovery--server-76-candidate), [Server #76](https://github.com/awangs1986/pi-coffee-server/issues/76). Actual main process recovery without Browser/API priming; synthetic default/user and path/capacity acceptance remains distinct from production activation.
 
 - [Codex Luna MISHU source candidate and acceptance](development/mishu-codex-source.md): existing Codex Chat/Work native foreground coordination; explicit Browser setup, per-run grants and revocation. Report isolation/output recovery and automatic reminders remain unavailable; production activation is separate.
+
+- Conversation-scoped unsent attachment drafts: [ownership and send boundary](spec/task-storage.md#conversation-scoped-attachment-drafts-2026-10-09), [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104). Switching preserves originals within the owning account/task and immediately renders the destination draft.
