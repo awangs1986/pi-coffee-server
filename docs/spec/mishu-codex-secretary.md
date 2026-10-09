@@ -208,3 +208,11 @@ stop/dispatch 和目标 capability 检查；这些入口可用不等于 C04–C1
 隔离真实 Pi adapter（合成 provider）及原生 Codex。证据目录只保存合成测试，不进
 提交/Issue。源码、真实原生验收、安装包和生产激活分别记结论；完整矩阵及实测结果见
 [候选验收记录](../development/mishu-codex-source.md)。
+
+
+### Native tool readiness (2026-10-09 repair)
+
+Each foreground refresh checks only the bound coffee_mishu tool/auth inventory
+using toolsAndAuthOnly; unavailable unrelated MCP resources must not prevent a
+secretary turn. Missing/error tool readiness still rejects before model execution,
+with no replacement thread and no grant widening. See [repair evidence](../development/mishu-manager-repairs.md).
