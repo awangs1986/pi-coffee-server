@@ -37,7 +37,7 @@ const server=createServer(async(req,res)=>{
 });
 const wsServer=new WebSocketServer({server,path:'/ws'});
 const modelFrame=id=>({v:1,type:'models',models:[{provider:'codex',id:models.get(id)}],current:{provider:'codex',id:models.get(id)},thinkingLevel:'medium',thinkingLevels:['medium']});
-wsServer.on('connection',ws=>ws.on('message',raw=>{
+wsServer.on('connection',ws=>{ws.user=identity.user;ws.on('message',raw=>{
   const f=JSON.parse(String(raw));frames.push({type:f.type,sessionId:f.sessionId});if(f.type.startsWith('set_'))mutations.push(f.type);
   if(f.type==='list_sessions')ws.send(JSON.stringify({v:1,type:'sessions',sessions:tasks}));
   if(f.type==='open'){
@@ -46,9 +46,9 @@ wsServer.on('connection',ws=>ws.on('message',raw=>{
     ws.send(JSON.stringify({v:1,type:'history',sessionId:f.sessionId,entries:[{kind:'user',text:'Synthetic history '+f.sessionId}]}));
   }
   if(f.type==='ping')ws.send(JSON.stringify({v:1,type:'pong',nonce:f.nonce}));
-  if(f.type==='prompt'){promptCalls.push({taskId:ws.taskId,text:f.text,imageCount:f.images?.length||0});ws.send(JSON.stringify({v:1,type:'ack',operation:'prompt',requestId:f.requestId}));server.emit('fixture-prompt');}
+  if(f.type==='prompt'){promptCalls.push({user:ws.user,taskId:ws.taskId,text:f.text,imageCount:f.images?.length||0});ws.send(JSON.stringify({v:1,type:'ack',operation:'prompt',requestId:f.requestId}));server.emit('fixture-prompt');}
   if(f.type==='get_models'&&models.has(ws.taskId)&&!holdModels)ws.send(JSON.stringify({...modelFrame(ws.taskId),requestId:f.requestId}));
-}));
+});});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let browser;
 const evidence=process.env.EVIDENCE_DIR||join(tmpdir(),'coffee-attachment-draft-probe-'+Date.now());await mkdir(evidence,{recursive:true});
@@ -103,7 +103,17 @@ try{
   if(promptCalls.length!==1||promptCalls[0].taskId!=='a'||uploadCalls.some(c=>c.scope!=='synthetic-a'))throw Error('Explicit send reached the wrong task or scope');
   await page.locator('#session-list [data-session-id="b"]').click();await expectModel('gpt-6-luna');await page.locator('#session-list [data-session-id="a"]').click();await expectModel('gpt-6.1-sol');
   if(await page.locator('#attachments .attachment-remove').count()!==0)throw Error('Accepted attachment reappeared in draft');
-  const acceptance={pass:true,immediateSwitch:true,returnRestore:true,lateImageDecode:true,otherDraftPreserved:true,noPreSendSideEffects:true,abandonedUploadRestored:true,noAutomaticReplay:true,explicitSendOwned:true,sentDraftCleared:true,errors};
+  const previousPrompts=promptCalls.length;
+  await page.locator('#file').setInputFiles({name:'identity.png',mimeType:'image/png',buffer:png});
+  await page.locator('#attachments .attachment img').waitFor();await page.locator('#prompt').fill('Synthetic account-private upload');holdUploads=true;
+  const accountUpload=once(server,'fixture-upload',{signal:AbortSignal.timeout(5000)});await page.locator('#send').click();await accountUpload;
+  identity.user='synthetic-next-account';
+  await page.evaluate(()=>{localStorage.setItem('pi-coffee.active.v2:synthetic-next-account','b');window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'cache:synthetic-account-change'}));});
+  await page.waitForFunction(()=>document.querySelector('#user-name')?.textContent==='synthetic-next-account'&&document.querySelector('#thread')?.textContent.includes('Synthetic history a'));
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  if(promptCalls.length!==previousPrompts)throw Error('Pending attachment Send leaked into a different authenticated account');
+  if(await page.locator('#attachments .attachment-remove').count()||await page.locator('#prompt').inputValue())throw Error('Old account retained composer draft');
+  const acceptance={pass:true,immediateSwitch:true,returnRestore:true,lateImageDecode:true,otherDraftPreserved:true,noPreSendSideEffects:true,abandonedUploadRestored:true,noAutomaticReplay:true,explicitSendOwned:true,sentDraftCleared:true,accountChangeDropsPendingSend:true,errors};
   if(errors.length)throw Error(JSON.stringify(errors));console.log(JSON.stringify(acceptance));await writeFile(join(evidence,'acceptance.json'),JSON.stringify(acceptance,null,2));
 }finally{
   await browser?.close();for(const ws of wsServer.clients)ws.terminate();await new Promise(resolve=>wsServer.close(resolve));
