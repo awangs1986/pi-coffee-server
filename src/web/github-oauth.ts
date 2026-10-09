@@ -1,4 +1,4 @@
-import {oauthCredentials,githubSecret,type GitHubCredentials} from '../shared/github-credentials.js';
+import {githubOAuthResponse,oauthCredentials,githubSecret,type GitHubCredentials} from '../shared/github-credentials.js';
 import {createHash,randomBytes} from 'node:crypto';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import {json} from '../shared/http.js';
@@ -29,7 +29,7 @@ export class GitHubOAuth {
     try {
       const response=await fetch(new URL('/login/oauth/access_token',this.provider),{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify({client_id:this.options.clientId,client_secret:this.options.clientSecret,code,code_verifier:entry.verifier,redirect_uri:this.origin+'/auth/github/callback'}),redirect:'error',signal:AbortSignal.timeout(15000)});
       if(!response.ok)throw Error('OAuth rejected');
-      await bind(oauthCredentials(await response.json()));
+      await bind(oauthCredentials(await githubOAuthResponse(response)));
       res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"});
       res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>GitHub 已连接</title><p>GitHub 账号已连接。请关闭此窗口，返回 PI Coffee 刷新账号列表。</p></html>');
     }catch{json(res,502,{error:'GitHub connection failed; retry authorization. No shared account was used.'});}
@@ -37,7 +37,7 @@ export class GitHubOAuth {
   async refresh(refreshToken:unknown):Promise<GitHubCredentials> {
     if(!githubSecret(refreshToken))throw Error('Invalid GitHub refresh credential');
     const response=await fetch(new URL('/login/oauth/access_token',this.provider),{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify({client_id:this.options.clientId,client_secret:this.options.clientSecret,grant_type:'refresh_token',refresh_token:refreshToken}),redirect:'error',signal:AbortSignal.timeout(15000)});
-    const result=await response.json() as Record<string,unknown>;
+    const result=await githubOAuthResponse(response) as Record<string,unknown>;
     if(['bad_refresh_token','invalid_grant','expired_token'].includes(String(result.error)))throw Error('github_reconnect_required');
     if(!response.ok||result.error)throw Error('github_refresh_unavailable');
     const credentials=oauthCredentials(result);

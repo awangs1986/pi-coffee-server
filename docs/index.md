@@ -157,3 +157,8 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Reviewed keepalive and compact UI integration: [connection recovery contract](spec/conversation-switching.md#connection-recovery-2026-10-08), [Server #103](https://github.com/awangs1986/pi-coffee-server/issues/103). Unrestricted Codex defaults and LAN transfer remain unchanged; source integration is separate from service activation.
 
 - Conversation-scoped unsent attachment drafts: [ownership and send boundary](spec/task-storage.md#conversation-scoped-attachment-drafts-2026-10-09), [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104). Switching preserves originals within the owning account/task and immediately renders the destination draft.
+
+- 2026-10-09: [Server #105](https://github.com/awangs1986/pi-coffee-server/issues/105)
+  adds browser-independent GitHub OAuth renewal for selected-account forge APIs
+  and managed native Git/gh. See [account authorization contract](spec/github-accounts.md#automatic-oauth-renewal-2026-10-09-server-105).
+  Production activation and real reauthorization evidence remain in the Issue.
