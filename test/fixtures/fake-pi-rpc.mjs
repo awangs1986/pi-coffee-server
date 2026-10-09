@@ -46,7 +46,7 @@ function finishTurn(text) {
   appendEntry(assistant);
   send({ type: "message_end", message: assistant });
   streaming = false;
-  send({ type: "agent_settled" });
+  send({ type: "agent_settled", ...(process.env.FAKE_SETTLED_ABORTED === "1" ? { aborted: true } : {}) });
 }
 
 if (resumedFrom !== undefined) {
@@ -223,7 +223,7 @@ for await (const line of input) {
         const assistant = { role: "assistant", content: [{ type: "text", text: `echo: ${command.message}` }] };
         appendEntry(assistant);
         send({ type: "message_end", message: assistant });
-        const settle=()=>{streaming=false;send({type:"agent_settled"});};
+        const settle=()=>{streaming=false;send({type:"agent_settled",...(process.env.FAKE_SETTLED_ABORTED==="1"?{aborted:true}:{})});};
         if(process.env.FAKE_SETTLE_DELAY_MS)setTimeout(settle,Number(process.env.FAKE_SETTLE_DELAY_MS));
         else settle();
       });
@@ -232,7 +232,7 @@ for await (const line of input) {
     case "abort":
       response("abort", command.id);
       streaming = false;
-      send({ type: "agent_settled" });
+      send({ type: "agent_settled", ...(process.env.FAKE_SETTLED_ABORTED === "1" ? { aborted: true } : {}) });
       break;
     default:
       response(command.type, command.id);

@@ -814,7 +814,7 @@ export class MishuCoordinator {
  });}
  event(targetId:string,event:JsonValue){this.secretaryEvent(targetId,event);if(this.watchActive())this.watch.event(targetId,event);if(event&&typeof event==='object'&&!Array.isArray(event)&&['message_end','message_completed','agent_settled','extension_ui_request','native_request','run_started','run_completed','agent_interrupted','run_interrupted'].includes(String(event.type)))this.observeEvent(targetId);const active=this.active.get(targetId);if(!active||!event||typeof event!=='object'||Array.isArray(event))return;
   const e=event as Record<string,any>;let text:string|undefined;
-  if((e.type==='run_completed'&&e.status==='interrupted')||e.message?.stopReason==='error'){active.receipt.error=clean(String(e.message?.errorMessage??'Target execution was interrupted')).slice(0,500);}
+  if((e.type==='run_completed'&&e.status==='interrupted')||(e.type==='agent_settled'&&e.aborted===true)||e.message?.stopReason==='error'){active.receipt.error=clean(String(e.message?.errorMessage??'Target execution was interrupted')).slice(0,500);}
   if(e.type==='message_end'&&e.message?.role==='assistant')text=Array.isArray(e.message.content)?e.message.content.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n'):typeof e.message.content==='string'?e.message.content:undefined;
   if((e.type==='message_completed'||e.type==='message_end'&&e.message?.role==='assistant')&&typeof e.text==='string')text=e.text;
   if(text){const prior=active.receipt.result??'',value=clean(prior+(prior?'\n':'')+text);active.receipt.result=value.slice(0,4000);active.receipt.truncated=value.length>4000;}
@@ -828,7 +828,7 @@ export class MishuCoordinator {
   if(e.type==='agent_interrupted'||e.type==='run_interrupted'){this.pendingCursor.delete(id);this.secretaryRunError.delete(id);}
   if(e.type!=='agent_settled'&&e.type!=='run_completed')return;
   const pending=this.pendingCursor.get(id);this.pendingCursor.delete(id);
-  const failed=this.secretaryRunError.delete(id)||e.status==='failed'||e.status==='interrupted';
+  const failed=this.secretaryRunError.delete(id)||e.status==='failed'||e.status==='interrupted'||e.aborted===true;
   if(pending===undefined||failed)return;
   this.watch.noteTier2Run();
   void this.change(async()=>{const m=this.state.chats[id]?.manager;if(m&&pending>m.watchCursor)m.watchCursor=pending;},false).catch(()=>undefined);

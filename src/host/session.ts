@@ -520,7 +520,8 @@ export class HostSession {
     try{this.onEvent?.(this.id,safeEvent);}catch{/* Display ingestion must never interrupt native execution. */}
     const runPhase=isRecord(safeEvent)?runLifecycle(safeEvent.type):undefined;
     if(runPhase){
-      const status=runPhase==='interrupted'?'uncertain':runPhase;
+      const cancelled=isRecord(safeEvent)&&safeEvent.type==='agent_settled'&&safeEvent.aborted===true;
+      const status=runPhase==='interrupted'||cancelled?'uncertain':runPhase;
       for(const requestId of this.runCommands)void this.onCommand?.(this.id,requestId,status).catch(()=>undefined);
       if(status!=='running')this.runCommands.clear();
     }
@@ -552,7 +553,7 @@ export class HostSession {
         lifecycle = true;
         // Whatever dialogs were open have been answered or timed out by now.
         this.pendingUi.clear();
-        if (this.sinks.size === 0) this.unseenSettle = true;
+        if (this.sinks.size === 0 && !(safeEvent.type === "agent_settled" && safeEvent.aborted === true)) this.unseenSettle = true;
       }
     }
     this.cursor += 1;
