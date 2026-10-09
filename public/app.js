@@ -1648,6 +1648,10 @@ function handleFrame(frame, ws) {
       return;
     case 'sync_changed':
       if(frame.sessionId===activeId)requestConversationSync();return;
+    case 'mishu_watch':
+      // Tier-1 MISHU watch notice: deterministic text, shown as a transient toast only.
+      if(frame.notice&&typeof frame.notice.text==='string')toast(frame.notice.text.slice(0,300),6000);
+      return;
     case 'history': {
       if (frame.sessionId !== activeId) return;
       if(!conversationDisplay.history(frame))return;

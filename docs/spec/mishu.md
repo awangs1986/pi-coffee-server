@@ -906,3 +906,30 @@ Codex result preserves truncation through the automatic report input. Real Chrom
 probes separately cover desktop/mobile detail warnings and failed queued-stop retention.
 Checks using `MISHU_PLUGIN_ROOT` verify candidate source; they do not validate a new
 immutable package or change Server's consumed tracking.2 artifact.
+
+## Manager (P1–P9, 2026-10-09 candidate)
+
+Two tiers. Tier 1 is deterministic Host code with zero model tokens: an
+event-driven watch over all of one user's conversations (secretary Chats
+excluded), a strict `rules.json` engine, a persisted to-do panel (≤50 items),
+Web notices with cooldown/batch/hourly budget/quiet hours, and exact-keyword fast
+replies with one-time confirmation codes for stop/cancel. Tier 2 is the secretary
+model, woken only by non-keyword user messages, which receives a bounded digest
+(≤1500 chars, ≤20 lines) and to-do text (≤1200 chars) as untrusted data. The
+digest cursor commits only after a successful secretary run.
+
+Authorization: overview/events/peek are read-only and limited to configured
+contacts unless the user enabled view-all in `/mishu-setup`; contactability never
+widens. Execution (`send` authorized-execution, `tasks/dispatch`, queue
+cancel/move, quick stop/cancel) still requires configured contacts, and model
+execution requires `version:2` `authorization.quote` matching a Host-issued
+credential for the current direct user message (≤3 distinct uses, expires with the
+run). The free-text v1 `authorizationRef` path is closed unless
+`PI_COFFEE_MISHU_LEGACY_AUTHORIZATION=1`, which still requires a credential.
+
+Compatibility: `state.json` schema is unchanged; manager data lives in
+`manager.json`, `watch/`, `receipts/` and `grant.key`. Receipts beyond 500 per
+secretary rotate to an archive whose index keeps message-ID idempotency. The
+`queue_action` protocol gains `move` (`to: front|back`); the server frame
+`mishu_watch` is new and ignored by older clients. Details, `rules.json` example
+and deployment order: [development/mishu-manager.md](../development/mishu-manager.md).

@@ -229,6 +229,8 @@ export class HostSession {
   /** Host-controlled run classification; never populated from model fields. */
   setReportOrigin(){if(!this.activeRequestId)throw Error('Report requires reserved command');this.reportOrigin=true;}
   get isReportRun(){return this.reportOrigin;}
+  /** Host request currently owning the native run (undefined when idle). */
+  get currentRequestId(){return this.activeRequestId;}
   private contextChanging=false;
   private get executionBusy(): boolean { return this.contextChanging || this.compacting || this.state.isStreaming || this.activeRequestId !== undefined; }
   get isTransitioning():boolean {return this.contextChanging||this.compacting;}
@@ -308,7 +310,7 @@ export class HostSession {
   async changeQueue(action:import('../shared/protocol.js').QueueAction){
     if(this.interrupted||this.compacting||this.contextChanging||this.reportOrigin)throw new SessionBusyError();
     const queued=this.inputs.items.find(item=>item.id===action.id);
-    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited or promoted; stop the task and inspect its original dispatch');
+    if(queued?.requestId?.startsWith('mishu-dispatch-')&&action.action!=='cancel')throw Error('Tracked assignments cannot be edited, promoted or moved; stop the task and inspect its original dispatch');
     const command=action.action==='cancel'?queued?.requestId:undefined;
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }

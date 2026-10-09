@@ -574,11 +574,13 @@ export class HostServer {
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
       },onCommand:async(id,requestId,state,mode)=>{await mishu?.command(id,requestId,state,mode);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
-      mishu?.attach(registry);
+      mishu?.attach(registry);mishu?.attachIndex(index);
+      mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
       const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
+        if(session)mishu?.sessionChanged(session.id,{queued:session.queueFrame.items.filter(i=>!i.readOnly).length,running:session.isBusy,...(session.attention?{attention:session.attention}:{})});
         if(session?.wasInterrupted&&slot.workspaces) void this.trackBackground(slot.workspaces.markRun(session.id,"interrupted")).catch(()=>undefined);
         if(slot.workspaces)void this.trackBackground(slot.workspaces.settleRuns(id=>registry.get(id)?.wasInterrupted ? undefined : registry.get(id)?.isBusy)).catch(()=>undefined);
       });
@@ -1161,12 +1163,15 @@ class HostSocket implements SessionSink {
         const capabilities=await this.factory.capabilities?.(this.session.id)??capabilitiesFor(engine);
         if(frame.mode==='follow_up'&&!capabilities.followUp)throw new Error('Queueing unavailable for this Agent');
         if(originSession&&originGeneration!==undefined)originSession.assertCommandGeneration(originGeneration);
+        await this.mishu?.userInput(this.session.id,frame.requestId,frame.text,frame.mode).catch(()=>undefined);
         await this.session.enqueue(frame.mode, frame.text, frame.images,frame.requestId,true);
         return;
       }
     }
     const session=this.session;
     await session.preparePrompt(frame.requestId);
+    // Host-issued authorization (P8): bound to this exact direct user message and request.
+    await this.mishu?.userInput(session.id,frame.requestId,frame.text,'prompt').catch(()=>undefined);
     // Acknowledgement means the command crossed the seam and was accepted;
     // lifecycle events continue asynchronously after it.
     this.send({ v: 1, type: "ack", operation: "prompt", requestId: frame.requestId });
@@ -1179,6 +1184,9 @@ class HostSocket implements SessionSink {
       if(frame.text.trim()==='/mishu-notifications')this.mishu?.beginNotifications(session.id,frame.requestId);
       if(setup)this.mishu?.beginSetup(session.id,frame.requestId);
       if(/^\/mishu-report(?:\s|$)/.test(frame.text.trim()))this.mishu?.beginReport(session.id,frame.requestId);
+      if(frame.text.trim()==='/mishu-todo')this.mishu?.beginTodo(session.id,frame.requestId);
+      // Tier-1 quick reply window: only the exact text of a plain, image-free, non-command prompt.
+      if(frame.mode!=='steer'&&frame.mode!=='follow_up'&&!frame.images?.length&&!frame.text.trimStart().startsWith('/'))this.mishu?.beginQuick(session.id,frame.requestId,frame.text);
       void session.prompt(frame.requestId, frame.text, frame.images).catch((error) => {
         this.send({
           v: 1,
@@ -1187,7 +1195,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      }).finally(()=>{this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);});
+      }).finally(()=>{this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);this.mishu?.endTodo(session.id,frame.requestId);this.mishu?.endQuick(session.id,frame.requestId);});
     });
   }
 
