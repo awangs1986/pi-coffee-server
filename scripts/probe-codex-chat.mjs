@@ -22,7 +22,7 @@ const server=createServer(async(req,res)=>{
  if(path.startsWith('/api/'))return reply(res,{});
  const file=path==='/'?'index.html':path.slice(1);
  if(!/^[\w.-]+$/.test(file)){res.writeHead(404);return res.end();}
- try{res.writeHead(200,{'content-type':{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[extname(file)]||'application/octet-stream'});res.end(await readFile(join(resolve('public'),file)));}catch{res.writeHead(404);res.end();}
+ try{const content=await readFile(join(resolve('public'),file));res.writeHead(200,{'content-type':{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[extname(file)]||'application/octet-stream'});res.end(content);}catch{res.writeHead(404);res.end();}
 });
 const wss=new WebSocketServer({server,path:'/ws'});
 wss.on('connection',socket=>{
