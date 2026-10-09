@@ -5,7 +5,7 @@ import type { GitHubForge, GitHubRepository, Project, PullRequest } from "./work
  * API calls made by the Host (list repositories, look one up, open a PR); Git
  * clone/push keeps using the VM owner's own Git credentials, as with Gitea.
  */
-export interface GitHubOptions { token:string; apiUrl?:string }
+export interface GitHubOptions { token:string|(()=>Promise<string>); apiUrl?:string }
 interface ApiRepository { id:number; name?:string; full_name?:string; private?:boolean; archived?:boolean; default_branch?:string; clone_url?:string; html_url?:string; pushed_at?:string|null; description?:string|null; permissions?:{push?:boolean;maintain?:boolean;admin?:boolean} }
 interface ApiPull { number:number; html_url:string; state:string; head?:{ref?:string;repo?:{id?:number}|null}; base?:{ref?:string;repo?:{id?:number}|null} }
 
@@ -43,7 +43,7 @@ export class GitHubClient implements GitHubForge {
   constructor(private readonly options:GitHubOptions) {
     this.api=new URL(options.apiUrl?.trim() || "https://api.github.com");
     if(!["http:","https:"].includes(this.api.protocol) || this.api.username || this.api.password || this.api.search || this.api.hash)throw new Error("GitHub API URL must be credential-free HTTP(S)");
-    if(!options.token || /\s/.test(options.token))throw new Error("GitHub token is required");
+    if(typeof options.token!=='function'&&(!options.token || /\s/.test(options.token)))throw new Error("GitHub token is required");
     this.webHost=githubWebHost(this.api.href);
   }
   async identity():Promise<{githubId:string;login:string}> {
@@ -103,7 +103,7 @@ export class GitHubClient implements GitHubForge {
     const [pathname,search]=path.split("?");
     url.pathname=url.pathname.replace(/\/+$/,"")+pathname;url.search=search ? "?"+search : "";
     const response=await fetch(url,{method,headers:{
-      authorization:`Bearer ${this.options.token}`,accept:"application/vnd.github+json","x-github-api-version":"2022-11-28","user-agent":"pi-coffee-host",
+      authorization:`Bearer ${typeof this.options.token==='function'?await this.options.token():this.options.token}`,accept:"application/vnd.github+json","x-github-api-version":"2022-11-28","user-agent":"pi-coffee-host",
       ...(body===undefined ? {} : {"content-type":"application/json"}),
     },...(body===undefined ? {} : {body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000),redirect:"error"});
     const text=await response.text();let value:unknown={};try{value=text ? JSON.parse(text) : {};}catch{}

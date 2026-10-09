@@ -1,5 +1,5 @@
 import {it,expect,afterEach} from 'vitest';
-import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {WebServer} from '../src/web/server.js';import {HostServer} from '../src/host/server.js';
 import {GiteaAuth} from '../src/web/auth.js';import {GitHubAccounts} from '../src/host/github-accounts.js';
 import {createServer,type Server} from 'node:http';
@@ -8,7 +8,7 @@ let web:WebServer,host:HostServer,api:Server,root='';
 afterEach(async()=>{await web?.close();await host?.close();await new Promise<void>(r=>api?.close(()=>r())??r());if(root)await rm(root,{recursive:true,force:true});});
 it('requires Gitea login and same-origin start, binds callbacks to that browser, and never exposes tokens',async()=>{
  root=await mkdtemp(join(tmpdir(),'coffee-oauth-'));let exchanges=0;
- api=createServer((req,res)=>{res.setHeader('content-type','application/json');if(req.url==='/login/oauth/access_token'){exchanges++;res.end(JSON.stringify({access_token:'private-github-token',scope:'repo,read:user'}));}else if(req.url==='/user')res.end(JSON.stringify({id:42,login:'github-alice'}));else{res.writeHead(404);res.end('{}');}});
+ api=createServer((req,res)=>{res.setHeader('content-type','application/json');if(req.url==='/login/oauth/access_token'){exchanges++;res.end(JSON.stringify({access_token:'private-github-token',scope:'repo,read:user',refresh_token:'private-refresh-token',expires_in:28800,refresh_token_expires_in:15552000}));}else if(req.url==='/user')res.end(JSON.stringify({id:42,login:'github-alice'}));else{res.writeHead(404);res.end('{}');}});
  await new Promise<void>(r=>api.listen(0,'127.0.0.1',r));const a=api.address();if(!a||typeof a==='string')throw Error();const provider=`http://127.0.0.1:${a.port}`;
  host=new HostServer({port:0,token:'transport',factory,requireUser:true,scopeForUser:user=>({factory,githubAccounts:new GitHubAccounts(join(root,user),{apiUrl:provider})})});await host.start();
  const auth=new GiteaAuth({giteaUrl:'http://gitea.invalid',clientId:'gitea',clientSecret:'private',allowedUsers:['alice','bob'],fetch:async(url,init)=>new Response(JSON.stringify(String(url).endsWith('/user')?{login:init?.headers && JSON.stringify(init.headers).includes('bob')?'bob':'alice'}:{access_token:JSON.parse(String(init?.body)).code}),{status:200})});
@@ -19,7 +19,7 @@ it('requires Gitea login and same-origin start, binds callbacks to that browser,
  expect((await call({action:'list'},'')).status).toBe(401);
  expect((await call({action:'connect'},alice,'http://evil.test')).status).toBe(403);
  expect((await call({action:'bind',token:'stolen'})).status).toBe(400);
- const start=await call({action:'connect'});expect(start.status).toBe(200);const target=new URL((await start.json()).authorizeUrl);expect(target.searchParams.get('code_challenge_method')).toBe('S256');
+ const start=await call({action:'connect'});expect(start.status).toBe(200);const target=new URL((await start.json()).authorizeUrl);expect(target.searchParams.get('code_challenge_method')).toBe('S256');expect(target.searchParams.get('scope')).toContain('offline_access');
  const callback=base+'/auth/github/callback?code=code&state='+target.searchParams.get('state');
  expect((await fetch(callback,{headers:{cookie:bob}})).status).toBe(400);expect(exchanges).toBe(0);
  const retry=await call({action:'connect'});const url=new URL((await retry.json()).authorizeUrl);const correct=base+'/auth/github/callback?code=code&state='+url.searchParams.get('state');
@@ -27,4 +27,7 @@ it('requires Gitea login and same-origin start, binds callbacks to that browser,
  expect((await fetch(correct,{headers:{cookie:alice}})).status).toBe(400);expect(exchanges).toBe(1);
  const accounts=await (await call({action:'list'})).json();expect(accounts.accounts).toHaveLength(1);expect(JSON.stringify(accounts)).not.toContain('private-github-token');
  expect((await (await call({action:'list'},bob)).json()).accounts).toEqual([]);
+ const stored=JSON.parse(await readFile(join(root,'alice','accounts.json'),'utf8')).accounts[0];
+ expect(stored.refreshToken).toBe('private-refresh-token');expect(stored.expiresAt).toBeGreaterThan(Date.now());
+ expect(JSON.stringify(accounts)).not.toContain('private-refresh-token');
 });

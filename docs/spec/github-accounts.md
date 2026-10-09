@@ -101,3 +101,52 @@ Resolve explicit targets, default branch remotes, push URLs, fetch groups and
 Git URL rewrites using config-only Git probes. Parse option operands separately
 for each subcommand (for example, `push -u` takes no value, while `clone -u` does).
 Clone-local `-c` URL rewrites participate in target resolution before transport.
+
+## Automatic OAuth renewal (2026-10-09, Server #105)
+
+Web requests `offline_access` alongside the existing repository and identity scopes.
+The callback preserves the expiring access token, refresh token and both absolute
+expiry timestamps in the authenticated user's private Host store. Non-expiring
+responses remain supported. Only the existing account identity fields are returned
+by browser account APIs; expiry credentials and revision fences are never spread
+into public metadata.
+
+Web retains the OAuth App client secret. Host uses the administrator-configured
+`PI_COFFEE_GITHUB_REFRESH_URL` (the Web origin plus `/internal/github-refresh`) to
+exchange a refresh token over authenticated service transport. This endpoint accepts
+no browser cookies or Origin and requires a configured Host bearer grant; routed
+Hosts must also match the configured user scope. It is independent of browser login
+lifetime and does not extend the Gitea browser session. Redirects are forbidden,
+requests have deadlines and bounded bodies/concurrency, and errors contain no
+upstream credential payload. Production uses the existing trusted LAN transport;
+remote public transport must use HTTPS.
+
+Host refreshes on demand within one minute of access-token expiry. Forge API clients
+resolve their selected account's token for each request, including an API client
+created before expiry. Managed Git credential helpers and gh wrappers obtain only
+the access token from a private per-user Unix socket capability. They never receive
+the App secret or refresh token in their environment or command arguments. The
+broker descriptor is private (0600) and lives beside the private account store;
+it contains no GitHub credential. Without a live broker an expired credential fails
+closed. No VM-global or other-account fallback is allowed.
+
+Concurrent requests for the same credential revision share one renewal. Successful
+rotation verifies the numeric GitHub identity and atomically stores both new tokens
+and expiry timestamps. Rebinding gets a new revision; deletion or rebind wins over
+an older renewal, including a rejected one. Revoked renewal explicitly requires
+reconnection and is not retried indefinitely; transient failures keep the existing
+refresh credential and impose a thirty-second retry delay. Missing refresh grants
+from older installations require one explicit Web reauthorization. No background
+model task is needed to renew, and new service processes recover the stored rotation.
+
+GitHub currently expires access tokens after eight hours and refresh tokens after
+six months without use. Each successful renewal issues a new refresh token, so
+regular use can avoid repeated human authorization. Revocation still requires
+reconnection. Reference: [GitHub OAuth authorization](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
+
+Acceptance: OAuth HTTP callback persistence and no Browser credential disclosure;
+real Git credential/gh subprocesses and preexisting forge clients coalesce on expiry;
+restart recovery; cross-user rejection; in-flight rebind/delete and rejected-renewal
+fencing; wrong-identity rejection; terminal revocation and transient retry bounds;
+unauthenticated, browser, wrong-route and malformed service request rejection.
+Fixture coverage is not a claim that a newly authorized real account has renewed.
