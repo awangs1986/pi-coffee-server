@@ -562,7 +562,7 @@ it('keeps truncated, missing-final-audit and next-user replies incomplete or unc
 
 it.each(['normal','lost-ack','queued-stop','failed-stop'] as const)('dispatch persists business responsibility and deduplicates changed IDs (%s)',async(mode)=>{
  let targetCalls=0,sourceCalls=0;let finishSource=()=>{},finishTarget=()=>{};
- const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const isTarget=JSON.stringify(body.messages).includes('DISPATCH_SYNTHETIC_WORK');
+ const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);const actor=body.messages.filter((m:any)=>m.role==='user'&&!JSON.stringify(m).includes('【PI Coffee 插件状态】')).at(-1);const isTarget=JSON.stringify(actor?.content).includes('DISPATCH_SYNTHETIC_WORK');
   const reply=(text:string)=>{if(res.writableEnded||res.destroyed)return;res.writeHead(200,{'content-type':'text/event-stream'});const frame={id:randomUUID(),object:'chat.completion.chunk',created:1,model:'fixture'};res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');};
   if(isTarget){targetCalls++;finishTarget=()=>reply('DISPATCH_RESULT');}else{sourceCalls++;finishSource=()=>reply('Secretary done');}
  });await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
