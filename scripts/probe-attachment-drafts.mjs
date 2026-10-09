@@ -59,6 +59,8 @@ try{
   const expectModel=async id=>{try{await page.waitForFunction(expected=>document.querySelector('#agent-name')?.textContent===expected,id,{timeout:5000});}catch{throw Error(JSON.stringify({expected:id,actual:await page.locator('#agent-name').textContent(),path:new URL(page.url()).pathname,frames:frames.slice(-20),errors}));}};
   await page.addInitScript(()=>{
     const read=FileReader.prototype.readAsDataURL;window.fixtureReads=[];
+    const NativeSocket=window.WebSocket;window.fixtureHistories=[];
+    window.WebSocket=class extends NativeSocket{constructor(...args){super(...args);this.addEventListener('message',event=>{const frame=JSON.parse(event.data);if(frame.type==='history')window.fixtureHistories.push({user:document.querySelector('#user-name')?.textContent,id:frame.sessionId});});}};
     FileReader.prototype.readAsDataURL=function(file){if(file.name==='late.png')window.fixtureReads.push(()=>read.call(this,file));else read.call(this,file);};
     window.releaseFixtureReads=()=>{for(const read of window.fixtureReads.splice(0))read();};
   });
@@ -109,7 +111,7 @@ try{
   const accountUpload=once(server,'fixture-upload',{signal:AbortSignal.timeout(5000)});await page.locator('#send').click();await accountUpload;
   identity.user='synthetic-next-account';
   await page.evaluate(()=>{localStorage.setItem('pi-coffee.active.v2:synthetic-next-account','b');window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'cache:synthetic-account-change'}));});
-  await page.waitForFunction(()=>document.querySelector('#user-name')?.textContent==='synthetic-next-account'&&document.querySelector('#thread')?.textContent.includes('Synthetic history a'));
+  await page.waitForFunction(()=>window.fixtureHistories?.some(h=>h.user==='synthetic-next-account'&&h.id==='a'));
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   if(promptCalls.length!==previousPrompts)throw Error('Pending attachment Send leaked into a different authenticated account');
   if(await page.locator('#attachments .attachment-remove').count()||await page.locator('#prompt').inputValue())throw Error('Old account retained composer draft');
