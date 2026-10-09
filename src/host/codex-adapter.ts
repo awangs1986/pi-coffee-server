@@ -683,7 +683,7 @@ class CodexSession implements PiSession {
       baseInstructions,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})}) as Obj;
     if((result.thread as Obj)?.id!==this.threadId)throw Error('Native secretary binding changed; no replacement accepted');
     if(context.token){
-      const inventory=await this.server.request('mcpServerStatus/list',{threadId:this.threadId,serverName:'coffee_mishu'},15000) as Obj;
+      const inventory=await this.server.request('mcpServerStatus/list',{threadId:this.threadId,serverName:'coffee_mishu',detail:'toolsAndAuthOnly'},15000) as Obj;
       const row=(inventory.data as Obj[]|undefined)?.find(row=>row.name==='coffee_mishu');
       if(!row||(row.tools as Obj)?.mishu===undefined||row.toolsError)throw Error('Native MISHU tool connection unavailable');
     }

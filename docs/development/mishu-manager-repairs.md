@@ -62,3 +62,22 @@ capabilities and model transcripts stay private. GitHub publication, Gitea mirro
 and production activation are separate outcomes; this document alone proves none
 of them. Current GitHub OAuth returned 401 during preparation; only the selected
 Coffee account may publish when that authorization is restored.
+
+## Native Codex readiness follow-up
+
+Two authenticated Browser runs reached successful contact calls but later failed
+at `mcpServerStatus/list` (15-second timeout), including an isolated rerun. MISHU
+only needs its tool/auth readiness, not optional resource inventory. The adapter
+now requests `detail: toolsAndAuthOnly`, as documented by the [official App Server
+protocol](https://learn.chatgpt.com/docs/app-server) and the installed 0.159.1
+schema. A public native-protocol regression first failed when unrelated resources
+were unavailable and then passed with the narrower request. The original complete
+authenticated Browser probe then passed: original gpt-6-luna thread, Pi/Codex
+contacts, receipt reads, explicit visibility, v2 authorized execution, refresh and
+responsive/cancelable setup at desktop/mobile/short viewport sizes.
+
+A no-model metadata-only cycling probe did not reproduce the original full-query
+timeout. The upstream internal blocking cause is therefore not established; the
+fix removes an unnecessary readiness dependency rather than claiming all native
+MCP failures impossible. Existing timeout, missing-tool rejection, token/binding
+checks and unavailable-report gates remain unchanged.

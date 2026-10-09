@@ -1,6 +1,6 @@
 # PI Coffee documentation map
 
-- MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Preserves Codex/Luna native coordination; source merge does not activate production.
+- MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Preserves Codex/Luna native coordination and tool-only readiness; source merge does not activate production.
 
 - Local file download links: [current delivery contract](spec/task-storage.md#local-file-link-delivery--2026-10-08-server-102), [Server #102](https://github.com/awangs1986/pi-coffee-server/issues/102). Ordinary local files use authorized download; embedded images retain bounded preview.
 

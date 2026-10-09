@@ -316,7 +316,7 @@ rl.on("line", (line) => {
       const item = { type: "contextCompaction", id: uid("item") };
       setTimeout(()=>{notify("item/completed", { item, threadId: params.threadId, turnId: "compact", completedAtMs: Date.now() });notify("turn/completed",{threadId:params.threadId,turn:{id:"compact",status:"completed"}});},80);return;
     }
-    case "mcpServerStatus/list": if(existsSync(join(home,'mishu-inventory-unavailable')))return reply({data:[],nextCursor:null});return reply({data:settings.get(params.threadId)?.config?.mcp_servers?.coffee_mishu?.enabled?[{name:'coffee_mishu',tools:{mishu:{}},toolsError:null}]:[],nextCursor:null});
+    case "mcpServerStatus/list": if(existsSync(join(home,'mishu-resource-catalog-unavailable'))&&params.detail!=='toolsAndAuthOnly')return fail('Unrelated MCP resource inventory unavailable');if(existsSync(join(home,'mishu-inventory-unavailable')))return reply({data:[],nextCursor:null});return reply({data:settings.get(params.threadId)?.config?.mcp_servers?.coffee_mishu?.enabled?[{name:'coffee_mishu',tools:{mishu:{}},toolsError:null}]:[],nextCursor:null});
     case "config/read": return reply({config:{mcp_servers:{fixture_external:{command:"/bin/false",enabled:true}},model:"gpt-fake-mini",developer_instructions:process.env.FAKE_DEVELOPER_INSTRUCTIONS}});
     case "skills/list": {
       if(params.forceReload!==true)return fail("skills discovery must refresh");
