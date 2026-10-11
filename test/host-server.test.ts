@@ -91,8 +91,8 @@ class FakePiSession implements PiSession {
 
   /** Simulates an extension dialog: emits the request, resolves on respondUi. */
   readonly uiAnswers: unknown[] = [];
-  askUser(id: string): void {
-    this.emit({ type: "extension_ui_request", id, method: "confirm", title: "Proceed?", message: "fake extension asks" });
+  askUser(id: string, type="extension_ui_request", title="Proceed?"): void {
+    this.emit({ type, id, method: "confirm", title, message: "fake extension asks" });
   }
   async respondUi(response: unknown): Promise<void> {
     this.uiAnswers.push(response);
@@ -749,6 +749,12 @@ describe("Host WebSocket seam", () => {
     try{
       socket.send(encodeFrame({v:1,type:'ui_response',requestId:'answer-failed',id:'answer-failure',confirmed:true}));
       expect(await frames.next()).toMatchObject({type:'error',requestId:'answer-failed',message:'Native answer failed'});
+      socket.close();await once(socket,"close");
+      const again=await connect(server.address().port),retryFrames=new FrameQueue(again);
+      again.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+      expect(await retryFrames.next()).toMatchObject({type:"opened"});await retryFrames.next();
+      expect(await retryFrames.next()).toMatchObject({type:"event",event:{type:"extension_ui_request",id:"answer-failure"}});
+      again.close();
     }finally{spy.mockRestore();socket.close();}
   });
 
@@ -1027,6 +1033,32 @@ describe("Host WebSocket seam", () => {
     await waitFor(() => factory.deleted.includes(opened.sessionId));
     socket.close();
     watcher.close();
+  });
+
+  it.each(["extension_ui_request","native_request"].flatMap(type=>["none","next","reused","during-acceptance"].map(replacement=>({type,replacement}))))("does not replay an accepted $type answer while the next reply is pending ($replacement)",async({type,replacement})=>{
+    const factory=new FakeFactory();server=new HostServer({port:0,host:"127.0.0.1",factory});await server.start();
+    const first=await connect(server.address().port),frames=new FrameQueue(first);
+    first.send(encodeFrame({v:1,type:"open"}));const opened=await frames.next();if(opened.type!=="opened")throw Error("opened");await frames.next();
+    const pi=factory.sessions.get(opened.sessionId)!;pi.holdAfterDelta=true;
+    first.send(encodeFrame({v:1,type:"prompt",requestId:"start",text:"synthetic held run"}));for(let n=0;n<3;n++)await frames.next();
+    pi.askUser("answered-question",type);expect(await frames.next()).toMatchObject({type:"event",event:{id:"answered-question"}});
+    // Native accepts the choice, but its next completed message has not arrived.
+    vi.spyOn(pi,"respondUi").mockImplementation(async answer=>{pi.uiAnswers.push(answer);if(replacement==="during-acceptance")pi.askUser("answered-question",type,"Current unanswered question");});
+    first.send(encodeFrame({v:1,type:"ui_response",requestId:"answer",id:"answered-question",confirmed:true}));
+    if(replacement==="during-acceptance")expect(await frames.next()).toMatchObject({type:"event",event:{title:"Current unanswered question"}});
+    expect(await frames.next()).toMatchObject({type:"ack",operation:"ui_response",requestId:"answer"});
+    if(replacement!=="none"&&replacement!=="during-acceptance"){pi.askUser(replacement==="reused"?"answered-question":"still-pending",type,"Current unanswered question");await frames.next();}
+    first.close();await once(first,"close");
+    const second=await connect(server.address().port),replayed=new FrameQueue(second);
+    second.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+    // Unknown UI answers use the ordered control lane; connection pings deliberately
+    // bypass that lane and cannot delimit the opening replay.
+    second.send(encodeFrame({v:1,type:"ui_response",requestId:"replay-barrier",id:"unknown-barrier",cancelled:true}));const tail:ServerFrame[]=[];
+    for(;;){const f=await replayed.next();if(f.type==="error"&&f.requestId==="replay-barrier"){expect(f.code).toBe("unknown_ui_request");break;}tail.push(f);}
+    const questions=tail.filter(f=>f.type==="event"&&["extension_ui_request","native_request"].includes(String((f.event as {type?:string}).type)));
+    expect(questions.map(f=>f.type==="event"?(f.event as {title:string}).title:null)).toEqual(replacement==="none"?[]:["Current unanswered question"]);
+    expect(pi.uiAnswers).toEqual([{id:"answered-question",confirmed:true}]);expect(pi.state.isStreaming).toBe(true);
+    second.close();
   });
 
   it("carries extension dialogs to the browser, re-delivers them to a reconnecting browser, and routes the answer back", async () => {

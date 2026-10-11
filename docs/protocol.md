@@ -334,6 +334,25 @@ An expired question reports failure and returns a non-secret typed answer to the
 composer so the user can explicitly send it as a message. Error/disconnect feedback
 does not mark the ongoing model turn as completed.
 
+### Accepted questions are not replayed — 2026-10-11, Server #118
+
+A historical `extension_ui_request` or `native_request` is not a pending question
+merely because it remains in an unfinished run's event tail. Reopening or refreshing
+a Conversation replays only its actual pending dialog occurrences. Native-accepted
+answers disappear from question replay immediately, even before the next completed
+model message. If an extension reuses a question ID, only the current pending
+occurrence is replayed. Native-rejected or genuinely unanswered questions remain
+available once, with the existing explicit-answer/no-auto-retry rules.
+
+Host checks this state during replay projection and again immediately before the
+opening replay is sent, after asynchronous snapshot preparation. Text/tool replay
+and native run lifetime remain unchanged. Public WS regressions cover Pi and Codex
+question events, rejected answers and ID reuse. `scripts/probe-question-replay.mjs`
+uses actual Chromium/Browser/Web/Host with synthetic adapters: answer, native ACK,
+reload before another completed message, no duplicate dialog, and a new question
+remaining usable. The answer click itself does not navigate in this fixture;
+the owner's original production refresh trigger remains an independent evidence gap.
+
 Codex Web sessions enable native `request_user_input` in Default mode. Structured
 questions use `native_request {method:"input", required:true, options:[...]}`;
 labels are clickable suggestions beside a free-text input. No option is selected

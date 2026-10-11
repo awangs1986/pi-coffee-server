@@ -163,6 +163,26 @@ const marked = new Marked({
   },
 });
 
+// Native visualization output is a file reference, not executable chat markup.
+// An inline tokenizer leaves fenced/inline code examples untouched.
+marked.use({extensions:[{
+  name:'coffeeVisualization',level:'inline',
+  start(source){const index=source.indexOf('\uE200visualize\uE202');return index<0?undefined:index;},
+  tokenizer(source){
+    const match=/^\uE200visualize\uE202([^\uE201]{1,4096})\uE201/u.exec(source);
+    if(!match)return;
+    let value;try{value=JSON.parse(match[1]);}catch{return;}
+    const path=value?.path;
+    if(typeof path!=='string'||path.length>2048||!path.toLowerCase().endsWith('.html')||
+       /^[a-z][a-z0-9+.-]*:|^\/\//i.test(path)||/[\u0000-\u001f\u007f]/.test(path))return;
+    return {type:'coffeeVisualization',raw:match[0],path};
+  },
+  renderer(token){
+    const name=token.path.split('/').at(-1);
+    return '<a class="artifact-download visualization-download" data-workspace-path="'+esc(token.path)+'" data-workspace-download="true" href="#">下载 HTML · '+esc(name)+'</a>';
+  },
+}]});
+
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
     node.setAttribute('target', '_blank');

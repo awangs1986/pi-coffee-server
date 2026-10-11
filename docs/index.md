@@ -1,5 +1,8 @@
 # PI Coffee documentation map
 
+- Answered question replay: [protocol](protocol.md#accepted-questions-are-not-replayed--2026-10-11-server-118), [Server #118](https://github.com/awangs1986/pi-coffee-server/issues/118). Native-accepted questions are excluded from reconnect replay, independently of the next model message.
+- Native HTML visualization output: [download contract](spec/task-storage.md#native-html-visualization-download--2026-10-11-server-119), [Server #119](https://github.com/awangs1986/pi-coffee-server/issues/119). Valid local visualize markers become task-authorized HTML downloads; ordinary Chat prompts remain unchanged.
+
 - MISHU 产品源码和功能主票：[独立仓库职责与包接口](development/mishu-source-ownership.md)。秘书体验规格与研究已迁回 MISHU，旧链接保留指针。
 
 - Window wake after idle connection loss: [current recovery contract](spec/conversation-switching.md#window-wake-recovery-2026-10-11-server-117), [Server #117](https://github.com/awangs1986/pi-coffee-server/issues/117). Focus/page restoration reattaches the selected conversation without navigation; synthetic timer-throttling evidence does not identify the original production disconnect trigger.

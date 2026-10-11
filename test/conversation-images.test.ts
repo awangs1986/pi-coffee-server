@@ -55,3 +55,35 @@ it('downloads ordinary local file links and preserves embedded image preview',()
  bindWorkspaceArtifactLinks(root,(action,path)=>endpoint(action,path)+'&renewed=1');
  expect(links[0].href).toContain('&renewed=1');
 });
+
+
+it('turns a native visualize HTML marker into a scoped downloadable file',()=>{
+ const root=document.createElement('div');
+ root.innerHTML=renderMarkdown('\uE200visualize\uE202{"path":"/synthetic/task/workspace/output/animation.html"}\uE201');
+ const link=root.querySelector<HTMLAnchorElement>('a.visualization-download');
+ expect(link,'native visualization output needs an actual download link').not.toBeNull();
+ expect(link!.textContent).toContain('下载 HTML');
+ expect(root.textContent).not.toContain('visualize');
+ bindWorkspaceArtifactLinks(root,()=>null);expect(link!.hasAttribute('href')).toBe(false);
+ bindWorkspaceArtifactLinks(root,(action,path)=>'/files/'+action+'?path='+encodeURIComponent(path));
+ expect(link!.getAttribute('href')).toContain('/workspace-download?');
+ expect(link!.dataset.workspacePath).toBe('/synthetic/task/workspace/output/animation.html');
+});
+
+it('leaves visualize examples in code inert and rejects remote or malformed references',()=>{
+ const marker='\uE200visualize\uE202{"path":"output/animation.html"}\uE201';
+ for(const text of ['`'+marker+'`','```text\n'+marker+'\n```','\uE200visualize\uE202{"path":"https://example.test/animation.html"}\uE201','\uE200visualize\uE202{invalid}\uE201']){
+  const root=document.createElement('div');root.innerHTML=renderMarkdown(text);
+  expect(root.querySelector('.visualization-download')).toBeNull();
+  expect(root.querySelector('iframe,script')).toBeNull();
+ }
+});
+
+
+it('escapes visualize filenames instead of turning them into chat markup',()=>{
+ const path='output/quote\"<img src=x onerror=alert(1)>.html';
+ const root=document.createElement('div');root.innerHTML=renderMarkdown('\uE200visualize\uE202'+JSON.stringify({path})+'\uE201');
+ const link=root.querySelector<HTMLElement>('.visualization-download')!;
+ expect(link.dataset.workspacePath).toBe(path);expect(root.querySelector('img,script,iframe')).toBeNull();
+ expect(link.hasAttribute('onerror')).toBe(false);
+});

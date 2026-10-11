@@ -28,7 +28,7 @@ Browser activation and backend activation are separate outcomes.
 `npm run check` runs mechanical JS lint, the production build, Vitest, then the
 no-model Chromium probes listed by `node scripts/check-browser.mjs --list`:
 model display, completion icons, sidebar activity/scrolling, streaming responsiveness,
-Codex Chat, attachment delivery/drafts, connection heartbeat and window wake recovery.
+Codex Chat, attachment delivery/drafts, connection heartbeat, window wake recovery and answered-question reload behavior.
 A failed command stops later commands. Install the pinned
 Playwright browser with `npx playwright install chromium`, or set
 `BROWSER_EXECUTABLE` to the matching installed browser.
