@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch explicitly accepted PI Coffee maintenance requests
+
+[Path]
+PathChanged=/var/lib/pi-coffee/restart/request.json
+Unit=pi-coffee-restart.service
+
+[Install]
+WantedBy=multi-user.target

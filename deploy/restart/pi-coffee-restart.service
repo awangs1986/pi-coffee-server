@@ -1,0 +1,9 @@
+[Unit]
+Description=One bounded PI Coffee Web and Host restart
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/pi-coffee-maintenance/restart-worker.py --config /etc/pi-coffee/restart.json
+TimeoutStartSec=930
+Restart=no
+UMask=0077

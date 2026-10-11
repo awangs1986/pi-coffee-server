@@ -1,0 +1,20 @@
+{
+  "stateDir": "/var/lib/pi-coffee/restart",
+  "healthTimeoutSeconds": 90,
+  "targets": [
+    {
+      "role": "host",
+      "pause": ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "awang@HOST", "/home/awang/.local/bin/pi-coffee-watchdog pause --seconds 900"],
+      "restart": ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "awang@HOST", "systemctl --user restart pi-coffee-workbench-host.service"],
+      "resume": ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "awang@HOST", "/home/awang/.local/bin/pi-coffee-watchdog resume"],
+      "healthUrl": "http://HOST:8790/healthz"
+    },
+    {
+      "role": "web",
+      "pause": ["/usr/local/bin/pi-coffee-watchdog", "pause", "--seconds", "900"],
+      "restart": ["/usr/bin/systemctl", "restart", "pi-coffee-web.service"],
+      "resume": ["/usr/local/bin/pi-coffee-watchdog", "resume"],
+      "healthUrl": "http://127.0.0.1:3000/healthz"
+    }
+  ]
+}

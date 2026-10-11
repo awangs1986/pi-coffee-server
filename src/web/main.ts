@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { parseUserRoutes, type IdentityOptions } from "./identity.js";
 import { WebServer, type TlsMaterial } from "./server.js";
+import {restartOptions} from './restart.js';
 
 const tls = loadTls();
 const server = new WebServer({
+  restart:restartOptions(),
   host: envString("PI_COFFEE_WEB_BIND", "127.0.0.1"),
   port: envNumber("PI_COFFEE_WEB_PORT", 3000),
   hostUrl: envString("PI_COFFEE_HOST_URL", "ws://127.0.0.1:8788/host"),

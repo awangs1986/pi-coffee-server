@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Explicit `/restart`: [contract](spec/service-restart.md), [installation](deployment/service-restart.md), [Server #120](https://github.com/awangs1986/pi-coffee-server/issues/120). Authenticated Web-local maintenance, independent bounded worker and durable scoped receipts; production activation is separate.
+
 - Answered question replay: [protocol](protocol.md#accepted-questions-are-not-replayed--2026-10-11-server-118), [Server #118](https://github.com/awangs1986/pi-coffee-server/issues/118). Native-accepted questions are excluded from reconnect replay, independently of the next model message.
 - Native HTML visualization output: [download contract](spec/task-storage.md#native-html-visualization-download--2026-10-11-server-119), [Server #119](https://github.com/awangs1986/pi-coffee-server/issues/119). Valid local visualize markers become task-authorized HTML downloads; ordinary Chat prompts remain unchanged.
 

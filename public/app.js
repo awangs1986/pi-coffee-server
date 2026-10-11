@@ -28,6 +28,7 @@ import {initTakeoverControls} from "./takeover-controls.js";
 import {initQueueControls} from './queue-controls.js';
 import {initRunners} from "./runners.js";
 import {initSshme,parseSshme,SSHME_COMMAND} from './sshme.js';
+import {createRestartController,isRestart,RESTART_COMMAND} from './restart.js';
 import { initSkills } from "./skills.js";
 // PI Coffee browser shell — controller. The browser is a view: conversations,
 // history, models and running state live on the Host in the User VM. The
@@ -1391,7 +1392,7 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = Boolean(mishuChangingId&&mishuChangingId===activeId) || Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || (streaming && !supports("steer") && !supports("followUp"));
+  ui.send.disabled = !isRestart(ui.prompt.value) && (Boolean(mishuChangingId&&mishuChangingId===activeId) || Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || (streaming && !supports("steer") && !supports("followUp")));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -2433,7 +2434,7 @@ function slashItems() {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
   const mishuItems=currentTask()?.engine==='codex'?[{name:'mishu-setup',invocation:'/mishu-setup',description:'配置 MISHU 联系对象与权限',source:'web'},{name:'mishu-tasks',invocation:'/mishu-tasks',description:'查看 MISHU 跟踪事实',source:'web'},{name:'mishu',invocation:'/mishu',description:'查看秘书身份和当前状态',source:'web'},{name:'mishu-disable',invocation:'/mishu-disable',description:'停用秘书协调',source:'web'}]:[];
-  return [SSHME_COMMAND,...mishuItems,...commands.filter(c=>c.name.toLowerCase()!=='sshme')].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
+  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...commands.filter(c=>!['sshme','restart'].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
@@ -2900,7 +2901,7 @@ ui.prompt.addEventListener('input', () => {
 });
 ui.prompt.addEventListener('keydown', (event) => {
   if(event.isComposing || event.keyCode===229)return;
-  if(takeoverBusy()){event.preventDefault();return;}
+  if(takeoverBusy()&&!isRestart(ui.prompt.value)){event.preventDefault();return;}
   const slashOpen = !ui.slash.classList.contains('hidden');
   if (slashOpen && slashItems().length) {
     const items = slashItems();
@@ -2915,6 +2916,7 @@ ui.prompt.addEventListener('keydown', (event) => {
 ui.mode.addEventListener('change', refreshComposer);
 $('#composer').addEventListener('submit', (event) => {
   event.preventDefault();
+  if(restartControls.handle(ui.prompt.value))return;
   if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return;
   if(queuedPrompt!==null){toast('首条消息正在准备；新输入保留为草稿');return;}
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
@@ -2957,6 +2959,8 @@ $('#composer').addEventListener('submit', (event) => {
   }
   submitPrompt(text || (files.length ? '（附件）' : '（图片）'), images);
 });
+const restartControls=createRestartController({notify:toast,accepted:text=>{if(ui.prompt.value===text){ui.prompt.value='';ui.slash.classList.add('hidden');autoGrow();refreshComposer();}}});
+void restartControls.restore();
 function submitPrompt(text, images) {
   if(mishuCommands?.handle(text)){ui.prompt.value='';autoGrow();return true;}
   if(activeId&&!historyReady)return false;
