@@ -1,4 +1,5 @@
 import {githubSecret} from '../shared/github-credentials.js';
+import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
@@ -25,6 +26,7 @@ export interface TlsMaterial {
 }
 
 export interface WebServerOptions {
+  restart?:RestartOptions;
   releaseDir?:string;
   githubOAuth?:GitHubOAuthOptions;
   host?: string;
@@ -49,6 +51,7 @@ const SUPPORTED_HOST_PROTOCOL = 1;
 
 /** Browser-facing HTTP and WebSocket server. */
 export class WebServer {
+  private readonly restarts?:Restarts;
   private readonly host: string;
   private readonly port: number;
   private readonly hostUrl: string;
@@ -73,6 +76,7 @@ export class WebServer {
   private readonly transferDefaults = new Map<string,string>();
 
   constructor(options: WebServerOptions) {
+    this.restarts=options.restart?new Restarts(options.restart):undefined;
     this.githubOAuth=options.githubOAuth?new GitHubOAuth(options.githubOAuth):undefined;
     this.auth=options.auth;this.defaultUser=options.defaultUser;
     this.allowUnauthenticated = options.allowUnauthenticated ?? false;
@@ -201,6 +205,20 @@ export class WebServer {
     if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || isShellPath(path))) {
       if(path.startsWith('/api/'))json(response,401,{error:"Login required"});
       else {response.writeHead(302,{location:loginDestination('/login',path)});response.end();}return;
+    }
+    if(path === '/api/restart') {
+      try{
+        const session=await this.identity?.authorize(request),principal=this.auth?.principalOf(request);
+        const owner=session?'id:'+session.id:principal?'login:'+principal.user:undefined;
+        if(!owner){json(response,401,{error:'Login required'});return;}
+        if(!['GET','POST'].includes(request.method??'')){json(response,405,{error:'Use GET or POST'});return;}
+        if(!this.restarts){json(response,request.method==='GET'?200:503,{available:false,error:'restart_unconfigured'});return;}
+        if(!this.restarts.allows(owner)){json(response,403,{error:'restart_forbidden'});return;}
+        if(request.method==='GET'){json(response,200,await this.restarts.status(owner,new URL(request.url??'/', 'http://localhost').searchParams.get('id')??undefined));return;}
+        if(!(this.identity?this.identity.originAllowed(request):this.auth!.originAllowed(request))){json(response,403,{error:'Invalid origin'});return;}
+        let input;try{input=await readJson(request,1024,5000);}catch{json(response,400,{error:'invalid_restart_request'});return;}
+        json(response,202,await this.restarts.request(owner,input));
+      }catch(error){json(response,error instanceof RestartError?error.status:503,{error:error instanceof RestartError?error.code:'restart_unavailable'});}return;
     }
     if(path === '/api/client-address') {
       if(this.identity && !await this.identity.authorize(request)) {json(response,401,{error:'Login required'});return;}

@@ -21,6 +21,7 @@ import { RelayServer } from "./relay/server.js";
 import { normalizeUsername, parseAllowedUsers, taskNamespace } from "./shared/identity.js";
 import { GiteaAuth } from "./web/auth.js";
 import { WebServer } from "./web/server.js";
+import {restartOptions} from './web/restart.js';
 
 type Role = "host" | "web" | "relay" | "all";
 
@@ -228,6 +229,7 @@ async function run(selectedRole: Role): Promise<void> {
   const githubOAuthSecret=process.env.PI_COFFEE_GITHUB_CLIENT_SECRET?.trim();
   if(wantWeb&&Boolean(githubOAuthClient)!==Boolean(githubOAuthSecret))throw new Error('Configure both GitHub OAuth client ID and secret');
   const web = !wantWeb ? undefined : new WebServer({
+    restart:restartOptions(),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     ...(githubOAuthClient&&githubOAuthSecret?{githubOAuth:{clientId:githubOAuthClient,clientSecret:githubOAuthSecret,publicUrl:envString('PI_COFFEE_PUBLIC_URL','')}}:{}),
     host: envString("PI_COFFEE_WEB_BIND", "127.0.0.1"),

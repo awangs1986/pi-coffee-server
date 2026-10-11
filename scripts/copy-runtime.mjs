@@ -14,3 +14,6 @@ await cp(resolve(root, 'src/host/github-token.mjs'), resolve(root, 'dist/src/hos
 
 await mkdir(resolve(root, 'dist/src/shared'), { recursive: true });
 await cp(resolve(root, 'src/shared/release-version.mjs'), resolve(root, 'dist/src/shared/release-version.mjs'));
+await mkdir(resolve(root,'dist/maintenance'),{recursive:true});
+await cp(resolve(root,'scripts/restart-worker.py'),resolve(root,'dist/maintenance/restart-worker.py'));
+await cp(resolve(root,'deploy/restart'),resolve(root,'dist/maintenance/restart'),{recursive:true});
