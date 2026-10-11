@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU 产品源码和功能主票：[独立仓库职责与包接口](development/mishu-source-ownership.md)。秘书体验规格与研究已迁回 MISHU，旧链接保留指针。
+
 - Window wake after idle connection loss: [current recovery contract](spec/conversation-switching.md#window-wake-recovery-2026-10-11-server-117), [Server #117](https://github.com/awangs1986/pi-coffee-server/issues/117). Focus/page restoration reattaches the selected conversation without navigation; synthetic timer-throttling evidence does not identify the original production disconnect trigger.
 
 - MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Preserves Codex/Luna native coordination and tool-only readiness; source merge does not activate production.

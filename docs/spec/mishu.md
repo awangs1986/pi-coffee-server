@@ -17,6 +17,17 @@ isolation and original-report output recovery remain unavailable for Codex;
 automatic reminders and historical grant recovery are not claimed. No Pi fallback
 or target capability parity is implied. See C01–C12 and [candidate evidence](../development/mishu-codex-source.md).
 
+## Secretary experience target (2026-10-11)
+
+The accepted [secretary experience increment](mishu-secretary-experience.md) specifies
+transparent memory (M08/M09), nonblocking ordinary clarifications, bounded relevant
+coordination, evidence lookup and auxiliary-model usage accounting. E01–E05 and
+A36–A45 are pending requirements, not current runtime actions or deployment claims.
+Existing tracking/authorization remains; native approvals, per-engine capabilities
+and Codex report restrictions are preserved. The independent plugin SPEC owns the
+matching product requirements; the linked MISHU specification owns Host/UI acceptance requirements, while this
+repository implements the Host/Web/native integration.
+
 ## User flow
 
 1. Open a Pi Chat, click the coffee icon, and check **MISHU 秘书（当前对话）**.
