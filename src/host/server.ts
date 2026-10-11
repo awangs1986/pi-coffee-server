@@ -1132,11 +1132,14 @@ class HostSocket implements SessionSink {
         newestCursor: result.resync.newestCursor,
       });
     }
-    for (const replay of result.replay) this.send(replay);
+    // Native acceptance may settle while the asynchronous opening snapshot is
+    // returning. Recheck the question state immediately before sending replay.
+    const replay = result.session.filterReplay(result.replay);
+    for (const frame of replay) this.send(frame);
     if(result.session.queueFrame.items.length)this.send(result.session.queueFrame);
     // A dialog Pi is still blocked on must reach this browser even if the
     // request itself predates the replay window (e.g. after a reload).
-    const replayed = new Set(result.replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
+    const replayed = new Set(replay.map((frame) => (frame.type === "event" ? frame.cursor : -1)));
     for (const pending of result.session.pendingUiRequests) {
       if (pending.type === "event" && !replayed.has(pending.cursor)) this.send(pending);
     }

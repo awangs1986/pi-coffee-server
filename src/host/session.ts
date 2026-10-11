@@ -186,7 +186,7 @@ export class HostSession {
       : undefined;
     const replay = resync
       ? []
-      : this.events.filter((frame) => frame.type === "event" && frame.cursor > replayFrom);
+      : this.filterReplay(this.events.filter((frame) => frame.type === "event" && frame.cursor > replayFrom));
     return { session: this, history, completionId, replay, ...(resync === undefined ? {} : { resync }) };
   }
 
@@ -358,9 +358,10 @@ export class HostSession {
 
   /** Answer a pending extension dialog; unknown ids are ignored (already answered or timed out). */
   async respondUi(response: UiResponse): Promise<boolean> {
-    if (!this.pendingUi.has(response.id) || this.answeringUi.has(response.id)) return false;
+    const answered = this.pendingUi.get(response.id);
+    if (!answered || this.answeringUi.has(response.id)) return false;
     this.answeringUi.add(response.id);
-    try {await this.ready().respondUi(response);this.pendingUi.delete(response.id);this.onEvent?.(this.id,{type:"sync_pending",requests:this.pendingUiRequests.map(frame=>({id:frame.type==="event"&&isRecord(frame.event)?String(frame.event.id):""}))});this.onLifecycle?.(this);return true;}
+    try {await this.ready().respondUi(response);if(this.pendingUi.get(response.id)===answered)this.pendingUi.delete(response.id);this.onEvent?.(this.id,{type:"sync_pending",requests:this.pendingUiRequests.map(frame=>({id:frame.type==="event"&&isRecord(frame.event)?String(frame.event.id):""}))});this.onLifecycle?.(this);return true;}
     finally {this.answeringUi.delete(response.id);}
 
   }
@@ -368,6 +369,17 @@ export class HostSession {
   /** Dialogs Pi is still blocked on; re-sent to every browser that opens the Session. */
   get pendingUiRequests(): ServerFrame[] {
     return [...this.pendingUi.values()];
+  }
+
+  /** An old question is a historical event, not a new request for user input. */
+  filterReplay(frames: ServerFrame[]): ServerFrame[] {
+    return frames.filter(frame => {
+      if (frame.type !== "event" || !isRecord(frame.event) ||
+          !["extension_ui_request", "native_request"].includes(String(frame.event.type)) ||
+          !isDialogMethod(frame.event.method) || typeof frame.event.id !== "string") return true;
+      // Match the actual pending occurrence, including when an extension reuses an id.
+      return this.pendingUi.get(frame.event.id) === frame;
+    });
   }
 
   backgroundState():Promise<{known:boolean;active:number}> {return this.ready().backgroundState?.() ?? Promise.resolve({known:false,active:0});}

@@ -142,6 +142,30 @@ Live diagnosis separately confirmed a real authorized binary download succeeds
 and the incorrectly bound preview returns 413; user file contents are not stored
 in repository evidence.
 
+## Native HTML visualization download — 2026-10-11, Server #119
+
+A completed rich assistant reply containing the native visualize marker with a
+valid local `.html` path displays an explicit “下载 HTML” file link. The marker is
+a file reference; the Browser binds it to the existing selected Conversation's
+`workspace-download` grant, with existing renewal and missing-grant behavior.
+The Host's user/task/root, symlink and credential checks remain authoritative.
+Generated HTML is delivered as an attachment. Its script content is not executed
+in the parent application. Inline HTML preview is outside this change.
+
+The Markdown inline tokenizer preserves fenced and inline code examples. Malformed
+JSON, remote/protocol paths, non-HTML references, control characters and oversized
+references are not converted. Bounded plain-text/cache previews retain their existing
+inert behavior until rich authoritative rendering. Ordinary Markdown downloads and
+embedded image previews retain their existing routes. No generated file contents,
+system instruction or Work guidance is injected into native Chat context.
+
+Renderer/binder tests and `scripts/probe-attachment-download.mjs` verify marker
+recognition, actual Chromium HTML download bytes, unchanged binary/image behavior,
+and no HTML execution in the parent page. Production diagnosis verified that the
+reported task already had its HTML and a valid scoped HTTP 200 download; the marker
+was displayed literally. No private transcript/file content is saved in source.
+Source verification and compatible Browser activation are separate evidence.
+
 ## Conversation-scoped attachment drafts (2026-10-09)
 
 [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104)
