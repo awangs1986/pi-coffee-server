@@ -1,8 +1,9 @@
+import {randomId} from './ids.js';
 export const RESTART_COMMAND={name:'restart',source:'web',description:'重启 Web 和 Host（会停止运行中的 Agent）'};
 export const isRestart=text=>/^\/restart(?:\s|$)/i.test(String(text).trim());
 const key='coffee-maintenance-restart';
 const messages={restart_forbidden:'只有配置的运维账号可以重启服务',restart_unconfigured:'管理员尚未配置重启服务',restart_busy:'已有重启操作正在执行',restart_cooldown:'刚执行过重启，请稍后再试'};
-export function createRestartController({notify,accepted=()=>{},request=(...args)=>fetch(...args),storage=globalThis.sessionStorage,confirm=message=>globalThis.confirm(message),newId=()=>crypto.randomUUID(),wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
+export function createRestartController({notify,accepted=()=>{},request=(...args)=>fetch(...args),storage=globalThis.sessionStorage,confirm=message=>globalThis.confirm(message),newId=randomId,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
  let pending=false,work=Promise.resolve();
  const remember=id=>{try{id?storage.setItem(key,id):storage.removeItem(key);}catch{}};
  async function status(options,id){const response=await request('/api/restart'+(id?'?id='+encodeURIComponent(id):''),{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(8000),...options});

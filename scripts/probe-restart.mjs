@@ -9,7 +9,7 @@ try{
  const page=await browser.newPage();let approve=false,posts=0,operation=null;const errors=[];
  page.on('pageerror',error=>errors.push(error.message));
  page.on('dialog',async dialog=>{assert.match(dialog.message(),/停止所有正在运行的 Agent/);approve?await dialog.accept():await dialog.dismiss();});
- await page.addInitScript(()=>{window.agentInputs=[];const original=WebSocket.prototype.send;WebSocket.prototype.send=function(value){const frame=JSON.parse(value);if(['prompt','steer','follow_up'].includes(frame.type))window.agentInputs.push(frame);return original.call(this,value);};});
+ await page.addInitScript(()=>{Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true});window.agentInputs=[];const original=WebSocket.prototype.send;WebSocket.prototype.send=function(value){const frame=JSON.parse(value);if(['prompt','steer','follow_up'].includes(frame.type))window.agentInputs.push(frame);return original.call(this,value);};});
  await page.route('**/api/restart*',async route=>{
   if(route.request().method()==='POST'){posts++;const body=route.request().postDataJSON();assert.equal(body.confirmed,true);operation={id:body.id,phase:'scheduled'};await route.fulfill({status:202,json:{operation}});}
   else await route.fulfill({json:{available:true,busy:operation?.phase==='scheduled',operation}});
