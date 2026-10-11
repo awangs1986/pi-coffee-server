@@ -20,3 +20,12 @@ it('keeps the operation ID for a new login instead of repeatedly treating 401 as
  const controller=createRestartController({request,storage,notify:(text:string)=>notices.push(text),wait:async()=>{throw Error('Must not poll again before login');}});
  await controller.restore();expect(request).toHaveBeenCalledTimes(1);expect(values.get('coffee-maintenance-restart')).toBe('id');expect(notices[0]).toContain('重新登录');
 });
+it('submits on LAN HTTP where crypto.randomUUID is unavailable',async()=>{
+ const getRandomValues=globalThis.crypto.getRandomValues.bind(globalThis.crypto);vi.stubGlobal('crypto',{getRandomValues});
+ try{
+  let body:{id:string;confirmed:boolean}|undefined;
+  const request=async(_path:string,options?:RequestInit)=>{if(options?.method==='POST'){body=JSON.parse(String(options.body));return Response.json({operation:{id:body!.id,phase:'scheduled'}},{status:202});}return Response.json({available:true,busy:false,operation:body?{id:body.id,phase:'succeeded'}:null});};
+  const controller=createRestartController({request,storage:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}},confirm:()=>true,notify:()=>{},wait:async()=>{}});
+  controller.handle('/restart');await controller.settled();expect(body).toMatchObject({confirmed:true,id:expect.stringMatching(/^[0-9a-f-]{36}$/)});
+ }finally{vi.unstubAllGlobals();}
+});
