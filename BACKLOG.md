@@ -1,3 +1,5 @@
+> MISHU 产品规格和功能主票归 [pi-coffee-mishu](http://gitea/awangs/pi-coffee-mishu)。长期秘书体验 E01–E05/A36–A45 见[迁移指针](docs/spec/mishu-secretary-experience.md)；Server 保留 Host/Web/native 集成，参见[源码职责](docs/development/mishu-source-ownership.md)。
+
 > Codex Luna MISHU source candidate (2026-10-09): [contract](docs/spec/mishu-codex-secretary.md), [acceptance](docs/development/mishu-codex-source.md). Native MCP foreground coordination and explicit Browser setup reuse Host authorization; tool-free report/recovery and automatic reminders remain unavailable. Source, native acceptance and production activation are separate.
 
 > Repository-free Codex Chat (2026-10-08): [Server #98](https://github.com/awangs1986/pi-coffee-server/issues/98), [current contract](docs/spec/native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98). Pi remains the default; Codex uses native model settings and scoped directories without a repository. Chat engines remain fixed and MISHU remains opt-in; the Oct9 Codex source candidate is separately capability-gated. Source implementation and deployment are separate.

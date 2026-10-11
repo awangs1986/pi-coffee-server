@@ -1,50 +1,7 @@
-/**
- * Tier-1 MISHU watch rules. Rules are declarative data: fixed matchers, fixed
- * actions and whitelisted template fields. Nothing here evaluates expressions,
- * calls a model or reads conversation content.
- */
-export const WATCH_KINDS=['run.started','run.completed','run.errored','run.interrupted','run.stuck','approval.opened','approval.closed','queue.depth','task.truncated','task.settled','tracking.error'] as const;
-export type WatchKind=typeof WATCH_KINDS[number];
-export const PANEL_KINDS=['approval','error','stuck','completed','truncated','backlog','verify','tracking_error','config_invalid'] as const;
-export type PanelKind=typeof PANEL_KINDS[number];
-export const CONV_STATES=['idle','running','waiting','errored','stuck','unknown'] as const;
-export type ConvState=typeof CONV_STATES[number];
-export const NOTICE_CHANNELS=['web','wechat'] as const;
-export type NoticeChannel=typeof NOTICE_CHANNELS[number];
-export const TEMPLATE_FIELDS=['title','approvalTitle','error','minutes','link','count','state'] as const;
-
-export interface RuleWhen {state?:ConvState[];engine?:string[];noProgressMin?:number;queuedAtLeast?:number;conv?:string[]}
-export interface Rule {
- id:string;
- enabled?:boolean;
- on:WatchKind[];
- when?:RuleWhen;
- panel?:{kind:PanelKind;priority:number;autoExpireMin?:number};
- notify?:{channels:NoticeChannel[];template:string;cooldownMin?:number;batchSec?:number};
- /** Only a hint shown on the panel item; a rule never wakes a model by itself. */
- escalate?:{mode:'report'};
-}
-export interface WatchConfig {
- version:1;
- scope:{watch:'all'|'selected';exclude:string[]};
- quietHours?:{from:string;to:string;allow:WatchKind[]};
- rules:Rule[];
- quick:{enabled:boolean;maxLength:number};
- limits:{webPerHour:number;wechatPerHour:number};
-}
-
-export const DEFAULT_RULES:Rule[]=[
- {id:'approval',on:['approval.opened'],panel:{kind:'approval',priority:1},notify:{channels:['web','wechat'],template:'⏳ {title} 等你确认：{approvalTitle} {link}',cooldownMin:10}},
- {id:'error',on:['run.errored'],panel:{kind:'error',priority:2},notify:{channels:['web','wechat'],template:'❌ {title} 出错：{error} {link}',cooldownMin:15}},
- {id:'interrupted',on:['run.interrupted'],panel:{kind:'error',priority:2},notify:{channels:['web'],template:'⚠️ {title} 运行中断，未自动重试 {link}',cooldownMin:15}},
- {id:'stuck',on:['run.stuck'],when:{noProgressMin:20},panel:{kind:'stuck',priority:2},notify:{channels:['web'],template:'🐢 {title} 已 {minutes} 分钟无进展 {link}',cooldownMin:30}},
- {id:'done',on:['run.completed'],panel:{kind:'completed',priority:4,autoExpireMin:720},notify:{channels:['web'],template:'✅ {title} 已完成 {link}',batchSec:60}},
- {id:'truncated',on:['task.truncated'],panel:{kind:'truncated',priority:3}},
- {id:'backlog',on:['queue.depth'],when:{queuedAtLeast:3},panel:{kind:'backlog',priority:3}},
- {id:'verify',on:['task.settled'],panel:{kind:'verify',priority:2},escalate:{mode:'report'}},
- {id:'tracking',on:['tracking.error'],panel:{kind:'tracking_error',priority:3}},
-];
-export const DEFAULT_WATCH_CONFIG:WatchConfig={version:1,scope:{watch:'all',exclude:[]},rules:DEFAULT_RULES,quick:{enabled:true,maxLength:12},limits:{webPerHour:60,wechatPerHour:20}};
+// MISHU owns declarative defaults; Host validates and enforces user configuration.
+import {WATCH_KINDS,PANEL_KINDS,CONV_STATES,NOTICE_CHANNELS,TEMPLATE_FIELDS,DEFAULT_RULES,DEFAULT_WATCH_CONFIG,templateValue,type WatchKind,type PanelKind,type ConvState,type NoticeChannel,type RuleWhen,type Rule,type WatchConfig} from 'pi-coffee-mishu/host-policy';
+export {WATCH_KINDS,PANEL_KINDS,CONV_STATES,NOTICE_CHANNELS,TEMPLATE_FIELDS,DEFAULT_RULES,DEFAULT_WATCH_CONFIG,templateValue} from 'pi-coffee-mishu/host-policy';
+export type {WatchKind,PanelKind,ConvState,NoticeChannel,RuleWhen,Rule,WatchConfig} from 'pi-coffee-mishu/host-policy';
 
 export class RulesError extends Error {}
 type Row=Record<string,unknown>;
@@ -132,12 +89,6 @@ export function activeRules(config:WatchConfig):Rule[]{return config.rules.filte
 export function stuckThresholdMin(config:WatchConfig):number|undefined{
  const values=activeRules(config).filter(r=>r.on.includes('run.stuck')).map(r=>r.when?.noProgressMin).filter((v):v is number=>v!==undefined);
  return values.length?Math.min(...values):undefined;
-}
-/** Single-line, clipped, control-free template value. */
-export function templateValue(value:unknown,max:number):string{
- // eslint-disable-next-line no-control-regex
- const text=String(value??'').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g,' ').replace(/\s+/g,' ').trim();
- return text.length>max?text.slice(0,max-1)+'…':text;
 }
 export function renderTemplate(template:string,fields:Partial<Record<typeof TEMPLATE_FIELDS[number],unknown>>):string{
  const text=template.replace(/\{([A-Za-z]+)\}/g,(_all,name:string)=>templateValue((fields as Record<string,unknown>)[name],name==='title'?60:name==='link'?300:120));

@@ -1,11 +1,12 @@
 // Native stdio MCP bridge. The capability is bound to one scoped foreground
 // admission by Host; arguments can never choose the source user/thread/run.
+import {mishuToolDefinition} from 'pi-coffee-mishu/host-policy';
 import {createInterface} from 'node:readline';
 import {setTimeout as delay} from 'node:timers/promises';
 const sent=new Set();let inboxBudget=12000;
 const endpoint=process.env.PI_COFFEE_MISHU_URL,token=process.env.PI_COFFEE_MISHU_TOKEN;
 const instructions=process.env.PI_COFFEE_MISHU_CONTEXT??'';
-const tool={name:'mishu',description:instructions+'\nContact the user-configured conversations and query receipts or tracked tasks. First inspect status/directory. Send requires exact targetId,binding, stable messageId, kind (information-only or authorized-execution), text; execution additionally requires authorizationQuote: exact words from the current or earlier same-task user instruction; never ask to repeat existing authorization. inbox reads receipts. tasks uses version:1, operation (list,get,register,update,stop,observe,dispatch) and its exact revision/task fields. Setup, grants, reminders, history recovery and model reports are exclusively user controls.',inputSchema:{type:'object',properties:{action:{type:'string',enum:['status','directory','send','inbox','tasks','overview','events','peek','panel','queue']},operation:{type:'string'},version:{type:'integer'},targetId:{type:'string'},binding:{type:'string'},messageId:{type:'string'},kind:{type:'string',enum:['information-only','authorized-execution']},text:{type:'string'},authorizationQuote:{type:'string',maxLength:200},op:{type:'string'},id:{type:'string'},revision:{type:'integer'},to:{type:'string'},n:{type:'integer'},after:{type:'integer'},taskId:{type:'string'},operationId:{type:'string'},expectedRevision:{type:'integer'},purpose:{type:'string'},scope:{type:'string'},summary:{type:'string'},nextStep:{type:'string'},offset:{type:'integer'},limit:{type:'integer'},runId:{type:'string'},retryOf:{type:'string'}},required:['action'],additionalProperties:true}};
+const tool=mishuToolDefinition(instructions);
 async function dispatch(message){
  if(message.method==='initialize')return {protocolVersion:message.params?.protocolVersion??'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'pi-coffee-mishu',version:'1'},instructions};
  if(message.method==='tools/list')return {tools:[tool]};
