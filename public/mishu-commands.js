@@ -12,15 +12,37 @@ export function initMishuCommands({context,request,dialogs,toast,onOpen=()=>{},o
   const {body,footer}=shell('MISHU 设置');body.textContent='正在读取联系对象…';cancel(footer);const occurrence=epoch;
   try{
    const data=await request({action:'setup_open',id:captured.id});if(epoch!==occurrence)return;if(!current(captured))throw Error('当前对话已改变，请重新打开设置');
-   body.replaceChildren(node('p','选择已有对话。新对象限最近 72 小时；有效的旧对象可继续保留。'));const rows=new Map([...(data.conversations??[]),...(data.configuredTargets??[])].map(row=>[row.id,row]));const retained=new Set((data.configuredTargets??[]).map(row=>row.id));const selected=[];
-   for(const row of rows.values()){const label=node('label',null,'mishu-contact'),input=node('input');input.type='checkbox';input.checked=retained.has(row.id);input.setAttribute('aria-label',row.title);label.append(input,node('span',`${row.title} · ${row.engine} · ${row.project}`));body.append(label);selected.push({row,input});}
+   body.replaceChildren(node('p','默认显示最近 72 小时的对话；更早的对话可按完整 ID 添加。有效的已选对象继续保留。'));
+   const rows=new Map([...(data.conversations??[]),...(data.configuredTargets??[])].map(row=>[row.id,row]));const retained=new Set((data.configuredTargets??[]).map(row=>row.id));const selected=[];
+   const lookup=node('input');lookup.type='text';lookup.maxLength=128;lookup.setAttribute('aria-label','完整对话 ID');lookup.placeholder='粘贴完整对话 ID';lookup.style.width='100%';
+   const add=node('button','按 ID 添加');add.type='button';const lookupStatus=node('p');lookupStatus.setAttribute('role','status');const contacts=node('div');body.append(lookup,add,lookupStatus,contacts);
+   const append=(row,checked)=>{const label=node('label',null,'mishu-contact'),input=node('input');input.type='checkbox';input.checked=checked;input.setAttribute('aria-label',row.title);label.append(input,node('span',`${row.title} · ${row.engine} · ${row.project} · ${row.id}`));contacts.append(label);const item={row,input};selected.push(item);return item;};
+   for(const row of rows.values())append(row,retained.has(row.id));
+   let selecting=true,looking=false;
    const permission=node('select');permission.setAttribute('aria-label','消息权限');for(const [value,title] of [['information','仅信息通知'],['execution','允许授权执行']]){const option=node('option',title);option.value=value;permission.append(option);}permission.value='information';body.append(node('p','消息权限'),permission);
    const all=node('input');all.type='checkbox';all.checked=data.status?.manager?.viewAll===true;all.setAttribute('aria-label','查看全部对话');const allLabel=node('label');allLabel.append(all,node('span','查看全部对话（只读概况与摘录）'));body.append(allLabel);
    const next=node('button','完成选择');next.type='button';footer.prepend(next);
+   add.onclick=async()=>{
+    const targetId=lookup.value.trim();if(!targetId||looking)return;
+    if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}
+    looking=true;add.disabled=true;next.disabled=true;lookupStatus.textContent='正在查找…';
+    try{
+     const result=await request({action:'setup_lookup',id:captured.id,ticket:data.ticket,targetId});
+     if(epoch!==occurrence||!selecting)return;
+     if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}
+     const row=result.conversation;if(!row||row.id!==targetId){lookupStatus.textContent='未找到可添加的对话，请检查完整 ID、归档状态和所属账号。';return;}
+     const existing=selected.find(item=>item.row.id===row.id);
+     if(existing&&existing.row.binding!==row.binding){lookupStatus.textContent='对话绑定已改变，请重新打开设置。';return;}
+     if(!existing?.input.checked&&selected.filter(item=>item.input.checked).length>=20){lookupStatus.textContent='最多选择 20 个对话。';return;}
+     if(existing)existing.input.checked=true;else append(row,true);
+     lookupStatus.textContent=`已选中 ${row.title}，完成选择并确认后才会保存。`;lookup.value='';
+    }catch(error){if(epoch===occurrence&&selecting)lookupStatus.textContent=error.message;}
+    finally{looking=false;if(epoch===occurrence&&selecting){add.disabled=false;next.disabled=false;}}
+   };
    next.onclick=()=>{
     if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}
     const targets=selected.filter(x=>x.input.checked).map(x=>({id:x.row.id,binding:x.row.binding}));if(!targets.length||targets.length>20){toast('请选择 1–20 个联系对象');return;}
-    const allowInstructions=permission.value==='execution',viewAll=all.checked;body.replaceChildren(node('p',selected.filter(x=>x.input.checked).map(x=>x.row.title).join('\n')),node('p',allowInstructions?'允许按你的明确指令转达执行任务。目标原生权限问题仍由你处理。':'仅信息通知，不要求目标修改或开工。'),node('p',viewAll?'允许查看全部对话概况与摘录；不能操作未选择的对话。':'仅查看联系对象。'),node('p','自动提醒当前不可用；你可以回来询问进度和回执。'));next.textContent='确认启用';
+    selecting=false;const allowInstructions=permission.value==='execution',viewAll=all.checked;body.replaceChildren(node('p',selected.filter(x=>x.input.checked).map(x=>x.row.title).join('\n')),node('p',allowInstructions?'允许按你的明确指令转达执行任务。目标原生权限问题仍由你处理。':'仅信息通知，不要求目标修改或开工。'),node('p',viewAll?'允许查看全部对话概况与摘录；不能操作未选择的对话。':'仅查看联系对象。'),node('p','自动提醒当前不可用；你可以回来询问进度和回执。'));next.textContent='确认启用';
     next.onclick=async()=>{
      if(!current(captured)){toast('当前对话已改变，请重新打开设置');close();return;}for(const b of footer.querySelectorAll('button'))b.disabled=true;
      try{await request({action:'setup_confirm',id:captured.id,ticket:data.ticket,targets,allowInstructions,viewAll});if(epoch!==occurrence)return;close();toast('MISHU 已启用');onChanged(captured.id);}

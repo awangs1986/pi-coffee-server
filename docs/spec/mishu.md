@@ -34,12 +34,13 @@ repository implements the Host/Web/native integration.
    The idle Chat reconnects with the installed plugin; other tasks continue.
    The Chat recognizes its MISHU secretary role even before setup and explains
    that coordination is disabled. Selection does not authorize cross-conversation access.
-2. Send `/mishu-setup`. The directory offers only unarchived conversations with
-   activity in the last 72 hours, newest first. Select up to 20 exact target conversations, finish the
+2. Send `/mishu-setup`. The default directory shows unarchived conversations with
+   activity in the last 72 hours, newest first. The window filters presentation only:
+   an exact conversation ID can resolve and select an older available target. Select up to 20 exact target conversations, finish the
    selection, choose information-only or authorized-execution capability, and
    explicitly confirm. Cancellation preserves existing settings.
    Reopening setup prechecks still-valid prior selections so contacts can be added
-   or removed incrementally. New contacts remain subject to the 72-hour window;
+   or removed incrementally. New contacts are not restricted by age;
    previously confirmed contacts can remain selected after aging beyond it.
    Archived/unavailable targets or changed source/target bindings are not prechecked.
    Each edited set still requires explicit message-mode choice and final confirmation.
@@ -180,8 +181,14 @@ the 72-hour and lifecycle filters and newest-first ordering. Host records durabl
 `lastActivityAt` when a conversation turn starts; existing records fall back to
 their last turn snapshot, native summary update time, then creation time if no
 activity metadata exists. Renaming a record with tracked turn activity does not
-make an old conversation recent. The time window limits new setup selection;
+make an old conversation recent. The time window limits default directory presentation only;
 previously approved target bindings do not silently change as the clock advances.
+`directory` with an explicit `targetId` resolves at most one eligible exact match without
+an age cutoff, without starting native execution or changing contact permissions.
+The user can add that result in Pi or Codex setup, including when the default list is
+empty. Final setup validates the account, lifecycle and exact current binding, not
+recency or the first 200 directory rows. Codex `setup_lookup` requires the existing
+source-bound, expiring setup ticket; cancellation/late lookup never saves grants.
 `directory.configuredTargets` separately returns at most 20 retained entries whose
 saved source/target bindings are still current and whose targets remain available.
 Only these entries may bypass the recency window during incremental setup; arbitrary

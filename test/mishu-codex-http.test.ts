@@ -137,3 +137,46 @@ it('starts Codex secretary turns when optional MCP resource inventory is unavail
  const result=await channel.prompt('mishu-call:'+JSON.stringify({action:'status'}));
  expect(result.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(false);
 });
+
+it('allows an explicitly selected older contact even when it is outside the default 72-hour list',async()=>{
+ const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
+ const channel=await b.open(source.id);await channel.prompt('Synthetic source for old-contact setup');
+ expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);
+ const before=await(await b.call({action:'setup_open',id:source.id})).json(),row=before.conversations.find((r:any)=>r.id===target.id);
+ (await b.workspaces.lookup(target.id))!.lastActivityAt=new Date(Date.now()-96*3600000).toISOString();
+ const after=await(await b.call({action:'setup_open',id:source.id})).json();expect(after.conversations.some((r:any)=>r.id===target.id)).toBe(false);
+ expect((await b.call({action:'setup_lookup',id:source.id,ticket:'wrong',targetId:target.id})).status).toBe(409);
+ expect((await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id},'other')).status).toBe(409);
+ const found=await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id})).json();expect(found.conversation).toMatchObject({id:row.id,binding:row.binding});
+ expect((await(await b.call({action:'status',id:source.id})).json()).targets).toEqual([]);
+ expect(await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:source.id})).json()).toEqual({conversation:null});
+ const archived=await b.workspaces.createChatConversation();await b.workspaces.archive(archived.id,true);
+ expect(await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:archived.id})).json()).toEqual({conversation:null});
+ const response=await b.call({action:'setup_confirm',id:source.id,ticket:after.ticket,targets:[{id:row.id,binding:row.binding}],allowInstructions:false});
+ expect(response.status,await response.clone().text()).toBe(200);
+ expect((await(await b.call({action:'status',id:source.id})).json()).targets.map((r:any)=>r.id)).toEqual([target.id]);
+ expect((await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id})).status).toBe(409);
+ const again=await(await b.call({action:'setup_open',id:source.id})).json();await b.workspaces.archive(target.id,true);
+ expect((await b.call({action:'setup_confirm',id:source.id,ticket:again.ticket,targets:[row],allowInstructions:false})).status).toBe(409);
+},15000);
+
+it('never revives an old setup lookup or confirmation after secretary revocation',async()=>{
+ const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex');await b.workspaces.createChatConversation();
+ const channel=await b.open(source.id);await channel.prompt('Synthetic source for revoked setup');
+ await b.call({action:'select',id:source.id,selected:true});
+ for(const revoke of ['deselect','disable']){
+  const setup=await(await b.call({action:'setup_open',id:source.id})).json(),row=setup.conversations[0];
+  if(revoke==='deselect'){await b.call({action:'select',id:source.id,selected:false});await b.call({action:'select',id:source.id,selected:true});}
+  else await b.call({action:'inspect',id:source.id,operation:'disable'});
+  expect((await b.call({action:'setup_lookup',id:source.id,ticket:setup.ticket,targetId:row.id})).status).toBe(409);
+  expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[row],allowInstructions:true})).status).toBe(409);
+ }
+ const pending=await(await b.call({action:'setup_open',id:source.id})).json(),row=pending.conversations[0];
+ const originalList=b.workspaces.list.bind(b.workspaces);let release!:()=>void,arrived!:()=>void;
+ const started=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);let hold=true;
+ b.workspaces.list=async()=>{if(hold){hold=false;arrived();await gate;}return originalList();};
+ const lookup=b.call({action:'setup_lookup',id:source.id,ticket:pending.ticket,targetId:row.id});
+ await started;await b.call({action:'inspect',id:source.id,operation:'disable'});release();
+ expect((await lookup).status).toBe(409);
+
+},15000);

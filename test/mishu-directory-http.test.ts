@@ -24,8 +24,10 @@ it('offers only recent unarchived conversations, using real turn activity rather
  try{
   await host.start();await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'select',id:source.id,selected:true})});
   const runtime=await host.mishuRuntime(undefined,source.id);
-  const directory=async()=>await (await fetch(runtime.env.PI_COFFEE_MISHU_URL,{method:'POST',headers:{authorization:'Bearer '+runtime.env.PI_COFFEE_MISHU_TOKEN,'content-type':'application/json'},body:JSON.stringify({action:'directory'})})).json();
+  const directory=async(targetId?:string)=>await (await fetch(runtime.env.PI_COFFEE_MISHU_URL,{method:'POST',headers:{authorization:'Bearer '+runtime.env.PI_COFFEE_MISHU_TOKEN,'content-type':'application/json'},body:JSON.stringify({action:'directory',...(targetId?{targetId}:{})})})).json();
   expect((await directory()).conversations.map((c:any)=>c.id)).toEqual([recent.id]);
+  expect((await directory(old.id)).conversations.map((c:any)=>c.id)).toEqual([old.id]);
+  expect((await directory(archived.id)).conversations).toEqual([]);
   await workspaces.markRun(activeOld.id,'running');await workspaces.markRun(activeOld.id,'idle');
   expect((await directory()).conversations.map((c:any)=>c.id)).toEqual([activeOld.id,recent.id]);
   const restored=new Workspaces(store);expect(Date.parse((await restored.lookup(activeOld.id))!.lastActivityAt!)).toBeGreaterThan(now-1000);

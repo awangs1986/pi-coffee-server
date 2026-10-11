@@ -266,6 +266,7 @@ export class HostServer {
           result=await slot.mishu.select(input.id,input.selected);
           for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
         }else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
+        else if(input.action==='setup_lookup')result=await slot.mishu.browserLookup(input.id,input);
         else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
         else if(input.action==='inspect'&&['status','tasks','disable'].includes(String(input.operation)))result=await slot.mishu.browserInspect(input.id,String(input.operation));
         else throw Error('Use /mishu-setup explicitly inside the selected conversation');

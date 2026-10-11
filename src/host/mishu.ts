@@ -69,6 +69,7 @@ export class MishuCoordinator {
  private codexTokens=new Map<string,{id:string;requestId:string;binding:string;nativeTurn?:string}>();
  private codexInvocation=new AsyncLocalStorage<string>();
  private setupTickets=new Map<string,{id:string;binding:string;expires:number}>();
+ private revokeSetupTickets(id:string){for(const [key,permit] of this.setupTickets)if(permit.id===id)this.setupTickets.delete(key);this.setupWindows.delete(id);}
  private revokeCodexTokens(id:string){for(const [token,value] of this.codexTokens)if(value.id===id){this.codexTokens.delete(token);this.tokens.delete(token);}}
  private async checkCodexInvocation(){
   const token=this.codexInvocation.getStore();if(!token)return;
@@ -98,23 +99,35 @@ export class MishuCoordinator {
  }
  async browserInspect(id:string,action:string){
   const task=await this.source(id);if(task.engine!=='codex')throw Error('Use native Pi controls for this source');
-  if(action==='disable')return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;this.revokeCodexTokens(id);this.revokeQuick(id);this.grants.revokeChat(id);c.userInstructions=[];if(c.manager)c.manager.viewAll=false;}return {enabled:false};},true,true);
+  if(action==='disable')return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;this.revokeCodexTokens(id);this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);c.userInstructions=[];if(c.manager)c.manager.viewAll=false;}return {enabled:false};},true,true);
   if(action==='tasks'){const status=await this.status(id);if(!status.enabled)throw Error('Run /mishu-setup first');return this.tasks(id,{version:1,operation:'list',limit:50,offset:0});}
   return this.status(id);
  }
  async browserSetup(id:string){
   const task=await this.source(id);if(task.engine!=='codex')throw Error('Pi setup uses the native /mishu-setup command');
+  const setupEpoch=this.quickEpoch.get(id)??0,sourceBinding=binding(task);
   const status=await this.status(id);if(!status.selected)throw Error('Select MISHU first');
   if(this.registry?.get(id)?.isBusy||this.locks.has(id))throw Error('Wait for this conversation to finish');
   const directory=await this.directory(id),ticket=randomBytes(32).toString('hex');
+  const currentBinding=binding(await this.source(id));
+  if((this.quickEpoch.get(id)??0)!==setupEpoch||currentBinding!==sourceBinding)throw Error('Setup changed; open setup again');
   for(const [key,value] of this.setupTickets)if(value.expires<Date.now()||value.id===id)this.setupTickets.delete(key);
   if(this.setupTickets.size>=200)throw Error('Too many pending setup windows');
   this.setupTickets.set(ticket,{id,binding:binding(task),expires:Date.now()+10*60000});return {...directory,ticket,status:{...status,...(status.enabled?{manager:await this.managerStatus(id,false)}:{})}};
  }
+ async browserLookup(id:string,input:Record<string,unknown>){
+  const ticket=typeof input.ticket==='string'?input.ticket:'',permit=this.setupTickets.get(ticket),task=await this.source(id);
+  if(!permit||this.setupTickets.get(ticket)!==permit||permit.id!==id||permit.binding!==binding(task)||permit.expires<Date.now()||!(await this.status(id)).selected)throw Error('Setup expired or binding changed; open setup again');
+  const directory=await this.directory(id,[this.lookupTargetId(input.targetId)]);
+  const currentBinding=binding(await this.source(id));
+  if(this.setupTickets.get(ticket)!==permit||permit.expires<Date.now()||currentBinding!==permit.binding)throw Error('Setup changed; open setup again');
+  return {conversation:directory.conversations[0]??null};
+ }
+ private lookupTargetId(value:unknown){if(typeof value!=='string'||!value.trim()||value.trim().length>128)throw Error('Enter a complete conversation ID');return value.trim();}
  async browserConfirm(id:string,input:Record<string,unknown>){
   const ticket=typeof input.ticket==='string'?input.ticket:'',permit=this.setupTickets.get(ticket),task=await this.source(id);
+  if(!permit||this.setupTickets.get(ticket)!==permit||permit.id!==id||permit.binding!==binding(task)||permit.expires<Date.now())throw Error('Setup expired or binding changed; open setup again');
   this.setupTickets.delete(ticket);
-  if(!permit||permit.id!==id||permit.binding!==binding(task)||permit.expires<Date.now())throw Error('Setup expired or binding changed; open setup again');
   if(this.registry?.get(id)?.isBusy||this.locks.has(id))throw Error('Wait for this conversation to finish');
   this.locks.add(id);const token=randomBytes(32).toString('hex');this.tokens.set(token,id);this.beginSetup(id,ticket);
   try{return await this.runtime(token,{action:'setup',targets:input.targets,allowInstructions:input.allowInstructions,viewAll:input.viewAll});}
@@ -209,7 +222,7 @@ export class MishuCoordinator {
   const c=this.config(id,task),live=this.registry?.get(id);if(live){const background=await live.backgroundState();if(!background.known||background.active>0)throw Error('Wait for this Chat background tasks to finish before changing MISHU');}
   await this.registry?.stopIdle(id);this.revokeCodexTokens(id);this.foreground.delete(id);
   for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
-  this.revokeQuick(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;
+  this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;
   this.cancelObservations(c);c.selected=selected;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;c.enabled=false;c.allowInstructions=false;c.targets=[];c.sourceBinding=binding(task);this.state.chats[id]=c;
   return {selected:c.selected,enabled:false,allowInstructions:false,targets:[]};
   }finally{this.locks.delete(id);}
@@ -245,21 +258,22 @@ export class MishuCoordinator {
    const source=await this.source(id),c=this.state.chats[id];if(!c?.selected)throw Error('MISHU is not selected');
    const notes=structuredClone(c.notes??[]),result=historyOperation(c.taskJournal?.tasks??[],notes,binding(source),input);c.notes=notes;return result;
   },false);
-  if(input.action==='directory')return this.directory(id);
+  if(input.action==='directory')return this.directory(id,input.targetId===undefined?undefined:[this.lookupTargetId(input.targetId)]);
   if(input.action==='setup')return this.change(async()=>{
    if(!this.setupWindows.has(id))throw Error('Setup requires a direct user /mishu-setup command');
    const task=await this.source(id),c=this.config(id,task);
    if(!c.selected||!this.tokens.has(token))throw Error('MISHU selection was revoked');
    if(!Array.isArray(input.targets)||input.targets.length<1||input.targets.length>20||typeof input.allowInstructions!=='boolean')throw Error('Select 1–20 target conversations and an explicit instruction mode');
-   const directory=await this.directory(id),rows=[...directory.conversations,...directory.configuredTargets];
+   const ids=input.targets.map(value=>{if(!value||typeof value!=='object')throw Error('Invalid target');return this.lookupTargetId((value as Record<string,unknown>).id);});
+   const directory=await this.directory(id,ids),rows=directory.conversations;
    const targets=input.targets.map(value=>{if(!value||typeof value!=='object')throw Error('Invalid target');const v=value as Record<string,unknown>;const row=rows.find(r=>r.id===v.id&&r.binding===v.binding);if(!row)throw Error('Target binding changed; run setup again');return {id:row.id,binding:row.binding,title:row.title,engine:row.engine};});
    if(new Set(targets.map(t=>t.id)).size!==targets.length)throw Error('Duplicate target');
    if(input.viewAll!==undefined&&typeof input.viewAll!=='boolean')throw Error('viewAll must be boolean');
-   this.setupWindows.delete(id);c.userInstructions=[];this.revokeQuick(id);this.grants.revokeChat(id);if(c.sourceBinding!==binding(task)){c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}this.cancelObservations(c,new Set(targets.filter(t=>c.targets.some(old=>old.id===t.id&&old.binding===t.binding)).map(t=>t.id)));c.targets=targets;c.enabled=true;c.allowInstructions=input.allowInstructions;c.sourceBinding=binding(task);this.state.chats[id]=c;
+   this.setupWindows.delete(id);c.userInstructions=[];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(c.sourceBinding!==binding(task)){c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}this.cancelObservations(c,new Set(targets.filter(t=>c.targets.some(old=>old.id===t.id&&old.binding===t.binding)).map(t=>t.id)));c.targets=targets;c.enabled=true;c.allowInstructions=input.allowInstructions;c.sourceBinding=binding(task);this.state.chats[id]=c;
    await this.setManager(id,{sourceBinding:binding(task),viewAll:input.viewAll===true});
    return {selected:true,enabled:true,allowInstructions:c.allowInstructions,targets,viewAll:input.viewAll===true};
   });
-  if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
+  if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='overview')return {version:1,conversations:await this.overview(id)};
   if(input.action==='events')return this.events(id,input);
@@ -687,7 +701,7 @@ export class MishuCoordinator {
    config.taskJournal=journal;this.observationFailure=undefined;return result;
   },true,input.operation==='stop');
  }
- private async directory(id:string){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
+ private async directory(id:string,targetIds?:string[]){const {conversations,projects}=await this.workspaces.list();const summaries=await this.registry!.list(),byId=new Map(summaries.map(s=>[s.id,s]));
   const activity=(c:Conversation)=>Date.parse(c.lastActivityAt||c.turnSnapshot?.startedAt||byId.get(c.id)?.updatedAt||c.createdAt),now=Date.now();
   const eligible=conversations.filter(c=>c.id!==id&&visible(c)&&contactable(c)),source=await this.source(id),config=this.config(id,source);
   const row=async(c:Conversation)=>{
@@ -696,7 +710,7 @@ export class MishuCoordinator {
   const observation=evidence?{dispatchSupported:await this.registry!.supportsDispatchCorrelation(c.id),supported:evidence.supported,freshness:evidence.freshness,runId:evidence.runId,state:evidence.state,reason:evidence.reason,capabilities:evidence.capabilities,identity:evidence.identity,referenceKind:evidence.referenceKind}:undefined;return {id:c.id,binding:binding(c),engine:c.engine??'pi',title:currentTitle(s,c.takeoverTitle||c.id),project:projects.find(p=>p.id===c.projectId)?.name??'Chat',status:live?.attention==='waiting'?'waiting':live?.isBusy?'running':'idle',observation};
   };
   const configuredTargets=config.sourceBinding===binding(source)?config.targets.flatMap(saved=>{const task=eligible.find(c=>c.id===saved.id&&binding(c)===saved.binding);return task?[row(task)]:[];}):[];
-  return {conversations:await Promise.all(eligible.filter(c=>activity(c)>=now-72*3600000&&activity(c)<=now)
+  return {conversations:await Promise.all(eligible.filter(c=>targetIds?targetIds.includes(c.id):activity(c)>=now-72*3600000&&activity(c)<=now)
    .sort((a,b)=>activity(b)-activity(a)||a.id.localeCompare(b.id)).slice(0,200).map(row)),configuredTargets:await Promise.all(configuredTargets)};}
  private async authorize(sourceId:string,targetId:string,expected:string,kind:string,admitted=false){
   if(this.closing)throw Error('MISHU is stopping');
