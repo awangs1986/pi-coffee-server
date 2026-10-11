@@ -83,6 +83,7 @@ const ui = {
 // ---------- state ----------
 let socket, reconnectTimer, connectionEpoch=0;
 let heartbeat=null, reconnectAttempt=0;
+let connectionAuthEpoch=null, resumeMetadataEpoch=null, resumeMetadataAt=0;
 let modelsRequestEpoch=0, modelsSyncTimer=null;
 
 let retryNote;
@@ -1610,9 +1611,15 @@ function armHeartbeat(ws) {
 }
 function resumeLiveSubscription() {
   if(document.visibilityState!=='visible')return;
+  // Focus/pageshow/resume can arrive together while /auth/me is still pending.
+  // Keep one recovery attempt; navigation can still replace it via connect().
+  if(connectionAuthEpoch===connectionEpoch)return;
   if(socket?.readyState===WebSocket.CONNECTING)return;
-  if (!socket || socket.readyState !== WebSocket.OPEN) { connect(); return; }
+  if (!socket || socket.readyState !== WebSocket.OPEN || !connected) { connect(); return; }
   heartbeat?.start();heartbeat?.probe();
+  const now=Date.now();
+  if(resumeMetadataEpoch===connectionEpoch && now-resumeMetadataAt<1000)return;
+  resumeMetadataEpoch=connectionEpoch;resumeMetadataAt=now;
   send({ v: 1, type: 'list_sessions' });
   if (activeId && !takeoverBusy()) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
 }
@@ -1627,11 +1634,14 @@ function connect() {
   clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);
   abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   const epoch=++connectionEpoch;viewScheduler.setView(currentRenderView());
+  connectionAuthEpoch=epoch;
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   opened=false;historyReady=false;activeBindingEpoch=null;
   setConnection('连接中…');
-  whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); });
+  whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); }).finally(()=>{
+    if(connectionAuthEpoch===epoch)connectionAuthEpoch=null;
+  });
 }
 function connectSocket() {
   clearTimeout(reconnectTimer);clearHeartbeat();
@@ -3144,6 +3154,9 @@ document.addEventListener('visibilitychange', () => {
   resumeLiveSubscription();
 });
 window.addEventListener('online', resumeLiveSubscription);
+window.addEventListener('focus', resumeLiveSubscription);
+window.addEventListener('pageshow', resumeLiveSubscription);
+document.addEventListener('resume', resumeLiveSubscription);
 installCopyHandlers(ui.thread);
 
 // ---------- boot ----------

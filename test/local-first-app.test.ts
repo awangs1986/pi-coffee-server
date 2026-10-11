@@ -96,6 +96,42 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
   return complete ? { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } } : { type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text } };
 }
 
+describe('idle connection recovery at the app-controller seam', () => {
+  it.each(['focus','pageshow','resume'])('restores the selected reply on %s before a throttled retry, without navigation',async event=>{
+    const app=await setup();const socket=await app.select('b');draft('Unsent draft for B');
+    socket.close();socket.onclose?.({code:1006});
+    (event==='resume'?document:window).dispatchEvent(new Event(event));
+    await tick();
+    const restored=app.sockets.at(-1)!;
+    expect(restored,'wake must reconnect without waiting for the scheduled retry').not.toBe(socket);
+    restored.receive({type:'opened',sessionId:'b',engine:'codex',capabilities,state:{isStreaming:false}});
+    restored.receive({type:'history',sessionId:'b',entries:[{kind:'assistant',text:'Latest reply while away'}]});await tick(150);
+    expect(thread().textContent).toContain('Latest reply while away');
+    expect(prompt().value).toBe('Unsent draft for B');
+    expect(location.pathname).toBe('/conversations/b');
+  });
+  it('coalesces overlapping wake events while identity verification is pending',async()=>{
+    const app=await setup();const socket=await app.select('a');socket.close();socket.onclose?.({code:1006});
+    let release!:()=>void;app.network.authGate=new Promise<void>(resolve=>{release=resolve;});
+    const requests=()=>vi.mocked(fetch).mock.calls.filter(([url])=>url==='/auth/me').length;
+    const before=requests(),count=app.sockets.length;
+    window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('pageshow'));document.dispatchEvent(new Event('resume'));window.dispatchEvent(new Event('online'));await tick();
+    expect(requests()-before).toBe(1);expect(app.sockets.length).toBe(count);
+    release();await tick();expect(app.sockets.length).toBe(count+1);
+  });
+  it('probes a healthy unfocused socket without reopening or repeating metadata reads',async()=>{
+    const app=await setup();const socket=await app.select('a');const count=app.sockets.length;const writes=vi.spyOn(socket,'send');
+    window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('pageshow'));document.dispatchEvent(new Event('resume'));await tick();
+    expect(app.sockets.length).toBe(count);expect(app.sockets.at(-1)).toBe(socket);
+    const frames=writes.mock.calls.map(([raw])=>JSON.parse(raw));
+    expect(frames.filter(f=>f.type==='ping')).toHaveLength(1);
+    expect(frames.filter(f=>f.type==='list_sessions')).toHaveLength(1);
+    expect(frames.some(f=>f.type==='open')).toBe(false);
+    const ping=frames.find(f=>f.type==='ping');socket.receive({type:'pong',nonce:ping.nonce});await tick(10000);
+    expect(app.sockets.length).toBe(count);
+  });
+});
+
 describe('actual app local-first live output', () => {
   it.each([false,true])('places an older task with today’s conversation under Today in grouped=%s',async grouped=>{
     const app=await setup('codex',2,network=>{network.showGroups=grouped;});

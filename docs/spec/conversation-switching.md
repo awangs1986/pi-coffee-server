@@ -368,3 +368,22 @@ a different selection or a removed attachment. Returning never automatically sen
 or resumes an abandoned prompt. Identity changes clear both active and saved drafts.
 See the [attachment contract](task-storage.md#conversation-scoped-attachment-drafts-2026-10-09)
 and [Server #104](https://github.com/awangs1986/pi-coffee-server/issues/104).
+
+## Window wake recovery (2026-10-11, Server #117)
+
+Visible pages also recover on window focus, `pageshow` and page-lifecycle `resume`.
+A closed connection is reattached to the same selected Conversation immediately,
+without waiting for a background-throttled retry timer or sidebar navigation.
+An open healthy connection is probed, not replaced: overlapping wake events share
+the outstanding heartbeat deadline and refresh session/history metadata at most
+once per second per connection. Overlapping wake events during identity checking
+share that connection attempt; explicit navigation still replaces obsolete work.
+Hidden pages retain the existing paused-heartbeat policy. Drafts, pending delivery
+receipts, model authority and native task execution retain their existing boundaries.
+
+Controller tests and `scripts/probe-idle-recovery.mjs` verify latest-reply recovery
+without navigation, unsent text retention, healthy unfocused three-minute idle,
+and overlapping wake events. Chromium's retry-timer delay is injected; this proves
+the recovery gap, not why the owner's actual LAN browser originally disconnected.
+Production services had unchanged PIDs and zero systemd restarts during diagnosis.
+Source publication and compatible Browser-only activation remain separate evidence.
