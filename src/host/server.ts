@@ -221,12 +221,9 @@ export class HostServer {
     });
   }
 
-  async mishuSourceContext(user:string|undefined,id:string){
-    const slot=await this.slotFor(user),task=await slot.workspaces?.lookup(id);
-    if(task?.engine!=='codex'||!slot.mishu||!this.mishuExtension())return undefined;
-    const address=this.mishuHttp.address();if(!address||typeof address==='string')throw Error('MISHU local bridge unavailable');
-    return slot.mishu.sourceContext(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
-  }
+  /** Codex remains a target engine; it never receives a secretary role or tool capability. */
+  async mishuSourceContext(_user:string|undefined,_id:string):Promise<undefined>{return undefined;}
+
   async mishuRuntime(user:string|undefined,id:string):Promise<{extensions:string[];env:Record<string,string>}> {
     const slot=await this.slotFor(user);if(!slot.mishu)return {extensions:[],env:{}};
     const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};

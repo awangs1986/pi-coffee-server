@@ -1,3 +1,8 @@
+> Superseded by the owner on 2026-10-12: only Pi Chat may be a secretary.
+> Codex remains a target engine. The following records historical requirements,
+> not current authorization to enable Codex coordination or run its old probe.
+> See [current boundary](mishu.md#pi-only-secretary-boundary-2026-10-12).
+
 # Codex 作为 MISHU 主秘书
 
 状态：2026-10-07 接受目标；2026-10-09 人工协调源码候选正在验收，未发布/未上线。C06–C08 安全汇报/自动提醒仍不可用，其余未验收项保留。

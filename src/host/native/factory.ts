@@ -32,11 +32,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async mishuSourceCapabilities(id:string):Promise<import('../mishu-source.js').MishuSourceCapabilities> {
     const task=await this.options.workspaces.lookup(id),engine=task?.engine??'pi';
     if(engine==='pi'&&task?.workspaceKind==='chat')return {coordination:'supported',reports:'supported'};
-    if(engine==='codex'&&task){
-      const factory=await this.codexFactory(id,task.cwd);
-      if(factory?.mishuSourceCapabilities)return factory.mishuSourceCapabilities(id);
-    }
-    return {coordination:'unavailable',reports:'unavailable',reason:'This Agent has no configured native MISHU source bridge'};
+    return {coordination:'unavailable',reports:'unavailable',reason:'MISHU 仅支持 Pi Chat 担任秘书；其他 Agent 可以作为管理目标'};
   }
   contextResetEngines():AgentEngine[]{
     return CHAT_ENGINES.filter(engine=>engine==='pi'?Boolean(this.options.pi.resetNative):Boolean(this.options.codex&&this.options.codexSessionFactory));
@@ -351,7 +347,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.contextReset||c.fork));
     const ids=new Set(native.map(c=>c.id));
     for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if((c.takeoverSegments?.length||c.contextReset)&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
-    const summaries=await Promise.all(native.map(async c=>{
+    const summarize=async(c:typeof native[number])=>{
       const readable=!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready');
       const known=!readable?undefined:c.engine==="codex" && c.nativeBinding?.id && this.options.codexSummary
         ? await this.options.codexSummary(await this.options.workspaces.file(c.id,""),c.nativeBinding.id).catch(()=>undefined)
@@ -359,6 +355,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
         ? (await this.options.codexListings(await this.options.workspaces.file(c.id,"")).catch(()=>[])).find(s=>s.id===c.nativeBinding!.id) : c.engine==='pi'?piListings.find(s=>s.id===(c.nativeBinding?.id??c.id)):undefined;
       const preferences=c.engine==="claude"&&readable?await new NativeSettingsStore(join(c.taskRoot??join(c.cwd,".pi-coffee"),"claude-settings.json")).load().catch(()=>({name:undefined})):undefined;
       return {...(preferences?.name?{name:preferences.name}:{}),createdAt:c.createdAt,updatedAt:c.createdAt,messageCount:c.takeoverSegments?.length?1:0,preview:c.engine==="codex"?"Codex Task":c.engine==="pi"?"Pi Task":c.engine==="cursor"?"Cursor Task":c.engine==="grok"?"Grok Build Task":"Claude Code Task",...(c.fork?{name:c.fork.title,preview:c.fork.title}:{}),...known,...(c.takeoverTitle?{preview:c.takeoverTitle}:{}),...(c.contextReset?.title&&!known?.name?{name:c.contextReset.title}:{}),id:c.id,engine:c.engine};
+    };
+    // Registry coalescing bounds whole-list refreshes; this bounds reads inside one list.
+    const summaries:Awaited<ReturnType<typeof summarize>>[]=new Array(native.length);
+    let next=0;
+    await Promise.all(Array.from({length:Math.min(4,native.length)},async()=>{
+      while(next<native.length){const index=next++;summaries[index]=await summarize(native[index]);}
     }));
     return [...(await this.options.legacyCodex?.list().catch(()=>[]) ?? []).filter(s=>!ids.has(s.id)).map(s=>({...s,engine:"codex" as const})),...piListings.filter(c=>!ids.has(c.id)).map(row=>{const task=state.conversations.find(c=>c.id===row.id);return task?.fork?{...row,name:row.name||task.fork.title,preview:row.preview||task.fork.title}:row;}),...summaries];
   }
