@@ -637,7 +637,7 @@ export class HostSessionRegistry {
 
   async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
   async readRunEvidence(id:string,runId?:string){return await this.sessions.get(id)?.readRunEvidence(runId)??await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
-  constructor(private options: { runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;

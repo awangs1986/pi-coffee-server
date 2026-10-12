@@ -58,6 +58,8 @@ export interface SessionSummary {
   runStatus?: "running" | "settled" | "interrupted";
   /** Stable identity of the most recent settled run; independent of read state. */
   completionId?: string;
+  /** Most recent completion viewed by this authenticated account, across browsers. */
+  readCompletionId?: string;
   completedAt?: string;
   /**
    * Why this conversation wants the user's eyes: an agent dialog is waiting

@@ -8,7 +8,8 @@ import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright';
 const root=resolve('dist/public');
 let runStatus='settled',grouped=true,completionId='completion-1';
-const sessions=()=>['completed','untouched'].map((id,i)=>({id,name:`Synthetic ${id}`,engine:'pi',createdAt:`2026-10-06T00:00:0${i}Z`,updatedAt:'2026-10-06T01:00:00Z',messageCount:2,preview:'Synthetic fixture',running:id==='completed'&&runStatus==='running',...(id==='completed'?{runStatus,completionId}:{})}));
+const reads=new Map();
+const sessions=()=>['completed','untouched'].map((id,i)=>({id,name:`Synthetic ${id}`,engine:'pi',createdAt:`2026-10-06T00:00:0${i}Z`,updatedAt:'2026-10-06T01:00:00Z',messageCount:2,preview:'Synthetic fixture',running:id==='completed'&&runStatus==='running',...(id==='completed'?{runStatus,completionId,readCompletionId:reads.get(id)}:{})}));
 const json=(res,data)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data));};
 const server=createServer(async(req,res)=>{
  try{
@@ -16,6 +17,7 @@ const server=createServer(async(req,res)=>{
   if(path==='/auth/me')return json(res,{auth:true,user:'synthetic-completion'});
   if(path==='/api/me')return json(res,null);
   if(path==='/api/engines')return json(res,{engines:[{id:'pi',available:true}]});
+  if(path==='/api/workspace'&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');if(input.action==='completion_read'){const accepted=input.reads.filter(r=>r.id==='completed'&&r.completionId===completionId);for(const r of accepted)reads.set(r.id,r.completionId);return json(res,{reads:accepted});}}
   if(path==='/api/workspace')return json(res,{projects:[],conversations:sessions().map(s=>({...s,workspaceKind:'chat'})),sidebar:{showGroups:grouped,assignments:{},collapsed:[]},capabilities:{chatWorkspaces:true}});
   if(path.startsWith('/api/conversations/')){res.statusCode=404;return json(res,{error:'Native fixture'});}
   if(path.startsWith('/api/'))return json(res,{});
@@ -43,7 +45,7 @@ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECU
 const evidence=[];
 try{
  for(grouped of [true,false]){
-  runStatus='settled';completionId='completion-1';const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  reads.clear();runStatus='settled';completionId='completion-1';const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/?syncProtocol=1`);
   const row=page.locator('[data-session-id="completed"]');await row.locator('.finished-coffee').waitFor();
   assert.equal(await page.locator('[data-session-id="untouched"] .finished-coffee').count(),0);
@@ -56,6 +58,12 @@ try{
   assert.equal(await row.locator('.finished-coffee').count(),0,'Reading the latest completed reply must clear the coffee indicator');
   await page.reload();await page.locator('#thread').getByText('Synthetic completed reply').waitFor();
   assert.equal(await row.locator('.finished-coffee').count(),0,'Read completion must stay hidden after reload');
+  await page.waitForFunction(async()=>{const r=await fetch('/api/workspace');const data=await r.json();return data.conversations.find(c=>c.id==='completed').readCompletionId==='completion-1';});
+  const other=await browser.newPage();await other.goto(`http://127.0.0.1:${server.address().port}/?syncProtocol=1`);
+  await other.locator('[data-session-id="completed"]').waitFor();
+  assert.equal(await other.locator('[data-session-id="completed"] .finished-coffee').count(),0,'Another browser profile must retain the account read receipt');
+  assert.equal(await other.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('pi-coffee.completion-reads')).length),0,'Browser B must not depend on Browser A local storage');
+  await other.close();
   const order=await page.locator('#session-list [data-session-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.sessionId));
   runStatus='running';for(const socket of ws.clients)socket.send(JSON.stringify({v:1,type:'sessions',sessions:sessions()}));
   await row.locator('.sidebar-running-cat').waitFor();assert.equal(await row.locator('.finished-coffee').count(),0);
@@ -70,7 +78,7 @@ try{
   await page.waitForFunction(()=>!document.querySelector('[data-session-id="completed"] .sidebar-running-cat'));
   assert.equal(await row.locator('.finished-coffee').count(),0);
   if(!grouped)assert.deepEqual(await page.locator('#session-list [data-session-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.sessionId)),order);
-  assert.deepEqual(errors,[]);evidence.push({grouped,readSurvivesReload:true,newCompletionUnread:true,staleHistoryRejected:true,hiddenTabUnread:true,untouchedNoCoffee:true,runningOverrides:true,interruptedNoCoffee:true,pageErrors:errors.length});
+  assert.deepEqual(errors,[]);evidence.push({grouped,readSurvivesReload:true,separateBrowserReadsShared:true,newCompletionUnread:true,staleHistoryRejected:true,hiddenTabUnread:true,untouchedNoCoffee:true,runningOverrides:true,interruptedNoCoffee:true,pageErrors:errors.length});
   await page.close();
  }
  const result={passed:true,evidence};

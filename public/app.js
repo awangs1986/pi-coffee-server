@@ -906,8 +906,9 @@ function maybeReadCompletion(){
     viewScheduler.schedule({...currentRenderView(),entityId:'completion-read',entityRevision:key,priority:3,run:acknowledge});
     return;
   }
-  if(completionReads.read(session,proof))renderSessionList();
+  if(completionReads.read(session,proof)){renderSessionList();syncCompletionReads();}
 }
+function syncCompletionReads(){void completionReads.sync(sessions,reads=>workspaceApi({action:'completion_read',reads})).catch(()=>{});}
 function sessionTitle(session) {
   const raw = (session && (session.name || session.preview)) || '';
   // The preview is the first prompt as sent; drop the attachment listing we append.
@@ -1762,6 +1763,7 @@ function handleFrame(frame, ws) {
     case 'sessions':
       void loadWorkspace();
       sessions = Array.isArray(frame.sessions) ? frame.sessions : [];
+      syncCompletionReads();
       maybeReadCompletion();
       renderSessionList();
       renderHeader();

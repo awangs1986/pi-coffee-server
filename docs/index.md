@@ -208,3 +208,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
   [Server #106](https://github.com/awangs1986/pi-coffee-server/issues/106).
 
 - Native Pi 1.1 / formal v0.12 candidate: [compatibility and release gate](deployment/pi-110-upgrade.md), [Server #67](https://github.com/awangs1986/pi-coffee-server/issues/67). Supersedes the unmerged 1.0.4 candidate; retains current MISHU manager and guarded release flow.
+
+- Shared viewed-completion receipts (2026-10-12): [navigation contract](spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100), [Server #121](https://github.com/awangs1986/pi-coffee-server/issues/121), clarifying #100. Host-owned account receipts replace independent browser-only acknowledgement; native completion stays unchanged.

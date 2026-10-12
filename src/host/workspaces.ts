@@ -17,7 +17,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -640,10 +640,24 @@ export class Workspaces {
     void work.then(()=>this.runStatusWrites.delete(work),()=>this.runStatusWrites.delete(work));
     return work;
   }
+  /** Account-owned viewed runs; never infer a receipt from opening a conversation. */
+  async acknowledgeCompletions(input:unknown):Promise<{reads:Array<{id:string;completionId:string}>}> {
+    if(!Array.isArray(input)||!input.length||input.length>50||input.some(r=>!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).sort().join(',')!=='completionId,id'||typeof r.id!=='string'||!r.id||r.id.length>200||typeof r.completionId!=='string'||!r.completionId||r.completionId.length>512))throw Error('Invalid completion read receipts');
+    return this.mutate(async()=>{
+      const reads:Array<{id:string;completionId:string}>=[];let changed=false;
+      for(const receipt of input){
+        const c=this.state.conversations.find(c=>c.id===receipt.id);
+        if(!c||c.archived||c.workspaceRemoved||c.cleanupStarted||c.lastRunStatus!=='settled'||c.completionId!==receipt.completionId)continue;
+        if(c.readCompletionId!==receipt.completionId){c.readCompletionId=receipt.completionId;changed=true;}
+        reads.push({id:c.id,completionId:receipt.completionId});
+      }
+      if(changed)await this.save();return {reads};
+    });
+  }
   /** Compact scoped projection: no native startup, history export or remote Git reads. */
-  async runStatuses():Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt">>> {
+  async runStatuses():Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>> {
     await this.load();await Promise.all([...this.runStatusWrites]);await this.saveTail;
-    return new Map(this.state.conversations.filter(c=>c.lastRunStatus).map(c=>[c.id,{runStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt}]));
+    return new Map(this.state.conversations.filter(c=>c.lastRunStatus).map(c=>[c.id,{runStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,readCompletionId:c.readCompletionId}]));
   }
   private recordsTurns(c:Conversation) {
     return c.workspaceKind!=='chat' && TURN_SNAPSHOT_ENGINES.has(c.engine ?? 'pi') && (!c.creationState || c.creationState==='ready') && !c.workspaceRemoved && !c.cleanupStarted;

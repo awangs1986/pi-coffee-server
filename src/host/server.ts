@@ -488,6 +488,10 @@ export class HostServer {
           if(!await ws.lookup(input.id) && !(await slot.registry.list()).some(s=>s.id===input.id))throw new Error("Unknown conversation");
           result=await ws.moveSidebar(input.id,input.projectId);break;
         }
+        case "completion_read": {
+          if(Object.keys(input).sort().join(',')!=='action,reads')throw Error('Invalid completion read request');
+          result=await ws.acknowledgeCompletions(input.reads);break;
+        }
         case "sidebar_pin": {
           if(typeof input.id!=="string"||!input.id||input.id.length>200||typeof input.pinned!=="boolean")throw new Error('Invalid pin preference');
           if(!await ws.lookup(input.id)&&!(await slot.registry.list()).some(s=>s.id===input.id))throw new Error('Unknown conversation');

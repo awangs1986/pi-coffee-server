@@ -50,4 +50,37 @@ describe('completion acknowledgement',()=>{
     expect(reload.unread(session('first','result-2'))).toBe(false);
     expect(reload.unread(session('second','result-1'))).toBe(false);
   });
+  it('uses the account receipt in an empty browser and migrates only locally viewed current completions',async()=>{
+    const storage=fixture(),a=new CompletionReads({getStorage:()=>storage});a.setScope('alice');a.read(session(),'run-1');
+    const requests:any[]=[];await a.sync([session(),session('never-read','run-1')],async(reads:any[])=>{requests.push(reads);return {reads};});
+    expect(requests).toEqual([[{id:'same-task',completionId:'run-1'}]]);
+    await a.sync([session()],async()=>{throw Error('Already published');});
+    const b=new CompletionReads({getStorage:()=>fixture()});b.setScope('alice');
+    expect(b.unread({...session(),readCompletionId:'run-1'})).toBe(false);
+    expect(b.unread({...session('same-task','run-2'),readCompletionId:'run-1'})).toBe(true);
+    expect(b.unread(session())).toBe(true);
+  });
+  it('does not repeat rejected stale/native-only receipts after a scoped Host response',async()=>{
+    const reads=new CompletionReads({getStorage:()=>fixture()});reads.setScope('alice');reads.read(session(),'run-1');
+    let calls=0;const publish=async()=>{calls++;return {reads:[]};};
+    await reads.sync([session()],publish);await reads.sync([session()],publish);expect(calls).toBe(1);
+  });
+  it('retries a failed receipt publication and does not inherit another account in flight',async()=>{
+    const reads=new CompletionReads({getStorage:()=>fixture()});reads.setScope('alice');reads.read(session(),'run-1');
+    await expect(reads.sync([session()],async()=>{throw Error('offline');})).rejects.toThrow('offline');
+    let finish:any;const pending=reads.sync([session()],()=>new Promise(r=>{finish=r;}));
+    reads.setScope('bob');finish({reads:[{id:'same-task',completionId:'run-1'}]});await pending;
+    expect(reads.unread(session())).toBe(true);
+  });
+
+  it('drains a second viewed completion recorded while the first publication is in flight',async()=>{
+    const reads=new CompletionReads({getStorage:()=>fixture()});reads.setScope('alice');reads.read(session('a'),'run-1');
+    const requests:any[]=[];let release:any;
+    const publish=async(batch:any[])=>{requests.push(batch);if(requests.length===1)await new Promise(r=>{release=r;});return {reads:batch};};
+    const first=reads.sync([session('a'),session('b')],publish);
+    reads.read(session('b'),'run-1');await reads.sync([session('a'),session('b')],publish);
+    release();await first;
+    expect(requests).toEqual([[{id:'a',completionId:'run-1'}],[{id:'b',completionId:'run-1'}]]);
+  });
+
 });

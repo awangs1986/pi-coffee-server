@@ -561,3 +561,5 @@ unmerged tracking prerequisite, not an already deployed baseline. Source Codex
 support does not confer durable dispatch/recovery parity on non-Pi targets.
 
 - 2026-10-09: MISHU manager review repair candidate preserves native Codex/Luna, atomic setup authorization, exact quick-action identity and durable watch/dedup recovery. [Evidence and remaining boundaries](docs/development/mishu-manager-repairs.md); source publication and production activation remain separate.
+
+- 2026-10-12: [Server #121](https://github.com/awangs1986/pi-coffee-server/issues/121) changes viewed-completion receipts from browser-only to account-shared Host metadata. Original-browser valid local receipts migrate; fresh browser profiles share reads, newer runs remain unread, and no native execution status changes. [Contract](docs/spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100). Production activation remains separate.

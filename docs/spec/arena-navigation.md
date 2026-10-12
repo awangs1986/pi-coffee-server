@@ -531,10 +531,17 @@ history-read boundary, before asynchronous export. If completion changes during
 the read, history and identity are retried together; an older response cannot
 acknowledge a newer completed run.
 
-Browser read markers are account-scoped, bounded, disposable local metadata. They
-contain conversation and completion identities only, never transcript content or
-credentials. Acknowledgement survives reload in the same browser profile. Other
-browsers retain independent read state; clearing browser storage restores reminders.
+Host persists the authenticated account's latest viewed completion for each owned
+Conversation. Session lists expose `readCompletionId`; matching `completionId`
+suppresses the cup in every browser using that account, including after Host restart.
+Browser-local markers remain a bounded offline cache and migrate already-viewed
+current completions through `/api/workspace` action `completion_read`. The bounded
+batch accepts only exact current settled completion IDs in the selected account;
+unknown, archived, running or superseded completions are ignored. It never starts
+an Agent or changes native execution, completion identity or acceptance. Receipts
+contain conversation/completion IDs only. Clearing local browser storage does not
+restore reminders already acknowledged by Host. Historical native-only summaries
+without an owned durable completion identity retain the local compatibility path.
 Independent per-completion storage keys prevent cross-tab writes from replacing
 one another; storage events refresh other visible tabs. Unavailable storage falls
 back to tab memory. Legacy summaries lacking completion
@@ -554,7 +561,8 @@ cached preview, hidden tabs, old pages and delayed responses are not read receip
 Waiting and running indicators retain priority. Read state never changes run status,
 sidebar order, pinning, native session lifetime, or business acceptance.
 
-Acceptance: `test/completion-reads.test.ts`, `test/local-first-app.test.ts`,
+Acceptance: `test/completion-reads.test.ts`, `test/completion-reads-http.test.ts`, `test/local-first-app.test.ts`,
 `test/host-server.test.ts`, `test/sidebar-http.test.ts`, and the real Chromium
 `probe-completion-icon.mjs` cover scoped read persistence, stale-response rejection,
-hidden tabs, latest-tail viewing, subsequent completion and lifecycle restoration.
+hidden tabs, latest-tail viewing, subsequent completion, independent browser contexts,
+account isolation and Host-restart restoration.

@@ -1,4 +1,4 @@
-// Browser-local, account-scoped acknowledgement. No transcript or native state.
+// Browser cache of account-owned viewed runs. No transcript or native state.
 const PREFIX='pi-coffee.completion-reads.v1:';
 const MAX=1000, MAX_BYTES=256*1024;
 const encoder=new TextEncoder();
@@ -11,11 +11,11 @@ export function completionKey(session){
   return text(session.completionId)?session.completionId:text(session.updatedAt)?'legacy:'+session.updatedAt:null;
 }
 export class CompletionReads {
-  constructor({getStorage=storage}={}){this.getStorage=getStorage;this.user=null;this.items=new Map();}
+  constructor({getStorage=storage}={}){this.getStorage=getStorage;this.user=null;this.items=new Map();this.processed=new Set();this.syncing=null;this.nextSync=null;}
   key(){return this.user===null?null:PREFIX+encodeURIComponent(this.user)+':';}
   setScope(user){
     const next=text(user)?user:null;if(next===this.user)return;
-    this.user=next;this.items.clear();this.mergeStored();this.trim(true);
+    this.user=next;this.items.clear();this.processed.clear();this.syncing=null;this.nextSync=null;this.mergeStored();this.trim(true);
   }
   refresh(){this.items.clear();this.mergeStored();this.trim(true);}
   mergeStored(){
@@ -31,7 +31,7 @@ export class CompletionReads {
       }
     }catch{/* Corrupt or unavailable storage must not prevent navigation. */}
   }
-  unread(session){const key=completionKey(session);return Boolean(key&&!this.items.has(receiptKey(session.id,key)));}
+  unread(session){const key=completionKey(session);return Boolean(key&&session.readCompletionId!==key&&!this.items.has(receiptKey(session.id,key)));}
   read(session,proof){
     const key=completionKey(session);
     if(!this.user||!key||key!==proof||!text(session.id)||!this.unread(session))return false;
@@ -42,13 +42,34 @@ export class CompletionReads {
     try{this.getStorage()?.setItem(this.key()+encodeURIComponent(receipt),String(at));}catch{/* Memory still serves this tab. */}
     this.trim(true);return true;
   }
+  async sync(sessions,publish){
+    const scope=this.key();if(!scope)return;
+    if(this.syncing){this.nextSync={sessions,publish,scope};return;}
+    const work=(async()=>{
+      this.mergeStored();
+      const pending=sessions.flatMap(session=>{const key=completionKey(session),receipt=key&&receiptKey(session.id,key);return key&&session.readCompletionId!==key&&this.items.has(receipt)&&!this.processed.has(receipt)?[{id:session.id,completionId:key}]:[];});
+      for(let offset=0;offset<pending.length;offset+=50){
+        const batch=pending.slice(offset,offset+50),result=await publish(batch);
+        if(this.key()!==scope)return;
+        // A scoped Host response is definitive for this exact run. Ignored stale or
+        // native-only receipts must not cause a list → POST → list retry loop.
+        if(Array.isArray(result?.reads))for(const read of batch)this.processed.add(receiptKey(read.id,read.completionId));
+      }
+    })();this.syncing=work;
+    try{await work;}finally{
+      if(this.syncing===work){
+        this.syncing=null;const next=this.nextSync;this.nextSync=null;
+        if(next&&this.key()===next.scope)await this.sync(next.sessions,next.publish);
+      }
+    }
+  }
   trim(persist){
     const records=[...this.items].sort((a,b)=>a[1]-b[1]);
     const weight=receipt=>encoder.encode(this.key()+encodeURIComponent(receipt)).length+32;
     let size=records.reduce((sum,[receipt])=>sum+weight(receipt),0);
     for(const [receipt] of records){
       if(this.items.size<=MAX&&size<=MAX_BYTES)break;
-      this.items.delete(receipt);size-=weight(receipt);
+      this.items.delete(receipt);this.processed.delete(receipt);size-=weight(receipt);
       if(persist)try{this.getStorage()?.removeItem(this.key()+encodeURIComponent(receipt));}catch{}
     }
   }
