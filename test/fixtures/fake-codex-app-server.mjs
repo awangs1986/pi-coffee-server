@@ -326,10 +326,11 @@ rl.on("line", (line) => {
     case "model/list":
       if(existsSync(join(home,"fake-hang-model-list")))return;
       return reply({ data: [
-        { id: "gpt-fake", model: "gpt-fake", displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
+        { id: "gpt-fake", model: "gpt-fake", serviceTiers:[{id:"fast",name:"Fast",description:"Fixture tier"}], displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },
       ], nextCursor: null });
     case "turn/start": {
+      writeFileSync(join(home,"fake-service-tier.json"),JSON.stringify(params.serviceTier??null));
       writeFileSync(join(home,"fake-input.json"),JSON.stringify(params.input));
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");

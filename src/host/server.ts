@@ -991,6 +991,15 @@ class HostSocket implements SessionSink {
           await this.session.setModel(frame.provider, frame.id);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_model", ...rid(frame) });
           break;
+        case "set_speed": {
+          if(!this.session||!this.opened)throw new NotOpenError();
+          if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
+          await this.session.setSpeed(frame.mode);this.metadataEpoch++;
+          this.send({v:1,type:'ack',operation:'set_speed',...rid(frame)});
+          const target=this.session;
+          this.readMetadata(frame,'get_models',async()=>({v:1,type:'models',...await target.getModels()}));
+          break;
+        }
         case "set_context":
           if (!this.session || !this.opened) throw new NotOpenError();
           await this.session.setContextPreset(frame.preset);

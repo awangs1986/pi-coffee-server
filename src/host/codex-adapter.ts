@@ -2,7 +2,7 @@ import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
 import { createHash, randomUUID } from "node:crypto";
-import type { ContextPreset } from "../shared/protocol.js";
+import type { ContextPreset, CodexSpeed } from "../shared/protocol.js";
 import { codexCommands, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
@@ -214,12 +214,12 @@ export class CodexSessionFactory implements PiSessionFactory {
   private async readPreferences(id:string):Promise<CodexPreferences>{
     try{
       const saved=JSON.parse(await readFile(this.contextFile(id),'utf8'));
-      return {preset:saved.preset==='maximum'?'maximum':'272k',
+      return {preset:saved.preset==='maximum'?'maximum':'272k',speed:saved.speed==='fast'?'fast':'standard',
         ...(typeof saved.emptyContext==='boolean'?{emptyContext:saved.emptyContext}:{}),
         ...(saved.mishuRole===true?{mishuRole:true}:{}),
         ...(typeof saved.model==='string' && saved.model?{model:saved.model}:{}),
         ...(typeof saved.reasoningEffort==='string' && saved.reasoningEffort?{reasoningEffort:saved.reasoningEffort}:{})};
-    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k'};}
+    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k',speed:'standard'};}
   }
   private async savePreferences(id:string,preferences:CodexPreferences):Promise<void>{
     const file=this.contextFile(id),temp=file+'.'+randomUUID()+'.tmp';
@@ -314,6 +314,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const common = {
       ...(developerInstructions===undefined?{}:{developerInstructions}),
       config:{...nativeThreadConfig(preset),...preparationConfig},
+      serviceTier:preferences.speed==='fast'?'fast':'default',
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
       approvalPolicy: this.options.approvalPolicy ?? "never",
@@ -366,6 +367,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       freshEmpty:!resumed||preferences.emptyContext===true&&(!this.options.allowEmptyRecovery||await this.options.allowEmptyRecovery()),
       cwd: this.options.cwd,
       preset,
+      speed:preferences.speed??'standard',
       developerInstructions,
       sandbox:this.options.sandbox,
       preparation:this.options.preparation,
@@ -554,6 +556,7 @@ interface CodexPreferences {
   mishuRole?:boolean;
   emptyContext?:boolean;
   preset:ContextPreset;
+  speed:CodexSpeed;
   model?:string;
   reasoningEffort?:string;
 }
@@ -563,6 +566,7 @@ interface CodexSessionSettings {
   mishuContext?:()=>Promise<MishuSourceContext|undefined>;
   mishuRoleApplied?:boolean;
   preset:ContextPreset;
+  speed:CodexSpeed;
   sandbox?:string;
   preparation?:boolean;
   preparationConfig:Obj;
@@ -587,6 +591,7 @@ class CodexSession implements PiSession {
   private unsubscribe: () => void;
   private settings:CodexSessionSettings;
   private preset:ContextPreset;
+  private speed:CodexSpeed;
   private model?: string;
   private effort?: string;
   private preferenceWrites:Promise<void>=Promise.resolve();
@@ -612,7 +617,7 @@ class CodexSession implements PiSession {
   private readonly cwd: string;
 
   constructor(server: CodexAppServer, threadId: string, settings: CodexSessionSettings) {
-    this.settings=settings;this.preset=settings.preset;
+    this.settings=settings;this.preset=settings.preset;this.speed=settings.speed;
     this.server = server;
     this.cwd = settings.cwd;
     this.threadId = threadId;
@@ -648,6 +653,8 @@ class CodexSession implements PiSession {
 
   private turnOverrides(): Obj {
     return {
+      // Explicit standard clears any native/global Fast default for this task.
+      serviceTier:this.speed==='fast'?'fast':'default',
       ...(this.model === undefined ? {} : { model: this.model }),
       ...(this.effort === undefined ? {} : { effort: this.effort }),
     };
@@ -805,7 +812,8 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {},10000) as Obj;
-    return {...codexModelChoices(result,this.model,this.effort),context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
+    const models=codexModelChoices(result,this.model,this.effort);
+    return {...models,speed:{mode:this.speed,fastAvailable:models.models.some(m=>m.id===models.current?.id&&m.fastMode===true)},context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
@@ -813,11 +821,20 @@ class CodexSession implements PiSession {
     await this.updatePreferences({model:id});
   }
 
-  private updatePreferences(change:{model?:string;reasoningEffort?:string}):Promise<void>{
+  async setSpeed(mode:CodexSpeed):Promise<void>{
+    if(mode!=='standard'&&mode!=='fast')throw new Error('Invalid Codex speed');
+    await this.updatePreferences({speed:mode});
+  }
+
+  private updatePreferences(change:{model?:string;reasoningEffort?:string;speed?:CodexSpeed}):Promise<void>{
     const write=this.preferenceWrites.then(async()=>{
-      const next={mishuRole:this.settings.mishuRoleApplied===true,preset:this.preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
+      const next={mishuRole:this.settings.mishuRoleApplied===true,preset:this.preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
+      if(next.speed==='fast'&&(change.speed!==undefined||change.model!==undefined)){
+        const models=codexModelChoices(await this.server.request('model/list',{},10000) as Obj,next.model,next.reasoningEffort);
+        if(!models.models.some(m=>m.id===models.current?.id&&m.fastMode===true))throw new Error('This model does not advertise Fast mode; choose 1x first');
+      }
       await this.settings.savePreferences(this.threadId,next);
-      this.model=next.model;this.effort=next.reasoningEffort;
+      this.model=next.model;this.effort=next.reasoningEffort;this.speed=next.speed;
     });
     this.preferenceWrites=write.catch(()=>undefined);return write;
   }
@@ -828,7 +845,7 @@ class CodexSession implements PiSession {
     await this.preferenceWrites;
     const history=await this.getHistory(),oldId=this.threadId;
     const config={...nativeThreadConfig(preset),...this.settings.preparationConfig,...(this.effort?{model_reasoning_effort:this.effort}:{})};
-    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
+    const common={...(this.settings.developerInstructions===undefined?{}:{developerInstructions:this.settings.developerInstructions}),cwd:this.cwd,model:this.model??null,serviceTier:this.speed==='fast'?'fast':'default',approvalPolicy:this.settings.approvalPolicy,config,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{})};
     // Native resume ignores changed config on a subscribed thread. Release only
     // this idle thread; no model turn is replayed and other threads keep running.
     let response:Obj;
@@ -842,7 +859,7 @@ class CodexSession implements PiSession {
     if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
       this.settings.freshEmpty=history.entries.length===0;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
-    await this.settings.savePreferences(id,{mishuRole:this.settings.mishuRoleApplied===true,preset,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
+    await this.settings.savePreferences(id,{mishuRole:this.settings.mishuRoleApplied===true,preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
     this.absorbThread(thread);
   }
 
@@ -1220,6 +1237,9 @@ function codexModelChoices(result:Obj,configuredModel?:string,configuredEffort?:
       provider: "codex",
       id: String(model.model ?? model.id),
       thinkingLevels: efforts(model),
+      fastMode:Array.isArray(model.serviceTiers)
+        ? (model.serviceTiers as Obj[]).some(t=>t?.id==='fast'||t?.id==='priority')
+        : Array.isArray(model.additionalSpeedTiers)&&(model.additionalSpeedTiers as unknown[]).some(t=>t==='fast'||t==='priority'),
       ...(typeof model.defaultReasoningEffort === "string" ? {defaultThinkingLevel:model.defaultReasoningEffort} : {}),
       ...(efforts(model).length > 0 ? { reasoning: true } : {}),
     }));

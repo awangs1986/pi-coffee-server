@@ -53,6 +53,7 @@ export type AgentSessionListing = Omit<SessionSummary, "running">;
  */
 export interface AgentModels {
   context?: import("../shared/protocol.js").ContextSettings;
+  speed?: import("../shared/protocol.js").SpeedSettings;
   models: ModelChoice[];
   current: { provider: string; id: string; source?: "native" | "relay" } | null;
   thinkingLevel: string;
@@ -77,6 +78,7 @@ export interface AgentSession {
   getModels(): Promise<AgentModels>;
   setModel(provider: string, id: string): Promise<void>;
   setThinkingLevel(level: string): Promise<void>;
+  setSpeed?(mode: import("../shared/protocol.js").CodexSpeed): Promise<void>;
   setContextPreset?(preset: import("../shared/protocol.js").ContextPreset): Promise<void>;
   getCommands(): Promise<CommandInfo[]>;
   /** Extensions exposed by the selected engine (Pi only in this release). */

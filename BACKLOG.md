@@ -1,3 +1,5 @@
+> Codex speed / post-send promotion (2026-10-13): [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123), [contract](docs/spec/codex-speed-and-queued-input.md). Source candidate; no tests or production activation until the owner resumes verification. Preserve the separate unpublished Pi-only MISHU commit.
+
 > MISHU explicit older contacts (2026-10-11): the 72-hour window is presentation only. [Contract](docs/spec/mishu.md#user-flow) permits exact-ID lookup/selection of older eligible contacts, including beyond the default 200 rows. Final setup retains scope/native-binding validation and cancellation semantics. Earlier recent-only admission statements are superseded.
 
 > MISHU 产品规格和功能主票归 [pi-coffee-mishu](http://gitea/awangs/pi-coffee-mishu)。长期秘书体验 E01–E05/A36–A45 见[迁移指针](docs/spec/mishu-secretary-experience.md)；Server 保留 Host/Web/native 集成，参见[源码职责](docs/development/mishu-source-ownership.md)。

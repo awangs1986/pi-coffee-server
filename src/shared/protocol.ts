@@ -96,7 +96,12 @@ export interface ModelChoice {
   /** Native model-specific choices, available without creating a task. */
   thinkingLevels?: string[];
   defaultThinkingLevel?: string;
+  /** Native catalog advertises Fast mode; absence never implies support. */
+  fastMode?: boolean;
 }
+
+export type CodexSpeed = "standard" | "fast";
+export interface SpeedSettings { mode: CodexSpeed; fastAvailable: boolean; }
 
 export type ContextPreset = "272k" | "maximum";
 export interface ContextSettings { preset: ContextPreset; limit?: number; maximum?: number; }
@@ -175,6 +180,7 @@ export type AckOperation =
   | "rename_session"
   | "delete_session"
   | "set_model"
+  | "set_speed"
   | "set_context"
   | "set_thinking"
   | "compact"
@@ -244,6 +250,7 @@ export type ClientFrame = (
   | { v: typeof PROTOCOL_VERSION; type: "get_model_catalog"; engine: AgentEngine; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_models"; requestId?: string }
   | { v: typeof PROTOCOL_VERSION; type: "set_model"; requestId?: string; provider: string; id: string }
+  | { v: typeof PROTOCOL_VERSION; type: "set_speed"; requestId?: string; mode: CodexSpeed }
   | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: AgentEngine; requestId?: string }
@@ -305,6 +312,7 @@ export type ServerFrame = (
       models: ModelChoice[];
       current: { provider: string; id: string; source?: "native" | "relay" } | null;
       context?: ContextSettings;
+      speed?: SpeedSettings;
       thinkingLevel: string;
       thinkingLevels: string[];
     }
@@ -432,6 +440,9 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "get_command_catalog":
       if(!["pi","codex","claude","cursor","grok"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent command catalog");
       return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
+    case "set_speed":
+      if(value.mode!=="standard"&&value.mode!=="fast")throw new ProtocolError("invalid_frame","Speed must be standard or fast");
+      return {v:PROTOCOL_VERSION,type:"set_speed",mode:value.mode,...withRequestId(value)};
     case "set_context":
       if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");
       return {v:PROTOCOL_VERSION,type:"set_context",preset:value.preset,...withRequestId(value)};

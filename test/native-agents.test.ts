@@ -69,7 +69,8 @@ it.each(['pi','codex'])('shows the current %s model as a text-only existing conv
 it('keeps Pi available and disables native choices on a legacy Host',async()=>{
  await setup(true);const options=[...document.querySelector<HTMLSelectElement>('#task-engine')!.options];expect(options.map(o=>o.disabled)).toEqual([false,true,true,true,true]);
 });
-it.each(['steer','follow_up'])('keeps the active Pi reply and Stop available after a rejected %s command',async(mode)=>{
+it('keeps the active Pi reply and Stop available after a rejected queued command',async()=>{
+ const mode='follow_up';
  const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
  const opened={type:'opened',sessionId:id,engine:'pi',state:{isStreaming:true}};
@@ -77,14 +78,13 @@ it.each(['steer','follow_up'])('keeps the active Pi reply and Stop available aft
  const emit=(event:unknown)=>ws.receive({type:'event',sessionId:id,event});
  emit({type:'agent_start'});emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Still '}});
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
- document.querySelector<HTMLSelectElement>('#mode')!.value=mode;
  prompt.value='/harness work';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  const queued=app.frames.find(f=>f.type==='prompt');expect(queued).toMatchObject({mode,text:'/harness work'});
  ws.receive({type:'ack',operation:mode,requestId:queued.requestId});
  ws.receive({type:'error',code:'operation_failed',requestId:queued.requestId,message:'Extension commands cannot be queued.'});
  expect(document.querySelector('#thread')?.textContent).toContain('Extension commands cannot be queued.');
  expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
- expect(document.querySelector('#mode-wrap')?.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#mode-wrap')).toBeNull();
  emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'working.'}});await vi.advanceTimersByTimeAsync(50);
  expect(document.querySelectorAll('.msg.assistant')).toHaveLength(1);
  expect(document.querySelector('.msg.assistant')?.textContent).toContain('Still working.');
@@ -105,7 +105,7 @@ it.each([false,true])('allows retry after a rejected Pi prompt (queued input pro
  ws.receive({type:'ack',operation:'prompt',requestId:first.requestId});
  ws.receive({type:'error',code:'operation_failed',requestId:first.requestId,message:'No API key found for the selected model.'});
  expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(true);
- expect(document.querySelector('#mode-wrap')?.classList.contains('hidden')).toBe(true);
+ expect(document.querySelector('#mode-wrap')).toBeNull();
  prompt.value='explicit retry';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  const retry=app.frames.filter(f=>f.type==='prompt');expect(retry).toHaveLength(2);expect(retry[1].mode).toBeUndefined();
  expect(retry[1].text).toBe('explicit retry');expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
@@ -129,12 +129,11 @@ it('renders replayed native items once, answers a native question and never rese
  prompt.value='a new explicit instruction';prompt.dispatchEvent(new Event('input'));expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
  document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(2);
 });
-it.each(['pi','codex'].flatMap(engine=>['prompt','steer','follow_up'].map(mode=>({engine,mode}))))('does not mark acknowledged $engine $mode uncertain after reconnect and permits continuing',async({engine,mode})=>{
+it.each(['pi','codex'].flatMap(engine=>['prompt','follow_up'].map(mode=>({engine,mode}))))('does not mark acknowledged $engine $mode uncertain after reconnect and permits continuing',async({engine,mode})=>{
  const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
  const opened={type:'opened',sessionId:id,engine,state:{isStreaming:false},capabilities:{models:true,stop:true,steer:true,followUp:true}};
  ws.receive({...opened,state:{isStreaming:mode!=='prompt'}});ws.receive({type:'history',sessionId:id,entries:[]});
- document.querySelector<HTMLSelectElement>('#mode')!.value=mode==='prompt'?'follow_up':mode;
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;
  prompt.value='accepted request';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  const first=app.frames.find(f=>f.type==='prompt');ws.receive({type:'ack',operation:mode,requestId:first.requestId});
@@ -979,7 +978,7 @@ it.each(['pi','codex'])('does not interrupt a running %s reply when metadata que
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
  ws.receive({type:'opened',sessionId:id,engine,state:{isStreaming:true},capabilities:{stop:true,steer:true,followUp:true}});ws.receive({type:'history',sessionId:id,entries:[]});
  ws.receive({type:'error',code:'metadata_unavailable',operation:'get_stats',message:'Auxiliary Agent read timed out'});
- expect(document.querySelector('#stop')!.classList.contains('hidden')).toBe(false);expect(document.querySelector('#mode-wrap')!.classList.contains('hidden')).toBe(false);
+ expect(document.querySelector('#stop')!.classList.contains('hidden')).toBe(false);expect(document.querySelector('#mode-wrap')).toBeNull();
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='still queue this';prompt.dispatchEvent(new Event('input'));document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(app.frames.find(f=>f.type==='prompt')).toMatchObject({text:'still queue this',mode:'follow_up'});
 });
@@ -1405,4 +1404,59 @@ it('keeps Bash code blocks and copy actions in expanded authoritative older hist
  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{copied.push(text);}}});
  try{older.querySelector<HTMLButtonElement>('.codeblock-copy')!.click();await vi.advanceTimersByTimeAsync(20);expect(copied).toEqual([script.trimEnd()]);}
  finally{if(descriptor)Object.defineProperty(navigator,'clipboard',descriptor);else delete (navigator as any).clipboard;}
+});
+
+it.each(['pi','codex'])('queues a busy %s message first and promotes only its accepted queue entry',async(engine)=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=engine;
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine,state:{isStreaming:true},capabilities:{models:true,stop:true,steer:true,followUp:true}});
+ ws.receive({type:'history',sessionId:id,entries:[]});
+ expect(document.querySelector('#mode')).toBeNull();
+ const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='insert after sending';prompt.dispatchEvent(new Event('input'));
+ document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+ const sent=app.frames.find(f=>f.type==='prompt');expect(sent).toMatchObject({mode:'follow_up',text:'insert after sending'});
+ expect(app.frames.some(f=>f.type==='queue_action')).toBe(false);
+ ws.receive({type:'ack',operation:'follow_up',requestId:sent.requestId});
+ ws.receive({type:'queue_state',sessionId:id,items:[{id:'queued-1',requestId:sent.requestId,revision:3,status:'pending',text:sent.text,imageCount:0}]});
+ document.querySelector<HTMLButtonElement>('[data-queue-action="promote"]')!.click();
+ expect(app.frames.filter(f=>f.type==='queue_action')).toEqual([expect.objectContaining({action:'promote',id:'queued-1',revision:3})]);
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(1);
+});
+
+async function speedMenu(){
+ const app=await setup();chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value='codex';
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets[0];
+ ws.receive({type:'opened',sessionId:id,engine:'codex',state:{},capabilities:{models:true,stop:true,steer:true,followUp:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ const models={type:'models',sessionId:id,models:[{provider:'codex',id:'gpt-fake',fastMode:true}],current:{provider:'codex',id:'gpt-fake'},thinkingLevels:[],speed:{mode:'standard',fastAvailable:true},context:{preset:'272k'}};
+ ws.receive(models);
+ const chooseFast=()=>{document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-speed-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-speed-pane button')].find(b=>b.textContent?.startsWith('1.5x'))!.click();};
+ return {...app,id,ws,models,chooseFast};
+}
+it('confirms Fast pricing before sending and waits for authoritative speed metadata',async()=>{
+ const app=await speedMenu();app.chooseFast();
+ expect(document.querySelector('#modal-text')!.textContent).toContain('2 倍');expect(document.querySelector('#modal-text')!.textContent).toContain('2.5 倍');
+ expect(app.frames.some(f=>f.type==='set_speed')).toBe(false);
+ document.querySelector<HTMLButtonElement>('#modal-cancel')!.click();await vi.advanceTimersByTimeAsync(1);
+ expect(app.frames.some(f=>f.type==='set_speed')).toBe(false);
+ app.chooseFast();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
+ const change=app.frames.find(f=>f.type==='set_speed');expect(change).toMatchObject({mode:'fast'});
+ app.ws.receive({type:'ack',operation:'set_speed',requestId:change.requestId});
+ app.ws.receive({...app.models,requestId:'old-unrelated-read'});
+ expect(document.querySelector('#agent-speed-value')!.textContent).toBe('1x');
+ app.ws.receive({...app.models,requestId:change.requestId,speed:{mode:'fast',fastAvailable:true}});
+ expect(document.querySelector('#agent-speed-value')!.textContent).toBe('1.5x');
+});
+it('does not apply a Fast confirmation to a different conversation',async()=>{
+ const app=await speedMenu();app.chooseFast();
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
+ document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
+ expect(app.frames.some(f=>f.type==='set_speed')).toBe(false);
+ expect(document.querySelector('#agent-speed-row')!.classList.contains('hidden')).toBe(true);
+});
+it('does not retry an unconfirmed speed change after its deadline',async()=>{
+ const app=await speedMenu();app.chooseFast();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(15010);
+ expect(app.frames.filter(f=>f.type==='set_speed')).toHaveLength(1);
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);
 });

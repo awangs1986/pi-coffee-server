@@ -566,3 +566,13 @@ Acceptance: `test/completion-reads.test.ts`, `test/completion-reads-http.test.ts
 `probe-completion-icon.mjs` cover scoped read persistence, stale-response rejection,
 hidden tabs, latest-tail viewing, subsequent completion, independent browser contexts,
 account isolation and Host-restart restoration.
+
+
+## Codex speed and post-send promotion (2026-10-13 candidate)
+
+[Server #123 contract](codex-speed-and-queued-input.md) adds a Codex-only Speed
+row after Context, with 1x / 1.5x choices and explicit cost confirmation. Busy
+messages enter the queue first; Immediate Insert is an action on the accepted
+message. The previous pre-send steering selector is removed. This supersedes
+older UI examples, while the wire protocol still accepts native steering for
+compatible clients. Tests and activation remain paused.

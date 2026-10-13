@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Codex speed and post-send queue controls: [source candidate](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion; tests remain explicitly paused and production is unchanged.
+
 - MISHU 旧对话添加修正（2026-10-11）：[当前联系人合同](spec/mishu.md#user-flow)、[诊断和验证](development/mishu-old-contact.md)。72 小时只过滤默认列表；Pi/Codex 可按完整 ID 添加旧对话，Host 保留账号、生命周期、原生绑定和最终权限确认。产品入口与说明归独立 MISHU 插件。
 
 - Explicit `/restart`: [contract](spec/service-restart.md), [installation](deployment/service-restart.md), [Server #120](https://github.com/awangs1986/pi-coffee-server/issues/120). Authenticated Web-local maintenance, independent bounded worker and durable scoped receipts; production activation is separate.

@@ -432,3 +432,21 @@ immediately returns `pong` with the validated nonce. It does not create or resum
 an Agent session. Other session commands retain their open, scope and binding
 checks. Malformed frames retain normal protocol rejection. See Server #103 and
 [connection recovery](spec/conversation-switching.md#connection-recovery-2026-10-08).
+
+
+## Codex speed setting (2026-10-13 source candidate, Server #123)
+
+`set_speed` accepts `{v:1,type:"set_speed",requestId:"speed-1",mode:"standard"|"fast"}`.
+It requires the authenticated connection's open, idle, available Conversation and
+an adapter implementing `setSpeed`. Other modes and engines are rejected.
+
+A successful write sends an ACK with operation `set_speed`, then correlated
+`models` metadata containing optional `speed: {mode, fastAvailable}`. Model choices
+may expose `fastMode: boolean` from the native catalog. Missing fields mean this
+Host/adapter does not expose the feature. The browser confirms from metadata,
+not the ACK alone, and never retries an uncertain write automatically.
+
+Busy composer submissions now use `prompt.mode="follow_up"`. Later promotion uses
+existing `queue_action` with the exact item id/revision and action `promote`.
+Direct protocol steering remains compatible; the browser no longer offers it as
+a pre-send choice. See [the current candidate contract](spec/codex-speed-and-queued-input.md).

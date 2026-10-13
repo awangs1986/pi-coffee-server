@@ -247,6 +247,25 @@ describe("Codex app-server adapter", () => {
     }finally{ws.close();await host.close();}
   },20000);
 
+  it("changes Codex speed through authenticated WS without starting a model turn",async()=>{
+    const b=setup();mkdirSync(b.cwd,{recursive:true});const factory=b.factory(),host=new HostServer({port:0,token:'speed-test',factory});await host.start();
+    const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer speed-test'}}),frames:any[]=[];
+    ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+    const send=(frame:object)=>ws.send(JSON.stringify({v:1,...frame}));
+    try{
+      await once(ws,'open');send({type:'open',sessionId:'speed-ws'});
+      await expect.poll(()=>frames.some(f=>f.type==='opened')).toBe(true);
+      send({type:'set_speed',mode:'fast',requestId:'fast'});
+      await expect.poll(()=>frames.find(f=>f.type==='models'&&f.requestId==='fast')).toMatchObject({speed:{mode:'fast',fastAvailable:true}});
+      expect(frames.some(f=>f.type==='ack'&&f.operation==='set_speed'&&f.requestId==='fast')).toBe(true);
+      expect(frames.some(f=>f.event?.type==='agent_start')).toBe(false);
+      send({type:'set_speed',mode:'ultrafast',requestId:'invalid-speed'});
+      await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
+      send({type:'get_models',requestId:'read-after-invalid'});
+      await expect.poll(()=>frames.find(f=>f.type==='models'&&f.requestId==='read-after-invalid')).toMatchObject({speed:{mode:'fast'}});
+    }finally{ws.close();await host.close();}
+  });
+
   it("waits for native compaction completion instead of just request acceptance",async()=>{
     const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-test'});
     const events=recorder(session);let finished=false;const pending=session.compact().then(()=>{finished=true;});
@@ -271,6 +290,25 @@ describe("Codex app-server adapter", () => {
     const resumed=await b.factory().create({sessionId:'context-test'});expect((await resumed.getModels()).context).toMatchObject({preset:'maximum',limit:500000});
     expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toEqual({model_context_window:500000,model_auto_compact_token_limit:475000,'features.default_mode_request_user_input':true});
     await resumed.setContextPreset!('272k');expect(JSON.parse(readFileSync(join(b.codexHome,'fake-context.json'),'utf8'))).toMatchObject({model_context_window:272000});
+  });
+
+  it("persists per-thread Fast mode, explicitly restores standard, and rejects unsupported models",async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'speed-test'});
+    expect((await session.getModels()).speed).toEqual({mode:'standard',fastAvailable:true});
+    await session.setSpeed!('fast');await session.setThinkingLevel('high');
+    const events=recorder(session);await session.prompt('speed fixture');await events.until(settled);
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-service-tier.json'),'utf8'))).toBe('fast');
+    await session.stop();await factory.close();
+    const resumed=await b.factory().create({sessionId:'speed-test'});
+    expect((await resumed.getModels()).speed?.mode).toBe('fast');
+    await expect(resumed.setModel('codex','gpt-fake-mini')).rejects.toThrow('choose 1x');
+    expect((await resumed.getModels()).current?.id).toBe('gpt-fake');
+    await resumed.setSpeed!('standard');
+    const next=recorder(resumed);await resumed.prompt('standard fixture');await next.until(settled);
+    expect(JSON.parse(readFileSync(join(b.codexHome,'fake-service-tier.json'),'utf8'))).toBe('default');
+    await resumed.setModel('codex','gpt-fake-mini');
+    await expect(resumed.setSpeed!('fast')).rejects.toThrow('choose 1x');
+    expect((await resumed.getModels()).speed).toEqual({mode:'standard',fastAvailable:false});
   });
 
   it("creates a thread per PI Coffee session id, lists it under that id, and resumes it from a fresh server", async () => {

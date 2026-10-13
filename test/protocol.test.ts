@@ -83,3 +83,8 @@ describe("PI Coffee wire protocol", () => {
     expect(() => decodeClientFrame(JSON.stringify({ v: 1, type: "ui_response", id: "u1", cancelled: false }))).toThrow(/cancelled/);
   });
 });
+
+it('accepts only explicit Codex speed modes and preserves the request identity',()=>{
+ for(const mode of ['standard','fast'])expect(decodeClientFrame(JSON.stringify({v:1,type:'set_speed',requestId:'speed-1',mode}))).toEqual({v:1,type:'set_speed',requestId:'speed-1',mode});
+ for(const mode of ['ultrafast','priority','1.5x',null,{},1])expect(()=>decodeClientFrame(JSON.stringify({v:1,type:'set_speed',mode}))).toThrow();
+});

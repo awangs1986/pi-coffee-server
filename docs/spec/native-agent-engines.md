@@ -253,3 +253,12 @@ When a Host supplies an empty-recovery authority, its current scoped decision
 must also permit treating resumed native history as known empty. Old sidecars
 without this Boolean are unproven, and an admitted request is not replayed after
 clear. The native settings file remains Coffee-owned; vendor history is unchanged.
+
+
+## Codex speed (2026-10-13 candidate, Server #123)
+
+See [the speed contract](codex-speed-and-queued-input.md) for per-thread native
+service tiers, availability and confirmation. Standard is explicit even when a
+VM-wide configuration defaults to Fast. Pi customization, native tool permissions
+and other engines' model settings are unaffected. This is unverified source, not
+a production release.

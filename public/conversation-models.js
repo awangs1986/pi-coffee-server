@@ -12,6 +12,7 @@ function project(value){
   if(['native','relay'].includes(value.current.source))current.source=value.current.source;
   const result={engine:value.engine,current};
   if(value.fingerprint!==undefined)result.fingerprint=value.fingerprint;
+  if(value.engine==='codex'&&['standard','fast'].includes(value.speed?.mode))result.speed={mode:value.speed.mode};
   if(text(value.thinkingLevel,64))result.thinkingLevel=value.thinkingLevel;
   if(['272k','maximum'].includes(value.context?.preset))result.context={preset:value.context.preset};
   return result;
@@ -46,7 +47,7 @@ export class ConversationModels {
     if(!this.user||!text(id,256))return;
     const current=frame?.current;
     const source=current?.source||frame?.models?.find(model=>model.provider===current?.provider&&model.id===current?.id)?.source;
-    const value=project({engine,fingerprint,current:current?{...current,source}:null,thinkingLevel:frame?.thinkingLevel,context:frame?.context});
+    const value=project({engine,fingerprint,current:current?{...current,source}:null,thinkingLevel:frame?.thinkingLevel,context:frame?.context,speed:frame?.speed});
     if(!value){this.delete(id);return;}
     this.items.delete(id);this.items.set(id,{value,updatedAt:this.now()});this.persist();
   }

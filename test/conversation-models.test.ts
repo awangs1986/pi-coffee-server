@@ -36,3 +36,13 @@ describe('last-confirmed conversation display metadata',()=>{
     s.put('task-1099',{current:null},{engine:'codex'});expect(s.get('task-1099')).toBeNull();
   });
 });
+
+it('keeps confirmed speeds isolated per conversation and never caches native availability as authority',()=>{
+ const f=fixture(),cache=new ConversationModels({getStorage:()=>f.storage,now:f.now});cache.setScope('alice');
+ cache.put('fast-task',{...frame,speed:{mode:'fast',fastAvailable:true}},{engine:'codex'});
+ cache.put('normal-task',{...frame,speed:{mode:'standard',fastAvailable:true}},{engine:'codex'});
+ const restored=new ConversationModels({getStorage:()=>f.storage,now:f.now});restored.setScope('alice');
+ expect(restored.get('fast-task')?.speed).toEqual({mode:'fast'});
+ expect(restored.get('normal-task')?.speed).toEqual({mode:'standard'});
+ restored.setScope('bob');expect(restored.get('fast-task')).toBeNull();
+});

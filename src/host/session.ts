@@ -419,6 +419,12 @@ export class HostSession {
   getHistory():Promise<import("./agent-adapter.js").AgentHistory>{return this.ready().getHistory();}
   getModels(): Promise<PiModels> { return this.ready().getModels(); }
   setModel(provider: string, id: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setModel(provider, id); }
+  async setSpeed(mode:import('../shared/protocol.js').CodexSpeed):Promise<void>{
+    if(this.isBusy)throw new SessionBusyError();
+    const adapter=this.ready();if(!adapter.setSpeed)throw new Error('Fast mode requires the native Codex adapter');
+    this.contextChanging=true;
+    try{await adapter.setSpeed(mode);}finally{this.contextChanging=false;}
+  }
   async setContextPreset(preset:import('../shared/protocol.js').ContextPreset):Promise<void>{
     if(this.isBusy)throw new SessionBusyError();
     const adapter=this.ready();if(!adapter.setContextPreset)throw new Error('Context settings require an updated Host and Agent');
