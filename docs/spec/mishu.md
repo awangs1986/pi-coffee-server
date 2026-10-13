@@ -7,15 +7,36 @@ Owner decision, 2026-10-05: fork `awangs/MISHU` into the independently maintaine
 exception to the Pi plugin monorepo source rule. The owner selected coordination
 of **existing conversations**, with independent settings for **the current Pi Chat**.
 
-## Codex source candidate (2026-10-09)
+## Pi-only secretary boundary (2026-10-12)
 
-The owner requested [Codex Luna as the main MISHU secretary](mishu-codex-secretary.md).
-Repository-free Codex Chat already exists (#98); this candidate supports explicitly
-selected existing Codex Chat/Work through native MCP, scoped Host grants and
-Browser setup controls. Current Pi flows below remain valid. Native report-only
-isolation and original-report output recovery remain unavailable for Codex;
-automatic reminders and historical grant recovery are not claimed. No Pi fallback
-or target capability parity is implied. See C01–C12 and [candidate evidence](../development/mishu-codex-source.md).
+Owner decision, tracked in [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122):
+only an active Pi Chat can be selected or configured as a MISHU secretary.
+Codex and the other supported engines remain eligible existing targets, subject to
+their native capabilities and the authenticated user's grants. Ordinary Codex
+Chat/Work, native model choices and task bindings are unchanged.
+
+Browser selection and Host admission reject non-Pi sources. Unsupported native
+MISHU slash commands are consumed with a clear message instead of becoming model
+prompts. Pi continues to own its native setup interface. On Host recovery,
+persisted non-Pi source grants and pending observations are retired after a private
+byte-preserving backup is written, while
+historical contact lists, receipts and task records remain. Legacy Codex sessions
+resume with their original native base instructions and the Coffee secretary MCP
+server disabled. No replacement thread or prompt replay is required.
+
+The former [Codex secretary design](mishu-codex-secretary.md) is historical and
+superseded as a source requirement. This restriction does not establish that
+MISHU caused any provider capacity error.
+
+Bulk creation or awakening follows [the high-risk execution policy](batch-agent-execution.md).
+Passive directory/status/peek reads must not create threads or start model turns.
+Registry-level list coalescing remains; per-conversation native metadata reads
+inside a list use at most four concurrent workers, preserving original order and
+fallback metadata on an individual native read failure. SQLite/history worker
+queues keep their existing bounds. This is read concurrency, not a model-run allowance.
+
+Source acceptance and production activation are separate; this spec does not
+claim all external native tools mechanically enforce the new approval policy.
 
 ## Secretary experience target (2026-10-11)
 
@@ -185,14 +206,13 @@ make an old conversation recent. The time window limits default directory presen
 previously approved target bindings do not silently change as the clock advances.
 `directory` with an explicit `targetId` resolves at most one eligible exact match without
 an age cutoff, without starting native execution or changing contact permissions.
-The user can add that result in Pi or Codex setup, including when the default list is
+The user can add that result in Pi setup, including when the default list is
 empty. Final setup validates the account, lifecycle and exact current binding, not
-recency or the first 200 directory rows. Codex `setup_lookup` requires the existing
-source-bound, expiring setup ticket; cancellation/late lookup never saves grants.
+recency or the first 200 directory rows. Cancellation or late lookup never saves grants.
 `directory.configuredTargets` separately returns at most 20 retained entries whose
 saved source/target bindings are still current and whose targets remain available.
-Only these entries may bypass the recency window during incremental setup; arbitrary
-older IDs remain rejected. Setup validates the entire edited set again at commit.
+Retained contacts remain selected; explicitly resolved older IDs may also be added.
+Setup validates the entire edited set again at commit.
 
 Directory and status resolve current native names, including confirmed renames
 and Host restart, with first-user-message preview as the unnamed-title fallback.

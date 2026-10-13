@@ -84,13 +84,14 @@ export class MishuCoordinator {
   call.nativeTurn=evidence.runId;
  }
  async sourceContext(id:string,url:string){
+  const task=await this.workspaces.lookup(id);if((task?.engine??'pi')!=='pi')return undefined;
   const status=await this.status(id);if(!status.selected)return undefined;
   this.revokeCodexTokens(id);
   let instructions=secretaryInstructions(status);const requestId=this.foreground.get(id);
   if(status.enabled&&requestId){const manager=await this.managerStatus(id,true);instructions+=managerInstructions(manager);}
   if(!status.enabled||!requestId)return {instructions};
-  const token=randomBytes(32).toString('hex'),task=await this.source(id);
-  this.tokens.set(token,id);this.codexTokens.set(token,{id,requestId,binding:binding(task)});
+  const token=randomBytes(32).toString('hex'),sourceTask=await this.source(id);
+  this.tokens.set(token,id);this.codexTokens.set(token,{id,requestId,binding:binding(sourceTask)});
   return {instructions,endpoint:url,token};
  }
  async validateSteer(id:string){
@@ -192,6 +193,19 @@ export class MishuCoordinator {
   try{const loaded=await readMishuState(this.root);this.persistedBytes=loaded.bytes.length;this.state={version:2,chats:loaded.state.chats as Record<string,Config>};if(loaded.backupName)this.migration={bytes:loaded.bytes,name:loaded.backupName};
    for(const c of Object.values(this.state.chats)){for(const task of c.taskJournal?.tasks??[])for(const r of task.reports??[])if(r.automatic&&r.deliveryAttempted&&['pending','admitted'].includes(r.state)){r.state='uncertain';r.error='Host restarted during notification admission; no automatic replay.';}for(const a of c.assignments??[])if(!['settled','cancelled','uncertain'].includes(a.state)){a.state='uncertain';a.error='Host restarted; no execution replay. Inspect native evidence.';}for(const task of c.taskJournal?.tasks??[]){const a=c.assignments?.find(a=>a.id===task.assignment?.id);if(a)task.assignment={...a};}}
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
+   // Retire formerly configured Codex secretaries without deleting their audit records.
+   let retired=false;
+   for(const [id,c] of Object.entries(this.state.chats)){
+    const task=await this.workspaces.lookup(id);
+    if(task&&(task.engine??'pi')!=='pi'&&(c.selected||c.enabled||c.notifications)){
+     c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;
+     this.cancelObservations(c);retired=true;
+    }
+   }
+   if(retired){
+    this.migration??={bytes:loaded.bytes,name:'state.before-pi-only.'+createHash('sha256').update(loaded.bytes).digest('hex')+'.json'};
+    await this.save(true);
+   }
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
  private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
@@ -202,7 +216,7 @@ export class MishuCoordinator {
   }
  }
  private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
- private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||!((c.workspaceKind==='chat'&&(c.engine??'pi')==='pi')||c.engine==='codex'))throw Error('MISHU requires an active Pi Chat or Codex conversation belonging to this user');if(c.engine==='codex'&&(await this.capabilities?.(id))?.coordination!=='supported')throw Error('Native Codex MISHU source bridge unavailable');return c;}
+ private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user; other Agents may be targets only');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
   const currentBinding=c.sourceBinding===binding(task);

@@ -1,4 +1,3 @@
-import {execFileSync} from 'node:child_process';
 import {afterEach,it,expect} from 'vitest';
 import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -6,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {randomUUID,createHash} from 'node:crypto';
+import {MishuCoordinator} from '../src/host/mishu.js';
 import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
 import {NativeAgentFactory} from '../src/host/native/factory.js';
@@ -22,161 +22,59 @@ async function bench(){
  const factory=new NativeAgentFactory({pi,workspaces,codex:{command:process.execPath,args:[resolve('test/fixtures/fake-codex.mjs')]},codexSessionFactory:(id,cwd,onBound)=>new CodexSessionFactory({cwd,cliPath:cli,codexHome:home,model:'gpt-6-luna',env:{FAKE_DEVELOPER_INSTRUCTIONS:'PRESERVE_NATIVE_USER_GUIDANCE'},mappingFile:join(root,'mapping',id+'.json'),mishuContext:async()=>{const task=await workspaces.lookupByCwd(cwd);return task?host.mishuSourceContext('owner',task.id):undefined;},onBound:async(_,nativeId)=>onBound(nativeId)})});
  host=new HostServer({port:0,token:'synthetic-host',requireUser:true,factory,workspaces,scopeForUser:user=>({factory,workspaces:user==='owner'?workspaces:other})});await host.start();cleanups.push(()=>host.close());
  const call=(body:unknown,user='owner',token='synthetic-host',path='/api/mishu')=>fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer '+token,'x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});
- async function open(id:string){const frames:any[]=[],socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer synthetic-host','x-pi-coffee-user':'owner'}});cleanups.push(async()=>{socket.close();});socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.find(f=>f.type==='opened'||f.type==='error'),{timeout:5000}).toMatchObject({type:'opened'});
+ async function open(id:string){const frames:any[]=[],socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer synthetic-host','x-pi-coffee-user':'owner'}});cleanups.push(async()=>{socket.close();});socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'||f.type==='error'),{timeout:4000}).toBe(true);expect(frames.find(f=>f.type==='opened'||f.type==='error')).toEqual(expect.objectContaining({type:'opened'}));
   async function prompt(text:string,hold=false){const offset=frames.length,requestId=randomUUID();socket.send(JSON.stringify({v:1,type:'prompt',requestId,text}));await expect.poll(()=>frames.slice(offset).some(f=>f.type==='error'||f.event?.type===(hold?'tool_execution_end':'agent_settled')),{timeout:10000}).toBe(true);const current=frames.slice(offset);expect(current.filter(f=>f.type==='error')).toEqual([]);return current;}
   return {socket,frames,prompt};
  }
  return {root,home,workspaces,host,call,open};
 }
-it('enables the same Codex Luna thread, preserves native guidance, contacts a real target and rejects stale/source-forged tool grants',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
- let channel=await b.open(source.id);await channel.prompt('Materialize synthetic Codex conversation');
- const before=(await b.workspaces.lookup(source.id))!.nativeBinding!.id;
- expect((await b.call({action:'select',id:source.id,selected:true},'other')).status).toBe(409);
- const selected=await b.call({action:'select',id:source.id,selected:true});expect(selected.status,await selected.clone().text()).toBe(200);
- channel=await b.open(source.id);await channel.prompt('Who are you?');
- let guidance=JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'));expect(guidance).toContain('你是 MISHU');expect(guidance).toContain('尚未启用');expect(guidance).toContain('PRESERVE_NATIVE_USER_GUIDANCE');
- const status=await (await b.call({action:'status',id:source.id})).json();expect(status).toMatchObject({selected:true,enabled:false,source:{coordination:'supported',reports:'unavailable',reportOutputRecovery:'unavailable'},notifications:{available:false,enabled:false}});
- const setup=await (await b.call({action:'setup_open',id:source.id})).json(),row=setup.conversations.find((r:any)=>r.id===target.id);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[{id:row.id,binding:row.binding}],allowInstructions:false})).status).toBe(200);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[row],allowInstructions:true})).status).toBe(409);
- const sent=await channel.prompt('mishu-call:'+JSON.stringify({action:'send',targetId:row.id,binding:row.binding,messageId:'synthetic-message',kind:'information-only',text:'Reply with TARGET_RECEIPT_OK'}));
- expect(sent.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(false);
- const inbox=await channel.prompt('mishu-call:'+JSON.stringify({action:'inbox'}));expect(JSON.stringify(inbox)).toContain('synthetic-message');
- guidance=JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'));expect(guidance).toContain('协调已启用');expect(guidance.match(/你是 MISHU/g)).toHaveLength(1);expect(guidance).not.toContain('PI_COFFEE_MISHU_TOKEN');
- const persisted=JSON.parse(await readFile(join(b.home,'fake-threads.json'),'utf8'));expect(persisted[before].model).toBe('gpt-6-luna');expect((await b.workspaces.lookup(source.id))!.nativeBinding!.id).toBe(before);
- await channel.prompt('mishu-hold:'+JSON.stringify({action:'status'}),true);
- const config=JSON.parse(await readFile(join(b.home,'fake-context.json'),'utf8')),token=config.mcp_servers.coffee_mishu.env.PI_COFFEE_MISHU_TOKEN;
- const runtime=(input:unknown)=>b.call(input,'owner',token,'/api/mishu/runtime');
- expect((await runtime({action:'setup',targets:[row],allowInstructions:true})).status).toBe(409);
- expect((await runtime({action:'tasks',version:1,operation:'list',sourceRunId:'forged-user-run'})).status).toBe(409);
- expect((await runtime({action:'report',operation:'list'})).status).toBe(409);
- const offset=channel.frames.length;channel.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'source-steering',mode:'steer',text:'An active source cannot change its grant through steering'}));await expect.poll(()=>channel.frames.slice(offset).find(f=>f.type==='error'&&f.requestId==='source-steering')).toMatchObject({code:'operation_failed'});
- expect((await runtime({action:'status'})).status).toBe(200);
- let release!:()=>void,entered!:()=>void;const paused=new Promise<void>(resolve=>release=resolve),atTarget=new Promise<void>(resolve=>entered=resolve),lookup=b.workspaces.lookup.bind(b.workspaces);let armed=true;
- b.workspaces.lookup=async id=>{if(id===target.id&&armed){armed=false;entered();await paused;}return lookup(id);};
- const late=runtime({action:'send',messageId:'expired-admission',targetId:row.id,binding:row.binding,kind:'information-only',text:'Must not be admitted after expiration'});
- await atTarget;
- await writeFile(join(b.home,'allow-mishu-terminal'),'');await expect.poll(()=>channel.frames.filter(f=>f.event?.type==='agent_settled').length,{timeout:5000}).toBeGreaterThanOrEqual(4);
- await expect.poll(async()=>(await runtime({action:'status'})).status).toBe(401);release();expect((await late).status).toBe(409);
- expect((await b.call({action:'inspect',id:source.id,operation:'disable'})).status).toBe(200);
- await channel.prompt('Explain your current role after disable');guidance=JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'));expect(guidance).toContain('尚未启用');expect(JSON.parse(await readFile(join(b.home,'fake-context.json'),'utf8')).mcp_servers.coffee_mishu.enabled).toBe(false);
- const disabledSend=await channel.prompt('mishu-call:'+JSON.stringify({action:'send',targetId:row.id,binding:row.binding,messageId:'disabled-message',kind:'information-only',text:'Denied'}));expect(disabledSend.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(true);
- expect((await b.call({action:'select',id:source.id,selected:false})).status).toBe(200);channel=await b.open(source.id);await channel.prompt('Normal Codex conversation');expect(JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'))).not.toContain('MISHU');
-},30000);
-it('rejects unmaterialized Codex selection and native slash prompts rather than replacing a thread or asking the model to grant access',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex');const channel=await b.open(source.id);
- const denied=await b.call({action:'select',id:source.id,selected:true});expect(denied.status).toBe(409);expect((await denied.json()).error).toContain('原生记录');
- const offset=channel.frames.length;channel.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'direct-setup',text:'/mishu-setup'}));await expect.poll(()=>channel.frames.slice(offset).find(f=>f.type==='error')).toMatchObject({requestId:'direct-setup'});
- expect((await (await b.call({action:'status',id:source.id})).json()).enabled).toBe(false);
-},15000);
-it('registers and observes a Codex target run in the shared Host ledger while durable Codex dispatch stays unavailable',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation(undefined,'codex');
- let secretary=await b.open(source.id);await secretary.prompt('Save secretary native conversation');const targetChannel=await b.open(target.id);await targetChannel.prompt('Save target native run');
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);secretary=await b.open(source.id);
- const setup=await (await b.call({action:'setup_open',id:source.id})).json(),contact=setup.conversations.find((c:any)=>c.id===target.id);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[contact],allowInstructions:true})).status).toBe(200);
- const ask=(input:unknown)=>secretary.prompt('mishu-call:'+JSON.stringify(input));
- function output(frames:any[]){const tool=frames.find(f=>f.event?.type==='tool_execution_end')?.event;expect(tool?.isError).toBe(false);const result=JSON.parse(tool.result.content[0].text);return JSON.parse(result.content[0].text);}
- const registered=output(await ask({action:'tasks',version:1,operation:'register',operationId:'codex-registration',targetId:target.id,binding:contact.binding,purpose:'Observe current Codex run',scope:'Read-only evidence',summary:'Current target task',nextStep:'Read native result'}));
- const current=output(await ask({action:'directory'})).configuredTargets.find((c:any)=>c.id===target.id);expect(current.observation.capabilities.restartRecovery).toBe('unknown');expect(current.observation.dispatchSupported).toBe(false);
- const dispatch=await ask({action:'tasks',version:1,operation:'dispatch',taskId:registered.task.taskId,expectedRevision:registered.task.revision,messageId:'unsupported-dispatch',text:'Do a synthetic authorized task',authorizationRef:'User explicitly asked'});expect(dispatch.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(true);
- const observed=output(await ask({action:'tasks',version:1,operation:'observe',operationId:'codex-observation',taskId:registered.task.taskId,expectedRevision:registered.task.revision,runId:current.observation.runId}));expect(observed.task.obligation.runId).toBe(current.observation.runId);expect(observed.task.observation).toBe('reply-available');
- const display=await (await b.call({action:'inspect',id:source.id,operation:'tasks'})).json();expect(display.tasks[0]).toMatchObject({taskId:registered.task.taskId,observation:'reply-available'});
- const snapshot=JSON.parse(await readFile(join(b.workspaces.root,'.coffee','mishu','state.json'),'utf8'));expect(snapshot.chats[source.id].taskJournal.tasks[0].taskId).toBe(registered.task.taskId);
- const stopped=output(await ask({action:'tasks',version:1,operation:'stop',operationId:'stop-codex-observation',taskId:registered.task.taskId,expectedRevision:display.tasks[0].revision}));expect(stopped.task.workState).toBe('stopped');
-},20000);
 
-it('restores original native identity after inventory failure between role application and a model turn',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
- let channel=await b.open(source.id);await channel.prompt('Save source before role installation');const native=(await b.workspaces.lookup(source.id))!.nativeBinding!.id!;
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);channel=await b.open(source.id);
- const setup=await (await b.call({action:'setup_open',id:source.id})).json(),contact=setup.conversations.find((c:any)=>c.id===target.id);expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[contact],allowInstructions:false})).status).toBe(200);
- await writeFile(join(b.home,'mishu-inventory-unavailable'),'');const offset=channel.frames.length;channel.socket.send(JSON.stringify({v:1,type:'prompt',requestId:'failed-inventory',text:'Inventory must fail before model starts'}));await expect.poll(()=>channel.frames.slice(offset).find(f=>f.type==='error')).toMatchObject({requestId:'failed-inventory'});
- const prefs=JSON.parse(await readFile(join(b.root,'mapping','codex-context',createHash('sha256').update(native).digest('hex')+'.json'),'utf8'));expect(prefs.mishuRole).toBe(true);
- expect((await b.call({action:'select',id:source.id,selected:false})).status).toBe(200);channel=await b.open(source.id);await channel.prompt('Explain your original native role');const guidance=JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'));expect(guidance).toContain('NATIVE_BASE_ORIGINAL');expect(guidance).not.toContain('MISHU');expect((await b.workspaces.lookup(source.id))!.nativeBinding!.id).toBe(native);
-},15000);
-
-it('supports an existing Codex Work secretary through the same scoped setup without creating a Pi secretary',async()=>{
- const b=await bench(),seed=join(b.root,'seed');await mkdir(seed);const git=(args:string[])=>execFileSync('git',['-c','core.hooksPath=/dev/null','-c','user.name=Fixture','-c','user.email=fixture@localhost',...args],{cwd:seed,stdio:'ignore'});
- git(['init','-b','main']);await writeFile(join(seed,'note.txt'),'Synthetic repository');git(['add','.']);git(['commit','-m','fixture']);const remote=join(b.root,'remote.git');git(['clone','--bare',seed,remote]);
- const project=await b.workspaces.registerProject('codex-secretary-fixture',remote),source=await b.workspaces.createConversation(project.id,undefined,undefined,'codex'),target=await b.workspaces.createChatConversation();let channel=await b.open(source.id);await channel.prompt('Native Codex Work seed');const native=(await b.workspaces.lookup(source.id))!.nativeBinding!.id;
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);channel=await b.open(source.id);const setup=await (await b.call({action:'setup_open',id:source.id})).json(),contact=setup.conversations.find((c:any)=>c.id===target.id);expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[contact],allowInstructions:false})).status).toBe(200);await channel.prompt('Who is your current application role?');
- expect(JSON.parse(await readFile(join(b.home,'fake-guidance.json'),'utf8'))).toContain('你是 MISHU');expect((await b.workspaces.lookup(source.id))!.nativeBinding!.id).toBe(native);expect((await b.workspaces.lookup(source.id))!.workspaceKind).toBe('project');expect((await (await b.call({action:'status',id:source.id})).json()).enabled).toBe(true);
-},15000);
-
-it('Codex manager uses the native tool bridge and retains an earlier same-task instruction',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
- let channel=await b.open(source.id);await channel.prompt('Create native source');
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);channel=await b.open(source.id);
- const setup=await(await b.call({action:'setup_open',id:source.id})).json(),contact=setup.conversations.find((c:any)=>c.id===target.id);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[contact],allowInstructions:true,viewAll:false})).status).toBe(200);
- const overview=await channel.prompt('mishu-call:'+JSON.stringify({action:'overview',version:1}));expect(overview.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(false);expect(JSON.stringify(overview)).toContain(target.id);
- await channel.prompt('请修复登录并运行测试');
- await channel.prompt('mishu-hold:'+JSON.stringify({action:'status'}),true);
- const queueId='cancelled-user-request';channel.socket.send(JSON.stringify({v:1,type:'prompt',requestId:queueId,mode:'follow_up',text:'删除隔离测试文件'}));
- await expect.poll(()=>channel.frames.filter(f=>f.type==='queue_state').at(-1)?.items.some((row:any)=>row.requestId===queueId)).toBe(true);
- const queued=channel.frames.filter(f=>f.type==='queue_state').at(-1).items.find((row:any)=>row.requestId===queueId);
- channel.socket.send(JSON.stringify({v:1,type:'queue_action',requestId:'cancel-queued-proof',id:queued.id,revision:queued.revision,action:'cancel'}));
- await expect.poll(()=>channel.frames.filter(f=>f.type==='queue_state').at(-1)?.items.some((row:any)=>row.requestId===queueId)).toBe(false);
- const config=JSON.parse(await readFile(join(b.home,'fake-context.json'),'utf8')),token=config.mcp_servers.coffee_mishu.env.PI_COFFEE_MISHU_TOKEN;
- const send=await b.call({action:'send',version:2,targetId:contact.id,binding:contact.binding,messageId:'prior-user-instruction',kind:'authorized-execution',text:'Synthetic approved test',authorization:{quote:'修复登录并运行测试'}},'owner',token,'/api/mishu/runtime');
- expect(send.status,await send.clone().text()).toBe(200);
- const cancelled=await b.call({action:'send',version:2,targetId:contact.id,binding:contact.binding,messageId:'cancelled-authorization',kind:'authorized-execution',text:'Must not act',authorization:{quote:'删除隔离测试文件'}},'owner',token,'/api/mishu/runtime');expect(cancelled.status).toBe(409);
- const invented=await b.call({action:'send',version:2,targetId:contact.id,binding:contact.binding,messageId:'invented-instruction',kind:'authorized-execution',text:'Unapproved task',authorization:{quote:'删除所有用户数据'}},'owner',token,'/api/mishu/runtime');expect(invented.status).toBe(409);
- await writeFile(join(b.home,'allow-mishu-terminal'),'');
-},20000);
-
-it('starts Codex secretary turns when optional MCP resource inventory is unavailable',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
- let channel=await b.open(source.id);await channel.prompt('Materialize source for MCP readiness');
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);channel=await b.open(source.id);
- const setup=await(await b.call({action:'setup_open',id:source.id})).json(),contact=setup.conversations.find((c:any)=>c.id===target.id);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[contact],allowInstructions:false})).status).toBe(200);
- await writeFile(join(b.home,'mishu-resource-catalog-unavailable'),'');
- const result=await channel.prompt('mishu-call:'+JSON.stringify({action:'status'}));
- expect(result.find(f=>f.event?.type==='tool_execution_end')?.event.isError).toBe(false);
+it('rejects Codex as secretary without creating a native thread; Pi remains eligible',async()=>{
+ const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex');
+ const before=(await b.workspaces.lookup(source.id))!.nativeBinding;
+ for(const action of ['select','setup_open','status']){
+  const r=await b.call({action,id:source.id,selected:true});expect(r.status).toBe(409);expect((await r.json()).error).toMatch(/Pi Chat/);
+ }
+ expect(await b.host.mishuSourceContext('owner',source.id)).toBeUndefined();
+ expect((await b.workspaces.lookup(source.id))!.nativeBinding).toEqual(before);
+ await expect(readFile(join(b.home,'fake-threads.json'))).rejects.toMatchObject({code:'ENOENT'});
+ const pi=await b.workspaces.createChatConversation();expect((await b.call({action:'select',id:pi.id,selected:true})).status).toBe(200);
 });
 
-it('allows an explicitly selected older contact even when it is outside the default 72-hour list',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),target=await b.workspaces.createChatConversation();
- const channel=await b.open(source.id);await channel.prompt('Synthetic source for old-contact setup');
- expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(200);
- const before=await(await b.call({action:'setup_open',id:source.id})).json(),row=before.conversations.find((r:any)=>r.id===target.id);
- (await b.workspaces.lookup(target.id))!.lastActivityAt=new Date(Date.now()-96*3600000).toISOString();
- const after=await(await b.call({action:'setup_open',id:source.id})).json();expect(after.conversations.some((r:any)=>r.id===target.id)).toBe(false);
- expect((await b.call({action:'setup_lookup',id:source.id,ticket:'wrong',targetId:target.id})).status).toBe(409);
- expect((await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id},'other')).status).toBe(409);
- const found=await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id})).json();expect(found.conversation).toMatchObject({id:row.id,binding:row.binding});
- expect((await(await b.call({action:'status',id:source.id})).json()).targets).toEqual([]);
- expect(await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:source.id})).json()).toEqual({conversation:null});
- const archived=await b.workspaces.createChatConversation();await b.workspaces.archive(archived.id,true);
- expect(await(await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:archived.id})).json()).toEqual({conversation:null});
- const response=await b.call({action:'setup_confirm',id:source.id,ticket:after.ticket,targets:[{id:row.id,binding:row.binding}],allowInstructions:false});
- expect(response.status,await response.clone().text()).toBe(200);
- expect((await(await b.call({action:'status',id:source.id})).json()).targets.map((r:any)=>r.id)).toEqual([target.id]);
- expect((await b.call({action:'setup_lookup',id:source.id,ticket:after.ticket,targetId:target.id})).status).toBe(409);
- const again=await(await b.call({action:'setup_open',id:source.id})).json();await b.workspaces.archive(target.id,true);
- expect((await b.call({action:'setup_confirm',id:source.id,ticket:again.ticket,targets:[row],allowInstructions:false})).status).toBe(409);
-},15000);
+it('keeps ordinary Codex messaging and its model after secretary selection is rejected',async()=>{
+ const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex'),channel=await b.open(source.id);await channel.prompt('Native seed');
+ const id=(await b.workspaces.lookup(source.id))!.nativeBinding!.id;
+ expect((await b.call({action:'select',id:source.id,selected:true})).status).toBe(409);
+ await channel.prompt('Ordinary next turn');expect((await b.workspaces.lookup(source.id))!.nativeBinding!.id).toBe(id);
+});
 
-it('never revives an old setup lookup or confirmation after secretary revocation',async()=>{
- const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex');await b.workspaces.createChatConversation();
- const channel=await b.open(source.id);await channel.prompt('Synthetic source for revoked setup');
- await b.call({action:'select',id:source.id,selected:true});
- for(const revoke of ['deselect','disable']){
-  const setup=await(await b.call({action:'setup_open',id:source.id})).json(),row=setup.conversations[0];
-  if(revoke==='deselect'){await b.call({action:'select',id:source.id,selected:false});await b.call({action:'select',id:source.id,selected:true});}
-  else await b.call({action:'inspect',id:source.id,operation:'disable'});
-  expect((await b.call({action:'setup_lookup',id:source.id,ticket:setup.ticket,targetId:row.id})).status).toBe(409);
-  expect((await b.call({action:'setup_confirm',id:source.id,ticket:setup.ticket,targets:[row],allowInstructions:true})).status).toBe(409);
- }
- const pending=await(await b.call({action:'setup_open',id:source.id})).json(),row=pending.conversations[0];
- const originalList=b.workspaces.list.bind(b.workspaces);let release!:()=>void,arrived!:()=>void;
- const started=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);let hold=true;
- b.workspaces.list=async()=>{if(hold){hold=false;arrived();await gate;}return originalList();};
- const lookup=b.call({action:'setup_lookup',id:source.id,ticket:pending.ticket,targetId:row.id});
- await started;await b.call({action:'inspect',id:source.id,operation:'disable'});release();
- expect((await lookup).status).toBe(409);
+it('retires persisted non-Pi secretary grants while retaining audit contacts and Pi selection',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-retirement-'));cleanups.push(()=>rm(root,{recursive:true,force:true}));
+ const ws=new Workspaces(join(root,'work')),codex=await ws.createChatConversation(undefined,'codex'),pi=await ws.createChatConversation();
+ const store=join(root,'state');await mkdir(store);const file=join(store,'state.json');
+ const config={selected:true,enabled:true,allowInstructions:true,notifications:true,sourceBinding:'old-binding',targets:[],messages:[]};
+ const original=JSON.stringify({version:2,chats:{[codex.id]:config,[pi.id]:{...config,enabled:false,notifications:false}}});await writeFile(file,original);
+ const coordinator=new MishuCoordinator(store,ws,new Set());cleanups.push(()=>coordinator.close());
+ await coordinator.recoveryReady();await expect(coordinator.status(codex.id)).rejects.toThrow('Pi Chat');
+ const saved=JSON.parse(await readFile(file,'utf8'));
+ expect(saved.chats[codex.id]).toMatchObject({selected:false,enabled:false,allowInstructions:false,notifications:false,notificationGeneration:1,targets:[],messages:[]});
+ expect(saved.chats[pi.id].selected).toBe(true);
+ expect(await readFile(join(store,'state.before-pi-only.'+createHash('sha256').update(original).digest('hex')+'.json'),'utf8')).toBe(original);
+});
 
-},15000);
+it('resumes a legacy Codex secretary as ordinary Codex with its model, binding and native guidance preserved',async()=>{
+ const b=await bench(),source=await b.workspaces.createChatConversation(undefined,'codex');
+ // Simulate a durable pre-upgrade native thread and saved adapter preference.
+ await mkdir(b.home,{recursive:true});const nativeId=randomUUID(),task=(await b.workspaces.lookup(source.id))!;
+ await b.workspaces.setNativeBinding(source.id,{state:'bound',id:nativeId});
+ const rollout=join(b.home,'rollouts',nativeId+'.jsonl');await mkdir(join(b.home,'rollouts'));
+ await writeFile(rollout,JSON.stringify({type:'session_meta',payload:{id:nativeId,cwd:task.cwd,base_instructions:{text:'NATIVE_BASE_ORIGINAL\n\n<pi_coffee_mishu_role>\nOLD_ROLE'}}})+'\n');
+ await writeFile(join(b.home,'fake-threads.json'),JSON.stringify({[nativeId]:{id:nativeId,cwd:task.cwd,createdAt:1,updatedAt:1,turns:[{id:'old-turn',status:'completed',items:[{id:'old-user',type:'userMessage',content:[{type:'text',text:'old message'}]}]}],model:'preserved-model',effort:'medium'}}));
+ const preferences=join(b.root,'mapping','codex-context');await mkdir(preferences,{recursive:true});
+ await writeFile(join(preferences,createHash('sha256').update(nativeId).digest('hex')+'.json'),JSON.stringify({mishuRole:true,preset:'272k',model:'preserved-model',reasoningEffort:'medium'}));
+ const channel=await b.open(source.id);
+ expect(JSON.parse(await readFile(join(b.home,'fake-context.json'),'utf8')).mcp_servers.coffee_mishu.enabled).toBe(false);
+ const thread=JSON.parse(await readFile(join(b.home,'fake-threads.json'),'utf8'))[nativeId];
+ expect(thread.model).toBe('preserved-model');expect(thread.baseInstructions).toBe('NATIVE_BASE_ORIGINAL');
+ await channel.prompt('Ordinary resumed message');expect((await b.workspaces.lookup(source.id))!.nativeBinding!.id).toBe(nativeId);
+});

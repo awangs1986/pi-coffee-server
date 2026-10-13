@@ -313,7 +313,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     const preparationConfig=await this.preparationConfig(server);
     const common = {
       ...(developerInstructions===undefined?{}:{developerInstructions}),
-      config:{...nativeThreadConfig(preset),...preparationConfig},
+      config:{...nativeThreadConfig(preset),...preparationConfig,...(preferences.mishuRole?{mcp_servers:{...(preparationConfig.mcp_servers as Obj??{}),coffee_mishu:{command:process.execPath,args:[fileURLToPath(new URL('./mishu-mcp.mjs',import.meta.url))],enabled:false}}}:{})},
       serviceTier:preferences.speed==='fast'?'fast':'default',
       cwd: this.options.cwd,
       ...(this.options.sandbox === undefined ? {} : { sandbox: this.options.sandbox }),
@@ -338,7 +338,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       if (owned === false) throw new Error("No such conversation");
       // Deployment defaults only seed new threads. A resumed thread keeps its
       // native selection, unless a confirmed browser choice is pending for it.
-      const originalBase=owned&&preferences.mishuRole&&this.options.mishuContext?await originalCodexBase(server,known,this.options.cwd):undefined;
+      const originalBase=owned&&preferences.mishuRole?await originalCodexBase(server,known,this.options.cwd):undefined;
       if (owned) response = await server.request("thread/resume", { threadId: known, ...common,
         ...(originalBase===undefined?{}:{baseInstructions:originalBase}),
         ...(preferences.model?{model:preferences.model}:{}),

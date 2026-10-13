@@ -1,8 +1,14 @@
 # PI Coffee documentation map
 
-- Codex speed and post-send queue controls: [source candidate](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion; tests remain explicitly paused and production is unchanged.
+- Codex speed and post-send queue controls: [source candidate](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion; serial verification and one real Fast turn are authorized; source publication and activation remain separate.
 
-- MISHU 旧对话添加修正（2026-10-11）：[当前联系人合同](spec/mishu.md#user-flow)、[诊断和验证](development/mishu-old-contact.md)。72 小时只过滤默认列表；Pi/Codex 可按完整 ID 添加旧对话，Host 保留账号、生命周期、原生绑定和最终权限确认。产品入口与说明归独立 MISHU 插件。
+
+- Pi-only MISHU secretary: [current contract](spec/mishu.md#pi-only-secretary-boundary-2026-10-12), [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122). Other engines remain targets; persisted non-Pi source grants are retired without deleting history.
+
+- High-risk batch Agent execution: [owner policy](spec/batch-agent-execution.md). Bulk creation/awakening requires explicit approval of count, models, purpose and concurrency; passive monitoring stays read-only.
+
+- MISHU 旧对话添加修正（2026-10-11）：[当前联系人合同](spec/mishu.md#user-flow)、[诊断和验证](development/mishu-old-contact.md)。72 小时只过滤默认列表；Pi 秘书可按完整 ID 添加旧对话，Host 保留账号、生命周期、原生绑定和最终权限确认。产品入口与说明归独立 MISHU 插件。
+
 
 - Explicit `/restart`: [contract](spec/service-restart.md), [installation](deployment/service-restart.md), [Server #120](https://github.com/awangs1986/pi-coffee-server/issues/120). Authenticated Web-local maintenance, independent bounded worker and durable scoped receipts; production activation is separate.
 
@@ -23,7 +29,7 @@
 
 - MISHU manager candidate (P1–P9: watch, rules, to-do, overview/events/peek, keyword replies, Host-issued authorization, receipt rotation): [contract](spec/mishu.md#manager-p1p9-2026-10-09-candidate), [implementation, rules.json and deployment](development/mishu-manager.md). Requires `pi-coffee-mishu@0.3.0-manager.2`.
 - MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
-- Planned Codex main secretary: [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [approved Issues #85–#91](development/mishu-codex-tickets.md), [public SPEC #84](https://github.com/awangs1986/pi-coffee-server/issues/84). Explicitly selected Codex Work; ordinary Chat stays Pi-only. This is a new requirement, not implementation or production evidence.
+- Historical Codex main secretary (superseded by Pi-only #122): [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [approved Issues #85–#91](development/mishu-codex-tickets.md), [public SPEC #84](https://github.com/awangs1986/pi-coffee-server/issues/84). Explicitly selected Codex Work; ordinary Chat stays Pi-only. This is a new requirement, not implementation or production evidence.
 
 - MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 - Codex local readiness: [contract](spec/native-agent-engines.md#codex-local-readiness-correction--2026-10-06-server-82), [diagnosis and evidence](reviews/codex-readiness-20261006.md), [Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82). Local configured-login status is distinct from slow account metadata and provider acceptance; source verification is distinct from production activation.

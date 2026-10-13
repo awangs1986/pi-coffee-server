@@ -14,6 +14,10 @@ GitHub `awangs1986/pi-coffee-server` owns Browser, Web gateway, Relay, Host and 
 
 For verification/publication/activation tooling, use [the workflow](docs/development/verification-and-release.md). For sidebar changes, use [its source and lifecycle matrix](docs/agents/sidebar.md).
 
+## High-risk execution
+
+Bulk creation or concurrent awakening of conversations or Agents is high risk, including review subagents, MISHU, automation and bulk Fork. Before starting, read [the batch execution policy](docs/spec/batch-agent-execution.md), disclose the count, models, purpose and concurrency limit, and obtain explicit user approval for that scope. Generic review/check requests do not authorize fan-out; proceed serially within the current conversation by default.
+
 ## Implementation and release
 
 - Keep native engine details behind Agent interfaces. Web authenticates and forwards; Host owns execution and durable task data.

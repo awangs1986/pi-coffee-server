@@ -32,14 +32,13 @@ it('keeps selection unavailable until the current Chat has finished opening',asy
  current={...current,busy:false};ui.updateAvailability();expect(button.disabled).toBe(false);
 });
 
-it('lets an idle Codex Chat select MISHU without granting contact or execution rights',async()=>{
- document.body.innerHTML='<button id="m" aria-checked="false"><span class="mishu-check"></span></button>';
+it('disables Codex secretary selection without requesting metadata or granting rights',async()=>{
+ document.body.innerHTML='<button id="m" aria-checked="false"></button><button id="setup"></button>';
  const button=document.querySelector<HTMLButtonElement>('#m')!;
- const task={id:'codex-secretary',engine:'codex',workspaceKind:'chat',busy:false};
- const request=vi.fn(async(input:any)=>input.action==='status'?{selected:false,enabled:false,source:{coordination:'supported',reports:'unavailable'}}:{selected:true,enabled:false});
- const changed=vi.fn();const control=initMishuControls({button,context:()=>task,request,changed,toast:vi.fn()});
- await control.refresh();expect(button.disabled).toBe(false);
- button.click();await vi.waitFor(()=>expect(changed).toHaveBeenCalledWith('codex-secretary'));
- expect(request).toHaveBeenLastCalledWith({action:'select',id:'codex-secretary',selected:true});
- expect(button.getAttribute('aria-checked')).toBe('true');
+ const configureButton=document.querySelector<HTMLButtonElement>('#setup')!;
+ const request=vi.fn(),changed=vi.fn();
+ const control=initMishuControls({button,configureButton,context:()=>({id:'codex',engine:'codex',workspaceKind:'chat',busy:false}),request,changed,toast:vi.fn()});
+ await control.refresh();expect(button.disabled).toBe(true);button.click();
+ expect(request).not.toHaveBeenCalled();expect(changed).not.toHaveBeenCalled();
+ expect(configureButton.hidden).toBe(true);expect(configureButton.disabled).toBe(true);
 });

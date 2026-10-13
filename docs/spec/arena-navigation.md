@@ -575,4 +575,4 @@ row after Context, with 1x / 1.5x choices and explicit cost confirmation. Busy
 messages enter the queue first; Immediate Insert is an action on the accepted
 message. The previous pre-send steering selector is removed. This supersedes
 older UI examples, while the wire protocol still accepts native steering for
-compatible clients. Tests and activation remain paused.
+compatible clients. Serial verification is authorized; activation remains a separate release step.
