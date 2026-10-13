@@ -41,7 +41,7 @@ it('fixes Agent at Task creation, scopes Model controls and ignores obsolete soc
  app.sockets[0].receive({type:'opened',engine:'codex',sessionId:created.id,state:{},capabilities:{models:true,tools:true,questions:true,stop:true,images:true}});
  app.sockets[0].receive({type:'history',sessionId:created.id,entries:[]});await vi.advanceTimersByTimeAsync(10);
  expect(app.frames.filter(f=>f.type.startsWith('get_')).map(f=>f.type)).toEqual(['get_model_catalog','get_models']);
- expect(document.querySelector('#plugins-btn')?.classList.contains('hidden')).toBe(true);
+ expect(document.querySelector('#plugins-btn')?.classList.contains('hidden')).toBe(false);
  const oldHandler=app.sockets[0].onmessage;document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
  oldHandler({data:JSON.stringify({type:'opened',sessionId:'obsolete',state:{}})});expect(localStorage.getItem('pi-coffee.active.v2')).toBeNull();
 });

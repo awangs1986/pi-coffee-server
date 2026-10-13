@@ -64,7 +64,7 @@ prompt. An already delivered message cannot be retroactively promoted.
 
 ## Acceptance status
 
-Prepared regression coverage includes protocol validation, authenticated WS speed
+Regression coverage includes protocol validation, authenticated WS speed
 settings without a model turn, native preference restoration and tier reset,
 unsupported-model rejection, browser cost confirmation/cancellation, stale-dialog
 fencing, metadata correlation, timeout without retries, and Pi/Codex queue-then-
@@ -77,3 +77,19 @@ Use serial isolated regression checks without additional provider calls or revie
 subagents. Evidence and failures are recorded in Server #123; version advancement,
 publication and production activation remain distinct. The Pi-only MISHU source
 boundary and high-risk batch policy are integrated through normal merge ancestry.
+
+## Source verification (2026-10-13)
+
+Targeted verification passed: 9 files / 205 tests, executed serially with synthetic
+providers. An isolated local Web/Host task completed exactly one real Codex
+`gpt-6.1-sol` / medium model request with native `serviceTier=fast`, returned
+`SPEED_OK`, and displayed the confirmed Fast menu and cost dialog in Chromium.
+The observed turn took about 6.7 seconds; this is functional acceptance, not a
+Standard/Fast performance comparison or a guarantee of the advertised multiplier.
+The native CLI required recovery of discarded empty threads before the one turn;
+these scaffolding attempts made no model requests. The single Web diagnostic task
+was retained outside production account workspaces, and its processes were closed.
+
+The test's initial unpublished-thread UI attachment failures and recovery are
+retained in private evidence and the Issue. Canonical verification, publication,
+fresh-clone verification and production activation remain separately recorded gates.

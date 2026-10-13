@@ -259,10 +259,12 @@ describe("Codex app-server adapter", () => {
       await expect.poll(()=>frames.find(f=>f.type==='models'&&f.requestId==='fast')).toMatchObject({speed:{mode:'fast',fastAvailable:true}});
       expect(frames.some(f=>f.type==='ack'&&f.operation==='set_speed'&&f.requestId==='fast')).toBe(true);
       expect(frames.some(f=>f.event?.type==='agent_start')).toBe(false);
+      send({type:'get_models',requestId:'read-confirmed-speed'});
+      await expect.poll(()=>frames.find(f=>f.type==='models'&&f.requestId==='read-confirmed-speed')).toMatchObject({speed:{mode:'fast'}});
       send({type:'set_speed',mode:'ultrafast',requestId:'invalid-speed'});
       await expect.poll(()=>frames.some(f=>f.type==='error')).toBe(true);
-      send({type:'get_models',requestId:'read-after-invalid'});
-      await expect.poll(()=>frames.find(f=>f.type==='models'&&f.requestId==='read-after-invalid')).toMatchObject({speed:{mode:'fast'}});
+      // Invalid protocol frames close the socket; they do not admit another request.
+      await expect.poll(()=>ws.readyState).toBe(WebSocket.CLOSED);
     }finally{ws.close();await host.close();}
   });
 
