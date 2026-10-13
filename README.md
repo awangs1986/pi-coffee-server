@@ -278,7 +278,7 @@ One Gitea user can connect several GitHub accounts. Each project chooses an
 account; managed Git/gh operations do not borrow an unrelated VM GitHub login.
 Gitea operations use each account's verified Host credential and Git author.
 Administrators complete that binding during onboarding; both users must then be
-able to use the full Gitea workflow without creating another VM. Login alone is not
+able to use the complete Gitea workflow without creating another VM. Login alone is not
 acceptance. See [the two-user contract](docs/spec/multi-user-workbench.md) and
 [GitHub authorization](docs/spec/github-accounts.md).
 
