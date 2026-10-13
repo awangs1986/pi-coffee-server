@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- Approved shared-Host participant login: [legacy-owner routing and credential boundary](deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner), [Server #124](https://github.com/awangs1986/pi-coffee-server/issues/124). Explicit route admission retains existing default task data; newly scoped accounts never inherit the default owner's Gitea credential. Production activation is recorded separately.
+
 - Codex speed and post-send queue controls: [source candidate](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion; serial verification and one real Fast turn are authorized; source publication and activation remain separate.
 
 

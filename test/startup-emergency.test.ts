@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import {createServer} from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { pathToFileURL } from 'node:url';
 
-async function launch(role: 'web' | 'host', missing: string, check: (url: string) => Promise<void>) {
+async function launch(role: 'web' | 'host', missing: string, check: (url: string, root:string) => Promise<void>, environment:Record<string,string>={}) {
   const root = await mkdtemp(join(tmpdir(), 'coffee-emergency-'));
   await mkdir(join(root, 'agent'));
   const codex = join(root, 'codex.mjs');
@@ -20,6 +21,7 @@ async function launch(role: 'web' | 'host', missing: string, check: (url: string
       PI_COFFEE_WORKDIR: join(root, 'work'), PI_COFFEE_SESSION_DIR: join(root, 'sessions'),
       PI_COFFEE_TMP_ROOT: join(root, 'tmp'),
       PI_COFFEE_CODEX_COMMAND: codex, PI_COFFEE_CODEX_HOME: join(root,'codex-home'), CODEX_HOME:join(root,'codex-home'),
+      ...environment,
     }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = ''; child.stdout.on('data', data => output += data); child.stderr.on('data', data => output += data);
@@ -33,7 +35,7 @@ async function launch(role: 'web' | 'host', missing: string, check: (url: string
       child.once('exit', () => { clearInterval(poll); clearTimeout(timer); reject(new Error('Startup failed: ' + output)); });
       child.once('error', reject);
     });
-    await check(address);
+    await check(address,root);
   } finally {
     if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
     await rm(root, { recursive: true, force: true });
@@ -61,4 +63,22 @@ it.each(['pi-coffee-lsp', 'context-handoff', 'pi-coffee-harness'])('Host exposes
       await expect.poll(()=>frames.find(f=>f.requestId==='native-codex'),{timeout:5000}).toMatchObject({type:'model_catalog',engine:'codex',models:expect.arrayContaining([expect.objectContaining({provider:'codex',id:'gpt-fake'})])});
     } finally {socket.terminate();}
   });
+},15000);
+
+it('does not lend the default owner Gitea API or Git credentials to a scoped participant',async()=>{
+ let requests=0;
+ const forge=createServer((_req,res)=>{requests++;res.writeHead(200,{'content-type':'application/json'});res.end('[]');});
+ await new Promise<void>(resolve=>forge.listen(0,'127.0.0.1',resolve));
+ const address=forge.address();if(!address||typeof address==='string')throw Error('fixture address');
+ try{
+  await launch('host','pi-coffee-lsp',async(url,root)=>{
+   const call=(user?:string)=>fetch(url+'/api/workspace',{method:'POST',headers:{authorization:'Bearer fixture-token','content-type':'application/json',...(user?{'x-pi-coffee-user':user}:{})},body:JSON.stringify({action:'gitea_repos'})});
+   expect((await call()).status).toBe(200);expect(requests).toBe(1);
+   expect((await call('gitea-2')).status).toBe(409);expect(requests).toBe(1);
+   const transport=JSON.parse(await readFile(join(root,'sessions','gitea-2','github-accounts','transport.json'),'utf8'));
+   expect(transport.gitea).toBeUndefined();
+   const ownerTransport=JSON.parse(await readFile(join(root,'sessions','github-accounts','transport.json'),'utf8'));
+   expect(ownerTransport.gitea.owner).toBe('owner');
+  },{PI_COFFEE_GITEA_URL:`http://127.0.0.1:${address.port}`,PI_COFFEE_GITEA_TOKEN:'owner-fixture',PI_COFFEE_GITEA_OWNER:'owner'});
+ }finally{await new Promise<void>(resolve=>forge.close(()=>resolve()));}
 },15000);

@@ -22,6 +22,41 @@ Signed-cookie authentication requires a new login after Web restart, even with a
 
 A successful native model response alone is insufficient release evidence.
 
+## Shared Host onboarding with a legacy owner
+
+[Server #124](https://github.com/awangs1986/pi-coffee-server/issues/124).
+The route table admits numeric Gitea identities, separately from task-directory
+mapping. With `PI_COFFEE_SHARED_HOST=1`, normal entries derive `gitea-<id>` as their
+Host scope. An administrator may set `legacyDefault: true` on an existing owner's
+route to preserve that Host's unscoped registry, files and native bindings. Omitted
+or false uses the derived scope. Existing dedicated Hosts can each retain their own
+legacy owner; two identities cannot select the same Host/token and default scope.
+This is an explicit compatibility exception, not an automatic migration or fallback.
+The Host must continue accepting its legacy default scope; do not set
+`PI_COFFEE_REQUIRE_USER=1` until those data have been explicitly migrated.
+
+Back up the route file before activation. Keep each existing route's URL/token and
+scope, add only the approved numeric identity, and verify both authenticated HTTP
+and WebSocket paths. Route scope changes revoke existing browser sessions even if
+URL/token are unchanged. Browser parameters and headers never choose the upstream
+scope. Web restart requires a fresh login; old callback URLs must not be replayed.
+
+Host's legacy `PI_COFFEE_GITEA_TOKEN`/owner belongs only to the default registry.
+Scoped participants receive no fallback Gitea API or native Git credential, including
+through the shared Skill manager. Gitea login alone is not repository authorization.
+Their Chat tasks and independently connected GitHub accounts are usable; scoped
+Gitea repository onboarding requires a separate credential design and is not part
+of this repair. All agents still run as the same OS owner; this is application-level
+separation, not a Linux security boundary.
+
+Acceptance: `test/identity-shared-host.test.ts` drives real Web/Host HTTP and WS
+boundaries with fixture identities. It covers legacy path retention, scoped lists,
+cross-task denial, missing routes, duplicate default scope and scope-change
+revocation. `test/startup-emergency.test.ts` starts the built Host and confirms
+default Gitea credentials are absent from scoped API and native Git transport.
+Production activation must additionally compare the original task IDs and replay
+the actual configured callback boundary without creating model turns.
+
 ## Emergency startup
 
 Web and Relay do not load Pi plugins. Host resolves its configured Pi packages

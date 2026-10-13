@@ -2,7 +2,7 @@ import {conversationReturnTo} from './conversation-route.js';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-export interface UserRoute { hostUrl: string; hostToken: string; user?:string }
+export interface UserRoute { hostUrl: string; hostToken: string; user?:string; /** Explicitly retain this Host's pre-scoping owner registry. */ legacyDefault?:boolean }
 export function parseUserRoutes(text:string):Record<string,UserRoute> {
   return JSON.parse(text.replace(/^\uFEFF/,'')) as Record<string,UserRoute>;
 }
@@ -36,7 +36,7 @@ export class Identity {
     if (!session) return;
     let route: UserRoute | undefined;
     try { route = this.routes()[session.id]; } catch { return; }
-    if (session.expires <= Date.now() || !route || route.hostUrl !== session.route.hostUrl || route.hostToken !== session.route.hostToken) { this.sessions.delete(key!); return; }
+    if (session.expires <= Date.now() || !route || route.hostUrl !== session.route.hostUrl || route.hostToken !== session.route.hostToken || route.user !== session.route.user) { this.sessions.delete(key!); return; }
     if (Date.now() - session.checked > 30000) {
       try {
         const user = await this.user(session.token);
@@ -49,15 +49,20 @@ export class Identity {
   }
   private routes(): Record<string, UserRoute> {
     const routes=this.options.routes();const urls=new Set<string>();const tokens=new Set<string>();
+    const scopedUrls=new Set<string>();const scopedTokens=new Set<string>();const resolved:Record<string,UserRoute>={};
     if(!routes || typeof routes!=="object" || Array.isArray(routes))throw new Error("Invalid VM routes");
     for(const [id,route] of Object.entries(routes)) {
       if(!/^[1-9][0-9]*$/.test(id) || !route || typeof route.hostToken!=="string" || !route.hostToken || !/^wss?:\/\//.test(route.hostUrl))throw new Error("Invalid VM route");
+      if(route.legacyDefault!==undefined && typeof route.legacyDefault!=="boolean")throw new Error("Invalid legacy default route");
       const url=new URL(route.hostUrl).href;
       if(!this.options.sharedHost && (urls.has(url) || tokens.has(route.hostToken)))throw new Error("Each user needs an independent Host and token");
-      if(this.options.sharedHost)route.user="gitea-"+id;
+      const user=this.options.sharedHost ? route.legacyDefault===true ? undefined : "gitea-"+id : route.user;
+      const scopedUrl=JSON.stringify([url,user??null]),scopedToken=JSON.stringify([route.hostToken,user??null]);
+      if(scopedUrls.has(scopedUrl)||scopedTokens.has(scopedToken))throw new Error("Each user needs an independent Host scope");
+      scopedUrls.add(scopedUrl);scopedTokens.add(scopedToken);resolved[id]={...route,user};
       urls.add(url);tokens.add(route.hostToken);
     }
-    return routes;
+    return resolved;
   }
   /** Service-only reverse OAuth exchange; no browser session can use this grant. */
   authorizesHost(req:IncomingMessage):boolean {

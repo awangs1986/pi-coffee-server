@@ -1,3 +1,5 @@
+> Shared-Host participant login (2026-10-13): [Server #124](https://github.com/awangs1986/pi-coffee-server/issues/124), [routing and credential contract](docs/deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner). Explicitly preserve the legacy owner's registry when admitting a scoped account. Source verification and production route activation remain separate.
+
 > Codex speed / post-send promotion (2026-10-13): [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123), [contract](docs/spec/codex-speed-and-queued-input.md). Owner clarified that serial testing and one real Fast turn are authorized. Publish after verification, retaining Pi-only MISHU and the high-risk batch policy through merge ancestry.
 
 > Pi-only MISHU secretary (2026-10-12): [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122), [current contract](docs/spec/mishu.md#pi-only-secretary-boundary-2026-10-12). Codex remains a target. Source tests and deployment acceptance are tracked separately.

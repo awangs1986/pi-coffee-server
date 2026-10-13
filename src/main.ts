@@ -124,7 +124,9 @@ async function run(selectedRole: Role): Promise<void> {
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
     await mkdir(cwd,{recursive:true});
     const workRoot=user ? cwd : process.env.PI_COFFEE_WORK_ROOT ?? cwd;
-    const forge=process.env.PI_COFFEE_GITEA_URL && process.env.PI_COFFEE_GITEA_TOKEN && process.env.PI_COFFEE_GITEA_OWNER ? new GiteaClient({baseUrl:process.env.PI_COFFEE_GITEA_URL,token:process.env.PI_COFFEE_GITEA_TOKEN,owner:process.env.PI_COFFEE_GITEA_OWNER}) : undefined;
+    // The legacy environment credential belongs only to the default owner.
+    // A newly scoped participant must not inherit its repository or Git access.
+    const forge=user===undefined && process.env.PI_COFFEE_GITEA_URL && process.env.PI_COFFEE_GITEA_TOKEN && process.env.PI_COFFEE_GITEA_OWNER ? new GiteaClient({baseUrl:process.env.PI_COFFEE_GITEA_URL,token:process.env.PI_COFFEE_GITEA_TOKEN,owner:process.env.PI_COFFEE_GITEA_OWNER}) : undefined;
     const githubAccounts=new GitHubAccounts(join(sessionDir??join(cwd,'.pi-coffee'),'github-accounts'),{...(process.env.PI_COFFEE_GITHUB_REFRESH_URL?{renew:githubRenewalClient(process.env.PI_COFFEE_GITHUB_REFRESH_URL,process.env.PI_COFFEE_HOST_TOKEN??'',user)}:{}),...(forge?{gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}}:{})});
     const deniedGitHub=await githubAccounts.environment(undefined);
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
