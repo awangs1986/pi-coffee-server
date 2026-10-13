@@ -1,3 +1,4 @@
+const {compactEntry,compactOperation}=await import(new URL(import.meta.url.endsWith('.ts')?'./conversation-projection.ts':'./conversation-projection.js',import.meta.url).href);
 // Source workers run directly under Node's type stripping; releases use JS.
 const {runLifecycle}=await import(new URL(import.meta.url.endsWith('.ts')?'../shared/run-lifecycle.ts':'../shared/run-lifecycle.js',import.meta.url).href);
 /** SQLite work stays off the Host control/event loop. Never opens native runtimes. */
@@ -217,26 +218,27 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
     let before: number | undefined;let anchorAdjusted=false;
     if(a.anchorEntityId){if(typeof a.anchorEntityId!=='string'||a.anchorEntityId.length>1024)fail('invalid_anchor');const anchor=db.prepare('SELECT position FROM entities WHERE id=?').get(a.anchorEntityId);if(anchor)before=Number(anchor.position)+1;else anchorAdjusted=true;}
     if (a.cursor) { let cursor:any;try{cursor=JSON.parse(Buffer.from(a.cursor,'base64url').toString());}catch{fail('invalid_cursor');}
-      if(cursor.epoch!==s.bindingEpoch||cursor.snapshotId!==s.snapshotId)fail('reset_required',s,a.id);
+      if(cursor.epoch!==s.bindingEpoch||cursor.snapshotId!==s.snapshotId||cursor.displayMode!==(a.displayMode??'detailed'))fail('reset_required',s,a.id);
       const row=db.prepare('SELECT position FROM entities WHERE id=?').get(cursor.beforeId);if(!row)fail('reset_required',s,a.id);before=Number(row.position);
     }
-    const rows = before === undefined ? db.prepare('SELECT * FROM entities ORDER BY position DESC LIMIT 41').all() : db.prepare('SELECT * FROM entities WHERE position<? ORDER BY position DESC LIMIT 41').all(before);
+    const visible=a.displayMode==='compact'?"(json_extract(entry,'$.kind')!='tool' OR json_extract(entry,'$.isError')=1)":'1';
+    const rows = before === undefined ? db.prepare(`SELECT * FROM entities WHERE ${visible} ORDER BY position DESC LIMIT 41`).all() : db.prepare(`SELECT * FROM entities WHERE ${visible} AND position<? ORDER BY position DESC LIMIT 41`).all(before);
     const result:any={...identity(s,a.id),baseRevision:s.headRevision,entries:[],olderCursor:null,pendingRequests:s.pendingRequests,...(a.anchorEntityId?{anchorEntityId:a.anchorEntityId,anchorAdjusted}:{})};
-    for(const row of rows.slice(0,40)) { const entry=boundedEntry(JSON.parse(String(row.entry)),String(row.revision),Math.min(BLOCK_BYTES,limit-bytes(result)-650)); if(bytes({...result,entries:[entry,...result.entries]})+650>limit)break;result.entries.unshift(entry); }
+    for(const row of rows.slice(0,40)) { const entry=boundedEntry(a.displayMode==='compact'?compactEntry(JSON.parse(String(row.entry))):JSON.parse(String(row.entry)),String(row.revision),Math.min(BLOCK_BYTES,limit-bytes(result)-650)); if(bytes({...result,entries:[entry,...result.entries]})+650>limit)break;result.entries.unshift(entry); }
     if (rows.length && !result.entries.length) fail('limit_too_small');
-    const first=result.entries[0];if(first && (rows.length>result.entries.length))result.olderCursor=Buffer.from(JSON.stringify({epoch:s.bindingEpoch,snapshotId:s.snapshotId,beforeId:first.id})).toString('base64url');
+    const first=result.entries[0];if(first && (rows.length>result.entries.length))result.olderCursor=Buffer.from(JSON.stringify({epoch:s.bindingEpoch,snapshotId:s.snapshotId,displayMode:a.displayMode??'detailed',beforeId:first.id})).toString('base64url');
     return result;
   }
   if (action === 'changes') {
     assertEpoch(s,a);if(!/^(0|[1-9][0-9]{0,18})$/.test(a.afterRevision ?? ''))fail('invalid_revision');const after=BigInt(a.afterRevision);
     if(after>BigInt(s.headRevision)||after<BigInt(s.oldestAvailableRevision))fail('reset_required',s,a.id);
     const result:any={...identity(s,a.id),fromExclusive:String(after),throughRevision:String(after),hasMore:false,operations:[]};
-    for(const row of db.prepare('SELECT body FROM changes WHERE revision>? ORDER BY revision LIMIT 100').all(after)) { const op=JSON.parse(String(row.body));if(bytes({...result,operations:[...result.operations,op]})>limit)break; result.operations.push(op);result.throughRevision=op.revision; }
+    for(const row of db.prepare('SELECT body FROM changes WHERE revision>? ORDER BY revision LIMIT 100').all(after)) { const raw=JSON.parse(String(row.body));const op=a.displayMode==='compact'?compactOperation(raw):raw;if(bytes({...result,operations:[...result.operations,op]})>limit)break; result.operations.push(op);result.throughRevision=op.revision; }
     if(result.throughRevision===String(after)&&after<BigInt(s.headRevision))fail('limit_too_small');result.hasMore=BigInt(result.throughRevision)<BigInt(s.headRevision);return result;
   }
   if(action==='content') {
     assertEpoch(s,a);const row=db.prepare('SELECT * FROM entities WHERE id=?').get(a.entityId);if(!row)fail('entity_deleted',s,a.id);if(String(row.revision)!==a.entityRevision)fail('entity_changed',s,a.id);
-    const entry=JSON.parse(String(row.entry));const field=a.field ?? (entry.kind==='tool'?'result':'text');if(!['text','result','args','diff'].includes(field))fail('invalid_field');
+    const rawEntry=JSON.parse(String(row.entry));if(a.displayMode==='compact'&&rawEntry.kind==='tool')fail('invalid_detail_mode');const entry=rawEntry;const field=a.field ?? (entry.kind==='tool'?'result':'text');if(!['text','result','args','diff'].includes(field))fail('invalid_field');
     const text=field==='args'?JSON.stringify(entry.args??{}):String(entry[field]??'');const offset=Number(a.offset??0);if(!Number.isSafeInteger(offset)||offset<0||offset>text.length)fail('invalid_offset');
     const result:any={...identity(s,a.id),entityId:a.entityId,entityRevision:String(row.revision),field,encoding:'utf-16',offset,totalLength:text.length,text:'',nextOffset:offset,hasMore:offset<text.length};
     result.text=textPrefix(text.slice(offset),Math.min(BLOCK_BYTES,limit-bytes(result)-100));result.nextOffset=offset+result.text.length;result.hasMore=result.nextOffset<text.length;return result;

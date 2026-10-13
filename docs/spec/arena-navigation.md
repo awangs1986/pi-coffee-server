@@ -576,3 +576,13 @@ messages enter the queue first; Immediate Insert is an action on the accepted
 message. The previous pre-send steering selector is removed. This supersedes
 older UI examples, while the wire protocol still accepts native steering for
 compatible clients. Serial verification is authorized; activation remains a separate release step.
+
+## Conversation display mode (2026-10-13, source candidate)
+
+Source candidate v0.24, not deployed: add “上下文显示” immediately below “速度” in
+the composer settings menu, offering “精简” (default) and “详细”. Compact shows
+user/assistant dialogue and output results without tool/process cards; Detailed
+preserves existing commands, tools and work-process presentation. Keep the
+context-token capacity control separate. Account-scoped persistence, live mode
+switching and Host-side transport requirements are defined in
+[conversation-first delivery](conversation-delivery.md#user-control-compact-and-detailed).

@@ -112,3 +112,11 @@ it('keeps last native run boundaries scoped and durable without inferring comple
    expect(await store.lookup('reset')).toMatchObject({lastRunStatus:'settled',completionId:before!.completionId,completedAt:before!.completedAt});
   }finally{await rm(root,{recursive:true,force:true});}
  });
+
+it('saves display mode per account across Host restart without starting an Agent',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-display-'));let server:HostServer|undefined;
+ const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No Agent allowed');}};
+ const start=async()=>{server=new HostServer({port:0,token:'display',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:new Workspaces(join(root,user))})});await server.start();};
+ const call=async(user:string,mode?:string)=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/workspace`,{method:mode?'POST':'GET',headers:{authorization:'Bearer display','x-pi-coffee-user':user,'content-type':'application/json'},...(mode?{body:JSON.stringify({action:'conversation_display',mode})}:{})});return {status:response.status,data:await response.json()};};
+ try{await start();expect((await call('alice')).data.displayMode??'compact').toBe('compact');expect((await call('alice','detailed')).status).toBe(200);await server!.close();await start();expect((await call('alice')).data.displayMode).toBe('detailed');expect((await call('bob')).data.displayMode??'compact').toBe('compact');expect((await call('alice','invalid')).status).toBe(409);expect((await call('alice','compact')).status).toBe(200);}finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});

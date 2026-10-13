@@ -1042,7 +1042,7 @@ it('restores user-scoped persistent text after page startup before any history r
  // @ts-expect-error browser module
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','saved-task',{entries:[{kind:'assistant',text:'Saved across reload <img src=x onerror=alert(1)>'}],scroll:0,truncated:false});
+ await store.put('owner','saved-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Saved across reload <img src=x onerror=alert(1)>'}],scroll:0,truncated:false});
  sessionStorage.setItem('pi-coffee.active.v2:owner','saved-task');
  const app=await setup(false,false,true,false,'owner');await vi.advanceTimersByTimeAsync(200);
  expect(document.querySelector('#thread')!.textContent).toContain('Saved across reload');
@@ -1270,7 +1270,7 @@ it.each([false,true])('shows a disk preview only when it matches known task meta
  vi.stubGlobal('indexedDB',new IDBFactory());
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','known-task',{entries:[{kind:'assistant',text:'Persisted task reply'}],scroll:0,truncated:false,...(recorded?{fingerprint:JSON.stringify(['pi',null,null])}:{})});
+ await store.put('owner','known-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Persisted task reply'}],scroll:0,truncated:false,...(recorded?{fingerprint:JSON.stringify(['pi',null,null])}:{})});
  const app=await setup(false,false,true,false,'owner');
  app.conversations.push({id:'known-task',workspaceKind:'chat',engine:'pi'});
  app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'known-task',name:'Known task'}]});await vi.advanceTimersByTimeAsync(20);
@@ -1285,7 +1285,7 @@ it.each(['before disk','after disk'])('invalidates a deleted task preview when t
  vi.stubGlobal('indexedDB',new IDBFactory());
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','deleted-task',{entries:[{kind:'assistant',text:'Private reply from deleted task'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi','old-native-binding',null])});
+ await store.put('owner','deleted-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Private reply from deleted task'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi','old-native-binding',null])});
  sessionStorage.setItem('pi-coffee.active.v2:owner','deleted-task');
  let release!:()=>void;
  const metadata=new Promise<void>(resolve=>{release=resolve;});
@@ -1459,4 +1459,13 @@ it('does not retry an unconfirmed speed change after its deadline',async()=>{
  const app=await speedMenu();app.chooseFast();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(15010);
  expect(app.frames.filter(f=>f.type==='set_speed')).toHaveLength(1);
  expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);
+});
+
+
+it('does not restore a legacy rich preview into default Compact mode',async()=>{
+ vi.stubGlobal('indexedDB',new IDBFactory());
+ const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
+ await new ConversationPreviewStore().put('owner','old-mode',{entries:[{kind:'tool',text:'OLD TOOL LOG'}],scroll:0,truncated:false});
+ sessionStorage.setItem('pi-coffee.active.v2:owner','old-mode');await setup(false,false,true,false,'owner');await vi.advanceTimersByTimeAsync(100);
+ expect(document.querySelector('#thread')!.textContent).not.toContain('OLD TOOL LOG');
 });

@@ -1,5 +1,8 @@
 # PI Coffee MVP protocol
 
+> Source candidate v0.24, not deployed: [conversation-first browser delivery](spec/conversation-delivery.md). See that contract for explicit display-mode selection, payload filtering and mode-bound cursor/cache semantics. Legacy clients retain Detailed behavior.
+
+
 > 当前协议记录已实现的接口。工作区合同由 [GW-01～12](./spec/gitea-workspaces.md) 定义；Host 和 Server 已切换到独立 Checkout、同步/PR/迁移动作，并退出平台本地 merge 接口。
 
 > **2026-09-22 目标 Workspace 合同，尚待实现**：每个 Chat/Work Conversation 的 cwd、inbox、research、artifact 和 images 归属见 [`conversation-workspaces.md`](./spec/conversation-workspaces.md)。下文 `.pi-coffee/inbox/<sessionId>` 是当前已实现帧，不能覆盖新合同；协议升级时必须返回 Host 解析的 Workspace 相对路径，浏览器不得提交 cwd。

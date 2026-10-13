@@ -24,6 +24,62 @@ async function primeV2(host:HostServer,factory:any,entries:any[]=[]){
  await vi.waitFor(async()=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/page`,{headers:{authorization:'Bearer secret'}});expect((await response.json()).sourceFreshness).toBe('current');},{timeout:3000});
 }
 describe('read-only sync seam',()=>{
+ it('serves compact dialogue pages and contiguous payload-free tool changes, while detailed retains evidence',async()=>{
+  const {factory,session}=fake(),host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});servers.push(host);await host.start();
+  const entries=[{id:'answer',kind:'assistant',text:'RESULT'},...Array.from({length:60},(_,i)=>({id:'tool-'+i,kind:'tool',name:'bash',args:{command:'PRIVATE_COMMAND'},result:'PRIVATE_OUTPUT'}))];
+  await primeV2(host,factory,entries);
+  const read=async(path:string)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/${path}`,{headers:{authorization:'Bearer secret'}});expect(response.status).toBe(200);return response.json();};
+  const compact=await read('page?displayMode=compact');
+  expect(compact.entries.map((entry:any)=>entry.id)).toEqual(['answer']);
+  expect(JSON.stringify(compact)).not.toContain('PRIVATE_');
+  expect((await read('page?displayMode=detailed')).entries.some((entry:any)=>entry.kind==='tool')).toBe(true);
+  const {ws,frames}=await socket(host);ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',syncProtocol:2,displayMode:'compact'}));
+  try{
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));
+   expect(JSON.stringify(frames.find(f=>f.type==='history'))).not.toContain('PRIVATE_');
+   session.emit({type:'tool_update',id:'new-tool',name:'bash',result:'SECRET_LIVE_OUTPUT'});
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='sync_changed')).toBe(true));
+   const changes=await read(`changes?displayMode=compact&bindingEpoch=${compact.bindingEpoch}&afterRevision=${compact.baseRevision}`);
+   expect(BigInt(changes.throughRevision)).toBeGreaterThan(BigInt(compact.baseRevision));
+   expect(JSON.stringify(changes)).not.toContain('SECRET_LIVE_OUTPUT');
+   expect(changes.operations.at(-1).type).toBe('setMetadata');
+   session.emit({type:'tool_update',id:'new-tool',name:'bash',result:'PRIVATE_ERROR',isError:true});
+   await vi.waitFor(async()=>{const failure=await read(`changes?displayMode=compact&bindingEpoch=${compact.bindingEpoch}&afterRevision=${changes.throughRevision}`);const note=failure.operations.find((op:any)=>op.payload?.entry?.kind==='note');expect(note?.payload.isNew).toBe(true);expect(JSON.stringify(failure)).not.toContain('PRIVATE_ERROR');});
+  }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
+ });
+ it('switches a running legacy view to detailed without restarting execution or losing interactive events',async()=>{
+  const {factory,session}=fake();session.getHistory.mockResolvedValue({entries:[{id:'u',kind:'user',text:'MAKE SCRIPT'},{id:'t',kind:'tool',name:'bash',args:{command:'RAW_COMMAND'},result:'RAW_OUTPUT'},{id:'a',kind:'assistant',text:'```bash\necho result\n```'}],leafId:'a'});
+  const host=new HostServer({port:0,token:'secret',factory});servers.push(host);await host.start();const {ws,frames}=await socket(host);
+  ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',displayMode:'compact'}));
+  try{
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));expect(JSON.stringify(frames)).not.toContain('RAW_');
+   session.emit({type:'run_started',runId:'run'});session.emit({type:'tool_execution_update',toolCallId:'t',partialResult:{content:[{type:'text',text:'RAW_LIVE'}]}});
+   session.emit({type:'extension_ui_request',id:'question',method:'select',title:'Choose',options:['A','B']});
+   await vi.waitFor(()=>expect(frames.some(f=>f.event?.id==='question')).toBe(true));expect(JSON.stringify(frames)).not.toContain('RAW_LIVE');
+   ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'detailed',requestId:'display-1'}));
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='ack'&&f.requestId==='display-1')).toBe(true));
+   expect(frames.filter(f=>f.type==='history').at(-1).entries.some((entry:any)=>entry.result==='RAW_OUTPUT')).toBe(true);
+   expect(factory.create).toHaveBeenCalledTimes(1);expect(session.stop).not.toHaveBeenCalled();expect(session.abort).not.toHaveBeenCalled();
+   expect(session.prompt).not.toHaveBeenCalled();
+  }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
+ });
+ it('rejects invalid projection and cross-mode cursors while retaining safe error notices',async()=>{
+  const {factory}=fake(),host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});servers.push(host);await host.start();
+  await primeV2(host,factory,[...Array.from({length:45},(_,i)=>({id:'a-'+i,kind:'assistant',text:'answer '+i})),{id:'error',kind:'tool',name:'bash',isError:true,result:'PRIVATE_ERROR_BODY'}]);
+  const read=(path:string)=>fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/${path}`,{headers:{authorization:'Bearer secret'}});
+  expect((await read('page?displayMode=typo')).status).toBe(400);
+  const compact=await (await read('page?displayMode=compact')).json();expect(compact.entries.at(-1)).toMatchObject({kind:'note',text:'工具执行失败；切换到详细模式查看。'});expect(JSON.stringify(compact)).not.toContain('PRIVATE_ERROR_BODY');
+  expect((await read('page?displayMode=detailed&cursor='+encodeURIComponent(compact.olderCursor))).status).toBe(409);
+  expect((await read(`content?displayMode=compact&entityId=error&entityRevision=1&bindingEpoch=${compact.bindingEpoch}`)).status).toBe(400);
+ });
+ it('keeps Pi answer deltas without transmitting embedded tool arguments or reasoning',async()=>{
+  const {factory,session}=fake();const host=new HostServer({port:0,token:'secret',factory});servers.push(host);await host.start();const {ws,frames}=await socket(host);ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',displayMode:'compact'}));
+  try{await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));
+   const message={role:'assistant',content:[{type:'text',text:'PUBLIC_ANSWER'},{type:'toolCall',name:'bash',arguments:{command:'PRIVATE_COMMAND'}},{type:'thinking',thinking:'PRIVATE_REASONING'}]};
+   session.emit({type:'message_update',message,assistantMessageEvent:{type:'text_delta',delta:'PUBLIC_ANSWER',partial:message}});
+   await vi.waitFor(()=>expect(JSON.stringify(frames)).toContain('PUBLIC_ANSWER'));expect(JSON.stringify(frames)).not.toContain('PRIVATE_');
+  }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
+ });
  it('rejects an unavailable explicit conversation instead of creating a native session',async()=>{
   const {factory}=fake();const workspaces=new Workspaces(await root());
   const host=new HostServer({port:0,token:'secret',factory,workspaces});servers.push(host);await host.start();
@@ -46,7 +102,7 @@ describe('read-only sync seam',()=>{
   const {ws,frames}=await socket(host);ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',syncProtocol:2}));
   try{await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true),{timeout:4000});
    expect(frames.find(f=>f.type==='history').entries.some((entry:any)=>entry.text==='LATEST_NATIVE_REPLY')).toBe(true);
-  }finally{ws.close();await once(ws,'close');}
+  }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
  });
 
  it('does not serve an old verified index as current history when native audit is now unsupported',async()=>{
@@ -60,7 +116,7 @@ describe('read-only sync seam',()=>{
   const {ws,frames}=await socket(host);ws.send(JSON.stringify({v:1,type:'open',sessionId:'b',syncProtocol:2}));
   try{await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));
    expect(frames.find(f=>f.type==='history').entries.some((entry:any)=>entry.text==='LATEST_NATIVE_REPLY')).toBe(true);
-  }finally{ws.close();await once(ws,'close');}
+  }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
  });
 
  it('authenticates every HTTP read and forwards only the verified user, preserving query strings',async()=>{

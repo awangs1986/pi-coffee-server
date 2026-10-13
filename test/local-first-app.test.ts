@@ -763,3 +763,53 @@ it('shows the actually deployed Web/Host/browser versions in the compact Logo me
  const app=await setup();document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();await tick();const label=document.querySelector('#release-status')!;expect(label.textContent).toContain('Web v0.12');expect(label.textContent).toContain('Host v0.11');expect(label.textContent).toContain('页面 v0.13');expect(label.getAttribute('title')).toContain('aaaaaaa');
  document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();app.network.release={webVersion:'<img src=x>',webBackendCommit:'/private/path',hostVersion:'unknown'};document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();await tick();expect(label.textContent).toContain('未标记');expect(label.querySelector('img')).toBeNull();expect(label.getAttribute('title')).not.toContain('/private');
 });
+
+
+describe('conversation display menu',()=>{
+ it.each(['pi','codex','claude','cursor','grok'] as const)('defaults to compact below speed and changes a busy %s conversation without losing the draft',async engine=>{
+  const app=await setup(engine,2);await app.select('a',undefined,true);draft('KEEP DRAFT');
+  expect(document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.disabled).toBe(false);
+  const row=document.querySelector<HTMLButtonElement>('#agent-display-row');expect(row).not.toBeNull();
+  expect(row!.previousElementSibling?.id).toBe('agent-speed-row');
+  expect(document.querySelector('#agent-display-value')?.textContent).toBe('精简');
+  row!.click();await tick();
+  const detail=Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(b=>b.textContent?.includes('详细'));expect(detail).toBeDefined();detail!.click();await tick(200);
+  expect(document.querySelector('#agent-display-value')?.textContent).toBe('详细');expect(prompt().value).toBe('KEEP DRAFT');
+  expect(allFrames.some(frame=>frame.type==='set_display_mode'&&frame.mode==='detailed')).toBe(true);
+  expect(allFrames.some(frame=>frame.type==='abort')).toBe(false);
+  expect(vi.mocked(fetch).mock.calls.some(([url,init])=>url==='/api/workspace'&&String(init?.body).includes('conversation_display'))).toBe(true);
+ });
+});
+
+
+it('keeps a question and draft while changing display mode, and rejects late detailed history',async()=>{
+ const app=await setup('pi',1),socket=await app.select('a',undefined,true);draft('NOT SENT');
+ const change=async(label:string)=>{document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent===label)!.click();await tick();};
+ app.emit(socket,'a',{type:'extension_ui_request',id:'keep-question',method:'select',title:'KEEP QUESTION',options:['Yes','No']});await tick();
+ await change('详细');socket.receive({type:'history',sessionId:'a',displayMode:'detailed',displayRefresh:true,entries:[{id:'a',kind:'assistant',text:'ANSWER'},{id:'t',kind:'tool',name:'bash',result:'TOOL LOG'}]});await tick();
+ expect(thread().querySelector('.tool')).not.toBeNull();
+ await change('精简');socket.receive({type:'history',sessionId:'a',displayMode:'compact',displayRefresh:true,entries:[{id:'a',kind:'assistant',text:'ANSWER'}]});await tick();
+ socket.receive({type:'history',sessionId:'a',displayMode:'detailed',entries:[{id:'late',kind:'assistant',text:'OBSOLETE MODE'}]});await tick();
+ expect(thread().textContent).toContain('ANSWER');expect(thread().textContent).not.toContain('OBSOLETE MODE');expect(thread().querySelector('.tool')).toBeNull();expect(prompt().value).toBe('NOT SENT');
+ expect(document.querySelector('#ui-modal')?.classList.contains('hidden')).toBe(false);expect(document.querySelector('#ui-modal')?.textContent).toContain('KEEP QUESTION');
+ expect(allFrames.some(frame=>frame.type==='ui_response')).toBe(false);
+});
+
+
+it('does not mark a running task idle when changing display mode fails',async()=>{
+ const app=await setup('pi',1),socket=await app.select('a',undefined,true);
+ document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent==='详细')!.click();await tick();
+ const request=allFrames.findLast(frame=>frame.type==='set_display_mode');expect(request).toBeDefined();
+ socket.receive({type:'error',requestId:request.requestId,code:'operation_failed',message:'History temporarily unavailable'});await tick();
+ expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
+});
+
+it('never drops questions or completion merely because their display-mode tag is older',async()=>{
+ const app=await setup('pi',1),socket=await app.select('a',undefined,true);
+ socket.receive({type:'event',sessionId:'a',cursor:49,displayMode:'detailed',event:{type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'ANSWER DURING SWITCH'}}});await tick();
+ expect(thread().textContent).toContain('ANSWER DURING SWITCH');
+ socket.receive({type:'event',sessionId:'a',cursor:50,displayMode:'detailed',event:{type:'extension_ui_request',id:'race-question',method:'select',title:'ANSWER ME',options:['Yes','No']}});await tick();
+ expect(document.querySelector('#ui-modal')?.classList.contains('hidden')).toBe(false);
+ socket.receive({type:'event',sessionId:'a',cursor:51,displayMode:'detailed',event:{type:'agent_settled'}});await tick();
+ expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(true);
+});

@@ -65,9 +65,9 @@ const ui = {
   sessionList: $('#session-list'), search: $('#search'), queue: $('#queue'), slash: $('#slash'),
   attachments: $('#attachments'), attach: $('#attach'), file: $('#file'), hint: $('#hint'),
   agentBtn: $('#agent-menu-btn'), agentMenu: $('#agent-menu'), agentName: $('#agent-name'), agentNote: $('#agent-menu-note'),
-  agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row'), context: $('#agent-context-row'), speed: $('#agent-speed-row') },
-  agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane'), context: $('#agent-context-pane'), speed: $('#agent-speed-pane') },
-  agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value'), context: $('#agent-context-value'), speed: $('#agent-speed-value') },
+  agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row'), context: $('#agent-context-row'), speed: $('#agent-speed-row'), display: $('#agent-display-row') },
+  agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane'), context: $('#agent-context-pane'), speed: $('#agent-speed-pane'), display: $('#agent-display-pane') },
+  agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value'), context: $('#agent-context-value'), speed: $('#agent-speed-value'), display: $('#agent-display-value') },
   modelSource: $('#model-source'), model: $('#model'), thinking: $('#thinking'),
   projectSelect: $('#project-select'), startBranch: $('#start-branch'), taskDetails: $('#task-details'), taskDetailsBtn: $('#task-details-btn'),
   modal: $('#modal'), modalTitle: $('#modal-title'), modalText: $('#modal-text'), modalInput: $('#modal-input'),
@@ -101,9 +101,10 @@ const preferDurableSync=new URLSearchParams(location.search).get('syncProtocol')
 const viewScheduler=createRenderScheduler({budgetMs:4});
 function currentRenderView(){return {userScope:currentUser,conversationId:activeId,epoch:connectionEpoch,viewGeneration:taskSelectionEpoch};}
 const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened)connect();}},timeoutMs:10000});
-const conversationRepository=new ConversationRepository({onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
+let displayMode="compact",displaySaving=false,displayAnchor=null,displayRequest=null,displayTimer=null;
+const conversationRepository=new ConversationRepository({displayMode,onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
-  onRendered:(visible,state)=>{entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
+  onRendered:(visible,state)=>{restoreDisplayAnchor();entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
 function requestConversationSync(){
   if(!activeId||!currentUser)return;
@@ -113,9 +114,10 @@ function requestConversationSync(){
 }
 const conversationDisplay=new ConversationDisplay({onState:state=>{completionIndexState=state;maybeReadCompletion();},repository:conversationRepository,view:syncedView,status:syncStatus,renderNative:frame=>{
   const scroll=previewScroll===null?null:ui.scroller.scrollTop;
-  renderHistory(frame);if(scroll!==null)ui.scroller.scrollTop=scroll;
+  renderHistory(frame);restoreDisplayAnchor();if(scroll!==null)ui.scroller.scrollTop=scroll;
 }});
 function selectConversationView(id){
+  clearTimeout(displayTimer);displayRequest=null;displayAnchor=null;
   completionProof=null;completionIndexState=null;openCompletionKey=null;openedEventCursor=0;receivedEventCursor=0;liveCompletionStart=null;liveCompletionSettled=false;
   clearTimeout(syncHintTimer);syncHintTimer=null;
   viewScheduler.setView(currentRenderView());conversationDisplay.select(id);
@@ -218,7 +220,7 @@ function rememberRecentThread(){
   const bounded=boundedTranscriptWindow(safe);
   const snapshot=createConversationPreview((Array.isArray(bounded)?bounded:bounded.entries).map(entry=>({k:entry.kind,name:entry.name,text:entry.text})),ui.scroller.scrollTop);
   snapshot.truncated ||= historyTruncated || historyPrefix.length>0 || entries.length>40;
-  snapshot.fingerprint=previewFingerprint(activeId);
+  snapshot.fingerprint=previewFingerprint(activeId);snapshot.displayMode=displayMode;
   const bytes=snapshot.entries.reduce((sum,item)=>sum+item.text.length*2+128,256);
   recentConversations.put(previewKey(activeId),snapshot,bytes);
   const user=currentUser,id=activeId;
@@ -235,6 +237,7 @@ function scheduleRecentThread(){
   previewTimer=setTimeout(()=>{previewTimer=null;rememberRecentThread();},250);
 }
 function displayPreview(id,snapshot){
+  if(snapshot.displayMode!==displayMode)return false;
   const fingerprint=previewFingerprint(id);
   // Once metadata arrives, reject either a missing saved binding or a saved
   // binding whose task is now absent. Wait for authoritative history instead.
@@ -498,6 +501,10 @@ function renderAgentPane(kind) {
     }
     return;
   }
+  if(kind==='display'){
+    for(const [mode,label] of [['compact','精简'],['detailed','详细']])pane.append(agentOption({label,selected:displayMode===mode,disabled:displaySaving,onClick:()=>void chooseDisplayMode(mode)}));
+    return;
+  }
   if(kind==='speed'){
     const current=activeId?models?.speed?.mode:draftSpeed;
     const fastAvailable=activeId?models?.speed?.fastAvailable:selectedModelInfo()?.fastMode===true;
@@ -568,6 +575,30 @@ function renderAgentPane(kind) {
     }));
   }
 }
+function restoreDisplayAnchor(){if(displayAnchor?.id===activeId){syncedView.anchor.restore(displayAnchor.anchor);displayAnchor=null;}}
+function requestDisplaySync(){
+  if(!activeId||!opened)return;
+  clearTimeout(displayTimer);displayRequest=requestId('display');
+  if(!send({v:1,type:'set_display_mode',mode:displayMode,requestId:displayRequest})){displayRequest=null;toast('显示模式已保存，连接恢复后生效');return;}
+  const request=displayRequest;
+  displayTimer=setTimeout(()=>{if(displayRequest===request){displayRequest=null;toast('上下文显示同步超时；可重新选择当前模式重试');}},10000);
+}
+function applyDisplayMode(mode) {
+  if(mode===displayMode)return;
+  displayAnchor=activeId?{id:activeId,anchor:syncedView.capture()}:null;
+  displayMode=mode;clearTimeout(previewTimer);previewTimer=null;recentConversations.clear();
+  conversationRepository.setDisplayMode(mode);syncedView.clear();
+  if(activeId){conversationDisplay.select(activeId);requestDisplaySync();}
+  renderAgentSettings();
+}
+async function chooseDisplayMode(mode) {
+  if(displaySaving)return;
+  if(mode===displayMode){closeAgentMenu();requestDisplaySync();return;}
+  const user=currentUser;displaySaving=true;closeAgentMenu();renderAgentSettings();
+  try{await workspaceApi({action:'conversation_display',mode});if(currentUser===user){workspaceRequestSeq++;if(workspaceState)workspaceState.displayMode=mode;applyDisplayMode(mode);}}
+  catch(error){if(currentUser===user)toast('显示设置未保存：'+error.message);}
+  finally{if(currentUser===user){displaySaving=false;renderAgentSettings();}}
+}
 // Speed changes are scoped to this conversation and never replayed after disconnect.
 function clearSpeedPending(){clearTimeout(speedTimer);speedTimer=null;speedPending=null;}
 function applySpeed(mode){
@@ -608,7 +639,7 @@ function renderAgentTrigger() {
   for (const icon of ui.agentBtn.querySelectorAll('svg')) icon.classList.toggle('hidden', existing);
   ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}${existing && model ? `，模型 ${model}` : ''}`);
   ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', display?.current ? `模型 ${display.current.provider}/${display.current.id}` : '', display?.thinkingLevel ? `思考 ${display.thinkingLevel}` : '', !models&&modelPreview?'上次确认的设置，正在同步':''].filter(Boolean).join(' · ');
-  ui.agentBtn.disabled = takeoverBusy() || !connected || (choiceLocked && modelLocked && !canTakeover());
+  ui.agentBtn.disabled = takeoverBusy() || !connected || (!currentUser && choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');
 }
 function renderAgentSettings() {
@@ -643,7 +674,9 @@ function renderAgentSettings() {
   if (display) ui.agentBtn.dataset.state = `${source} · ${display.current ? display.current.id : 'no model'} · ${display.thinkingLevel || 'default'}`;
   else delete ui.agentBtn.dataset.state;
   renderAgentTrigger();
-  for (const pane of ['source', 'model', 'thinking', 'context', 'speed']) renderAgentPane(pane);
+  ui.agentValues.display.textContent=displayMode==='detailed'?'详细':'精简';
+  ui.agentRows.display.disabled=displaySaving||!currentUser;
+  for (const pane of ['source', 'model', 'thinking', 'context', 'speed', 'display']) renderAgentPane(pane);
 }
 // 任务详情 (scroll button): VM, path, copy path and local compaction.
 function closeTaskDetails() {
@@ -693,12 +726,12 @@ function askModal({ title, text, input, okLabel = '确定', danger = false }) {
 }
 
 // ---------- thread rendering ----------
-function resetThread() {
+function resetThread({preserveQueue=false}={}) {
   lastUserText='';
   viewScheduler.setView(currentRenderView());
   pendingAssistantRenders.clear();pendingToolFills.clear();
   previewScroll=null;visiblePreviewFingerprint=undefined;historyPrefix=[];historyTruncated=false;
-  queueControls.reset();
+  if(!preserveQueue)queueControls.reset();
   ui.thread.innerHTML = '';
   nativeItems.clear();nativeCursor=0;
   entries = [];
@@ -844,7 +877,7 @@ function historyDisplayEntry(item) {
 }
 
 function renderHistory(frame) {
-  resetThread();
+  resetThread({preserveQueue:frame.displayRefresh===true});
   historyBatch=document.createDocumentFragment();
   const source=frame.entries||[];
   lastUserText='';
@@ -1197,6 +1230,7 @@ ui.agentRows.source?.addEventListener('click', () => openAgentPane('source'));
 ui.agentRows.model?.addEventListener('click', () => openAgentPane('model'));
 ui.agentRows.thinking?.addEventListener('click', () => openAgentPane('thinking'));
 ui.agentRows.context?.addEventListener('click', () => openAgentPane('context'));
+ui.agentRows.display?.addEventListener('click',()=>openAgentPane('display'));
 ui.agentRows.speed?.addEventListener('click', () => openAgentPane('speed'));
 ui.agentMenu?.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') { event.stopPropagation(); closeAgentMenu(); ui.agentBtn.focus(); }
@@ -1466,7 +1500,7 @@ async function whoAmI(epoch) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1759,7 +1793,7 @@ async function openSession(id) {
   }
   if(!isCurrent())return;
   pendingOpenId = id || 'new';
-  const frame = { v: 1, type: 'open', nativeProtocol:1, ...(preferDurableSync?{syncProtocol:2}:{}) };
+  const frame = { v: 1, type: 'open', nativeProtocol:1, displayMode, ...(preferDurableSync?{syncProtocol:2}:{}) };
   if (id) frame.sessionId = id;
   if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); }
 }
@@ -1840,6 +1874,7 @@ function handleFrame(frame, ws) {
       if(frame.notice&&typeof frame.notice.text==='string')toast(frame.notice.text.slice(0,300),6000);
       return;
     case 'history': {
+      if(frame.displayMode&&frame.displayMode!==displayMode)return;
       if (frame.sessionId !== activeId) return;
       if(!conversationDisplay.history(frame))return;
       historyReady=true;
@@ -1918,6 +1953,7 @@ function handleFrame(frame, ws) {
     case 'queue_state':
       if(frame.sessionId===activeId){queueControls.update(frame.items||[]);refreshComposer();}return;
     case 'ack':
+      if(frame.operation==='set_display_mode'&&frame.requestId===displayRequest){clearTimeout(displayTimer);displayRequest=null;return;}
       // Acceptance is known even if the connection drops before the turn ends.
       if(['prompt','steer','follow_up'].includes(frame.operation)){const accepted=promptOutbox.get(frame.requestId);if(accepted?.optimistic)delete accepted.optimistic.pendingRequestId;accepted?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
       if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
@@ -1944,6 +1980,10 @@ function handleFrame(frame, ws) {
       return;
     case 'event':
       if(frame.sessionId!==activeId)return;
+      if(frame.displayMode&&frame.displayMode!==displayMode&&(['tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(frame.event?.type)||(frame.event?.type==='sync_entity'&&frame.event?.entry?.kind==='tool'))){
+        if(frame.event?.isError)pushNote('工具执行失败；切换到详细模式查看。',true);
+        return;
+      }
       if(Number.isSafeInteger(frame.cursor))receivedEventCursor=Math.max(receivedEventCursor,frame.cursor);
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       if(conversationDisplay.indexed){
@@ -1955,6 +1995,7 @@ function handleFrame(frame, ws) {
       maybeReadCompletion();scheduleRecentThread();
       return;
     case 'error':
+      if(frame.requestId?.startsWith('display-')){if(frame.requestId===displayRequest){clearTimeout(displayTimer);displayRequest=null;toast('上下文显示读取失败，可重新选择当前模式重试：'+frame.message);}return;}
       if(speedPending&&frame.requestId===speedPending.id){clearSpeedPending();speedToApply=null;restoreQueuedPrompt();toast('速度设置失败：'+frame.message);renderAgentSettings();refreshComposer();return;}
       void loadRuntimeStatus();
       if(frame.code==='metadata_unavailable'){
@@ -1993,6 +2034,8 @@ function handleFrame(frame, ws) {
 
 function handleEvent(event,{replayed=false}={}) {
   const type = event.type;
+  if(type==='display_boundary'){currentAssistant=undefined;return;}
+  if(type==='display_notice'){pushNote(event.text,Boolean(event.error));return;}
 
   if (type === 'agent_start') {startCompletionReadRun(replayed); setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
   if (type === 'tool_execution_update') {
@@ -3235,6 +3278,7 @@ async function loadWorkspace() {
   const seq=++workspaceRequestSeq;
   try {
     const data=await workspaceApi();if(seq!==workspaceRequestSeq)return;
+    applyDisplayMode(data.displayMode==='detailed'?'detailed':'compact');
     const previous=workspaceState;workspaceState=data;takeoverControls.sync(currentTask());forkControls.sync();
     for(const task of previous?.conversations||[])if(!data.conversations.some(c=>c.id===task.id))invalidatePreview(task.id);
     for(const task of data.conversations||[]){const saved=recentConversations.get(previewKey(task.id));if(saved&&saved.fingerprint!==previewFingerprint(task.id))invalidatePreview(task.id);}

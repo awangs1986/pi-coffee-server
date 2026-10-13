@@ -66,6 +66,7 @@ function plainSnapshot(value) {
   if (!value.entries.every(entry => entry && KINDS.has(entry.kind) && typeof entry.text === 'string')) return undefined;
   const bounded = boundedEntries(value.entries, entry => entry);
   const snapshot = { entries: bounded.entries, scroll: value.scroll, truncated: value.truncated || bounded.truncated };
+  if (['compact','detailed'].includes(value.displayMode)) snapshot.displayMode=value.displayMode;
   if (value.fingerprint !== undefined) snapshot.fingerprint = value.fingerprint;
   return snapshot;
 }

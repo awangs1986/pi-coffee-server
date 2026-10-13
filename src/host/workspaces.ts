@@ -84,7 +84,7 @@ function diffFiles(nameStatusRaw:string,numstatRaw:string) {
   return files;
 }
 interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<string,string|null>;collapsed:string[];groups?:Array<{id:string;name:string}>;hiddenProjects?:string[]}
-interface State { sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
+interface State { displayMode?:"compact"|"detailed"; sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
   private state: State = {version:2,projects:[],conversations:[]};
@@ -239,6 +239,10 @@ export class Workspaces {
     const sidebar=this.state.sidebar??{assignments:{},collapsed:[]},prior=sidebar.pinned??[];
     const pins=pinned?(prior.includes(id)?prior:[id,...prior]):prior.filter(key=>key!==id);
     this.state.sidebar={...sidebar,pinned:pins.length?pins:undefined};await this.save();return this.state.sidebar;
+  });}
+  async displayConversation(mode:unknown) {return this.mutate(async()=>{
+    if(mode!=='compact'&&mode!=='detailed')throw new Error('Invalid conversation display mode');
+    this.state.displayMode=mode;await this.save();return {displayMode:mode};
   });}
   async displaySidebar(showGroups:unknown) { return this.mutate(async()=>{
     if(typeof showGroups!=='boolean')throw new Error('Invalid sidebar display preference');

@@ -1,5 +1,8 @@
 # PI Coffee documentation map
 
+- Source candidate v0.24, not deployed: [conversation-first browser delivery](spec/conversation-delivery.md). Host sends dialogue and essential controls by default; default Compact shows dialogue/results; Detailed retains existing process cards. Native evidence remains intact; performance must be measured.
+
+
 - Native Codex Skill namespaces and Cat Skills installation: [catalog, invocation and reconciliation contract](spec/skill-management.md#codex-skill-namespaces-2026-10-13), [Server #126](https://github.com/awangs1986/pi-coffee-server/issues/126). Keep complete plugin names, search by Skill name, and distinguish installed files from native discovery and deployed Host behavior.
 
 - Complete two-user Gitea workbench: [current product and onboarding contract](spec/multi-user-workbench.md), [Server #125](https://github.com/awangs1986/pi-coffee-server/issues/125). Both accounts must create projects, clone, develop, push and open PRs with their own credentials and Git authors; this corrects #124's incomplete routing-only acceptance.

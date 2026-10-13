@@ -1,3 +1,4 @@
+import {compactEntry,compactEvent} from "./conversation-projection.js";
 import {MishuStateError} from './mishu-state.js';
 import {readReleaseIdentity} from '../shared/release.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
@@ -279,7 +280,7 @@ export class HostServer {
       try {
         const id=decodeURIComponent(syncRoute[1]);if(!id||id.length>256||/[\/\\\x00]/.test(id)){json(res,400,{error:'invalid_conversation'});return;}
         if(slot.workspaces && ((!await slot.workspaces.lookup(id)&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
-        const args=Object.fromEntries(readUrl.searchParams);if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
+        const args=Object.fromEntries(readUrl.searchParams);if(args.displayMode!==undefined&&!['compact','detailed'].includes(args.displayMode)){json(res,400,{error:'invalid_display_mode'});return;}if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
         let value:unknown;
         if(syncRoute[2]==='meta')value=await slot.index.meta(id);
         else if(syncRoute[2]==='page')value=await slot.index.page(id,args);
@@ -497,6 +498,7 @@ export class HostServer {
         }
         case "sidebar_group_create": result=await ws.createSidebarGroup(input.name);break;
         case "sidebar_group_delete": result=await ws.deleteSidebarGroup(input.groupId);break;
+        case "conversation_display": result=await ws.displayConversation(input.mode);break;
         case "sidebar_display": result=await ws.displaySidebar(input.showGroups);break;
         case "sidebar_collapse": result=await ws.collapseSidebar(input.projectId,input.collapsed);break;
         case "files": {
@@ -790,6 +792,7 @@ class HostSocket implements SessionSink {
   private readonly metadataReads=new Map<string,Promise<ServerFrame>>();
   private metadataEpoch=0;
   private syncProtocol?:2;
+  private displayMode:"compact"|"detailed"="detailed";
   private bindingEpoch?:string;
   private index?:ConversationIndex;
   private messageQueue: Promise<void>;
@@ -849,10 +852,15 @@ class HostSocket implements SessionSink {
   get sessionId():string|undefined {return this.session?.id;}
 
   send(frame: ServerFrame): void {
+    if(this.syncProtocol===2&&frame.type==='event'&&frame.event&&typeof frame.event==='object'&&!Array.isArray(frame.event)&&['sync_entity','message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(String(frame.event.type)))return;
+    if(['history','event'].includes(frame.type))frame={...frame,displayMode:this.displayMode} as ServerFrame;
+    if(this.displayMode==='compact'){
+      if(frame.type==='history')frame={...frame,entries:frame.entries.map(compactEntry).filter(Boolean)};
+      if(frame.type==='event'){const event=compactEvent(frame.event);if(!event)return;frame={...frame,event};}
+    }
     if(frame.type==='sync_changed'&&this.syncProtocol!==2)return;
     if(frame.type==='sync_changed'&&this.bindingEpoch&&frame.bindingEpoch!==this.bindingEpoch){this.send({v:1,type:'error',code:'binding_changed',message:'Conversation binding changed. Reopen to continue.',fatal:true});this.close();return;}
     if(this.syncProtocol===2&&this.session&&this.bindingEpoch)frame={...frame,conversationId:this.session.id,bindingEpoch:this.bindingEpoch};
-    if(this.syncProtocol===2&&frame.type==='event'&&frame.event&&typeof frame.event==='object'&&!Array.isArray(frame.event)&&['sync_entity','message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(String(frame.event.type)))return;
     if (this.closed || this.socket.readyState !== WebSocket.OPEN) return;
     try {
       this.socket.send(encodeFrame(frame));
@@ -988,6 +996,23 @@ class HostSocket implements SessionSink {
           await this.session.setModel(frame.provider, frame.id);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_model", ...rid(frame) });
           break;
+        case "set_display_mode": {
+          if(!this.session||!this.opened)throw new NotOpenError();
+          this.displayMode=frame.mode;
+          const id=this.session.id;
+          if(this.syncProtocol===2&&this.index){
+            const page=await this.index.page(id,{displayMode:frame.mode});
+            this.send({v:1,type:'history',sessionId:id,...page,displayRefresh:true,syncProtocol:2,leafId:page.entries.at(-1)?.id??null,truncated:Boolean(page.olderCursor)});
+          }else{
+            const result=await this.registry.open(id);
+            const entries=frame.mode==='compact'?result.history.entries.map(compactEntry).filter(Boolean):result.history.entries;
+            this.send({...boundedHistoryFrame(id,entries,result.history.leafId),displayRefresh:true,completionId:result.completionId});
+            for(const replay of result.session.filterReplay(result.replay))if(replay.type==='event'&&['message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end','sync_entity'].includes(String((replay.event as any)?.type)))this.send(replay);
+            if(result.resync)this.send({v:1,type:'resync_required',sessionId:id,...result.resync});
+          }
+          this.send(this.session.queueFrame);
+          this.send({v:1,type:'ack',operation:'set_display_mode',...rid(frame)});break;
+        }
         case "set_speed": {
           if(!this.session||!this.opened)throw new NotOpenError();
           if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
@@ -1091,10 +1116,11 @@ class HostSocket implements SessionSink {
     const sessionId = frame.sessionId ?? randomUUID();
     const capabilities = await this.factory.capabilities?.(sessionId) ?? capabilitiesFor(engine);
     if (this.closed) return;
+    this.displayMode=frame.displayMode??"detailed";
     let syncPage:any;
     let useSync=frame.syncProtocol===2&&this.syncV2Enabled&&Boolean(this.index);
     if(useSync){
-      syncPage=await this.index!.page(sessionId);
+      syncPage=await this.index!.page(sessionId,{displayMode:this.displayMode});
       // An old successful audit does not prove today's native history is indexed.
       // Unverified/stale sources must use native history on this explicit open.
       if(!syncPage.lastSourceCheckAt || syncPage.sourceFreshness!=='current'){useSync=false;syncPage=undefined;}
@@ -1102,7 +1128,7 @@ class HostSocket implements SessionSink {
     if(this.closed)return;
     const result = useSync ? await (async()=>{
       const session=await this.registry.connect(sessionId);
-      syncPage=await this.index!.page(sessionId);
+      syncPage=await this.index!.page(sessionId,{displayMode:this.displayMode});
       // Native startup can yield long enough for another audit to invalidate
       // the admission snapshot. Recheck the page that will actually be sent.
       if(!syncPage.lastSourceCheckAt || syncPage.sourceFreshness!=='current'){
@@ -1131,7 +1157,7 @@ class HostSocket implements SessionSink {
       cursor: result.session.currentCursor,
       state,
     });
-    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:{...boundedHistoryFrame(result.session.id, result.history.entries, result.history.leafId),completionId:result.completionId});
+    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:{...boundedHistoryFrame(result.session.id, this.displayMode==='compact'?result.history.entries.map(compactEntry).filter(Boolean):result.history.entries, result.history.leafId),completionId:result.completionId});
     if(syncPage)this.index!.scheduleAudit(sessionId,true);
 
     if (result.resync) {

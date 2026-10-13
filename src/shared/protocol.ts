@@ -180,6 +180,7 @@ export type AckOperation =
   | "rename_session"
   | "delete_session"
   | "set_model"
+  | "set_display_mode"
   | "set_speed"
   | "set_context"
   | "set_thinking"
@@ -210,6 +211,7 @@ export interface UiResponse {
 }
 
 export type ClientFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"set_display_mode";mode:"compact"|"detailed";requestId?:string}
   | ({v:typeof PROTOCOL_VERSION;type:"queue_action";requestId:string} & QueueAction)
   | {v:typeof PROTOCOL_VERSION;type:"get_queue"}
   | {
@@ -219,6 +221,7 @@ export type ClientFrame = (
       after?: number;
       nativeProtocol?: 1;
       syncProtocol?: 2;
+      displayMode?: "compact" | "detailed";
     }
   | {
       v: typeof PROTOCOL_VERSION;
@@ -282,6 +285,7 @@ export type ServerFrame = (
       v: typeof PROTOCOL_VERSION;
       type: "opened";
       syncProtocol?: 2;
+      displayMode?: "compact" | "detailed";
       bindingEpoch?: string;
       baseRevision?: string;
       engine?: AgentEngine;
@@ -384,7 +388,9 @@ export type ServerFrame = (
        */
       v: typeof PROTOCOL_VERSION;
       type: "history";
+      displayRefresh?:boolean;
       syncProtocol?: 2;
+      displayMode?: "compact" | "detailed";
       bindingEpoch?: string;
       baseRevision?: string;
       headRevision?: string;
@@ -440,6 +446,9 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "get_command_catalog":
       if(!["pi","codex","claude","cursor","grok"].includes(String(value.engine)))throw new ProtocolError("invalid_frame","Unknown Agent command catalog");
       return {v:PROTOCOL_VERSION,type:"get_command_catalog",engine:parseAgentEngine(value.engine),...withRequestId(value)};
+    case "set_display_mode":
+      if(value.mode!=="compact"&&value.mode!=="detailed")throw new ProtocolError("invalid_frame","Invalid display mode");
+      return {v:PROTOCOL_VERSION,type:"set_display_mode",mode:value.mode,...withRequestId(value)};
     case "set_speed":
       if(value.mode!=="standard"&&value.mode!=="fast")throw new ProtocolError("invalid_frame","Speed must be standard or fast");
       return {v:PROTOCOL_VERSION,type:"set_speed",mode:value.mode,...withRequestId(value)};
@@ -551,10 +560,12 @@ function parseOpen(value: Record<string, unknown>): ClientFrame {
   const sessionId = optionalString(value.sessionId, "sessionId", 256);
   const after = optionalNonNegativeInteger(value.after, "after");
   if(value.nativeProtocol!==undefined && value.nativeProtocol!==1)throw new ProtocolError("unsupported_version","Unsupported native Agent presentation protocol");
+  if(value.displayMode!==undefined && !["compact","detailed"].includes(value.displayMode as string))throw new ProtocolError("invalid_frame","Invalid display mode");
   if(value.syncProtocol!==undefined && value.syncProtocol!==2)throw new ProtocolError("unsupported_version","Unsupported conversation sync protocol");
   return {
     v: PROTOCOL_VERSION,
     type: "open",
+    ...(value.displayMode ? {displayMode:value.displayMode as "compact"|"detailed"}:{}),
     ...(value.syncProtocol === 2 ? {syncProtocol:2 as const} : {}),
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(after === undefined ? {} : { after }),

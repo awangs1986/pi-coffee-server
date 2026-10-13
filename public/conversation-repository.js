@@ -259,17 +259,24 @@ export class ConversationSyncStore {
 
 export class ConversationRepository {
   constructor({ onUpdate = () => {}, onUnauthorized = () => {}, fetch, indexedDB, store, useWorkers = true, workerFactory,
-    concurrency = 4, maxMemoryConversations = 5, pollMs = 2500, now = Date.now, ...storeOptions } = {}) {
+    displayMode, concurrency = 4, maxMemoryConversations = 5, pollMs = 2500, now = Date.now, ...storeOptions } = {}) {
     this.store = store || new ConversationSyncStore({ indexedDB, ...storeOptions }); this.onUpdate = onUpdate; this.onUnauthorized = onUnauthorized;
     this.pool = new BoundedReadPool({ concurrency }); this.transport = new SyncWorkerPool({ fetch, useWorkers: useWorkers && !fetch, workerFactory });
     this.actors = new Map(); this.subscriptions=new Map(); this.generations = new Map(); this.authGeneration = 0; this.maxMemoryConversations = maxMemoryConversations; this.pollMs = pollMs; this.now = now;
-    this.scope = undefined; this.closed = false; this.watched = new Set(); this.timers = new Map(); this.authController = new AbortController();
+    this.displayMode=displayMode; this.scope = undefined; this.closed = false; this.watched = new Set(); this.timers = new Map(); this.authController = new AbortController();
   }
+  setDisplayMode(mode) {
+    if(mode===this.displayMode)return;
+    this.displayMode=mode;this.authGeneration++;this.authController.abort();this.authController=new AbortController();this.store.invalidate();
+    this.actors.clear();this.generations.clear();this.watched.clear();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();
+  }
+  _cacheScope(scope) {return this.displayMode?JSON.stringify([scope,'display-v1',this.displayMode]):scope;}
+  _deleteCache(scope,id) {return Promise.all([scope,JSON.stringify([scope,'display-v1','compact']),JSON.stringify([scope,'display-v1','detailed'])].map(key=>this.store.delete(key,id)));}
   setScope(scope) {
     const next = typeof scope === 'string' && scope ? scope : undefined; if (next === this.scope) return;
     const previous = this.scope; this.scope = next; this.authGeneration++; this.authController.abort(); this.authController = new AbortController(); this.store.invalidate();
     this.actors.clear(); this.subscriptions.clear(); this.generations.clear(); this.watched.clear(); for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear();
-    if (!next && previous) void this.store.delete(previous);
+    if (!next && previous) void this._deleteCache(previous);
   }
   _context(id) { return { userScope: this.scope, conversationId: id, authGeneration: this.authGeneration, conversationGeneration: this.generations.get(id) || 0 }; }
   _valid(context) { return !this.closed && !!context.userScope && context.userScope === this.scope && context.authGeneration === this.authGeneration && context.conversationGeneration === (this.generations.get(context.conversationId) || 0); }
@@ -292,7 +299,7 @@ export class ConversationRepository {
   subscribe(id, listener) { const actor = this._actor(id),listeners=actor.listeners; this.subscriptions.set(id,listeners);listeners.add(listener);return ()=>{listeners.delete(listener);if(!listeners.size&&this.subscriptions.get(id)===listeners)this.subscriptions.delete(id);}; }
   async _load(actor, context, refresh = false) {
     if (actor.state && !refresh) return actor.state;
-    const disk = await this.store.read(context.userScope, actor.id, () => this._valid(context));
+    const disk = await this.store.read(this._cacheScope(context.userScope), actor.id, () => this._valid(context));
     if (!this._valid(context)) throw new SyncError('stale_scope');
     if (disk) { actor.state = disk.state; actor.receipts = disk.receipts; this._emit(actor, { reason: 'local' }); }
     return actor.state;
@@ -309,7 +316,7 @@ export class ConversationRepository {
     const state = snapshotState(frame, actor.id), old = actor.state;
     if (old && old.bindingEpoch !== state.bindingEpoch && !allowEpochChange) throw new SyncError('epoch_mismatch');
     if (old?.bindingEpoch === state.bindingEpoch && compareRevision(state.appliedRevision, old.appliedRevision) < 0) return old;
-    const committed = await this.store.commit(context.userScope, actor.id, old, state, { reset: true, guard: () => this._valid(context) });
+    const committed = await this.store.commit(this._cacheScope(context.userScope), actor.id, old, state, { reset: true, guard: () => this._valid(context) });
     if (!this._valid(context)) throw new SyncError('stale_scope');
     if (committed.conflict) throw new SyncError('store_conflict');
     state.persistent = committed.persisted; state.durableRevision = committed.persisted ? state.appliedRevision : undefined;
@@ -324,7 +331,7 @@ export class ConversationRepository {
     if (!this._valid(context) || !actor.state || (batch.userScope !== undefined && batch.userScope !== context.userScope)) throw new SyncError('stale_scope');
     const merged = applyOperations(actor.state, batch, actor.receipts);
     if (!merged.operations.length) return actor.state;
-    const committed = await this.store.commit(context.userScope, actor.id, actor.state, merged.state, { ...merged, guard: () => this._valid(context) });
+    const committed = await this.store.commit(this._cacheScope(context.userScope), actor.id, actor.state, merged.state, { ...merged, guard: () => this._valid(context) });
     if (!this._valid(context)) throw new SyncError('stale_scope');
     if (committed.conflict) throw new SyncError('store_conflict');
     merged.state.persistent = committed.persisted; merged.state.durableRevision = committed.persisted ? merged.state.appliedRevision : actor.state.durableRevision;
@@ -340,7 +347,7 @@ export class ConversationRepository {
     return this._enqueue(actor, async () => { await this._load(actor, context); return this._changes(actor, batch, context); });
   }
   _read(id, type, params, context, priority = 2) {
-    const query = new URLSearchParams(params).toString(), url = `/api/conversations/${encodeURIComponent(id)}/${type}${query ? `?${query}` : ''}`;
+    const query = new URLSearchParams({...params,...(this.displayMode?{displayMode:this.displayMode}:{})}).toString(), url = `/api/conversations/${encodeURIComponent(id)}/${type}${query ? `?${query}` : ''}`;
     const timeoutMs = type === 'meta' ? 3000 : type === 'changes' ? 8000 : 10000;
     const actor=this._actor(id), key=keyFor(context.userScope, context.authGeneration, url);
     actor.readKeys??=new Set();actor.readKeys.add(key);
@@ -430,14 +437,14 @@ export class ConversationRepository {
     const epoch = actor.state?.bindingEpoch, snapshotId = actor.state?.snapshotId;
     if (!epoch) throw new SyncError('snapshot_required');
     const valid = () => this._valid(context) && actor.state?.bindingEpoch === epoch && actor.state?.snapshotId === snapshotId;
-    const cached = await this.store.readPage(context.userScope, id, epoch, cursor, valid);
+    const cached = await this.store.readPage(this._cacheScope(context.userScope), id, epoch, cursor, valid);
     if (cached && cached.snapshotId === snapshotId && valid()) return cached;
     let frame;
     try { frame = await this._read(id, 'page', { cursor, limitBytes: String(PAGE_BYTES) }, context, 1); }
     catch (error) { if (error.code === 'reset_required' && this._valid(context)) void this.sync(id, { priority: 1, forceSnapshot: true }); throw error; }
     identity(frame, id); if (!valid() || frame.bindingEpoch !== epoch || frame.snapshotId !== snapshotId) throw new SyncError('reset_required');
     const page = { ...snapshotState(frame, id), baseRevision: frame.baseRevision };
-    await this.store.putPage(context.userScope, id, cursor, page, valid);
+    await this.store.putPage(this._cacheScope(context.userScope), id, cursor, page, valid);
     if (!valid()) throw new SyncError('stale_scope'); return page;
   }
   async loadAround(id, anchorEntityId) {
@@ -477,12 +484,12 @@ export class ConversationRepository {
   async invalidate(id) {
     this.generations.set(id, (this.generations.get(id) || 0) + 1);
     const actor = this.actors.get(id); if (actor) { actor.generation++; actor.state = undefined; actor.receipts.clear(); }
-    this.actors.delete(id); this.unwatch(id); if (this.scope) await this.store.delete(this.scope, id);
+    this.actors.delete(id); this.unwatch(id); if (this.scope) await this._deleteCache(this.scope,id);
   }
   async clear() {
     const scope = this.scope; this.authGeneration++; this.authController.abort(); this.authController = new AbortController(); this.store.invalidate();
     for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear(); this.watched.clear(); this.actors.clear(); this.generations.clear();
-    if (scope) await this.store.delete(scope);
+    if (scope) await this._deleteCache(scope);
   }
   dispose() {
     this.closed = true; this.authGeneration++; this.authController.abort(); this.pool.close(); this.transport.close(); this.store.close(); this.subscriptions.clear();

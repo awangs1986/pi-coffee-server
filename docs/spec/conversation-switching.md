@@ -1,5 +1,8 @@
 # Fast conversation switching and temporary resource lifetime
 
+> Source candidate v0.24, not deployed: [conversation-first delivery](conversation-delivery.md) changes default Host-to-browser payloads, with default Compact and optional Detailed process display. This supersedes default process delivery below for clients explicitly selecting Compact; Detailed preserves existing behavior.
+
+
 Delivery: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).
 
 ## Recent conversation previews
