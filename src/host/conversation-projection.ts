@@ -1,3 +1,4 @@
+import {isToolExecutionEvent} from '../../public/display-events.js';
 /** Display projection only. Native evidence and execution consumers retain originals. */
 export function compactEntry(entry:any):any|null {
   if(entry?.kind!=='tool')return entry;
@@ -12,7 +13,7 @@ export function compactOperation(op:any):any {
 }
 export function compactEvent(event:any):any|null {
   if(!event||typeof event!=='object')return event;
-  if(['tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(event.type)) {
+  if(isToolExecutionEvent(event)) {
     if(event.isError)return {type:'display_notice',text:'工具执行失败；切换到详细模式查看。',error:true};
     return event.type==='tool_execution_start'?{type:'display_boundary'}:null;
   }

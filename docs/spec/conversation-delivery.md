@@ -218,3 +218,23 @@ account-scoped GitHub credentials; the configured broker returned “GitHub cred
 unavailable” during this task. No alternate/global identity is used. Production
 rollout, fresh-public-clone validation and long-running real-user measurements are
 still pending; no production service was restarted.
+
+### Display-read isolation (v0.24 review fix)
+
+`set_display_mode` starts an auxiliary read outside the ordered task-command lane.
+A stalled snapshot cannot delay prompt delivery, question answers or queue controls.
+Each socket permits one underlying display read; overlapping requests receive
+`display_busy`. The metadata deadline yields `display_read_timeout`; it does not
+cancel the native task or permit unbounded replacement reads. The pending slot is
+released only when the underlying read settles. Late results after timeout,
+disconnection or a changed session/binding/display generation are discarded.
+If live events advance while the read is pending, `display_stale` preserves the
+already-painted dialogue instead of overwriting it. Retry the selected mode after
+the read settles. A display refresh replays transcript bodies only, never historical
+questions or lifecycle transitions. Browser and Host share event classification in
+`public/display-events.js`; the native transcript remains unchanged.
+
+Web HTTP and Web/Host Upgrade boundaries reject malformed request targets with
+400 and contain handler failures so an unauthenticated malformed URL cannot
+terminate the service. Isolated child-process regression tests also verify that
+health and authentication enforcement still work after rejection.

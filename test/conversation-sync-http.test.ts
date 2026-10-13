@@ -80,6 +80,41 @@ describe('read-only sync seam',()=>{
    await vi.waitFor(()=>expect(JSON.stringify(frames)).toContain('PUBLIC_ANSWER'));expect(JSON.stringify(frames)).not.toContain('PRIVATE_');
   }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
  });
+ it('keeps prompt delivery independent of a stalled display read and discards its timed-out result',async()=>{
+  const {factory,session}=fake();let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});let reads=0;
+  session.getHistory.mockImplementation(async()=>{if(++reads>1)await gate;return {entries:[],leafId:null};});
+  const host=new HostServer({port:0,token:'secret',factory,metadataTimeoutMs:40});servers.push(host);await host.start();const {ws,frames}=await socket(host);
+  ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',displayMode:'compact'}));
+  try{
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));
+   ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'detailed',requestId:'display-1'}));await vi.waitFor(()=>expect(reads).toBe(2));
+   ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'compact',requestId:'display-2'}));
+   ws.send(JSON.stringify({v:1,type:'prompt',text:'deliver while reading',requestId:'prompt-1'}));
+   await vi.waitFor(()=>expect(session.prompt).toHaveBeenCalledTimes(1));
+   expect(frames.some(f=>f.type==='ack'&&f.requestId==='prompt-1')).toBe(true);
+   await vi.waitFor(()=>expect(frames.some(f=>f.code==='display_read_timeout'&&f.requestId==='display-1')).toBe(true));
+   expect(frames.some(f=>f.code==='display_busy'&&f.requestId==='display-2')).toBe(true);expect(reads).toBe(2);
+   release();await new Promise(resolve=>setTimeout(resolve,20));
+   expect(frames.filter(f=>f.type==='history')).toHaveLength(1);
+   expect(frames.some(f=>f.type==='ack'&&f.requestId==='display-1')).toBe(false);
+   ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'compact',requestId:'display-3'}));
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='ack'&&f.requestId==='display-3')).toBe(true));
+  }finally{release();if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
+ });
+ it('does not replace live dialogue with a display snapshot captured before a new event',async()=>{
+  const {factory,session}=fake();let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});let reads=0;
+  session.getHistory.mockImplementation(async()=>{if(++reads>1)await gate;return {entries:[],leafId:null};});
+  const host=new HostServer({port:0,token:'secret',factory,metadataTimeoutMs:5000});servers.push(host);await host.start();const {ws,frames}=await socket(host);
+  ws.send(JSON.stringify({v:1,type:'open',sessionId:'c',displayMode:'compact'}));
+  try{
+   await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));
+   ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'detailed',requestId:'display-race'}));await vi.waitFor(()=>expect(reads).toBe(2));
+   session.emit({type:'message_delta',id:'live',delta:'New live answer'});
+   await vi.waitFor(()=>expect(frames.some(f=>f.event?.delta==='New live answer')).toBe(true));release();
+   await vi.waitFor(()=>expect(frames.some(f=>f.code==='display_stale'&&f.requestId==='display-race')).toBe(true));
+   expect(frames.filter(f=>f.type==='history')).toHaveLength(1);
+  }finally{release();if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
+ });
  it('rejects an unavailable explicit conversation instead of creating a native session',async()=>{
   const {factory}=fake();const workspaces=new Workspaces(await root());
   const host=new HostServer({port:0,token:'secret',factory,workspaces});servers.push(host);await host.start();

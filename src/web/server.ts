@@ -6,7 +6,7 @@ import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
-import { readJson, json } from "../shared/http.js";
+import { readJson, json, parseRequestTarget } from "../shared/http.js";
 import { Identity, type IdentityOptions } from "./identity.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
@@ -88,11 +88,14 @@ export class WebServer {
     this.releaseDir=options.releaseDir??process.cwd();
     this.publicDir = options.publicDir ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../public");
     this.secure = options.tls !== undefined;
-    const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response);
+    const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response).catch(()=>{
+      if(response.destroyed)return;
+      if(!response.headersSent)json(response,500,{error:'Web operation failed'});else response.destroy();
+    });
     this.http = options.tls ? createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handler) : createServer(handler);
     this.http.requestTimeout = 0;
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-    this.http.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
+    this.http.on("upgrade", (request, socket, head) => {void this.handleUpgrade(request, socket, head).catch(()=>socket.destroy());});
     this.wsServer.on("connection", (socket, request) => {
       const route = (request as IncomingMessage & { coffeeRoute?: { hostUrl: string; hostToken: string; user?:string } }).coffeeRoute;
       const bridge = new BrowserBridge(socket, { url: route?.hostUrl ?? this.hostUrl, token: route?.hostToken ?? this.hostToken, user:route?.user ?? this.defaultUser, authorize:async()=>this.identity ? Boolean(await this.identity.authorize(request)) : this.auth ? Boolean(this.auth.principalOf(request)) : true, onFrame:(data,binary)=>{if(!binary){try{this.recordTransferGrant(JSON.parse(typeof data==="string"?data:data.toString()),(request as IncomingMessage & {coffeeTransferOwner?:string}).coffeeTransferOwner ?? "local");}catch{}}} });
@@ -156,7 +159,9 @@ export class WebServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    const target=parseRequestTarget(request.url);
+    if(!target){json(response,400,{error:'Invalid request target'});return;}
+    const path=target.pathname;
     if(path==='/internal/github-refresh') {
       const bearer=request.headers.authorization?.replace(/^Bearer /,'');
       const allowed=this.identity?this.identity.authorizesHost(request):Boolean(this.hostToken&&bearer&&timingSafeEqual(createHash('sha256').update(this.hostToken).digest(),createHash('sha256').update(bearer).digest()));
@@ -417,7 +422,9 @@ export class WebServer {
   }
 
   private async handleUpgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): Promise<void> {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    const target=parseRequestTarget(request.url);
+    if(!target){socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');return;}
+    const path=target.pathname;
     if (path !== "/ws") {
       socket.destroy();
       return;

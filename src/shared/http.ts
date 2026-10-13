@@ -15,3 +15,8 @@ export async function readJson(req: IncomingMessage, limit=65536, timeoutMs?:num
  }finally{if(timer!==undefined)clearTimeout(timer);}
 }
 export function json(res:ServerResponse,status:number,value:unknown) {res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(value));}
+
+/** Request targets are untrusted, including before HTTP/Upgrade authentication. */
+export function parseRequestTarget(target:string|undefined):URL|undefined {
+ try{return new URL(target??'/', 'http://localhost');}catch{return undefined;}
+}

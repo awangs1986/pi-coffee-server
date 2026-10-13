@@ -1,3 +1,4 @@
+import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
 import {initMishuCommands} from './mishu-commands.js';
@@ -1980,7 +1981,7 @@ function handleFrame(frame, ws) {
       return;
     case 'event':
       if(frame.sessionId!==activeId)return;
-      if(frame.displayMode&&frame.displayMode!==displayMode&&(['tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(frame.event?.type)||(frame.event?.type==='sync_entity'&&frame.event?.entry?.kind==='tool'))){
+      if(frame.displayMode&&frame.displayMode!==displayMode&&isProcessEvent(frame.event)){
         if(frame.event?.isError)pushNote('工具执行失败；切换到详细模式查看。',true);
         return;
       }
@@ -1988,8 +1989,7 @@ function handleFrame(frame, ws) {
       if(engine!=="pi" && frame.cursor){if(frame.cursor<=nativeCursor && frame.event?.type!=="native_request")return;nativeCursor=Math.max(nativeCursor,frame.cursor);}
       if(conversationDisplay.indexed){
         requestConversationSync();
-        const type=frame.event?.type;
-        if(['message_delta','message_completed','tool_update','message_update','message_start','message_end','tool_execution_start','tool_execution_update','tool_execution_end'].includes(type))return;
+        if(isTranscriptEvent(frame.event))return;
       }
       handleEvent(frame.event || {},{replayed:Number.isSafeInteger(frame.cursor)&&frame.cursor<=openedEventCursor});
       maybeReadCompletion();scheduleRecentThread();

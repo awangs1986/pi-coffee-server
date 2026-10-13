@@ -1,3 +1,5 @@
+import {isTranscriptEvent} from '../../public/display-events.js';
+import {parseRequestTarget} from '../shared/http.js';
 import {compactEntry,compactEvent} from "./conversation-projection.js";
 import {MishuStateError} from './mishu-state.js';
 import {readReleaseIdentity} from '../shared/release.js';
@@ -207,7 +209,7 @@ export class HostServer {
       handleRequest(request,response);
     });
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-    this.http.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
+    this.http.on("upgrade", (request, socket, head) => {try{this.handleUpgrade(request,socket,head);}catch{socket.destroy();}});
     this.wsServer.on("connection", (socket, request) => {
 
       // The user name was validated during the upgrade; a connection without
@@ -749,7 +751,8 @@ export class HostServer {
 
   private handleUpgrade(request: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
     if (this.closing) { socket.destroy(); return; }
-    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    const requestUrl=parseRequestTarget(request.url);
+    if(!requestUrl){socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');return;}
     if (requestUrl.pathname !== "/host") {
       socket.destroy();
       return;
@@ -792,6 +795,8 @@ class HostSocket implements SessionSink {
   private readonly metadataReads=new Map<string,Promise<ServerFrame>>();
   private metadataEpoch=0;
   private syncProtocol?:2;
+  private displayRead?:Promise<unknown>;
+  private displayEpoch=0;
   private displayMode:"compact"|"detailed"="detailed";
   private bindingEpoch?:string;
   private index?:ConversationIndex;
@@ -852,7 +857,7 @@ class HostSocket implements SessionSink {
   get sessionId():string|undefined {return this.session?.id;}
 
   send(frame: ServerFrame): void {
-    if(this.syncProtocol===2&&frame.type==='event'&&frame.event&&typeof frame.event==='object'&&!Array.isArray(frame.event)&&['sync_entity','message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end'].includes(String(frame.event.type)))return;
+    if(this.syncProtocol===2&&frame.type==='event'&&frame.event&&typeof frame.event==='object'&&!Array.isArray(frame.event)&&isTranscriptEvent(frame.event))return;
     if(['history','event'].includes(frame.type))frame={...frame,displayMode:this.displayMode} as ServerFrame;
     if(this.displayMode==='compact'){
       if(frame.type==='history')frame={...frame,entries:frame.entries.map(compactEntry).filter(Boolean)};
@@ -874,6 +879,38 @@ class HostSocket implements SessionSink {
     this.closed = true;
     this.socket.close();
     void this.detach();
+  }
+
+  /** Display reads never occupy the prompt lane. One underlying read per socket. */
+  private refreshDisplay(frame:Extract<ClientFrame,{type:'set_display_mode'}>):void {
+    if(this.displayRead){this.send({v:1,type:'error',code:'display_busy',message:'Previous display read is still pending; retry after it settles',...rid(frame)});return;}
+    const target=this.session!,id=target.id,binding=this.bindingEpoch,epoch=++this.displayEpoch,cursor=target.currentCursor;
+    this.displayMode=frame.mode;
+    let expired=false;
+    const current=()=>!this.closed&&this.session===target&&this.bindingEpoch===binding&&this.displayEpoch===epoch;
+    const work=this.syncProtocol===2&&this.index
+      ? this.index.page(id,{displayMode:frame.mode}).then(page=>({page,legacy:undefined}))
+      : this.registry.open(id).then(legacy=>({page:undefined,legacy}));
+    this.displayRead=work;
+    const timer=setTimeout(()=>{expired=true;if(current())this.send({v:1,type:'error',code:'display_read_timeout',message:'Display history read timed out; native task continues',...rid(frame)});},this.metadataTimeoutMs);timer.unref();
+    void work.then(result=>{
+      if(expired||!current())return;
+      // A live frame may already be painted. Never replace it with an older snapshot.
+      if(target.currentCursor!==cursor){this.send({v:1,type:'error',code:'display_stale',message:'Conversation advanced during display read; retry the selected mode',...rid(frame)});return;}
+      if(result.page){
+        const page=result.page;
+        if(page.bindingEpoch!==binding)throw new Error('Conversation binding changed; reopen before reading history');
+        this.send({v:1,type:'history',sessionId:id,...page,displayRefresh:true,syncProtocol:2,leafId:page.entries.at(-1)?.id??null,truncated:Boolean(page.olderCursor)});
+      }else if(result.legacy){
+        const snapshot=result.legacy;
+        const entries=frame.mode==='compact'?snapshot.history.entries.map(compactEntry).filter(Boolean):snapshot.history.entries;
+        this.send({...boundedHistoryFrame(id,entries,snapshot.history.leafId),displayRefresh:true,completionId:snapshot.completionId});
+        for(const replay of snapshot.session.filterReplay(snapshot.replay))if(replay.type==='event'&&isTranscriptEvent(replay.event))this.send(replay);
+        if(snapshot.resync)this.send({v:1,type:'resync_required',sessionId:id,...snapshot.resync});
+      }
+      this.send(target.queueFrame);this.send({v:1,type:'ack',operation:'set_display_mode',...rid(frame)});
+    }).catch(()=>{if(!expired&&current())this.send({v:1,type:'error',code:'display_unavailable',message:'Display history unavailable; native task continues',...rid(frame)});})
+      .finally(()=>{clearTimeout(timer);if(this.displayRead===work)this.displayRead=undefined;});
   }
 
   /** Auxiliary reads share work, have a deadline, and cannot block prompts or answers. */
@@ -998,20 +1035,7 @@ class HostSocket implements SessionSink {
           break;
         case "set_display_mode": {
           if(!this.session||!this.opened)throw new NotOpenError();
-          this.displayMode=frame.mode;
-          const id=this.session.id;
-          if(this.syncProtocol===2&&this.index){
-            const page=await this.index.page(id,{displayMode:frame.mode});
-            this.send({v:1,type:'history',sessionId:id,...page,displayRefresh:true,syncProtocol:2,leafId:page.entries.at(-1)?.id??null,truncated:Boolean(page.olderCursor)});
-          }else{
-            const result=await this.registry.open(id);
-            const entries=frame.mode==='compact'?result.history.entries.map(compactEntry).filter(Boolean):result.history.entries;
-            this.send({...boundedHistoryFrame(id,entries,result.history.leafId),displayRefresh:true,completionId:result.completionId});
-            for(const replay of result.session.filterReplay(result.replay))if(replay.type==='event'&&['message_start','message_update','message_end','message_delta','message_completed','tool_update','tool_execution_start','tool_execution_update','tool_execution_end','sync_entity'].includes(String((replay.event as any)?.type)))this.send(replay);
-            if(result.resync)this.send({v:1,type:'resync_required',sessionId:id,...result.resync});
-          }
-          this.send(this.session.queueFrame);
-          this.send({v:1,type:'ack',operation:'set_display_mode',...rid(frame)});break;
+          this.refreshDisplay(frame);break;
         }
         case "set_speed": {
           if(!this.session||!this.opened)throw new NotOpenError();
