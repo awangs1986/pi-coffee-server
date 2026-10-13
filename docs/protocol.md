@@ -68,7 +68,7 @@ Host -> Web Server -> Browser: ack | event | error | sessions
 
 ## Where conversation state lives
 
-- **Completed messages** live in Pi's own session file in the User VM (ADR-0008). The Host projects them into `history` on every `open`. The Browser renders `history` from scratch and keeps nothing across page loads except which conversation it last looked at.
+- **Completed messages** live in Pi's own session file in the User VM (ADR-0008). The Host projects them into `history` on every `open`. The compatibility Browser renderer consumes bounded `history`; the current Browser also keeps account-scoped disposable previews and an indexed cache across reloads under [the synchronization contract](spec/local-first-conversation-sync.md). Native/Host history remains authoritative.
 - **In-flight events** (a message that is still streaming, a tool that is still running) live in the Host's bounded per-Session buffer. After `history`, the Host replays only buffered Events newer than `max(after, cursor of the last completed message)`. So a Browser that has never seen the Session and a Browser that reconnects mid-stream both end up with: history + the current tail, no duplicates.
 - If the in-flight tail itself has fallen out of the bounded buffer (a single message with more Events than the buffer), the Host emits `resync_required` instead of a partial tail; completed messages are unaffected because they come from `history`.
 - The Host may stop an idle Pi process (no Browser attached, nothing running) after `PI_COFFEE_IDLE_TIMEOUT_MS`. The conversation is unaffected: the next `open` resumes it from the store.

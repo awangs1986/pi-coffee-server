@@ -1,6 +1,6 @@
 # Native Agent integration
 
-> Current Work engines: Pi, Codex CLI, Claude Code, Cursor and Grok Build. [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md) supplement the initial M0–M5 contract. Read their actual-account and capability limits before claiming parity. Source baseline for this refresh: `5073c97`; [evidence and remaining gaps](../reviews/spec-freshness-20261006.md).
+> Current Work engines: Pi, Codex CLI, Claude Code, Cursor and Grok Build. [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md) supplement the initial M0–M5 contract. Read their actual-account and capability limits before claiming parity. Current refresh: published main `789a0d1` plus local candidate `e7f8ce5`; [weekly evidence and remaining gaps](../reviews/spec-freshness-20261013.md).
 
 Initial milestone status (2026-09-23): **M0–M5 implemented, merged and deployed**. This dated status does not certify later Cursor/Grok integrations or current upstream accounts. See [M5 deployment evidence](../reviews/native-agents-m5-20260923.md) and [supported capabilities](../deployment/native-agents.md).
 Date: 2026-09-23. Owner decisions were synthesized from the current discussion.
@@ -37,7 +37,7 @@ This maintained contract is implemented for the version-pinned interfaces; live 
 12. As a Browser User, I want rename, refresh and reconnect to retain the same Workspace, so that my local work remains stable.
 13. As a Browser User, I want failed creation to retain a recoverable identity, so that retries do not create duplicate clones or native Sessions.
 14. As a Browser User, I want to send prompts and receive streamed responses, so that the native engine is usable from the browser.
-15. As a Browser User, I want tool activity, results and failures displayed accurately, so that I can understand ongoing work.
+15. As a Browser User, I want default Compact dialogue/results and optional Detailed tool activity, with necessary errors and questions preserved in both, so that I can read conversations without losing execution evidence. See [display modes](conversation-delivery.md) for the local v0.24 candidate.
 16. As a Browser User, I want unsupported controls hidden or disabled with a reason, so that the UI does not promise unavailable features.
 17. As a Browser User, I want model and reasoning controls to reflect the selected engine, so that Pi settings are not presented as universal capabilities.
 18. As a Browser User, I want native user-input and permission requests to be actionable, so that execution does not stall invisibly.

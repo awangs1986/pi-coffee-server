@@ -84,7 +84,7 @@ change is sent. Host rejects changes while a turn or context operation is active
 The first message waits for the selected model and context settings to be applied.
 An older Host without context capability disables the setting.
 
-Pi Harness 0.2.1 uses the public native model API and clamps both the 272,000
+The consumed Pi Harness (0.3.3 in the reviewed lockfile) uses the public native model API and clamps both the 272,000
 and 500,000 token limits to model registry capacity. Its custom session entry
 persists the selection when native Pi saves the session. Pi automatic compaction
 and reserve remain native. Codex uses `model_context_window=272000` and
@@ -102,3 +102,11 @@ native context-compaction item and successful turn completion. Request acceptanc
 is not completion. Native failure, process exit and timeout surface as failures or
 unknown outcomes. Pi manual Handoff remains separate. Provider-specific remote
 compaction behavior is owned by Codex, not reimplemented by the Web gateway.
+
+## Distinct display controls (2026-10-13)
+
+The context-capacity selector still means nominal 272K or fixed 500K. Codex Speed
+selects the native service tier, with its own cost confirmation. The local v0.24
+“上下文显示” row below Speed selects Compact or Detailed browser delivery only.
+It does not alter tokens, compaction, model input, context attribution or cost tier.
+See [display modes](conversation-delivery.md) and [Speed](codex-speed-and-queued-input.md).

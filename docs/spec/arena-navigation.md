@@ -418,9 +418,9 @@ contiguous tool records into one closed “工作过程 · N 步” row. User me
 Agent replies remain directly visible in chronological order. Readers can expand
 the process to inspect individual tools and outputs; a failed tool marks its group
 “含错误”. Explicit group expansion survives updates within the same visible run.
-When live tool activity gives way to dialogue, its group closes. This changes only
-display: native records, model context, retrieval, pagination and error data remain
-intact. Long outputs remain bounded and load additional content on demand.
+When live tool activity gives way to dialogue, its group closes. This describes Detailed process rendering. The v0.24
+[Compact projection](conversation-delivery.md) omits these groups and reduces
+transmitted process bodies; native records and model context remain intact. Long outputs remain bounded and load additional content on demand.
 
 
 ### Recent-conversation order (2026-10-06, Server #80; supersedes #54)
@@ -459,16 +459,19 @@ Conversation actions offer Pin/Unpin. Active pinned conversations appear once,
 in a separate top section outside project/custom/date groups in either display
 mode. New pins lead; repeated pin requests do not reorder them. Pin preferences
 are user scoped and durable. Pinning preserves the original group assignment;
-unpin restores that placement (or creation-time order in flat mode). Archiving
+unpin restores that placement (or recent-conversation activity order in flat mode). Archiving
 hides the pin until restore. Pinned membership still prevents group deletion.
 
-The Context Usage popup offers “一键清空上下文” only for an active Pi Chat.
+The Context Usage popup offers “一键清空上下文” for an active Pi or Codex Chat
+when Host advertises the engine in `contextResetEngines` (Server #98).
 One click executes directly without confirmation. Running/queued instructions,
 blocking questions, lifecycle transitions and active/unknown background work
-prevent reset. Work tasks and other Agents cannot use this operation.
+prevent reset. Work tasks and unsupported Agents cannot use this operation.
 
-Host prepares and verifies an empty native Pi branch in a new native session,
-using public native session-tree APIs. The Conversation ID, creation time,
+Host prepares and verifies an empty native binding. Pi uses its public native
+session-tree APIs; Codex uses a fenced new native thread with retained preferences,
+as specified in [repository-free Codex Chat](native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98).
+The Conversation ID, creation time,
 title, model, thinking/context settings and task directory/attachments remain.
 Old native records are retained and excluded from future model requests; no
 handoff summary or prior dialogue is injected. Commit changes the durable native

@@ -10,7 +10,7 @@
 
 | ID | 正式合同 |
 |---|---|
-| GW-01 | Host/Pi 以 VM owner 运行，保留其 HOME、PATH、Git/SSH/Pi 配置；owner 具备 `NOPASSWD: ALL` 的 sudo。工具层无 allowlist、目录 sandbox、权限档位、命令审批；部署不得用 `NoNewPrivileges` 或其他设置阻断所需提权。T0 须从真实服务子进程验证，不能用当前终端权限推断。 |
+| GW-01 | Host/Pi 以 VM owner 运行，保留原生运行时配置；受管 Git/gh 使用当前账号的独立凭据环境，不继承共享 Git 登录；owner 具备 `NOPASSWD: ALL` 的 sudo。工具层无 allowlist、目录 sandbox、权限档位、命令审批；部署不得用 `NoNewPrivileges` 或其他设置阻断所需提权。T0 须从真实服务子进程验证，不能用当前终端权限推断。 |
 | GW-02 | 完整执行能力不取消产品行为范围。当前任务的本地编辑、检查、必要 sudo，以及登记的 Gitea Conversation 分支正常 commit/push 已预授权；无需逐次确认。默认/共享分支合并、强推、远端删除、对外发布按用户明确授权范围执行，既有授权不重复询问。读取建议/分析请求不触发自动 checkpoint。 |
 | GW-03 | Server 身份、固定 VM 路由、Host token、文件 API scope/路径检查继续存在；它们保护网络访问正确性，不限制 VM 内 Bash。VM root 不意味着可访问其他 VM、虚拟化宿主机或中央 Relay 密钥。 |
 
@@ -25,7 +25,12 @@
 | Server | 登录、固定路由、透明代理；UI 展示 Host 提供的仓库、同步和 PR 状态/链接 | Git 执行、clone、项目锁、Pi transcript 或第二套权威工作区索引 |
 | VM owner | VM/root、Git 身份与凭据、备份/快照、故障恢复 | 平台自动 VM 管理服务 |
 
-网页 OAuth 凭据与 VM Git/Gitea API 凭据用途分离。Git 使用 VM 的 SSH/credential helper，API 使用 VM owner 配置的凭据；浏览器只接收状态和链接。远端 URL 不嵌密码/token，凭据不进入 Git、Issue、命令输出和日志。
+Web OAuth identity and Host repository credentials have separate purposes.
+Managed Git and Gitea API calls use the authenticated account's verified binding;
+only the explicitly configured legacy owner may retain its existing default
+credential. Other participants never fall back to it. See [the shared-Host
+workbench](multi-user-workbench.md) and [GitHub bindings](github-accounts.md).
+The Browser receives status and links only. 远端 URL 不嵌密码/token，凭据不进入 Git、Issue、命令输出和日志。
 
 ## 项目、分支和创建
 

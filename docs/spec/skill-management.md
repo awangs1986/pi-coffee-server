@@ -53,7 +53,7 @@ ancestor directory or package configured outside this manager. Eligible existing
 files are never adopted or overwritten. Bundled and linked sources remain read-only.
 
 Native discovery references: [Codex Skills](https://developers.openai.com/codex/skills/),
-[Claude Code Skills](https://code.claude.com/docs/en/skills), pinned Pi 0.99.1 public
+[Claude Code Skills](https://code.claude.com/docs/en/skills), consumed Pi 1.1.0 public
 `loadSkills` interface. Engine-native precedence and metadata semantics remain intact.
 
 ## Install and lifecycle
@@ -66,7 +66,8 @@ Native discovery references: [Codex Skills](https://developers.openai.com/codex/
   retain supporting files. Packages are bounded to 500 regular files / 10 MB;
   SKILL.md is at most 64 KB. Symlinks and special files in managed packages are
   rejected. Repository escape paths and inline URL credentials are rejected.
-- VM Git credentials serve private sources. Configured Gitea credentials are
+- The current Web account's verified Host Git binding serves private sources;
+  shared machine credentials are not a fallback. Configured Gitea credentials are
   scoped to that origin and are never returned to the browser or placed in clone
   URLs. Redirects are not followed with source credentials.
 - Install refuses collisions with existing native files. Updates follow the
@@ -273,3 +274,18 @@ package, so future Web updates have one maintained content source. This is not
 automatic adoption by the HTTP installer. Development-checkout links and a stale
 Web registry must be reconciled explicitly; a recorded commit alone does not prove
 the files currently loaded by the Agent.
+
+### Recorded installation versus source activation (2026-10-13)
+
+The recorded owner-approved Cat Skills reconciliation installed 50 managed Pi
+and 50 managed Codex packages from catskills revision `c77c5a1`, with backups and
+zero reported missing/modified inventory flags. These are dated installation
+facts, not permanent package-count requirements. Explicit slash availability is
+separate from automatic model invocation; upstream `disable-model-invocation`
+metadata must not be silently removed to increase apparent coverage.
+
+Namespace code is published as v0.23 / `789a0d1`; the last deployment record is
+v0.22 / `1139720`. Installing Skill files alone did not activate the new general
+Host namespace parser. Other engine installations were not silently updated.
+See [#126 source evidence](https://github.com/awangs1986/pi-coffee-server/issues/126#issuecomment-6152119487)
+and the [weekly audit](../reviews/spec-freshness-20261013.md).

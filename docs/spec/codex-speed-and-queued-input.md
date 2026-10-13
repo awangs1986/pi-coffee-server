@@ -1,9 +1,11 @@
 # Codex speed and post-send queue controls
 
 Owner request, 2026-10-13. Tracking: [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123).
-Source candidate: the owner clarified on 2026-10-13 that the restriction concerns
-bulk Agent creation. Local serial verification and exactly one real-model probe
-are authorized; publication remains conditional on successful verification.
+Implemented in published main (`5119256`, verified by `cf7a2f7`). The owner
+clarified that the restriction concerns bulk Agent creation. The specifically
+authorized single real-model probe has completed; that approval is consumed, not
+a standing allowance for future calls. See the [weekly status](../reviews/spec-freshness-20261013.md)
+for source versus recorded deployment.
 
 ## Speed
 
@@ -71,8 +73,8 @@ fencing, metadata correlation, timeout without retries, and Pi/Codex queue-then-
 promote behavior without duplicate prompts. Existing queue edit/cancel tests remain.
 
 The owner clarified that ordinary testing is allowed; sudden bulk creation or
-awakening of conversations remains high risk. Exactly one real Codex Fast turn
-is authorized for this release, followed by normal source publication if it passes.
+awakening of conversations remains high risk. The single real Codex Fast turn authorized for this release
+completed as recorded below, before source publication.
 Use serial isolated regression checks without additional provider calls or review
 subagents. Evidence and failures are recorded in Server #123; version advancement,
 publication and production activation remain distinct. The Pi-only MISHU source

@@ -1,5 +1,7 @@
 # Native-engine support in the existing Browser Shell
 
+Current refresh (2026-10-13): [weekly source/spec map](../reviews/spec-freshness-20261013.md). Composer controls preserve task-scoped model/effort/272K–500K settings, add Codex-only [Speed](codex-speed-and-queued-input.md), and in local v0.24 add account-scoped [Compact/Detailed display](conversation-delivery.md) below Speed. Busy instructions queue first, then may be edited/cancelled/promoted. Neither display mode nor speed changes the Agent binding.
+
 > Current Work engines: Pi, Codex, Claude Code, Cursor and Grok Build, gated by Host readiness. [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md) define later capabilities and limits. The M4/M5 status below records the initial three-engine rollout, not current real-account acceptance. Refreshed against `5073c97`; see [evidence](../reviews/spec-freshness-20261006.md).
 
 Status: **M4 merged; M5 production deployment and combined acceptance completed**. See [M4 evidence](../reviews-native-agents-m4-20260923.md) and [M5 production evidence](http://gitea:3000/awangs/pi-coffee/src/branch/main/docs/reviews/native-agents-m5-20260923.md).

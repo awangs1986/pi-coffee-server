@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+Current weekly source/spec baseline: [2026-10-06 through 2026-10-13](reviews/spec-freshness-20261013.md). Published Server main is v0.23; Compact/Detailed remains the local v0.24 candidate. The report distinguishes source, installed Skills and last recorded deployment; read it before interpreting older dated delivery notes.
+
 - Source candidate v0.24, not deployed: [conversation-first browser delivery](spec/conversation-delivery.md). Host sends dialogue and essential controls by default; default Compact shows dialogue/results; Detailed retains existing process cards. Native evidence remains intact; performance must be measured.
 
 
@@ -9,7 +11,7 @@
 
 - Approved shared-Host participant login: [legacy-owner routing and credential boundary](deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner), [Server #124](https://github.com/awangs1986/pi-coffee-server/issues/124). Explicit route admission retains existing default task data; newly scoped accounts never inherit the default owner's Gitea credential. Production activation is recorded separately.
 
-- Codex speed and post-send queue controls: [source candidate](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion; serial verification and one real Fast turn are authorized; source publication and activation remain separate.
+- Codex speed and post-send queue controls: [current contract](spec/codex-speed-and-queued-input.md), [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123). Per-conversation Standard/Fast choice and queue-first promotion are in published main. The previously authorized one-turn probe is complete; it is not standing permission for more model calls. Source and activation evidence remain separate.
 
 
 - Pi-only MISHU secretary: [current contract](spec/mishu.md#pi-only-secretary-boundary-2026-10-12), [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122). Other engines remain targets; persisted non-Pi source grants are retired without deleting history.
@@ -28,7 +30,7 @@
 
 - Window wake after idle connection loss: [current recovery contract](spec/conversation-switching.md#window-wake-recovery-2026-10-11-server-117), [Server #117](https://github.com/awangs1986/pi-coffee-server/issues/117). Focus/page restoration reattaches the selected conversation without navigation; synthetic timer-throttling evidence does not identify the original production disconnect trigger.
 
-- MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Preserves Codex/Luna native coordination and tool-only readiness; source merge does not activate production.
+- MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Retains historical Codex-source repair evidence; current #122 allows only Pi secretary sources. Target-native capabilities remain independently gated.
 
 - Local file download links: [current delivery contract](spec/task-storage.md#local-file-link-delivery--2026-10-08-server-102), [Server #102](https://github.com/awangs1986/pi-coffee-server/issues/102). Ordinary local files use authorized download; embedded images retain bounded preview.
 
@@ -36,11 +38,11 @@
 
 - Streaming browser responsiveness: [Word discovery contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and regression evidence](reviews/streaming-browser-freeze-20261007.md), [Server #96](https://github.com/awangs1986/pi-coffee-server/issues/96). Dense historical text must not block live replies or browser interaction during file-link discovery.
 
-- MISHU manager candidate (P1–P9: watch, rules, to-do, overview/events/peek, keyword replies, Host-issued authorization, receipt rotation): [contract](spec/mishu.md#manager-p1p9-2026-10-09-candidate), [implementation, rules.json and deployment](development/mishu-manager.md). Requires `pi-coffee-mishu@0.3.0-manager.2`.
-- MISHU review correction source candidate: [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). This source follow-up does not replace the immutable tracking.2 package or activate production.
-- Historical Codex main secretary (superseded by Pi-only #122): [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [approved Issues #85–#91](development/mishu-codex-tickets.md), [public SPEC #84](https://github.com/awangs1986/pi-coffee-server/issues/84). Explicitly selected Codex Work; ordinary Chat stays Pi-only. This is a new requirement, not implementation or production evidence.
+- MISHU manager source (P1–P9: watch, rules, to-do, overview/events/peek, keyword replies, Host-issued authorization, receipt rotation): [contract](spec/mishu.md#manager-p1p9-2026-10-09-candidate), [implementation, rules.json and deployment](development/mishu-manager.md). Initially required manager.2; the current consumer pins manager.5. Current Pi-only source admission supersedes the older Codex-source path.
+- Historical MISHU review correction (2026-10-07): [complete-state stop rollback, tracking status and explicit truncated facts](spec/mishu.md#review-corrections-2026-10-07-source-candidate), [TDD and Browser evidence](development/mishu-review-fixes.md). Later manager consumers integrate these repairs; the dated report alone is not production activation evidence.
+- Historical Codex main secretary (superseded by Pi-only #122): [source entry, Host/native boundaries and C01–C12](spec/mishu-codex-secretary.md), [approved Issues #85–#91](development/mishu-codex-tickets.md), [public SPEC #84](https://github.com/awangs1986/pi-coffee-server/issues/84). Historical Codex-source design, now superseded by #122. Ordinary Chat supports Pi and advertised Codex under #98; only Pi Chat may act as secretary.
 
-- MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
+- Historical MISHU tracking release candidate: [package, review and acceptance record](reviews/mishu-tracking-candidate.md), [44-story matrix](development/mishu-tracking-acceptance-76.md), [Server PR #78](https://github.com/awangs1986/pi-coffee-server/pull/78). Source, immutable artifact, dependency advisory repairs, installed validation and production activation are recorded separately.
 - Codex local readiness: [contract](spec/native-agent-engines.md#codex-local-readiness-correction--2026-10-06-server-82), [diagnosis and evidence](reviews/codex-readiness-20261006.md), [Server #82](https://github.com/awangs1986/pi-coffee-server/issues/82). Local configured-login status is distinct from slow account metadata and provider acceptance; source verification is distinct from production activation.
 - Pi native model recovery: [contract](spec/conversation-switching.md#pi-process-lifetime-and-native-model-recovery--2026-10-07-server-92), [diagnosis and verification](reviews/pi-model-recovery-20261007.md), [Server #92](https://github.com/awangs1986/pi-coffee-server/issues/92). Host model defaults seed new sessions only; reopening preserves Pi's native choice independently of browser display caches.
 - Generated Word delivery: [contract](spec/task-storage.md#word-document-delivery--2026-10-07-server-94), [diagnosis and acceptance](reviews/word-delivery-20261007.md), [Server #94](https://github.com/awangs1986/pi-coffee-server/issues/94). Verified assistant filenames use existing scoped downloads; Word output discovery excludes inputs and does not inject Chat context or repeated cards.

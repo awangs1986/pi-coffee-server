@@ -1,8 +1,10 @@
+> Current weekly reconciliation: [2026-10-13 source/spec map](docs/reviews/spec-freshness-20261013.md). Read current topical contracts before older milestone notes; source publication, installed data and production activation are distinct.
+
 > Source candidate v0.24 (2026-10-13), not deployed: [conversation-first browser delivery](docs/spec/conversation-delivery.md). Owner approved Host-side reduction of default process payloads, default Compact / optional Detailed display and bounded detail access and preserved reliable controls/native history. Public Issue/publication require available scoped GitHub credentials; source acceptance is linked from the contract.
 
 > Shared-Host participant login (2026-10-13): [Server #124](https://github.com/awangs1986/pi-coffee-server/issues/124), [routing and credential contract](docs/deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner). Explicitly preserve the legacy owner's registry when admitting a scoped account. Source verification and production route activation remain separate.
 
-> Codex speed / post-send promotion (2026-10-13): [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123), [contract](docs/spec/codex-speed-and-queued-input.md). Owner clarified that serial testing and one real Fast turn are authorized. Publish after verification, retaining Pi-only MISHU and the high-risk batch policy through merge ancestry.
+> Codex speed / post-send promotion (2026-10-13): [Server #123](https://github.com/awangs1986/pi-coffee-server/issues/123), [contract](docs/spec/codex-speed-and-queued-input.md). The authorized one-turn Fast probe is complete and source is in published main. Retain Pi-only MISHU and the high-risk batch policy; this historical test grant must not be reused.
 
 > Pi-only MISHU secretary (2026-10-12): [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122), [current contract](docs/spec/mishu.md#pi-only-secretary-boundary-2026-10-12). Codex remains a target. Source tests and deployment acceptance are tracked separately.
 
@@ -15,15 +17,15 @@
 
 > Historical Codex Luna MISHU source candidate (2026-10-09; superseded by Pi-only #122): [contract](docs/spec/mishu-codex-secretary.md), [acceptance](docs/development/mishu-codex-source.md). Native MCP foreground coordination and explicit Browser setup reuse Host authorization; tool-free report/recovery and automatic reminders remain unavailable. Source, native acceptance and production activation are separate.
 
-> Repository-free Codex Chat (2026-10-08): [Server #98](https://github.com/awangs1986/pi-coffee-server/issues/98), [current contract](docs/spec/native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98). Pi remains the default; Codex uses native model settings and scoped directories without a repository. Chat engines remain fixed and MISHU remains opt-in; the Oct9 Codex source candidate is separately capability-gated. Source implementation and deployment are separate.
+> Repository-free Codex Chat (2026-10-08): [Server #98](https://github.com/awangs1986/pi-coffee-server/issues/98), [current contract](docs/spec/native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98). Pi remains the default; Codex uses native model settings and scoped directories without a repository. Chat engines remain fixed and MISHU remains opt-in; #122 restricts secretary sources to Pi Chat. Source implementation and deployment are separate.
 
-> Current-entry refresh (2026-10-06): start with [REPOSITORIES.md](REPOSITORIES.md), [CONTEXT.md](CONTEXT.md) and the [freshness audit](docs/reviews/spec-freshness-20261006.md), tracked in [Server #66](https://github.com/awangs1986/pi-coffee-server/issues/66). The dated decision register and milestone tables below are historical slices, not a second current requirement set. Current contracts retain ordinary zero-system Pi Chat, five capability-gated Work engines, independent clones/task bundles, Web-managed native Skills, explicit SSHME and Work-only runner guidance. MISHU current-request authorization is implemented; persistent follow-up remains [#64](https://github.com/awangs1986/pi-coffee-server/issues/64). Code/source publication, native-account acceptance and production activation are separate verdicts.
+> Historical entry refresh (2026-10-06; superseded where noted by the [2026-10-13 audit](docs/reviews/spec-freshness-20261013.md)): start with [REPOSITORIES.md](REPOSITORIES.md), [CONTEXT.md](CONTEXT.md) and the [freshness audit](docs/reviews/spec-freshness-20261006.md), tracked in [Server #66](https://github.com/awangs1986/pi-coffee-server/issues/66). The dated decision register and milestone tables below are historical slices, not a second current requirement set. Current contracts retain ordinary zero-system Pi Chat, five capability-gated Work engines, independent clones/task bundles, Web-managed native Skills, explicit SSHME and Work-only runner guidance. MISHU current-request authorization and later bounded tracking/reporting slices are implemented; broader experience and per-engine acceptance remain explicitly gated in the current MISHU contract. Code/source publication, native-account acceptance and production activation are separate verdicts.
 
 > Chat zero-system correction (2026-10-05): [contract](docs/spec/session-environment.md#chat-zero-system-boundary--2026-10-05). No automatic project, Host or runner guidance, including after clear-context and restart.
 
 > Incremental MISHU setup (2026-10-05): [Server #63](https://github.com/awangs1986/pi-coffee-server/issues/63). Prefill still-valid prior exact bindings; retain approved older contacts, add only recent ones, remove explicitly and cancel without saving. Consume immutable plugin 0.1.3.
 
-> MISHU setup usability (2026-10-05): [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62). Bounded, scrollable native dialogs; current titles after rename/restart; only recent-72-hour unarchived targets in new selection. Exact native bindings remain authoritative.
+> MISHU setup usability (2026-10-05): [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62). Bounded, scrollable native dialogs; current titles after rename/restart; recent-72-hour unarchived targets in the default directory, plus explicit exact-ID selection of older targets under the later exact-ID correction. Exact native bindings remain authoritative.
 
 > Busy top-conversation scroll correction (2026-10-05): [Server #61](https://github.com/awangs1986/pi-coffee-server/issues/61). Sidebar focus restoration must preserve the user's scroll position in grouped and chronological views; real Chromium regression catches focus-induced scroll-to-top.
 
@@ -67,7 +69,7 @@
 
 > **当前新增决策（2026-09-21）**：[ADR-0012](./docs/adr/0012-owner-privileges-and-gitea-checkouts.md) 接受 VM owner + 无限制 sudo、Gitea 代码权威与每 Conversation 独立 clone；[T0–T4](./docs/development/t0-t4-gitea-workspaces.md) 的 Agent/Server 代码、双 User VM、2 × 3 Conversation、VM 快照回滚与普通用户对称私库验收均已落地，[真实证据](./docs/reviews/t0-t4-implementation-20260921.md)已记录，T0–T4 已完成。替代以下历史工作区/本地合并条目时以该合同为准。
 
-> **2026-09-21 仓库拆分**：本文件保留历史产品 Backlog，但当前仓库的执行范围只包括 Agent Runtime。Web UI、统一网关、身份、固定路由、Relay 和 Server 部署进入 [`awangs/pi-coffee-server`](http://gitea:3000/awangs/pi-coffee-server)；新工作按两个仓库各自 Issue 追踪。
+> **历史记录：2026-09-21 仓库拆分（当前边界见 REPOSITORIES.md）**：当时本文件保留历史产品 Backlog，当时仓库的执行范围只包括 Agent Runtime。Web UI、统一网关、身份、固定路由、Relay 和 Server 部署进入 [`awangs/pi-coffee-server`](http://gitea:3000/awangs/pi-coffee-server)；新工作按两个仓库各自 Issue 追踪。
 
 > **工作台产品排期**：[P0–P5（仅 Pi Agent 讨论前的产品 SPEC）](./docs/development/product-priorities-20260916.md)。与下方 Pi/工具交接记录分开，以此安排产品增量开发。
 

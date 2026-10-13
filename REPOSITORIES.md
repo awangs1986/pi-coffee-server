@@ -22,7 +22,7 @@ do not alter native Codex or Claude tools or authentication.
 
 Server's `package.json` and `package-lock.json` specify the actual immutable plugin
 artifacts. A Pi repository's latest main does not automatically update this Server.
-The P0–P9 candidate removes the historical aggregate. Maintained package roots
+The completed P0–P9 migration removed the historical aggregate. Maintained package roots
 are discovered by native Pi; Host starts with --no-extensions plus the selected
 explicit roots to avoid executing a second configured/discovered plugin copy.
 User/project Skills and context remain native Pi resources. An explicit
@@ -33,3 +33,8 @@ Use [the release runbook](docs/deployment/unified-release.md) and recorded deplo
 evidence to identify the running service. A source push or package release alone is
 not a production deployment. Plugin installation/release/rollback is documented in
 [the Pi release guide](https://github.com/awangs1986/pi-coffee/blob/main/docs/releases/README.md).
+
+For the reviewed 2026-10-13 consumer pins, recent source changes and last recorded
+activation, see [the weekly spec audit](docs/reviews/spec-freshness-20261013.md).
+That dated record supplements the manifest; it never substitutes for a live
+release/asset check when deploying.

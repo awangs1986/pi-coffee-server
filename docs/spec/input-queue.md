@@ -1,5 +1,7 @@
 # Pending Web instructions
 
+Current composer admission (Server #123, 2026-10-13): busy sends queue first. Edit/Cancel/Immediate Insert are offered on the Host-accepted row, never as a pre-send steering toggle. Promotion uses that row's ID/revision and never duplicates its prompt. See [speed and queued input](codex-speed-and-queued-input.md#sending-while-busy).
+
 Delivery: [Server #18](https://github.com/awangs1986/pi-coffee-server/issues/18).
 
 While a supported Agent is running, Web follow-up instructions remain in a Host-owned

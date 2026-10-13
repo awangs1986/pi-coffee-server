@@ -390,3 +390,18 @@ and overlapping wake events. Chromium's retry-timer delay is injected; this prov
 the recovery gap, not why the owner's actual LAN browser originally disconnected.
 Production services had unchanged PIDs and zero systemd restarts during diagnosis.
 Source publication and compatible Browser-only activation remain separate evidence.
+
+## Current synchronization boundaries (2026-10-13)
+
+Cache-first navigation, account-scoped remembered models, native model restoration,
+heartbeat/wake recovery and Compact/Detailed delivery solve distinct problems.
+Cached model metadata is display-only; reconnect must not apply another task's
+model. A healthy ping does not prove a message was accepted. Required questions
+are cleared only after native acceptance and must not reappear because a reply
+has not yet arrived. See [the answer-replay contract](../protocol.md#accepted-questions-are-not-replayed--2026-10-11-server-118).
+
+The local v0.24 [display projection](conversation-delivery.md) reduces process
+payloads while retaining dialogue/control delivery. It does not establish the
+cause of an earlier idle disconnect or replace current reconnect/freshness guards.
+The [weekly audit](../reviews/spec-freshness-20261013.md) separates published and
+local source from the last recorded active release.

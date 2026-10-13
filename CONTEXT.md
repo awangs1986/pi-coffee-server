@@ -1,7 +1,9 @@
 # PI Coffee domain model
 
-Reviewed against Server main `5073c97`, 2026-10-06. The owner confirmed the
-[project refocus](docs/reviews/spec-freshness-20261006.md). Start with
+Reviewed 2026-10-13 against published main `789a0d1` and local v0.24 candidate
+`e7f8ce5`. See the [weekly source/spec map](docs/reviews/spec-freshness-20261013.md)
+for source, installed-package and deployment distinctions. The earlier
+[project refocus](docs/reviews/spec-freshness-20261006.md) remains historical evidence. Start with
 [REPOSITORIES.md](REPOSITORIES.md) for source ownership; use the linked feature
 contracts for defaults, limits and acceptance. Picode/V5 is historical.
 
@@ -100,11 +102,13 @@ artifact. Harness, LSP and Handoff have canonical directories in `pi-coffee`;
 official web/subagent packages remain upstream. Native upstream activation and
 readiness rules determine optional-tool availability.
 
-**MISHU**: an explicitly selected secretary conversation (Pi Chat, or candidate Codex Chat/Work) with exact, authorized
-Conversation contacts. Its independent plugin and Host coordinator currently
-provide scoped message/receipt handling. Persistent event-driven tracking and
-automatic delayed-result reporting remain [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64),
-not completed by the 0.1.6 authorization repair. See [MISHU](docs/spec/mishu.md).
+**MISHU**: an explicitly selected Pi Chat secretary with exact authorized
+Conversation contacts. Codex/Claude/Cursor/Grok can be targets, never secretary
+sources. The consumed manager package and Host implement task briefs, bounded
+observation/dispatch/reporting, watch/rules/to-do data and explicit authorization.
+Enablement, target-native capabilities and uncertainty still gate each operation;
+not every accepted secretary-experience requirement is implemented. See the
+[current capability boundary](docs/spec/mishu.md#current-source-status-2026-10-13).
 
 **Test Runner**: the account-configured Windows SSH computer and its WSL, known
 to Work through one pointer to external configuration. **SSHME** is instead
@@ -113,6 +117,11 @@ computer. Neither feature activates the other. See [runners](docs/spec/test-runn
 and [SSHME](docs/spec/sshme.md).
 
 ## Transport and operations
+
+**Conversation Display Mode**: the local v0.24 candidate offers Compact (default)
+and Detailed below Speed, persisted per Web account. It changes browser delivery
+and presentation, not native model context, token capacity or execution. See
+[the delivery contract](docs/spec/conversation-delivery.md).
 
 **Frame / Event / Cursor**: the versioned transport message, native observation,
 and bounded replay position defined by [the protocol](docs/protocol.md). A cursor
@@ -127,5 +136,5 @@ Native engine login is not migrated into it.
 
 **Watchdog**: the bounded per-machine service health monitor. It recovers actual
 service failures with cooldown and a persistent circuit breaker, independently
-of MISHU's planned task tracking. A browser disconnect alone is not proof of a
+of MISHU's task tracking and deterministic watch. A browser disconnect alone is not proof of a
 Host/Web crash. See [watchdog](docs/deployment/watchdog.md).

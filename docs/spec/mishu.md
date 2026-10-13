@@ -7,6 +7,33 @@ Owner decision, 2026-10-05: fork `awangs/MISHU` into the independently maintaine
 exception to the Pi plugin monorepo source rule. The owner selected coordination
 of **existing conversations**, with independent settings for **the current Pi Chat**.
 
+## Current source status (2026-10-13)
+
+At published Server main `789a0d1`, the consumed package is
+`pi-coffee-mishu@0.3.0-manager.5`. Host source includes task briefs, exact-binding
+observation/dispatch, report receipts/recovery, explicit notification opt-in and
+the deterministic watch/rules/to-do manager. These are implemented capability
+slices, subject to native target support and scoped authorization, not a promise
+that every M01–M13 or E01–E05 target has passed acceptance.
+
+Only Pi Chat may be a secretary source. Earlier Codex source/bridge descriptions
+below are historical and superseded by #122; native Codex remains a normal Chat/
+Work engine and an eligible target. Passive metadata reads cannot create model
+turns; bulk awakening needs the separately approved scope in the batch policy.
+
+The dated #69–#76 sections retain their requirement IDs, limits and historical
+verification boundaries. “Later slice” and “pending” in an individual slice mean
+its original delivery order; they do not negate subsequently implemented slices.
+Unmet product acceptance, target-engine limitations, package activation and real
+account verification remain separate. The [weekly audit](../reviews/spec-freshness-20261013.md)
+records the revision and consumer pins; it does not newly verify live deployment.
+
+Source evidence: `src/host/mishu.ts`, `mishu-watch.ts`, `mishu-tasks.ts`,
+`mishu-reports.ts`, `mishu-receipts.ts`, pinned `pi-coffee-mishu/host-policy`, and
+public `test/mishu-http.test.ts`, `test/mishu-dispatch.test.ts`,
+`test/mishu-manager.test.ts`, `test/mishu-manager-regressions.test.ts`,
+`test/mishu-old-contact-menu.test.ts` and `test/mishu-startup.test.ts`.
+
 ## Pi-only secretary boundary (2026-10-12)
 
 Owner decision, tracked in [Server #122](https://github.com/awangs1986/pi-coffee-server/issues/122):
@@ -160,8 +187,9 @@ Natural-language interpretation remains model-dependent; provider-payload checks
 and actual-model behavior must be reported as separate evidence.
 
 Tracking: [Server #65](https://github.com/awangs1986/pi-coffee-server/issues/65).
-[Repair evidence](../reviews/mishu-autonomy-20261006.md). Background follow-up is
-still separate planned work in [Server #64](https://github.com/awangs1986/pi-coffee-server/issues/64).
+[Repair evidence](../reviews/mishu-autonomy-20261006.md). Background follow-up was outside that 0.1.6 repair. The later #69–#76
+slices and [current status](#current-source-status-2026-10-13) describe implemented
+bounded tracking/reporting; broader acceptance is not inferred from that repair.
 
 ## Ownership and interfaces
 
@@ -169,7 +197,7 @@ still separate planned work in [Server #64](https://github.com/awangs1986/pi-cof
   tool, interactive setup, and bounded secretary guidance. Its Coffee entry does not
   load Herdr, old memory, terminal screens, or WeChat code. Original source/history
   remain in the fork for explicit legacy use.
-- Harness 0.3.2 provides `registerChatTools(pi,names)`. Its Chat filters preserve only
+- The consumed Harness 0.3.3 retains the `registerChatTools(pi,names)` interface introduced in 0.3.2. Its Chat filters preserve only
   registered **and active** optional tools. The plugin owns enablement. Native Pi
   keeps its own provider wire formats and model authentication.
 - Server owns authenticated user scope, conversation/native identity, durable
@@ -265,8 +293,10 @@ cases cover the original secretary experience: task briefs, correlated reply
 obligations, durable memory, recoverable notifications, instruction ordering,
 bounded helpers, stronger authorization and human-readable follow-through.
 This is a target contract, not a claim that these capabilities exist in 0.1.6.
-The earlier sections describe the implemented v1 contract; their exclusions of
-background supervision and new helpers remain the installed default.
+This dated section describes the earlier v1 boundary. Later implemented
+observation/report/manager slices supersede its blanket exclusion of tracking;
+new helper creation is still outside ordinary passive coordination and subject
+to the high-risk batch policy. See [current status](#current-source-status-2026-10-13).
 
 The 0.1.5 / `0af6cb924eaad1ae8a0d6ec597631c5c5f6f3e99` rollout completed on
 2026-10-05. The deployment record confirms normal Host mode, exact release
@@ -962,9 +992,12 @@ event-driven watch over all of one user's conversations (secretary Chats
 excluded), a strict `rules.json` engine, a persisted to-do panel (≤50 items),
 Web notices with cooldown/batch/hourly budget/quiet hours, and exact-keyword fast
 replies with one-time confirmation codes for stop/cancel. Tier 2 is the secretary
-model, woken only by non-keyword user messages, which receives a bounded digest
+model for non-keyword user messages, which receives a bounded digest
 (≤1500 chars, ≤20 lines) and to-do text (≤1200 chars) as untrusted data. The
-digest cursor commits only after a successful secretary run.
+digest cursor commits only after a successful secretary run. Deterministic manager
+watch notices do not themselves wake a model. The separately opted-in automatic
+report path described above remains available within its authorization/budget
+limits; it is not blanket permission for manager watch events to start turns.
 
 Authorization: overview/events/peek are read-only and limited to currently valid
 configured bindings unless the user explicitly enables view-all. Setup has separate
@@ -973,8 +1006,8 @@ confirmation. Cancel/Escape at any step writes nothing. View-all and contacts ar
 committed together in state.json; failure cannot expand access. Revoked bindings
 are also filtered out of model-facing to-do and digest data.
 
-Model execution uses version 2 authorization.quote through both Pi and the Codex
-MCP bridge. A live direct-user foreground admission is required. The quotation may
+Model execution uses version 2 authorization.quote through Pi. The earlier
+Codex secretary MCP bridge is retained only as historical source, disabled by #122. A live direct-user foreground admission is required. The quotation may
 come from the current or an earlier same-task user instruction recorded at actual
 native delivery (up to 200 request-bound entries, 4000 characters each). Merely
 queued/rejected/cancelled instructions and assistant/target output are not evidence;
@@ -1010,12 +1043,12 @@ bodies (20000/30-day retention); independent identities.sqlite tombstones retain
 execution deduplication without that expiry. Legacy archive read/corruption errors
 fail closed; a torn tail is preserved in a recovery file before safe appending.
 
-Codex Chat/Work preserves the existing native foreground token and original thread.
-Its tool bridge exposes overview/events/peek/panel-list/queue and v2 quoting; its
-Browser setup includes the same explicit view-all choice. Pi-only keyword input
-interception remains Pi-only. Codex reports, automatic wake-ups and native report
-recovery remain unavailable until separately verified. Ordinary unselected native
-sessions retain their original guidance.
+Historical Codex-source integration preserved its foreground token and thread
+and exposed manager reads/v2 quoting. This path is superseded by #122: Codex
+cannot be selected/configured as secretary, its secretary bridge is disabled,
+and it must not be revived by treating this dated paragraph as current admission
+policy. Existing Codex Chat/Work history and native guidance remain; it may still
+be an explicitly authorized target of a Pi secretary.
 
 The queue_action protocol gains move (to: front|back); mishu_watch frames are
 ignored by older clients. Source, artifact installation, Browser acceptance and
