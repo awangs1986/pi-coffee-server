@@ -2476,7 +2476,7 @@ function slashItems() {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
   const mishuItems=currentTask()?.engine==='codex'?[{name:'mishu-setup',invocation:'/mishu-setup',description:'配置 MISHU 联系对象与权限',source:'web'},{name:'mishu-tasks',invocation:'/mishu-tasks',description:'查看 MISHU 跟踪事实',source:'web'},{name:'mishu',invocation:'/mishu',description:'查看秘书身份和当前状态',source:'web'},{name:'mishu-disable',invocation:'/mishu-disable',description:'停用秘书协调',source:'web'}]:[];
-  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...commands.filter(c=>!['sshme','restart'].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^skill:/,'').toLowerCase().startsWith(query)));
+  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...commands.filter(c=>!['sshme','restart'].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^.*:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();

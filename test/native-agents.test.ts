@@ -624,16 +624,16 @@ it('invalidates a draft command catalog after Skill installation and requires ex
 });
 
 
-it('offers Codex Skills before the first message and inserts native dollar invocation',async()=>{
+it.each([['tdd','td'],['cat-skills:fresh-agent','fresh']])('offers Codex Skill %s before the first message and inserts native dollar invocation',async(name,query)=>{
  const app=await setup();chooseWork();
  const agent=document.querySelector<HTMLSelectElement>('#task-engine')!;agent.value='codex';agent.dispatchEvent(new Event('change'));
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='/';prompt.dispatchEvent(new Event('input'));
  const request=app.frames.find(f=>f.type==='get_command_catalog'&&f.engine==='codex');
  expect(request).toBeTruthy();
- app.sockets.at(-1).receive({type:'command_catalog',engine:'codex',requestId:request.requestId,commands:[{name:'tdd',invocation:'$tdd',source:'skill',description:'Test first'}]});
- expect(document.querySelector('#slash')!.textContent).toContain('$tdd');
- prompt.value='/td';prompt.dispatchEvent(new Event('input'));prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
- expect(prompt.value).toBe('$tdd ');expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+ app.sockets.at(-1).receive({type:'command_catalog',engine:'codex',requestId:request.requestId,commands:[{name,invocation:'$'+name,source:'skill',description:'Test first'}]});
+ expect(document.querySelector('#slash')!.textContent).toContain('$'+name);
+ prompt.value='/'+query;prompt.dispatchEvent(new Event('input'));prompt.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+ expect(prompt.value).toBe('$'+name+' ');expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
 });
 
 

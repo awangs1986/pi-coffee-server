@@ -3,7 +3,7 @@ import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
 import { createHash, randomUUID } from "node:crypto";
 import type { ContextPreset, CodexSpeed } from "../shared/protocol.js";
-import { codexCommands, codexSkills } from "./codex/skills.js";
+import { codexCommands, codexSkillMention, codexSkills } from "./codex/skills.js";
 import { NativeQuestions } from "./native/questions.js";
 import { nativeEnvironment } from "./native/process.js";
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -662,9 +662,9 @@ class CodexSession implements PiSession {
 
   private async input(text: string, images?: ImageInput[]): Promise<Json[]> {
     const input=toUserInput(text,images);
-    const mention=/^\$([a-zA-Z0-9_-]+)(?=\s|$)/.exec(text);
+    const mention=codexSkillMention(text);
     if(mention){
-      const matches=(await codexSkills(this.server,this.cwd)).filter(skill=>skill.name===mention[1]);
+      const matches=(await codexSkills(this.server,this.cwd)).filter(skill=>skill.name===mention);
       if(matches.length===1)input.push({type:'skill',name:matches[0].name,path:matches[0].path});
     }
     return input;

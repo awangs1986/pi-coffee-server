@@ -248,3 +248,28 @@ Grok expose only their verified native command catalogs.
 
 Reference: [official App Server Skills and explicit Skill input](https://developers.openai.com/codex/app-server/).
 Verified native release: Codex CLI 0.159.1.
+
+### Codex Skill namespaces (2026-10-13)
+
+[Server #126](https://github.com/awangs1986/pi-coffee-server/issues/126) corrects
+native plugin names such as `cat-skills:fresh-agent` being silently excluded from
+the Web catalog. Catalog discovery and explicit `$namespace:name` invocation
+accept nonempty colon-separated segments containing letters, digits, underscores
+or hyphens. Names containing paths, whitespace or empty segments are excluded.
+The complete native name is preserved in the menu and native Skill input; the
+browser cannot choose a filesystem path. Disabled filtering, exact native name
+lookup and native discovery precedence remain unchanged.
+
+Composer filtering accepts either the namespace prefix or the final Skill name:
+`/fresh` can select `$cat-skills:fresh-agent`. Selection retains the complete native
+invocation and creates no task or model turn. Source verification and activation
+of the new Host code are separate from updating installed Skill files.
+
+Historical `$CODEX_HOME/skills` copies can coexist with the managed `.agents/skills`
+root and win native discovery for an unqualified name. Reconciliation must retain
+backups, verify the selected source and preserve unrelated and disabled Skills.
+An administrator may replace those duplicate copies with references to the managed
+package, so future Web updates have one maintained content source. This is not
+automatic adoption by the HTTP installer. Development-checkout links and a stale
+Web registry must be reconciled explicitly; a recorded commit alone does not prove
+the files currently loaded by the Agent.

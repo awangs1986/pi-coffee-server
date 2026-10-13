@@ -206,22 +206,22 @@ describe("Codex app-server adapter", () => {
     expect((await restored.getModels()).current?.id).toBe('gpt-fake-mini');
   });
 
-  it("discovers and invokes enabled native Skills through authenticated Host WS",async()=>{
+  it.each(['tdd','cat-skills:fresh-agent'])("discovers and invokes enabled native Skill %s through authenticated Host WS",async(name)=>{
     const b=setup();mkdirSync(b.cwd,{recursive:true});mkdirSync(b.codexHome,{recursive:true});
-    const skill={name:'tdd',description:'Tests first',path:join(b.cwd,'.agents/skills/tdd/SKILL.md'),enabled:true};
-    writeFileSync(join(b.codexHome,'fake-skills.json'),JSON.stringify([{cwd:b.cwd,skills:[skill,{...skill,path:join(b.codexHome,'skills/tdd/SKILL.md')},{...skill,name:'disabled',enabled:false}],errors:[]}]));
+    const skill={name,description:'Tests first',path:join(b.cwd,'.agents/skills/example/SKILL.md'),enabled:true};
+    writeFileSync(join(b.codexHome,'fake-skills.json'),JSON.stringify([{cwd:b.cwd,skills:[skill,{...skill,path:join(b.codexHome,'skills/example/SKILL.md')},{...skill,name:'disabled',enabled:false},{...skill,name:'cat-skills:../../secret'}],errors:[]}]));
     const factory=b.factory(),host=new HostServer({port:0,token:'skills-test',factory});await host.start();
     const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer skills-test'}});
     const frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
     const send=(f:object)=>ws.send(JSON.stringify({v:1,...f}));
     try{
       await once(ws,'open');send({type:'get_command_catalog',engine:'codex',requestId:'skills'});
-      await expect.poll(()=>frames.find(f=>f.requestId==='skills'||f.type==='error')).toMatchObject({type:'command_catalog',engine:'codex',commands:[{name:'tdd',invocation:'$tdd',description:'Tests first',source:'skill'}]});
+      await expect.poll(()=>frames.find(f=>f.requestId==='skills'||f.type==='error')).toMatchObject({type:'command_catalog',engine:'codex',commands:[{name,invocation:'$'+name,description:'Tests first',source:'skill'}]});
       expect(await factory.list()).toEqual([]);
       send({type:'open',sessionId:'skill-task'});await expect.poll(()=>frames.find(f=>f.type==='opened')).toBeTruthy();
-      send({type:'get_commands'});await expect.poll(()=>frames.find(f=>f.type==='commands')).toMatchObject({commands:[{name:'tdd',invocation:'$tdd',description:'Tests first',source:'skill'}]});
-      send({type:'prompt',requestId:'invoke',text:'$tdd check this'});
-      await expect.poll(()=>{try{return JSON.parse(readFileSync(join(b.codexHome,'fake-input.json'),'utf8'));}catch{return null;}}).toContainEqual({type:'skill',name:'tdd',path:skill.path});
+      send({type:'get_commands'});await expect.poll(()=>frames.find(f=>f.type==='commands')).toMatchObject({commands:[{name,invocation:'$'+name,description:'Tests first',source:'skill'}]});
+      send({type:'prompt',requestId:'invoke',text:'$'+name+' check this'});
+      await expect.poll(()=>{try{return JSON.parse(readFileSync(join(b.codexHome,'fake-input.json'),'utf8'));}catch{return null;}}).toContainEqual({type:'skill',name,path:skill.path});
       await expect.poll(()=>frames.some(f=>f.type==='event'&&f.event?.type==='agent_settled')).toBe(true);
       // The same native connection must force rediscovery after a management change.
       writeFileSync(join(b.codexHome,'fake-skills.json'),JSON.stringify([{cwd:b.cwd,skills:[{...skill,enabled:false}],errors:[]}]));
