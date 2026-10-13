@@ -9,9 +9,10 @@ import {promisify} from 'node:util';
 const exec=promisify(execFile);
 const quote=(value:string)=>"'"+value.replace(/'/g,"'\\''")+"'";
 import {GitHubClient} from './github.js';
+import type {GiteaTransport} from './gitea-identity.mjs';
 export interface GitHubAccount {id:string;githubId:string;login:string;connectedAt:string;}
 interface StoredAccount extends GitHubAccount,GitHubCredentials {credentialVersion?:string;reconnectRequired?:boolean;}
-interface GitHubAccountsOptions {apiUrl?:string;gitea?:{url:string;token:string;owner:string};renew?:(refreshToken:string)=>Promise<GitHubCredentials>;now?:()=>number;}
+interface GitHubAccountsOptions {apiUrl?:string;gitea?:GiteaTransport;gitIdentity?:{name:string;email:string};renew?:(refreshToken:string)=>Promise<GitHubCredentials>;now?:()=>number;}
 /** Private Host-owned credentials; callers receive metadata, never bearer tokens. */
 export class GitHubAccounts {
   private tail:Promise<unknown>=Promise.resolve();
@@ -94,6 +95,7 @@ export class GitHubAccounts {
       const value=await exec(gitProgram,['config','--global','--get',key]).then(r=>r.stdout.trim()).catch(()=>undefined);
       if(value)identity[key]=value;
     }
+    if(this.options.gitIdentity){identity['user.name']=this.options.gitIdentity.name;identity['user.email']=this.options.gitIdentity.email;}
     const transport=join(this.root,'transport.json'),temp=transport+'.'+randomUUID();
     await writeFile(temp,JSON.stringify({identity,gitea:this.options.gitea}),{mode:0o600});await rename(temp,transport);
     const script=fileURLToPath(new URL('./github-tools.mjs',import.meta.url));
@@ -112,6 +114,7 @@ export class GitHubAccounts {
       ['url.https://github.com/.insteadOf','ssh://git@github.com:22/'],
     ];
     const env:Record<string,string>={PATH:bin+':'+(process.env.PATH??''),GH_CONFIG_DIR:config,GH_HOST:'github.com',GH_TOKEN:'coffee-no-shared-auth',GITHUB_TOKEN:'coffee-no-shared-auth',GH_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GITHUB_ENTERPRISE_TOKEN:'coffee-no-shared-auth',GIT_TERMINAL_PROMPT:'0',GIT_ASKPASS:'/bin/false',SSH_ASKPASS:'/bin/false',SSH_AUTH_SOCK:'',GIT_CONFIG_PARAMETERS:'',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_COUNT:String(settings.length),...Object.fromEntries(settings.flatMap(([key,value],index)=>[['GIT_CONFIG_KEY_'+index,key],['GIT_CONFIG_VALUE_'+index,value]]))};
+    if(this.options.gitIdentity)Object.assign(env,{GIT_AUTHOR_NAME:this.options.gitIdentity.name,GIT_AUTHOR_EMAIL:this.options.gitIdentity.email,GIT_COMMITTER_NAME:this.options.gitIdentity.name,GIT_COMMITTER_EMAIL:this.options.gitIdentity.email});
     const bashEnv=join(bin,'bash-env'),bashTemporary=bashEnv+'.'+randomUUID();
     const exports=Object.entries(env).filter(([key])=>key!=='PATH').map(([key,value])=>'export '+key+'='+quote(value)).join('\n');
     await writeFile(bashTemporary,'export PATH='+quote(bin)+':"${COFFEE_MANAGED_PATH:-}":"$PATH"\n'+exports+'\n',{mode:0o600});await rename(bashTemporary,bashEnv);

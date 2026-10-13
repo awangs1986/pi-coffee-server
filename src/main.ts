@@ -2,17 +2,18 @@ import {savedMishuScopes} from './host/mishu-recovery.js';
 import {githubRenewalClient} from './host/github-renewal.js';
 import {homedir} from "node:os";
 import {RunnerManager} from "./host/runners.js";
-import {hostSessionInstructions} from "./host/session-instructions.js";
+import {hostSessionInstructions,accountScopeInstruction} from "./host/session-instructions.js";
 import {taskRootForScope} from './host/task-storage.js';
 import { NativeAgentFactory } from "./host/native/factory.js";
 import { Workspaces } from "./host/workspaces.js";
 import { GiteaClient } from "./host/gitea.js";
+import {giteaAccountForScope} from './host/gitea-accounts.js';
 import {GitHubAccounts} from "./host/github-accounts.js";
 import { HostPiRuntime } from "./host/pi-runtime.js";
 import { parseUserRoutes, type IdentityOptions } from "./web/identity.js";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { CodexSessionFactory } from "./host/codex-adapter.js";
 import { HostServer, type UserScope } from "./host/server.js";
 import { RpcPiSessionFactory, type PiSessionFactory } from "./host/pi-adapter.js";
@@ -124,25 +125,27 @@ async function run(selectedRole: Role): Promise<void> {
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
     await mkdir(cwd,{recursive:true});
     const workRoot=user ? cwd : process.env.PI_COFFEE_WORK_ROOT ?? cwd;
-    // The legacy environment credential belongs only to the default owner.
-    // A newly scoped participant must not inherit its repository or Git access.
-    const forge=user===undefined && process.env.PI_COFFEE_GITEA_URL && process.env.PI_COFFEE_GITEA_TOKEN && process.env.PI_COFFEE_GITEA_OWNER ? new GiteaClient({baseUrl:process.env.PI_COFFEE_GITEA_URL,token:process.env.PI_COFFEE_GITEA_TOKEN,owner:process.env.PI_COFFEE_GITEA_OWNER}) : undefined;
-    const githubAccounts=new GitHubAccounts(join(sessionDir??join(cwd,'.pi-coffee'),'github-accounts'),{...(process.env.PI_COFFEE_GITHUB_REFRESH_URL?{renew:githubRenewalClient(process.env.PI_COFFEE_GITHUB_REFRESH_URL,process.env.PI_COFFEE_HOST_TOKEN??'',user)}:{}),...(forge?{gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}}:{})});
+    const giteaAccount=await giteaAccountForScope(process.env.PI_COFFEE_GITEA_ACCOUNTS_FILE,user,process.env.PI_COFFEE_GITEA_TOKEN&&process.env.PI_COFFEE_GITEA_OWNER?{login:process.env.PI_COFFEE_GITEA_OWNER,token:process.env.PI_COFFEE_GITEA_TOKEN}:undefined);
+    const gitea=process.env.PI_COFFEE_GITEA_URL&&giteaAccount?{url:process.env.PI_COFFEE_GITEA_URL,token:giteaAccount.token,owner:giteaAccount.login,userId:giteaAccount.userId}:undefined;
+    const forge=gitea?new GiteaClient({baseUrl:gitea.url,...gitea}):undefined;
+    const githubAccounts=new GitHubAccounts(join(sessionDir??join(cwd,'.pi-coffee'),'github-accounts'),{...(process.env.PI_COFFEE_GITHUB_REFRESH_URL?{renew:githubRenewalClient(process.env.PI_COFFEE_GITHUB_REFRESH_URL,process.env.PI_COFFEE_HOST_TOKEN??'',user)}:{}),...(gitea?{gitea}:{}),...(giteaAccount?.gitEmail?{gitIdentity:{name:giteaAccount.gitName??giteaAccount.login,email:giteaAccount.gitEmail}}:{})});
     const deniedGitHub=await githubAccounts.environment(undefined);
+    const accountProjects=taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts);
+    const accountGuidance=accountScopeInstruction(giteaAccount?.login??user??'VM owner',accountProjects?dirname(accountProjects):cwd);
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     await workspaces.list();
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
     const sshme=new RunnerManager(join(runners.root,'sshme'),'sshme');
-    const instructions=async(id?:string)=>{const task=id?await workspaces.lookup(id):undefined;if(task?.workspaceKind==='chat')return undefined;return [hostSessionInstructions(),task?await workspaces.forkInstructionForCwd(task.cwd):undefined].filter(Boolean).join('\n');};
+    const instructions=async(id?:string)=>{const task=id?await workspaces.lookup(id):undefined;if(task?.workspaceKind==='chat')return undefined;return [hostSessionInstructions(accountGuidance),task?await workspaces.forkInstructionForCwd(task.cwd):undefined].filter(Boolean).join('\n');};
     const codexOptions={env:deniedGitHub,instructions,cliPath:codexCommand,codexHome:process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,instructions,
       pi:new RpcPiSessionFactory({...piOptions,instructions,cwd,sessionDir:sessionDir ?? join(bookkeeping,"sessions"),runtimeIdForSession:id=>taskNamespace(user,id),env:{...deniedGitHub,PATH:deniedGitHub.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:deniedGitHub.PATH+':'+piRuntime!.path()},
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
         extensionsForSession:async id=>(await host?.mishuRuntime(user,id))?.extensions??[],
-        envForSession:async id=>{const env=await workspaces.lookup(id)?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,...(await host?.mishuRuntime(user,id))?.env,PATH:env.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:env.PATH+':'+piRuntime!.path()};},
+        envForSession:async id=>{const task=await workspaces.lookup(id),env=task?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,...(task?.workspaceKind==='project'?{PI_COFFEE_ACCOUNT_GUIDANCE:accountGuidance}:{}),...(await host?.mishuRuntime(user,id))?.env,PATH:env.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:env.PATH+':'+piRuntime!.path()};},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
         codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>new CodexSessionFactory({...codexOptions,preparation,mishuContext:preparation?undefined:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?host?.mishuSourceContext(user,task.id):undefined;},allowEmptyRecovery:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?.workspaceKind==='chat'&&task.engine==='codex'&&task.nativeContextEmpty===true;},instructions:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return instructions(task?.id);},envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
@@ -154,7 +157,7 @@ async function run(selectedRole: Role): Promise<void> {
       ...(process.env.PI_COFFEE_GROK_COMMAND ? {grok:{command:process.env.PI_COFFEE_GROK_COMMAND,env:deniedGitHub}} : {}),
       ...(process.env.PI_COFFEE_CURSOR_COMMAND ? {cursor:{command:process.env.PI_COFFEE_CURSOR_COMMAND,env:deniedGitHub}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(forge ? {gitea:{url:process.env.PI_COFFEE_GITEA_URL!,token:process.env.PI_COFFEE_GITEA_TOKEN!,owner:process.env.PI_COFFEE_GITEA_OWNER!}} : {})}};
+    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(gitea?{gitea}:{})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);

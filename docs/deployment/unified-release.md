@@ -42,12 +42,13 @@ URL/token are unchanged. Browser parameters and headers never choose the upstrea
 scope. Web restart requires a fresh login; old callback URLs must not be replayed.
 
 Host's legacy `PI_COFFEE_GITEA_TOKEN`/owner belongs only to the default registry.
-Scoped participants receive no fallback Gitea API or native Git credential, including
-through the shared Skill manager. Gitea login alone is not repository authorization.
-Their Chat tasks and independently connected GitHub accounts are usable; scoped
-Gitea repository onboarding requires a separate credential design and is not part
-of this repair. All agents still run as the same OS owner; this is application-level
-separation, not a Linux security boundary.
+Scoped participants use their own verified binding from
+`PI_COFFEE_GITEA_ACCOUNTS_FILE` for Gitea API, native Git and project Skills.
+See [complete two-user onboarding](../spec/multi-user-workbench.md), Server #125.
+The earlier v0.21 decision to defer this binding was an incomplete repair, not an
+accepted reduction of product capability. Both accounts must complete the Gitea
+workflow before onboarding is accepted. This remains application-level separation,
+not a Linux security boundary between agents sharing the same OS owner.
 
 Acceptance: `test/identity-shared-host.test.ts` drives real Web/Host HTTP and WS
 boundaries with fixture identities. It covers legacy path retention, scoped lists,

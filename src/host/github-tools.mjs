@@ -1,4 +1,5 @@
 import {githubToken} from './github-token.mjs';
+import {verifyGiteaIdentity} from './gitea-identity.mjs';
 // Invoked only by task-local Git/gh wrappers. Read credentials afresh on each call.
 import {readFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';
@@ -89,6 +90,7 @@ try {
     if(mode==='gitea'){
       const gitea=JSON.parse(readFileSync(file,'utf8')).gitea;if(!gitea)process.exit(0);
       const target=new URL(gitea.url);if(fields.host!==target.host||fields.protocol!==target.protocol.slice(0,-1))process.exit(0);
+      await verifyGiteaIdentity(gitea);
       process.stdout.write('username='+gitea.owner+'\npassword='+gitea.token+'\n\n');process.exit(0);
     }
     if(fields.protocol!=='https'||fields.host!=='github.com')process.exit(0);
@@ -115,4 +117,4 @@ try {
     const env={...process.env,GH_TOKEN:token,GITHUB_TOKEN:token,GH_HOST:'github.com'};
     const result=spawnSync(program,args,{env,stdio:'inherit'});process.exit(result.status??1);
   }else throw Error();
-}catch{process.stderr.write('GitHub authorization is missing or disconnected. Connect/select an account in PI Coffee.\n');process.exit(1);}
+}catch{process.stderr.write(mode==='gitea'?'Gitea authorization is unavailable or does not match this account; ask the administrator to check its binding.\n':'GitHub authorization is missing or disconnected. Connect/select an account in PI Coffee.\n');process.exit(1);}

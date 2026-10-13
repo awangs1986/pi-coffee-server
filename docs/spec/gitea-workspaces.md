@@ -1,5 +1,7 @@
 # Gitea 工作区与 VM 执行边界
 
+> Shared-Host correction (2026-10-13): [two-user workbench](multi-user-workbench.md), Server #125, requires both accounts' full Gitea workflow. Scoped repository API, native Git and project Skills use that account's verified credential; the old default-owner environment credential is never lent to another scope.
+
 > Native-engine extension (2026-09-23): the shared Workspace, file ownership and Gitea contracts remain in force. Codex/Claude Code Session bindings and writer-state adapters are planned in the [native-engine SPEC](./native-agent-engines.md); Pi-specific startup, mode, history and cleanup descriptions below are the current implementation, not automatic rules for the new engines.
 
 状态：设计已确认（2026-09-21）；Agent/Server 代码已实现，部署与双 VM 验收见 [T0–T4](../development/t0-t4-gitea-workspaces.md)。决策：[ADR-0012](../adr/0012-owner-privileges-and-gitea-checkouts.md)。本文件是 Agent/Server 共用的工作区行为权威；Server 规格只引用，不维护另一套同步规则。

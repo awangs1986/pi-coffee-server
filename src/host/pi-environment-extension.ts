@@ -4,12 +4,12 @@ import { HOST_ENVIRONMENT_INSTRUCTION as instruction } from "./session-instructi
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
-function contains(value: unknown): boolean {
-  if (typeof value === "string") return value.includes(instruction);
-  if (Array.isArray(value)) return value.some(contains);
-  return record(value) && ["text", "content", "parts"].some(key => contains(value[key]));
+function contains(value: unknown,required=instruction): boolean {
+  if (typeof value === "string") return value.includes(required);
+  if (Array.isArray(value)) return value.some(item=>contains(item,required));
+  return record(value) && ["text", "content", "parts"].some(key => contains(value[key],required));
 }
-const append = (value: unknown) => typeof value === "string" && value ? `${value}\n${instruction}` : instruction;
+const append = (value: unknown,required=instruction) => typeof value === "string" && value ? `${value}\n${required}` : required;
 
 /** Zero-system boundary for Web Chat, including emergency mode without Harness. */
 export function withoutSystemContext(payload: unknown): unknown {
@@ -29,32 +29,33 @@ export function withoutSystemContext(payload: unknown): unknown {
 }
 
 /** Work-only Host context; Web Chat is filtered again at the provider boundary. */
-export function withHostEnvironment(payload: unknown, api?: string): unknown {
+export function withHostEnvironment(payload: unknown, api?: string,required=instruction): unknown {
   if (!record(payload)) return payload;
   const systemMessages = ["messages", "input", "contents"].flatMap(key => Array.isArray(payload[key])
     ? payload[key].filter((message: unknown) => record(message) && ["system", "developer"].includes(String(message.role))) : []);
   if ([payload.system, payload.instructions, payload.systemInstruction, payload.system_instruction,
-    record(payload.config) ? payload.config.systemInstruction : undefined, ...systemMessages].some(contains)) return payload;
+    record(payload.config) ? payload.config.systemInstruction : undefined, ...systemMessages].some(value=>contains(value,required))) return payload;
   if (api === "anthropic-messages" || api === "bedrock-converse-stream") {
-    const block = api === "anthropic-messages" ? { type: "text", text: instruction } : { text: instruction };
+    const block = api === "anthropic-messages" ? { type: "text", text: required } : { text: required };
     return { ...payload, system: Array.isArray(payload.system) ? [...payload.system, block]
-      : typeof payload.system === "string" ? append(payload.system) : [block] };
+      : typeof payload.system === "string" ? append(payload.system,required) : [block] };
   }
   if (Array.isArray(payload.contents)) {
     const config = record(payload.config) ? payload.config : {};
     const existing = config.systemInstruction;
     const systemInstruction = record(existing) && Array.isArray(existing.parts)
-      ? { ...existing, parts: [...existing.parts, { text: instruction }] }
-      : Array.isArray(existing) ? [...existing, { text: instruction }] : append(existing);
+      ? { ...existing, parts: [...existing.parts, { text: required }] }
+      : Array.isArray(existing) ? [...existing, { text: required }] : append(existing,required);
     return { ...payload, config: { ...config, systemInstruction } };
   }
-  if (Array.isArray(payload.input)) return { ...payload, instructions: append(payload.instructions) };
-  if (Array.isArray(payload.messages)) return { ...payload, messages: [{ role: "system", content: instruction }, ...payload.messages] };
+  if (Array.isArray(payload.input)) return { ...payload, instructions: append(payload.instructions,required) };
+  if (Array.isArray(payload.messages)) return { ...payload, messages: [{ role: "system", content: required }, ...payload.messages] };
   // Custom transports retain the native before_agent_start prompt; avoid guessing their schema.
   return payload;
 }
 
 export default function hostEnvironment(pi: ExtensionAPI): void {
+  const accountGuidance=process.env.PI_COFFEE_ACCOUNT_GUIDANCE?.trim();
   let runId:string|undefined,nextDispatch:{id:string;hash:string}|undefined;
   pi.registerCommand("coffee-dispatch-control",{description:"Host private dispatch correlation",handler:async(args,ctx)=>{
     const [token,id,hash,...extra]=args.trim().split(/\s+/);
@@ -101,8 +102,15 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
   pi.on("agent_settled",event=>{
     if(runId){try{pi.appendEntry('coffee-native-settled',{version:1,runId,...(typeof event.aborted==='boolean'?{aborted:event.aborted}:{})});}catch{/* Missing audit remains uncertain; observation never interrupts native work. */}runId=undefined;}reportOnly=false;
   });
-  pi.on("before_agent_start", event => ({
-    systemPrompt: process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? '' : contains(event.systemPrompt) ? event.systemPrompt : append(event.systemPrompt),
-  }));
-  pi.on("before_provider_request", (event, ctx) => process.env.PI_COFFEE_INITIAL_MODE === 'chat' ? withoutSystemContext(event.payload) : withHostEnvironment(event.payload, ctx.model?.api));
+  pi.on("before_agent_start", event => {
+    if(process.env.PI_COFFEE_INITIAL_MODE==='chat')return {systemPrompt:''};
+    let prompt=event.systemPrompt;
+    for(const required of [instruction,accountGuidance])if(required&&!contains(prompt,required))prompt=append(prompt,required);
+    return {systemPrompt:prompt};
+  });
+  pi.on("before_provider_request", (event, ctx) => {
+    if(process.env.PI_COFFEE_INITIAL_MODE==='chat')return withoutSystemContext(event.payload);
+    const payload=withHostEnvironment(event.payload,ctx.model?.api);
+    return accountGuidance?withHostEnvironment(payload,ctx.model?.api,accountGuidance):payload;
+  });
 }

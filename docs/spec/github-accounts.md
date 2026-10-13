@@ -48,8 +48,9 @@ Git/gh wrappers and credential helpers. GitHub SSH URL forms are normalized to
 HTTPS for managed Git operations; standalone SSH assistance is a separate feature.
 Git receives a private HOME and ignores system/global Git credential configuration,
 including VM .netrc. Existing Git author name/email are copied without copying
-credentials. Gitea transport continues using the configured Host Gitea credential;
-this change does not introduce per-user Gitea transport grants.
+credentials. Gitea transport now uses the current account's verified Host binding;
+see [the two-user Gitea contract](multi-user-workbench.md), Server #125. Existing
+GitHub bindings remain separate and are not reauthorized or migrated by that change.
 
 `gh` uses an isolated config directory. A task-local `BASH_ENV` restores managed
 Git settings and tool PATH after login-shell profiles; VM startup files are not modified. Native processes receive no usable global

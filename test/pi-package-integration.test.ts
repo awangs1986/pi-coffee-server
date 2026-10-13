@@ -17,6 +17,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
   const root = await mkdtemp(join(tmpdir(), "coffee-consumer-"));
   const agentDir = join(root, "agent"),cwd=join(root,"workspace"); await mkdir(agentDir);await mkdir(cwd);await writeFile(join(cwd,"protected.txt"),"keep");
   const requests:any[]=[];let invalidHandoff=false;let releaseSynthesis:(()=>void)|undefined;
+  const accountGuidance='Act only for PI Coffee account participant in /fixtures/participant; do not use another account’s files or credentials.';
   const provider = createServer(async (req, res) => {
     let body="";for await(const chunk of req)body+=chunk;
     const request=JSON.parse(body);requests.push(request);
@@ -44,7 +45,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
   const host = new HostServer({ host: "127.0.0.1", port: 0, idleTimeoutMs:50, factory: new RpcPiSessionFactory({
     cwd, agentDir, sessionDir: join(root, "sessions"), provider: "fixture", model: "fixture", args: ["--offline", "--no-extensions"],
     extensions: [...resolveHostPiExtensions({}), inspector],
-    env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_INITIAL_MODE: "work", PI_COFFEE_SCHEDULER_DIR: join(root, "admission") },
+    env: { ...runtime.withCoffeeLspPath(), PI_OFFLINE: "1", PI_COFFEE_INITIAL_MODE: "work", PI_COFFEE_SCHEDULER_DIR: join(root, "admission"),PI_COFFEE_ACCOUNT_GUIDANCE:accountGuidance },
   }) });
   let web: WebServer | undefined;
   const sockets: WebSocket[] = [];
@@ -78,6 +79,7 @@ it("keeps Web/Host Pi replies and reconnect history working through the installe
     first.socket.send(JSON.stringify({ v: 1, type: "prompt", requestId: "package-probe", text: "Reply with the test marker." }));
     await expect.poll(() => first.frames.filter(frame => frame.type === "event" && frame.event.type === "agent_settled").length === 3, { timeout: 15000 }).toBe(true);
     expect(JSON.stringify(first.frames)).toContain("PACKAGE_CONSUMER_OK");
+    expect(requests.filter(r=>!r.messages.some((m:any)=>String(m.content).startsWith('PI_HANDOFF_SYNTHESIS'))).every(r=>r.messages.filter((m:any)=>['system','developer'].includes(m.role)).map((m:any)=>m.content).join('\n').split(accountGuidance).length===2)).toBe(true);
     expect(requests.filter(r=>!r.messages.some((m:any)=>String(m.content).startsWith("PI_HANDOFF_SYNTHESIS"))).every(r=>r.messages.filter((m:any)=>["system","developer"].includes(m.role)).map((m:any)=>m.content).join("\n").split(HOST_ENVIRONMENT_INSTRUCTION).length===2)).toBe(true);
     expect(requests.some(r=>r.messages.some((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe"))).toBe(true);
     expect(requests.flatMap(r=>r.messages).find((m:any)=>m.role==="tool" && m.tool_call_id==="lsp-probe").content).not.toMatch(/not found|unknown tool|not active/i);

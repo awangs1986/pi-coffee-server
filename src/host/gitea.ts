@@ -1,7 +1,8 @@
 import type { CodeForge, ForgeRepository, Project, PullRequest } from "./workspaces.js";
+import {verifyGiteaIdentity} from './gitea-identity.mjs';
 
 export interface RepositoryRegistration {repoId:string;name:string;repoUrl:string;webUrl:string;branch:string}
-export interface GiteaOptions {baseUrl:string;token:string;owner:string}
+export interface GiteaOptions {baseUrl:string;token:string;owner:string;userId?:number}
 interface GiteaPull {number:number;html_url:string;state:string;head:{ref:string;repo_id?:number};base:{ref:string;repo_id?:number}}
 
 export class GiteaClient implements CodeForge {
@@ -66,6 +67,7 @@ export class GiteaClient implements CodeForge {
     return {repoId:String(repo.id),name:String(repo.name),repoUrl:String(repo.clone_url),webUrl:String(repo.html_url),branch};
   }
   private async request(path:string,method:string,body?:unknown):Promise<unknown> {
+    await verifyGiteaIdentity({url:this.options.baseUrl,...this.options});
     const url=new URL(path,this.base);
     const response=await fetch(url,{method,headers:{authorization:`token ${this.options.token}`,accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(120000),redirect:'error'});
     const text=await response.text();let value:unknown={};try{value=text ? JSON.parse(text) : {};}catch{}

@@ -1,5 +1,11 @@
 # Session environment instruction
 
+Shared-account Work guidance (2026-10-13, Server #125): the
+[two-user contract](multi-user-workbench.md#directories-and-prompts) adds one
+English sentence identifying the current account and account directory. It is
+retained at Pi's final provider boundary and through native Work instructions;
+ordinary Chat retains the zero-system/zero-Work-context rules below.
+
 Delivery: [Server #16](https://github.com/awangs1986/pi-coffee-server/issues/16).
 
 Every Web-managed Work Agent receives this English sentence at runtime:

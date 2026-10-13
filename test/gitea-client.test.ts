@@ -7,6 +7,18 @@ let server:ReturnType<typeof createServer>|undefined;
 afterEach(async()=>{if(server){server.close();await once(server,"close");server=undefined;}});
 
 describe("Gitea code collaboration adapter",()=>{
+  it('rejects another account’s token before creating a repository',async()=>{
+    let created=false;
+    server=createServer((req,res)=>{
+      res.setHeader('content-type','application/json');
+      if(req.url==='/api/v1/user')return res.end(JSON.stringify({id:1,login:'owner',active:true}));
+      created=true;res.end(JSON.stringify({id:10,name:'private',default_branch:'main',clone_url:'http://gitea/owner/private.git',html_url:'http://gitea/owner/private'}));
+    });server.listen(0,'127.0.0.1');await once(server,'listening');
+    const address=server.address();if(!address||typeof address==='string')throw Error('fixture address');
+    const client=new GiteaClient({baseUrl:`http://127.0.0.1:${address.port}`,token:'wrong-owner-fixture',owner:'participant',userId:2});
+    await expect(client.createRepository('private')).rejects.toThrow('Gitea credential identity does not match this account');
+    expect(created).toBe(false);
+  });
   it("creates and reuses a PR in the shared repository owned by another user",async()=>{
     let created=false;
     server=createServer((request,response)=>{

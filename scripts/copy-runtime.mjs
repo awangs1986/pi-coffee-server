@@ -11,6 +11,7 @@ await cp(resolve(root, 'src/host/github-tools.mjs'), resolve(root, 'dist/src/hos
 
 await cp(resolve(root, 'src/host/mishu-mcp.mjs'), resolve(root, 'dist/src/host/mishu-mcp.mjs'));
 await cp(resolve(root, 'src/host/github-token.mjs'), resolve(root, 'dist/src/host/github-token.mjs'));
+await cp(resolve(root, 'src/host/gitea-identity.mjs'), resolve(root, 'dist/src/host/gitea-identity.mjs'));
 
 await mkdir(resolve(root, 'dist/src/shared'), { recursive: true });
 await cp(resolve(root, 'src/shared/release-version.mjs'), resolve(root, 'dist/src/shared/release-version.mjs'));

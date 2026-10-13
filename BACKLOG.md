@@ -61,6 +61,8 @@
 
 # PI Coffee Backlog
 
+> Complete two-user Gitea workflow (2026-10-13): [Server #125](https://github.com/awangs1986/pi-coffee-server/issues/125), [current requirement](docs/spec/multi-user-workbench.md). Both approved accounts must complete project creation, clone, development and push/PR. #124's login/isolation-only evidence does not satisfy this requirement.
+
 > **当前新增决策（2026-09-21）**：[ADR-0012](./docs/adr/0012-owner-privileges-and-gitea-checkouts.md) 接受 VM owner + 无限制 sudo、Gitea 代码权威与每 Conversation 独立 clone；[T0–T4](./docs/development/t0-t4-gitea-workspaces.md) 的 Agent/Server 代码、双 User VM、2 × 3 Conversation、VM 快照回滚与普通用户对称私库验收均已落地，[真实证据](./docs/reviews/t0-t4-implementation-20260921.md)已记录，T0–T4 已完成。替代以下历史工作区/本地合并条目时以该合同为准。
 
 > **2026-09-21 仓库拆分**：本文件保留历史产品 Backlog，但当前仓库的执行范围只包括 Agent Runtime。Web UI、统一网关、身份、固定路由、Relay 和 Server 部署进入 [`awangs/pi-coffee-server`](http://gitea:3000/awangs/pi-coffee-server)；新工作按两个仓库各自 Issue 追踪。

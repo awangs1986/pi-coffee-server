@@ -4,3 +4,7 @@ export const HOST_ENVIRONMENT_INSTRUCTION = "You are running on a Linux server a
 export function hostSessionInstructions(extra?: string): string {
   return [HOST_ENVIRONMENT_INSTRUCTION, extra?.replaceAll(HOST_ENVIRONMENT_INSTRUCTION, "").trim()].filter(Boolean).join("\n");
 }
+
+export function accountScopeInstruction(account:string,directory:string):string {
+  return `You are acting for PI Coffee account ${JSON.stringify(account)} on a shared Linux Host; use this conversation's workspace, account directory ${JSON.stringify(directory)}, and configured repository credentials, and do not inspect, modify, or reuse another account's conversations, files, or credentials unless the system owner explicitly authorizes cross-account administration.`;
+}

@@ -7,6 +7,7 @@ import {basename,dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
 import {parseDocument} from 'yaml';
 import type {Workspaces} from './workspaces.js';
 import {parseAgentEngine,type AgentEngine} from '../shared/protocol.js';
+import {verifyGiteaIdentity,type GiteaTransport} from './gitea-identity.mjs';
 const exec=promisify(execFile);
 const MAX_BODY=64*1024, MAX_PACKAGE=10*1024*1024, MAX_FILES=500;
 export interface SkillManagerOptions {
@@ -14,7 +15,7 @@ export interface SkillManagerOptions {
   bundledPiSkills?:string[];
   /** Test fixture seam only. Production accepts credential-free HTTP(S)/SSH URLs. */
   allowLocalSources?:boolean;
-  gitea?:{url:string;token:string;owner:string};
+  gitea?:GiteaTransport;
 }
 interface Scope {engine:AgentEngine;scope:'user'|'project';conversationId?:string;directory:string;key:string}
 interface RecordEntry {id:string;key:string;name:string;description:string;repoUrl:string;ref:string;subdir:string;revision:string;digest:string;snapshot:string;enabled:boolean;updatedAt:string}
@@ -164,6 +165,7 @@ export class SkillManager {
   const env={...process.env,GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes'};
   const forge=this.options.gitea;
   if(forge&&new URL(forge.url).origin===(()=>{try{return new URL(url).origin;}catch{return '';}})()){
+   await verifyGiteaIdentity(forge);
    const origin=new URL(forge.url).origin;Object.assign(env,{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:`http.${origin}/.extraHeader`,GIT_CONFIG_VALUE_0:'Authorization: Basic '+Buffer.from(forge.owner+':'+forge.token).toString('base64')});
   }
   try{return (await exec('git',['-c','core.hooksPath=/dev/null','-c','http.followRedirects=false','-c',`protocol.file.allow=${this.options.allowLocalSources?'always':'never'}`,...args],{cwd,env,timeout:45000,maxBuffer:1024*1024})).stdout.trim();}

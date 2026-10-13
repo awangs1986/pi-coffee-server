@@ -494,7 +494,7 @@ function renderAgentPane(kind) {
   if (kind === 'kind') {
     for(const source of ['chat','gitea','github']) {
       const available=source==='chat' || forgeCapabilities()[source];
-      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'无仓库聊天':available?'Work 项目':'Host 未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
+      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'无仓库聊天':available?'Work 项目':'当前账号的仓库授权尚未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
     }
     return;
   }
@@ -734,7 +734,7 @@ function refreshHeroChoices() {
   for(const button of document.querySelectorAll('#hero [data-task-source]')){
     const source=button.dataset.taskSource,available=source==='chat' || forgeCapabilities()[source];
     button.disabled=Boolean(activeId || pendingOpenId) || !available;
-    button.title=available?'':`${FORGE_NAMES[source]} 尚未在 Host 配置`;
+    button.title=available?'':`当前账号的 ${FORGE_NAMES[source]} 仓库授权尚未配置，请联系管理员`;
   }
 }
 const CHIPS = ['列出当前目录的文件', '解释这个仓库的结构', '写一个 Python 脚本统计文件行数'];

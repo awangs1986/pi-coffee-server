@@ -93,8 +93,9 @@ flowchart LR
 
 一个 Gitea 用户可以绑定多个 GitHub 账号，项目明确选择其中一个。
 受管理的 Git/gh 操作使用任务绑定，不自动借用 VM 上其他账号的 GitHub 登录。
-当前 Gitea 仓库传输仍使用 Host 配置的 Gitea 凭证；Gitea 网页登录并不自动生成每个 Agent
-独立的 Gitea Git 凭证。详见 [GitHub 授权合同](docs/spec/github-accounts.md)。
+Gitea 仓库操作使用 Host 按账号绑定并核验的独立凭据和 Git 作者身份。管理员完成账号接入后，
+两位用户都应能使用完整的 Gitea 开发流程，无须另建 VM；仅登录成功不算接入完成。
+详见[双用户工作台](docs/spec/multi-user-workbench.md)和 [GitHub 授权合同](docs/spec/github-accounts.md)。
 
 Web 与 Host 可以同机，也可以分机。支持两种路由：
 
@@ -275,8 +276,10 @@ There are three independent authorization layers:
 
 One Gitea user can connect several GitHub accounts. Each project chooses an
 account; managed Git/gh operations do not borrow an unrelated VM GitHub login.
-Gitea transport currently uses the configured Host credential, not an automatic
-per-agent Git credential derived from Web login. Details:
+Gitea operations use each account's verified Host credential and Git author.
+Administrators complete that binding during onboarding; both users must then be
+able to use the full Gitea workflow without creating another VM. Login alone is not
+acceptance. See [the two-user contract](docs/spec/multi-user-workbench.md) and
 [GitHub authorization](docs/spec/github-accounts.md).
 
 Web and Host can run on separate machines or on the same machine. Dedicated
@@ -399,8 +402,10 @@ PI_COFFEE_AGENT_DIR=/home/coffee/.pi/agent
 
 # Gitea repository operations; separate from the OAuth application. / 仓库操作凭证。
 PI_COFFEE_GITEA_URL=http://GITEA_HOST:3000
-PI_COFFEE_GITEA_OWNER=REPLACE_WITH_REPOSITORY_OWNER
-PI_COFFEE_GITEA_TOKEN=REPLACE_WITH_REPOSITORY_ACCESS_TOKEN
+PI_COFFEE_GITEA_ACCOUNTS_FILE=/etc/pi-coffee/gitea-accounts.json
+# Optional legacy unscoped owner only; never shared-user fallback. / 仅旧默认账户使用。
+# PI_COFFEE_GITEA_OWNER=REPLACE_WITH_REPOSITORY_OWNER
+# PI_COFFEE_GITEA_TOKEN=REPLACE_WITH_REPOSITORY_ACCESS_TOKEN
 
 # Transfer address must be reachable by Web; direct clients may also use it.
 # 文件传输地址必须能被 Web 访问；浏览器也可能直接使用。
@@ -472,6 +477,30 @@ uses `PI_COFFEE_WEB_TLS_CERT` / `PI_COFFEE_WEB_TLS_KEY`.
 HTTPS 部署需正确转发 WebSocket 并保留外部 Origin；Web 也支持上面两个 TLS 文件变量。
 
 <a id="routes-json"></a>
+### Gitea accounts: `/etc/pi-coffee/gitea-accounts.json`
+
+Keep this file mode 0600 and readable by the Host system user. Use a distinct
+credential issued to each Gitea identity, with repository/user/issue scopes needed
+by the installed Gitea API; verify each token's `/api/v1/user` response first.
+The names and IDs below must match your users, route table and directory mapping.
+/ 文件权限为 0600，由 Host 用户读取；每个账号使用自己的凭据与 Git 作者，不能复制管理员令牌。
+
+```json
+{
+  "version": 1,
+  "accounts": {
+    "gitea-101": {
+      "userId": 101, "login": "alice", "token": "REPLACE_WITH_ALICE_TOKEN",
+      "gitName": "alice", "gitEmail": "alice@example.org"
+    },
+    "gitea-102": {
+      "userId": 102, "login": "bob", "token": "REPLACE_WITH_BOB_TOKEN",
+      "gitName": "bob", "gitEmail": "bob@example.org"
+    }
+  }
+}
+```
+
 ### Routes: `/etc/pi-coffee/routes.json`
 
 ```json
@@ -505,6 +534,12 @@ migration. / 每个用户填写不同的地址和令牌，独立 Host 使用默�
 The older allowed-login configuration (`PI_COFFEE_ALLOWED_USERS`, without a route
 file) remains supported. It uses login-name scopes instead of numeric-ID scopes.
 Do not mix these mappings. / 旧的登录名白名单模式仍支持，但作用域格式不同，不要混用。
+
+For an existing default-owner installation, the explicit `legacyDefault: true`
+route can retain that owner's registry while other users get scoped routes. Keep
+`PI_COFFEE_REQUIRE_USER=0` until that default data is explicitly migrated; see
+[the compatibility procedure](docs/deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner).
+/ 已有默认账号可用明确的兼容路由保留历史，不要直接改变旧数据的身份格式。
 
 <a id="systemd-units"></a>
 ### Explicit-role systemd units / 显式角色的 systemd 配置
