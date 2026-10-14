@@ -77,15 +77,15 @@ describe('persistent conversation previews', () => {
   it('round-trips across instances, isolates users and delimiter-containing IDs, and copies data', async () => {
     const indexedDB = new IDBFactory();
     const first = new ConversationPreviewStore({ indexedDB });
-    const data = { ...snapshot(), fingerprint: 'codex:native-id', actions: ['never retained'] };
+    const data = { ...snapshot(), fingerprint: 'codex:native-id', displayMode: 'compact', displayProjection: 2, actions: ['never retained'] };
     expect(await first.put('alice', 'task', data)).toBe(true);
     data.entries[0].text = 'mutated input';
     const second = new ConversationPreviewStore({ indexedDB });
     expect(await second.get('bob', 'task')).toBeUndefined();
-    expect(await second.get('alice', 'task')).toEqual({ ...snapshot(), fingerprint: 'codex:native-id' });
+    expect(await second.get('alice', 'task')).toEqual({ ...snapshot(), fingerprint: 'codex:native-id', displayMode: 'compact', displayProjection: 2 });
     const read = await second.get('alice', 'task');
     read.entries[0].text = 'mutated result';
-    expect(await first.get('alice', 'task')).toEqual({ ...snapshot(), fingerprint: 'codex:native-id' });
+    expect(await first.get('alice', 'task')).toEqual({ ...snapshot(), fingerprint: 'codex:native-id', displayMode: 'compact', displayProjection: 2 });
     await first.put('a:b', 'c', snapshot('first'));
     await first.put('a', 'b:c', snapshot('second'));
     expect((await second.get('a:b', 'c')).entries[0].text).toBe('first');

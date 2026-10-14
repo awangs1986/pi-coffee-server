@@ -67,6 +67,7 @@ function plainSnapshot(value) {
   const bounded = boundedEntries(value.entries, entry => entry);
   const snapshot = { entries: bounded.entries, scroll: value.scroll, truncated: value.truncated || bounded.truncated };
   if (['compact','detailed'].includes(value.displayMode)) snapshot.displayMode=value.displayMode;
+  if (value.displayProjection===2) snapshot.displayProjection=2;
   if (value.fingerprint !== undefined) snapshot.fingerprint = value.fingerprint;
   return snapshot;
 }
