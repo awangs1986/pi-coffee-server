@@ -221,7 +221,7 @@ function rememberRecentThread(){
   const bounded=boundedTranscriptWindow(safe);
   const snapshot=createConversationPreview((Array.isArray(bounded)?bounded:bounded.entries).map(entry=>({k:entry.kind,name:entry.name,text:entry.text})),ui.scroller.scrollTop);
   snapshot.truncated ||= historyTruncated || historyPrefix.length>0 || entries.length>40;
-  snapshot.fingerprint=previewFingerprint(activeId);snapshot.displayMode=displayMode;
+  snapshot.fingerprint=previewFingerprint(activeId);snapshot.displayMode=displayMode;snapshot.displayProjection=2;
   const bytes=snapshot.entries.reduce((sum,item)=>sum+item.text.length*2+128,256);
   recentConversations.put(previewKey(activeId),snapshot,bytes);
   const user=currentUser,id=activeId;
@@ -238,7 +238,7 @@ function scheduleRecentThread(){
   previewTimer=setTimeout(()=>{previewTimer=null;rememberRecentThread();},250);
 }
 function displayPreview(id,snapshot){
-  if(snapshot.displayMode!==displayMode)return false;
+  if(snapshot.displayMode!==displayMode||snapshot.displayProjection!==2)return false;
   const fingerprint=previewFingerprint(id);
   // Once metadata arrives, reject either a missing saved binding or a saved
   // binding whose task is now absent. Wait for authoritative history instead.
