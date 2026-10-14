@@ -1037,15 +1037,15 @@ it('keeps five long conversations readable while their new sockets are delayed',
  }
 });
 
-it('restores user-scoped persistent text after page startup before any history response',async()=>{
+it.each([undefined,2])('restores only current-projection persistent text before history (projection: %s)',async(displayProjection)=>{
  vi.stubGlobal('indexedDB',new IDBFactory());
  // @ts-expect-error browser module
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','saved-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Saved across reload <img src=x onerror=alert(1)>'}],scroll:0,truncated:false});
+ await store.put('owner','saved-task',{displayMode:'compact',displayProjection,entries:[{kind:'assistant',text:'Saved across reload <img src=x onerror=alert(1)>'}],scroll:0,truncated:false});
  sessionStorage.setItem('pi-coffee.active.v2:owner','saved-task');
  const app=await setup(false,false,true,false,'owner');await vi.advanceTimersByTimeAsync(200);
- expect(document.querySelector('#thread')!.textContent).toContain('Saved across reload');
+ expect(document.querySelector('#thread')!.textContent?.includes('Saved across reload')).toBe(displayProjection===2);
  expect(document.querySelector('#thread img')).toBeNull();
  expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(true);
  app.sockets.at(-1).receive({type:'opened',sessionId:'saved-task',engine:'pi',state:{isStreaming:false}});
@@ -1270,7 +1270,7 @@ it.each([false,true])('shows a disk preview only when it matches known task meta
  vi.stubGlobal('indexedDB',new IDBFactory());
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','known-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Persisted task reply'}],scroll:0,truncated:false,...(recorded?{fingerprint:JSON.stringify(['pi',null,null])}:{})});
+ await store.put('owner','known-task',{displayMode:'compact',displayProjection:2,entries:[{kind:'assistant',text:'Persisted task reply'}],scroll:0,truncated:false,...(recorded?{fingerprint:JSON.stringify(['pi',null,null])}:{})});
  const app=await setup(false,false,true,false,'owner');
  app.conversations.push({id:'known-task',workspaceKind:'chat',engine:'pi'});
  app.sockets.at(-1).receive({type:'sessions',sessions:[{id:'known-task',name:'Known task'}]});await vi.advanceTimersByTimeAsync(20);
@@ -1285,7 +1285,7 @@ it.each(['before disk','after disk'])('invalidates a deleted task preview when t
  vi.stubGlobal('indexedDB',new IDBFactory());
  const {ConversationPreviewStore}=await import('../public/conversation-preview-store.js');
  const store=new ConversationPreviewStore();
- await store.put('owner','deleted-task',{displayMode:'compact',entries:[{kind:'assistant',text:'Private reply from deleted task'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi','old-native-binding',null])});
+ await store.put('owner','deleted-task',{displayMode:'compact',displayProjection:2,entries:[{kind:'assistant',text:'Private reply from deleted task'}],scroll:0,truncated:false,fingerprint:JSON.stringify(['pi','old-native-binding',null])});
  sessionStorage.setItem('pi-coffee.active.v2:owner','deleted-task');
  let release!:()=>void;
  const metadata=new Promise<void>(resolve=>{release=resolve;});
