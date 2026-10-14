@@ -231,3 +231,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Shared viewed-completion receipts (2026-10-12): [navigation contract](spec/arena-navigation.md#viewed-completion-acknowledgement--2026-10-08-server-100), [Server #121](https://github.com/awangs1986/pi-coffee-server/issues/121), clarifying #100. Host-owned account receipts replace independent browser-only acknowledgement; native completion stays unchanged.
 
 - v0.24 review fixes: [display-read isolation and request-boundary containment](spec/conversation-delivery.md#display-read-isolation-v024-review-fix). Local source candidate; production activation remains separate.
+
+- Compact mode omits tool failure placeholders as well as tool output; Detailed retains diagnostic evidence. See [delivery contract](spec/conversation-delivery.md).

@@ -270,8 +270,8 @@ export class ConversationRepository {
     this.displayMode=mode;this.authGeneration++;this.authController.abort();this.authController=new AbortController();this.store.invalidate();
     this.actors.clear();this.generations.clear();this.watched.clear();for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();
   }
-  _cacheScope(scope) {return this.displayMode?JSON.stringify([scope,'display-v1',this.displayMode]):scope;}
-  _deleteCache(scope,id) {return Promise.all([scope,JSON.stringify([scope,'display-v1','compact']),JSON.stringify([scope,'display-v1','detailed'])].map(key=>this.store.delete(key,id)));}
+  _cacheScope(scope) {return this.displayMode?JSON.stringify([scope,'display-v2',this.displayMode]):scope;}
+  _deleteCache(scope,id) {return Promise.all([scope,JSON.stringify([scope,'display-v1','compact']),JSON.stringify([scope,'display-v1','detailed']),JSON.stringify([scope,'display-v2','compact']),JSON.stringify([scope,'display-v2','detailed'])].map(key=>this.store.delete(key,id)));}
   setScope(scope) {
     const next = typeof scope === 'string' && scope ? scope : undefined; if (next === this.scope) return;
     const previous = this.scope; this.scope = next; this.authGeneration++; this.authController.abort(); this.authController = new AbortController(); this.store.invalidate();

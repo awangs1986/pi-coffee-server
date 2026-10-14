@@ -72,8 +72,9 @@ Classify using native semantic types/channels where available. Do not infer that
 assistant text is disposable from words such as “bash”, Markdown syntax or length.
 When an adapter cannot distinguish progress from an answer, preserve assistant
 text. Model-visible hidden reasoning must not be newly exposed by this feature.
-A tool failure retains a concise visible error and access to diagnostic evidence even when its
-complete output is omitted. Errors are concise user-actionable notices, not raw log cards. A generated file discoverable from tool evidence must
+Compact omits failed tools as well as successful tools, without replacement notices.
+Detailed retains their error evidence. Agent/transport failures, questions and delivery
+errors remain visible; they are not tool output. A generated file discoverable from tool evidence must
 remain discoverable by the Host without sending that raw evidence to the Browser.
 
 ## Bounded detail delivery
@@ -184,15 +185,14 @@ state and allow retry by selecting the current mode again.
 
 Compact index pages select visible entities before applying page limits. Tool
 updates become content-free `setMetadata` operations with their original operation
-ID/revision, preserving contiguous log advancement. Tool failures become brief
-notes, including when the preceding tool was never visible. Detailed keeps the
+ID/revision, preserving contiguous log advancement. Tool failures also become payload-free operations; Compact adds no failure notes. Detailed keeps the
 existing tool entities and content endpoints. Page cursors include the display
 mode; crossing modes requires a new snapshot. Compact content reads reject tool
 bodies. Native history is never rewritten by this projection.
 
 The account preference is persisted by `POST /api/workspace` with
 `{action: "conversation_display", mode}`. It is restored through the existing
-scoped workspace read. IndexedDB keys distinguish account, display projection v1
+scoped workspace read. IndexedDB keys distinguish account, display projection v2
 and mode; legacy previews lacking a matching mode are misses. Explicit cache
 invalidation clears all mode variants. Mode changes invalidate obsolete read and
 render generations while preserving native/model state, drafts and questions.

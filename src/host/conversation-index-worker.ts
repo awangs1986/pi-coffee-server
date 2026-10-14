@@ -221,7 +221,7 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
       if(cursor.epoch!==s.bindingEpoch||cursor.snapshotId!==s.snapshotId||cursor.displayMode!==(a.displayMode??'detailed'))fail('reset_required',s,a.id);
       const row=db.prepare('SELECT position FROM entities WHERE id=?').get(cursor.beforeId);if(!row)fail('reset_required',s,a.id);before=Number(row.position);
     }
-    const visible=a.displayMode==='compact'?"(json_extract(entry,'$.kind')!='tool' OR json_extract(entry,'$.isError')=1)":'1';
+    const visible=a.displayMode==='compact'?"json_extract(entry,'$.kind')!='tool'":'1';
     const rows = before === undefined ? db.prepare(`SELECT * FROM entities WHERE ${visible} ORDER BY position DESC LIMIT 41`).all() : db.prepare(`SELECT * FROM entities WHERE ${visible} AND position<? ORDER BY position DESC LIMIT 41`).all(before);
     const result:any={...identity(s,a.id),baseRevision:s.headRevision,entries:[],olderCursor:null,pendingRequests:s.pendingRequests,...(a.anchorEntityId?{anchorEntityId:a.anchorEntityId,anchorAdjusted}:{})};
     for(const row of rows.slice(0,40)) { const entry=boundedEntry(a.displayMode==='compact'?compactEntry(JSON.parse(String(row.entry))):JSON.parse(String(row.entry)),String(row.revision),Math.min(BLOCK_BYTES,limit-bytes(result)-650)); if(bytes({...result,entries:[entry,...result.entries]})+650>limit)break;result.entries.unshift(entry); }

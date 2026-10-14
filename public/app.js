@@ -1982,7 +1982,6 @@ function handleFrame(frame, ws) {
     case 'event':
       if(frame.sessionId!==activeId)return;
       if(frame.displayMode&&frame.displayMode!==displayMode&&isProcessEvent(frame.event)){
-        if(frame.event?.isError)pushNote('工具执行失败；切换到详细模式查看。',true);
         return;
       }
       if(Number.isSafeInteger(frame.cursor))receivedEventCursor=Math.max(receivedEventCursor,frame.cursor);
@@ -2035,7 +2034,7 @@ function handleFrame(frame, ws) {
 function handleEvent(event,{replayed=false}={}) {
   const type = event.type;
   if(type==='display_boundary'){currentAssistant=undefined;return;}
-  if(type==='display_notice'){pushNote(event.text,Boolean(event.error));return;}
+  if(type==='display_notice'){if(displayMode==='detailed')pushNote(event.text,Boolean(event.error));return;}
 
   if (type === 'agent_start') {startCompletionReadRun(replayed); setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
   if (type === 'tool_execution_update') {

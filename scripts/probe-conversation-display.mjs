@@ -14,7 +14,7 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})});
  for(const protocol of [1,2]){
   const id='display-'+protocol;
-  const records=[{kind:'user',id:'u',text:'Write a script'},{kind:'assistant',id:'a',text:'FINAL_RESULT\n```bash\necho delivered\n```'},...Array.from({length:60},(_,i)=>({kind:'tool',id:'t'+i,name:'bash',args:{command:'INTERNAL_COMMAND'},result:'INTERNAL_OUTPUT '+('x'.repeat(9000))+' INTERNAL_OUTPUT'}))];
+  const records=[{kind:'user',id:'u',text:'Write a script'},{kind:'assistant',id:'a',text:'FINAL_RESULT\n```bash\necho delivered\n```'},...Array.from({length:60},(_,i)=>({kind:'tool',id:'t'+i,name:'bash',isError:i===0,args:{command:'INTERNAL_COMMAND'},result:'INTERNAL_OUTPUT '+('x'.repeat(9000))+' INTERNAL_OUTPUT'}))];
   const listeners=new Set();let starts=0,stops=0,aborts=0;
   const state={isStreaming:true};
   const session={getState:async()=>state,getHistory:async()=>({entries:records,leafId:'t59'}),onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);},stop:async()=>{stops++;},abort:async()=>{aborts++;},prompt:async()=>{throw Error('No model turns permitted');},getModels:async()=>({models:[],thinkingLevels:[]}),getStats:async()=>({}),getCommands:async()=>[],backgroundState:async()=>({known:true,active:0})};
@@ -29,6 +29,7 @@ try{
    await page.locator('#thread').filter({hasText:'FINAL_RESULT'}).waitFor();
    assert.ok(await page.locator('#thread pre').count(),'Delivered scripts retain code blocks');
    assert.equal(await page.locator('#thread .tool').count(),0);
+   assert.ok(!(await page.locator('#thread').textContent()).includes('工具执行失败；切换到详细模式查看。'));
    assert.equal(await page.locator('#agent-display-value').textContent(),'精简');
    assert.ok(!JSON.stringify(frames.filter(f=>f.type==='history'||f.type==='event')).includes('INTERNAL_OUTPUT'));
    await page.locator('#prompt').fill('PRESERVE DRAFT');

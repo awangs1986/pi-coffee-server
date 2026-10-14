@@ -44,7 +44,7 @@ describe('read-only sync seam',()=>{
    expect(JSON.stringify(changes)).not.toContain('SECRET_LIVE_OUTPUT');
    expect(changes.operations.at(-1).type).toBe('setMetadata');
    session.emit({type:'tool_update',id:'new-tool',name:'bash',result:'PRIVATE_ERROR',isError:true});
-   await vi.waitFor(async()=>{const failure=await read(`changes?displayMode=compact&bindingEpoch=${compact.bindingEpoch}&afterRevision=${changes.throughRevision}`);const note=failure.operations.find((op:any)=>op.payload?.entry?.kind==='note');expect(note?.payload.isNew).toBe(true);expect(JSON.stringify(failure)).not.toContain('PRIVATE_ERROR');});
+   await vi.waitFor(async()=>{const failure=await read(`changes?displayMode=compact&bindingEpoch=${compact.bindingEpoch}&afterRevision=${changes.throughRevision}`);expect(BigInt(failure.throughRevision)).toBeGreaterThan(BigInt(changes.throughRevision));expect(failure.operations.every((op:any)=>op.type==='setMetadata'&&Object.keys(op.payload).length===0)).toBe(true);expect(JSON.stringify(failure)).not.toContain('PRIVATE_ERROR');});
   }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
  });
  it('switches a running legacy view to detailed without restarting execution or losing interactive events',async()=>{
@@ -54,8 +54,10 @@ describe('read-only sync seam',()=>{
   try{
    await vi.waitFor(()=>expect(frames.some(f=>f.type==='history')).toBe(true));expect(JSON.stringify(frames)).not.toContain('RAW_');
    session.emit({type:'run_started',runId:'run'});session.emit({type:'tool_execution_update',toolCallId:'t',partialResult:{content:[{type:'text',text:'RAW_LIVE'}]}});
+   session.emit({type:'tool_execution_end',toolCallId:'t',isError:true,result:{content:[{type:'text',text:'RAW_FAILURE'}]}});
+   session.emit({type:'error',message:'Agent connection failed'});
    session.emit({type:'extension_ui_request',id:'question',method:'select',title:'Choose',options:['A','B']});
-   await vi.waitFor(()=>expect(frames.some(f=>f.event?.id==='question')).toBe(true));expect(JSON.stringify(frames)).not.toContain('RAW_LIVE');
+   await vi.waitFor(()=>expect(frames.some(f=>f.event?.id==='question')).toBe(true));expect(JSON.stringify(frames)).not.toContain('RAW_LIVE');expect(JSON.stringify(frames)).not.toContain('RAW_FAILURE');expect(frames.some(f=>f.event?.type==='display_notice')).toBe(false);expect(frames.some(f=>f.event?.message==='Agent connection failed')).toBe(true);
    ws.send(JSON.stringify({v:1,type:'set_display_mode',mode:'detailed',requestId:'display-1'}));
    await vi.waitFor(()=>expect(frames.some(f=>f.type==='ack'&&f.requestId==='display-1')).toBe(true));
    expect(frames.filter(f=>f.type==='history').at(-1).entries.some((entry:any)=>entry.result==='RAW_OUTPUT')).toBe(true);
@@ -63,12 +65,12 @@ describe('read-only sync seam',()=>{
    expect(session.prompt).not.toHaveBeenCalled();
   }finally{if(ws.readyState!==WebSocket.CLOSED){ws.close();await once(ws,'close');}}
  });
- it('rejects invalid projection and cross-mode cursors while retaining safe error notices',async()=>{
+ it('rejects invalid projection and cross-mode cursors while hiding failed tools only in compact mode',async()=>{
   const {factory}=fake(),host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});servers.push(host);await host.start();
   await primeV2(host,factory,[...Array.from({length:45},(_,i)=>({id:'a-'+i,kind:'assistant',text:'answer '+i})),{id:'error',kind:'tool',name:'bash',isError:true,result:'PRIVATE_ERROR_BODY'}]);
   const read=(path:string)=>fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/${path}`,{headers:{authorization:'Bearer secret'}});
   expect((await read('page?displayMode=typo')).status).toBe(400);
-  const compact=await (await read('page?displayMode=compact')).json();expect(compact.entries.at(-1)).toMatchObject({kind:'note',text:'工具执行失败；切换到详细模式查看。'});expect(JSON.stringify(compact)).not.toContain('PRIVATE_ERROR_BODY');
+  const compact=await (await read('page?displayMode=compact')).json();expect(compact.entries.every((entry:any)=>entry.kind==='assistant')).toBe(true);const detailed=await (await read('page?displayMode=detailed')).json();expect(detailed.entries.at(-1)).toMatchObject({kind:'tool',isError:true,result:'PRIVATE_ERROR_BODY'});expect(JSON.stringify(compact)).not.toContain('PRIVATE_ERROR_BODY');
   expect((await read('page?displayMode=detailed&cursor='+encodeURIComponent(compact.olderCursor))).status).toBe(409);
   expect((await read(`content?displayMode=compact&entityId=error&entityRevision=1&bindingEpoch=${compact.bindingEpoch}`)).status).toBe(400);
  });
