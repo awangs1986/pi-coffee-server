@@ -233,3 +233,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - v0.24 review fixes: [display-read isolation and request-boundary containment](spec/conversation-delivery.md#display-read-isolation-v024-review-fix). Local source candidate; production activation remains separate.
 
 - Compact mode omits tool failure placeholders as well as tool output; Detailed retains diagnostic evidence. See [delivery contract](spec/conversation-delivery.md).
+
+- Composer model label: [compact reasoning-level suffix](spec/conversation-switching.md#last-confirmed-model-display-2026-10-06-server-68) uses the same per-Conversation confirmed metadata as the model.

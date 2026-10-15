@@ -1,6 +1,6 @@
 # Fast conversation switching and temporary resource lifetime
 
-> Source candidate v0.24, not deployed: [conversation-first delivery](conversation-delivery.md) changes default Host-to-browser payloads, with default Compact and optional Detailed process display. This supersedes default process delivery below for clients explicitly selecting Compact; Detailed preserves existing behavior.
+> Current source contract: [conversation-first delivery](conversation-delivery.md) changes default Host-to-browser payloads, with default Compact and optional Detailed process display. This supersedes default process delivery below for clients explicitly selecting Compact; Detailed preserves existing behavior.
 
 
 Delivery: [Server #21](https://github.com/awangs1986/pi-coffee-server/issues/21).
@@ -13,7 +13,11 @@ The composer immediately shows the selected Conversation's last confirmed model
 ID, provider/source, reasoning level and supported context preset during navigation.
 It never displays the previous Conversation's model while waiting for authentication,
 native attachment or history. A Conversation without remembered metadata shows
-the existing loading/unknown state. The model label keeps its 12-character limit.
+the existing loading/unknown state. The model label keeps its 12-character limit. Existing conversations show a compact
+reasoning-level label immediately to its right: `off`, `min`, `low`, `med`, `hig`,
+`xhi`, `max` or `ult`. The unabbreviated native level remains in the tooltip and accessible
+label. The indicator uses the same Conversation-scoped confirmed metadata as the
+model; it stays hidden when no model/level is known or when creating a new task.
 
 `public/conversation-models.js` owns a separate display-only cache keyed by verified
 Web identity and Conversation ID. Memory supplies warm switches synchronously;

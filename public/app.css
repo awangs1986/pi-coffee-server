@@ -425,6 +425,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .agent-trigger .agent-icon { flex: none; }
 #agent-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+#agent-effort { flex: none; font-size: 11px; line-height: 1; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .agent-trigger:hover { background: var(--bg-subtle); color: var(--text); }
 .agent-trigger:disabled { color: var(--text-3); cursor: not-allowed; }
 .agent-trigger:disabled:hover { background: transparent; }

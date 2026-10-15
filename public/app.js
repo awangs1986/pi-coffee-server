@@ -65,7 +65,7 @@ const ui = {
   usage: $('#usage'),
   sessionList: $('#session-list'), search: $('#search'), queue: $('#queue'), slash: $('#slash'),
   attachments: $('#attachments'), attach: $('#attach'), file: $('#file'), hint: $('#hint'),
-  agentBtn: $('#agent-menu-btn'), agentMenu: $('#agent-menu'), agentName: $('#agent-name'), agentNote: $('#agent-menu-note'),
+  agentBtn: $('#agent-menu-btn'), agentMenu: $('#agent-menu'), agentName: $('#agent-name'), agentEffort: $('#agent-effort'), agentNote: $('#agent-menu-note'),
   agentRows: { kind: $('#agent-kind-row'), engine: $('#agent-engine-row'), source: $('#agent-source-row'), model: $('#agent-model-row'), thinking: $('#agent-thinking-row'), context: $('#agent-context-row'), speed: $('#agent-speed-row'), display: $('#agent-display-row') },
   agentPanes: { engine: $('#agent-engine-pane'), kind: $('#agent-kind-pane'), source: $('#agent-source-pane'), model: $('#agent-model-pane'), thinking: $('#agent-thinking-pane'), context: $('#agent-context-pane'), speed: $('#agent-speed-pane'), display: $('#agent-display-pane') },
   agentValues: { engine: $('#agent-engine-value'), kind: $('#agent-kind-value'), source: $('#agent-source-value'), model: $('#agent-model-value'), thinking: $('#agent-thinking-value'), context: $('#agent-context-value'), speed: $('#agent-speed-value'), display: $('#agent-display-value') },
@@ -637,8 +637,12 @@ function renderAgentTrigger() {
   const existing = Boolean(task || activeId || pendingOpenId);
   const display=visibleModels(),model = display?.current?.id;
   ui.agentName.textContent = existing ? (model ? Array.from(model).slice(0, 12).join('') : '模型加载中') : engineName(agent);
+  const effort=existing&&model?display?.thinkingLevel:'';
+  ui.agentEffort.textContent=effort?({off:'off',none:'off',minimal:'min',low:'low',medium:'med',high:'hig',xhigh:'xhi',max:'max',ultra:'ult'}[effort]||Array.from(effort).slice(0,3).join('')):'';
+  ui.agentEffort.classList.toggle('hidden',!effort);
+  ui.agentEffort.title=effort?`思考强度：${effort}`:'';
   for (const icon of ui.agentBtn.querySelectorAll('svg')) icon.classList.toggle('hidden', existing);
-  ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}${existing && model ? `，模型 ${model}` : ''}`);
+  ui.agentBtn.setAttribute('aria-label', `Agent 设置：${engineName(agent)}${existing && model ? `，模型 ${model}` : ''}${effort?`，思考强度 ${effort}`:''}`);
   ui.agentBtn.title = [`Agent：${engineName(agent)}`, kind === 'chat' ? 'Chat' : 'Work', display?.current ? `模型 ${display.current.provider}/${display.current.id}` : '', display?.thinkingLevel ? `思考 ${display.thinkingLevel}` : '', !models&&modelPreview?'上次确认的设置，正在同步':''].filter(Boolean).join(' · ');
   ui.agentBtn.disabled = takeoverBusy() || !connected || (!currentUser && choiceLocked && modelLocked && !canTakeover());
   ui.agentRows.source.classList.toggle('hidden', agent !== 'pi');
