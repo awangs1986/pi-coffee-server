@@ -792,9 +792,12 @@ describe("Host WebSocket seam", () => {
     try{
       await waitFor(()=>existsSync(marker));
       socket.send(encodeFrame({v:1,type:'prompt',requestId:'git-read-independent',text:'send despite slow remote'}));
-      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),300))]);
+      const result=await Promise.race([frames.next(),new Promise(resolve=>setTimeout(()=>resolve({type:'blocked'}),2000))]);
+      // Assert ordering against the held Git gate, not sub-300ms machine latency.
+      expect(existsSync(release)).toBe(false);
       expect(result).toMatchObject({type:'ack',operation:'prompt',requestId:'git-read-independent'});
       await waitFor(()=>factory.sessions.get(conversation.id)!.history.some(e=>e.kind==='user'&&e.text==='send despite slow remote'));
+      expect(existsSync(release)).toBe(false);
     }finally{await writeFile(release,'');await status;socket.close();await server.close();server=undefined;rmSync(root,{recursive:true,force:true});}
   });
 
