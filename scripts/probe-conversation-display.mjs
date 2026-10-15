@@ -42,11 +42,21 @@ try{
    await page.reload();await page.locator('#thread .tool').first().waitFor({state:'attached'});assert.equal(await page.locator('#agent-display-value').textContent(),'详细');
    await change('精简');await page.waitForFunction(()=>!document.querySelector('#thread .tool')&&document.querySelector('#thread').textContent.includes('FINAL_RESULT'));
    assert.equal(stops,0);assert.equal(aborts,0);
+   const liveText='## LIVE_DONE\n\n```bash\necho streamed\n```\n\n[Download HTML](report.html)';
+   const emit=event=>{for(const listener of listeners)listener(event);};
+   emit({type:'agent_start'});
+   emit({type:'message_update',id:'live-markdown',assistantMessageEvent:{type:'text_delta',delta:liveText}});
+   records.push({kind:'assistant',id:'live-markdown',text:liveText});
+   emit({type:'message_end',id:'live-markdown',text:liveText,message:{role:'assistant'}});
+   state.isStreaming=false;emit({type:'agent_settled'});
+   await page.locator('#thread h2').filter({hasText:'LIVE_DONE'}).waitFor();
+   assert.ok(await page.locator('#thread a[data-workspace-path="report.html"]').count(),'Completed streamed links require no conversation switch');
+   assert.ok((await page.locator('#thread .codeblock').allTextContents()).some(text=>text.includes('echo streamed')));
    let compact,detailed;
    for(let i=0;i<30;i++){compact=await (await page.request.get(base+'/api/conversations/'+id+'/page?displayMode=compact')).text();if(JSON.parse(compact).sourceFreshness==='current')break;await new Promise(r=>setTimeout(r,50));}
    detailed=await (await page.request.get(base+'/api/conversations/'+id+'/page?displayMode=detailed')).text();
    assert.ok(compact.includes('FINAL_RESULT'));assert.ok(!compact.includes('INTERNAL_OUTPUT'));assert.ok(detailed.includes('INTERNAL_OUTPUT'));assert.ok(Buffer.byteLength(compact)<Buffer.byteLength(detailed)/10);
-   assert.deepEqual(errors,[]);results.push({protocol,pass:true,compactPageBytes:Buffer.byteLength(compact),detailedPageBytes:Buffer.byteLength(detailed),nativeStarts:starts,noAbort:true,persisted:true});
+   assert.deepEqual(errors,[]);results.push({protocol,pass:true,compactPageBytes:Buffer.byteLength(compact),detailedPageBytes:Buffer.byteLength(detailed),nativeStarts:starts,noAbort:true,persisted:true,completedLiveMarkdown:true,completedLiveDownloadLink:true});
   }finally{await page.close();await web.close();await host.close();}
  }
  await writeFile(join(evidence,'result.json'),JSON.stringify({pass:true,results},null,2));console.log(JSON.stringify({pass:true,results,evidence}));

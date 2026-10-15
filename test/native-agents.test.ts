@@ -1390,6 +1390,32 @@ it.each(['cursor','grok'])('creates %s Work and hides unverified context and ste
  expect(document.querySelector('#agent-thinking-row')!.classList.contains('hidden')).toBe(true);
 });
 
+it.each(['pi','codex'])('renders completed %s Markdown and download links before history is reloaded',async(agent)=>{
+ const app=await setup();const originalFetch=globalThis.fetch;
+ vi.stubGlobal('fetch',async(url:any,init:any)=>{const body=init?.body?JSON.parse(init.body):null;if(body?.action==='files')return {ok:true,json:async()=>({url:'http://localhost/',scope:body.id,token:'synthetic'})};return originalFetch(url,init);});
+ chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=agent;
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ ws.receive({type:'opened',sessionId:id,engine:agent,state:{isStreaming:false}});
+ ws.receive({type:'history',sessionId:id,entries:[]});
+ let cursor=0;const emit=(event:any)=>ws.receive({type:'event',sessionId:id,cursor:++cursor,event});
+ const text='## Result\n\n```bash\necho ready\n```\n\n[Download HTML](report.html)';
+ emit({type:'agent_start'});
+ emit({type:'message_update',id:'answer',assistantMessageEvent:{type:'text_delta',delta:text}});
+ await vi.advanceTimersByTimeAsync(30);
+ // The Codex adapter puts final text on the event, not inside message.content.
+ emit(agent==='codex'?{type:'message_end',id:'answer',text,message:{role:'assistant'}}:{type:'message_end',message:{role:'assistant',content:[{type:'text',text}]}});
+ const ending='**All set**';
+ emit({type:'message_update',...(agent==='codex'?{id:'ending'}:{}),assistantMessageEvent:{type:'text_delta',delta:ending}});
+ emit(agent==='codex'?{type:'message_end',id:'ending',text:ending,message:{role:'assistant'}}:{type:'message_end',message:{role:'assistant',content:[{type:'text',text:ending}]}});
+ emit({type:'agent_settled'});await vi.advanceTimersByTimeAsync(100);
+ const live={code:!!document.querySelector('#thread .codeblock'),heading:!!document.querySelector('#thread h2'),link:!!document.querySelector('#thread a[data-workspace-path="report.html"]')?.getAttribute('href')?.includes('/workspace-download?'),ending:document.querySelector('#thread strong')?.textContent};
+ ws.receive({type:'history',sessionId:id,entries:[{kind:'assistant',id:'answer',text},{kind:'assistant',id:'ending',text:ending}]});await vi.advanceTimersByTimeAsync(100);
+ expect(document.querySelector('#thread .codeblock')).not.toBeNull();
+ expect(document.querySelector('#thread a[data-workspace-path="report.html"]')).not.toBeNull();
+ expect(live).toEqual({code:true,heading:true,link:true,ending:'All set'});
+});
+
 it('keeps Bash code blocks and copy actions in expanded authoritative older history',async()=>{
  const app=await setup();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);

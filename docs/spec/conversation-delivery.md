@@ -102,6 +102,14 @@ conversations need lightweight status updates, not unsolicited detailed streams.
 
 ## Output results and copyability
 
+The compatibility event renderer must finalize each completed assistant message
+before navigation or history reload. Codex completion text is carried by the
+message-end event's `text` field; Pi carries text in `message.content`. Both forms
+must produce the same bounded Markdown, code-copy controls and scoped attachment
+links as authoritative history. Completion closes that message's live rendering
+boundary so a subsequent assistant message cannot overwrite its formatted result.
+The existing sanitization, size limits and file authorization remain in force.
+
 Assistant-authored scripts, code blocks, tables and other requested results remain
 part of the dialogue with normal Markdown rendering and copy controls. Hiding a
 command execution log must not hide a script the user asked the Agent to deliver.

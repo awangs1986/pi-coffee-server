@@ -2114,8 +2114,8 @@ function handleEvent(event,{replayed=false}={}) {
   if (type === 'extension_ui_request') { handleExtensionUi(event); return; }
   if (type === 'transfer_progress' || type === 'transfer_complete' || type === 'transfer_failed') { handleTransferEvent(event); return; }
   if(type==='message_end'&&event.message?.role==='assistant'&&event.message.stopReason!=='error'){
-    const text=customMessageText(event.message.content);
-    if(text){if(!currentAssistant)currentAssistant=pushAssistant('');currentAssistant.text=text;scheduleEntryRender(currentAssistant,false,true);}
+    const text=typeof event.text==='string'?event.text:customMessageText(event.message.content);
+    if(text){const entry=currentAssistant||pushAssistant('');entry.text=text;scheduleEntryRender(entry,false,true);currentAssistant=undefined;}
     return;
   }
   if (type === 'message_end' && event.message && event.message.stopReason === 'error') { pushNote('模型调用失败：' + (event.message.errorMessage || '未知错误'), true); offerContextRecovery(event.message.errorMessage); return; }

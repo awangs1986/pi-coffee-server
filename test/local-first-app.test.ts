@@ -92,6 +92,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   return { sockets, select, emit, engine, network, snapshot, syncStates, syncReads, conversations };
 }
 function assistantEvent(engine: Engine, text: string, complete = false) {
+  if(engine==='codex')return complete?{type:'message_end',id:'live-answer',text,message:{role:'assistant'}}:{type:'message_update',id:'live-answer',assistantMessageEvent:{type:'text_delta',delta:text}};
   if (engine !== 'pi') return complete ? { type: 'message_completed', id: 'live-answer', text } : { type: 'message_delta', id: 'live-answer', delta: text };
   return complete ? { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } } : { type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text } };
 }
