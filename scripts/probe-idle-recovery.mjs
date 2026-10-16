@@ -77,8 +77,32 @@ try{
   await page.evaluate(()=>{window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('pageshow'));document.dispatchEvent(new Event('resume'));});
   await new Promise(resolve=>setTimeout(resolve,80));await page.clock.runFor(32);
   if(connections!==beforeWake+1)throw Error('Wake events replaced a healthy subscription');
+  // Suspend the first identity response, as can happen during a network handover.
+  // The second request succeeds; the abandoned response must not create another socket.
+  let heldIdentity=null,identityAttempts=0;
+  await page.route('**/auth/me',route=>{
+    identityAttempts++;
+    if(identityAttempts===1){heldIdentity=route;return;}
+    return route.continue();
+  });
+  latest='REPLY_AFTER_IDENTITY_TIMEOUT';
+  await page.locator('#prompt').fill('Preserved background draft');
+  for(const ws of wsServer.clients)ws.close();
+  await page.locator('#conn-banner:not(.hidden)').waitFor();
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  for(let attempt=0;attempt<100&&!heldIdentity;attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+  if(!heldIdentity)throw Error('Identity timeout fixture did not intercept a request');
+  await page.clock.runFor(10000);
+  await page.clock.runFor(4000);
+  for(let attempt=0;attempt<30;attempt++){await new Promise(resolve=>setTimeout(resolve,30));await page.clock.runFor(32);if(await page.locator("#thread").textContent().then(text=>text.includes("REPLY_AFTER_IDENTITY_TIMEOUT")))break;}
+  await page.waitForFunction(()=>document.querySelector('#thread')?.textContent.includes('REPLY_AFTER_IDENTITY_TIMEOUT'),null,{timeout:2000});
+  const recoveredConnections=connections;
+  await heldIdentity.fulfill({status:200,contentType:'application/json',body:JSON.stringify(identity)}).catch(()=>{});
+  await new Promise(resolve=>setTimeout(resolve,50));await page.clock.runFor(32);
+  if(connections!==recoveredConnections)throw Error('Obsolete identity response replaced recovered socket');
+  if(await page.locator('#prompt').inputValue()!=='Preserved background draft')throw Error('Recovery lost unsent draft');
   if(errors.length)throw Error(JSON.stringify(errors));
-  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,errors};
+  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,identityTimeoutRestoresLatest:true,lateIdentityIgnored:true,errors};
   await writeFile(join(evidence,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({...result,evidence}));
 }finally{
   await browser?.close();for(const ws of wsServer.clients)ws.terminate();await new Promise(resolve=>wsServer.close(resolve));

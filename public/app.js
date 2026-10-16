@@ -84,6 +84,7 @@ const ui = {
 
 // ---------- state ----------
 let socket, reconnectTimer, connectionEpoch=0;
+let connectionDeadline=null, connectionExpiresAt=0, connectionAbort=null;
 let heartbeat=null, reconnectAttempt=0;
 let connectionAuthEpoch=null, resumeMetadataEpoch=null, resumeMetadataAt=0;
 let modelsRequestEpoch=0, modelsSyncTimer=null;
@@ -1489,9 +1490,9 @@ function refreshComposer() {
 // Who am I? The Web Server answers from the Gitea cookie (ADR-0004). Without a
 // valid login the shell is useless, so go to the login page instead of
 // retrying a WebSocket that will only be refused.
-async function whoAmI(epoch) {
+async function whoAmI(epoch, signal) {
   try {
-    const response = await fetch('/auth/me', { cache: 'no-store' });
+    const response = await fetch('/auth/me', { cache: 'no-store', signal });
     if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
       revokeCachedIdentity();await clearPreviews();
@@ -1524,6 +1525,7 @@ async function whoAmI(epoch) {
   }
 }
 function revokeCachedIdentity(){
+  clearConnectionDeadline();
   conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
@@ -1649,6 +1651,18 @@ function renderProjectContext() {
 }
 
 
+// Identity fetch and WebSocket handshake need a deadline too: heartbeat only
+// exists after onopen. Wake checks wall time because hidden-tab timers can pause.
+function clearConnectionDeadline() {
+  clearTimeout(connectionDeadline);connectionDeadline=null;connectionExpiresAt=0;
+  connectionAbort?.abort();connectionAbort=null;
+}
+function expireConnectionAttempt(epoch) {
+  if(epoch!==connectionEpoch)return;
+  disconnectExecution();
+  setConnection('连接超时，正在重试…','error');
+  scheduleReconnect();
+}
 function clearHeartbeat() { heartbeat?.stop(); heartbeat=null; }
 function clearModelsSyncTimer() { clearTimeout(modelsSyncTimer); modelsSyncTimer = null; }
 function scheduleReconnect() {
@@ -1683,6 +1697,7 @@ function resumeLiveSubscription() {
   if(document.visibilityState!=='visible')return;
   // Focus/pageshow/resume can arrive together while /auth/me is still pending.
   // Keep one recovery attempt; navigation can still replace it via connect().
+  if(connectionExpiresAt && Date.now()>=connectionExpiresAt){expireConnectionAttempt(connectionEpoch);connect();return;}
   if(connectionAuthEpoch===connectionEpoch)return;
   if(socket?.readyState===WebSocket.CONNECTING)return;
   if (!socket || socket.readyState !== WebSocket.OPEN || !connected) { connect(); return; }
@@ -1694,22 +1709,27 @@ function resumeLiveSubscription() {
   if (activeId && !takeoverBusy()) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
 }
 function disconnectExecution() {
+  clearConnectionDeadline();
   abandonPendingSettings();clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   connectionEpoch++;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   opened=false;connected=false;historyReady=false;pendingOpenId=null;activeBindingEpoch=null;
 }
 function connect() {
+  clearConnectionDeadline();
   abandonPendingSettings();
   clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);
   abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   const epoch=++connectionEpoch;viewScheduler.setView(currentRenderView());
   connectionAuthEpoch=epoch;
+  connectionAbort=new AbortController();
+  connectionExpiresAt=Date.now()+10000;
+  connectionDeadline=setTimeout(()=>expireConnectionAttempt(epoch),10000);
   // Detach immediately so old replies cannot mutate the newly selected view.
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   opened=false;historyReady=false;activeBindingEpoch=null;
   setConnection('连接中…');
-  whoAmI(epoch).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); }).finally(()=>{
+  whoAmI(epoch,connectionAbort.signal).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); }).finally(()=>{
     if(connectionAuthEpoch===epoch)connectionAuthEpoch=null;
   });
 }
@@ -1725,6 +1745,7 @@ function connectSocket() {
   setConnection('连接中…');
   ws.onopen = () => {
     if (socket !== ws) return;
+    clearConnectionDeadline();
     armHeartbeat(ws);
     setConnection('已连接', 'ready');
     void loadRuntimeStatus();
@@ -1745,6 +1766,7 @@ function connectSocket() {
 }
 function socketDisconnected(ws,event) {
     if (socket !== ws) return;
+    clearConnectionDeadline();
     clearHeartbeat();clearModelsSyncTimer();
     abandonRenames();unconfirmedUiAnswers();
     abandonPromptDelivery(`连接断开（代码 ${event?.code ?? '未知'}）`);

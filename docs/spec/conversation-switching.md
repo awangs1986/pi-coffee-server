@@ -409,3 +409,19 @@ payloads while retaining dialogue/control delivery. It does not establish the
 cause of an earlier idle disconnect or replace current reconnect/freshness guards.
 The [weekly audit](../reviews/spec-freshness-20261013.md) separates published and
 local source from the last recorded active release.
+
+## Bounded connection establishment (2026-10-16, Server #117)
+
+Identity verification and the WebSocket handshake share a ten-second connection
+attempt deadline. An unresolved identity request or CONNECTING socket must not
+suppress recovery indefinitely. Expiry aborts the obsolete identity fetch, fences
+its late response, detaches only the transport, and retries with existing backoff.
+On focus/visibility/page resume, wall-clock expiry is checked before coalescing
+in-flight attempts, so suspended background timers cannot block recovery.
+Successful socket opening clears this deadline and starts the existing end-to-end
+heartbeat. Drafts and native runs remain intact; no prompt is automatically resent.
+
+Controller regressions inject a suspended identity request and a silent handshake
+across a background clock jump, then verify recovery without sidebar navigation.
+These identify reproducible recovery gaps, not the sole cause of a production
+browser's network interruption. Source fixes are not deployment evidence.

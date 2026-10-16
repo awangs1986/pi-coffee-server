@@ -237,3 +237,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Composer model label: [compact reasoning-level suffix](spec/conversation-switching.md#last-confirmed-model-display-2026-10-06-server-68) uses the same per-Conversation confirmed metadata as the model.
 
 - Completed live replies: [Markdown and download-link parity with history](spec/conversation-delivery.md#output-results-and-copyability) consumes both Codex and Pi completion payloads without requiring conversation navigation.
+
+- Bounded identity/handshake recovery after background suspension: [contract](spec/conversation-switching.md#bounded-connection-establishment-2026-10-16-server-117), Server #117.

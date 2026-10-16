@@ -25,6 +25,7 @@ function giant(length: number, marker: string) {
 
 afterEach(() => {
   for (const [target, type, listener, options] of listeners.splice(0)) target.removeEventListener(type, listener, options);
+  delete (document as any).visibilityState;
   vi.restoreAllMocks(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals();
   history.replaceState(null,'','/');localStorage.clear(); sessionStorage.clear(); vi.resetModules(); allFrames.length = 0;
 });
@@ -41,10 +42,11 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const network = { release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', lastSourceCheckAt:state.lastSourceCheckAt||'2026-10-03T00:00:00Z', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
+  const transport={holdHandshake:false};
   class Socket {
-    static OPEN = 1; readyState = 1;
+    static CONNECTING = 0; static OPEN = 1; readyState = 0;
     onopen: any; onmessage: any; onclose: any; onerror: any;
-    constructor() { sockets.push(this); queueMicrotask(() => this.onopen?.()); }
+    constructor() { sockets.push(this); if(!transport.holdHandshake)queueMicrotask(() => {this.readyState=1;this.onopen?.();}); }
     send(text: string) { allFrames.push(JSON.parse(text)); }
     close() { this.readyState = 3; }
     receive(frame: any) { this.onmessage?.({ data: JSON.stringify(frame) }); }
@@ -89,7 +91,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
     return socket;
   };
   const emit = (socket: Socket, id: string, event: any) => socket.receive({ type: 'event', sessionId: id, cursor: ++cursor, event });
-  return { sockets, select, emit, engine, network, snapshot, syncStates, syncReads, conversations };
+  return { sockets, select, emit, engine, network, snapshot, syncStates, syncReads, conversations, transport };
 }
 function assistantEvent(engine: Engine, text: string, complete = false) {
   if(engine==='codex')return complete?{type:'message_end',id:'live-answer',text,message:{role:'assistant'}}:{type:'message_update',id:'live-answer',assistantMessageEvent:{type:'text_delta',delta:text}};
@@ -109,6 +111,33 @@ describe('idle connection recovery at the app-controller seam', () => {
     restored.receive({type:'history',sessionId:'b',entries:[{kind:'assistant',text:'Latest reply while away'}]});await tick(150);
     expect(thread().textContent).toContain('Latest reply while away');
     expect(prompt().value).toBe('Unsent draft for B');
+    expect(location.pathname).toBe('/conversations/b');
+  });
+  it('recovers a silent socket handshake after returning from background without navigation',async()=>{
+    const app=await setup();await app.select('b');draft('Keep my B draft');
+    window.dispatchEvent(new Event('online'));await tick();
+    const old=app.sockets.at(-1)!;
+    // A network handover may leave readyState CONNECTING without an error/close event.
+    app.transport.holdHandshake=true;old.close();old.onclose?.({code:1006});await tick(1500);
+    const stuck=app.sockets.at(-1)!;
+    Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+    document.dispatchEvent(new Event('visibilitychange'));
+    vi.setSystemTime(Date.now()+60000);app.transport.holdHandshake=false;
+    Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+    document.dispatchEvent(new Event('visibilitychange'));await tick();
+    const recovered=app.sockets.at(-1)!;
+    expect(recovered,'stalled handshake must not require navigating to another conversation').not.toBe(stuck);
+    recovered.receive({type:'opened',sessionId:'b',engine:'codex',capabilities,state:{isStreaming:false}});
+    recovered.receive({type:'history',sessionId:'b',entries:[{kind:'assistant',text:'Reply after background'}]});await tick(150);
+    expect(thread().textContent).toContain('Reply after background');expect(prompt().value).toBe('Keep my B draft');
+  });
+  it('retries a suspended identity request after wake without bypassing identity checks',async()=>{
+    const app=await setup();const old=await app.select('b');
+    app.network.authGate=new Promise(()=>{});old.close();old.onclose?.({code:1006});
+    window.dispatchEvent(new Event('focus'));await tick();
+    app.network.authGate=null;
+    await tick(15000);window.dispatchEvent(new Event('focus'));await tick(1500);
+    expect(app.sockets.at(-1),'stalled identity fetch must not block recovery forever').not.toBe(old);
     expect(location.pathname).toBe('/conversations/b');
   });
   it('coalesces overlapping wake events while identity verification is pending',async()=>{
