@@ -239,3 +239,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Completed live replies: [Markdown and download-link parity with history](spec/conversation-delivery.md#output-results-and-copyability) consumes both Codex and Pi completion payloads without requiring conversation navigation.
 
 - Bounded identity/handshake recovery after background suspension: [contract](spec/conversation-switching.md#bounded-connection-establishment-2026-10-16-server-117), Server #117.
+
+- Same-VM Web/Host deployment: [migration protocol and staged status](deployment/same-vm-migration.md). Preserves two-user scope and independent services; source must be persistently stopped before target activation.
