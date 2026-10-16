@@ -71,3 +71,26 @@ This is staging evidence, not a completed migration. After cutover additionally
 verify both users' login, project visibility, current conversation updates,
 attachment download, OAuth callback origin, served assets and maintenance wiring.
 Do not trigger actual Agent turns or `/restart` merely to test configuration.
+
+## Activation outcome (2026-10-16)
+
+After the owner changed LAN DNS, both names resolved to 192.168.100.123 and
+preflight passed. The first cutover automatically rolled back because its probe
+incorrectly requested the non-public `/release-manifest.json` (404). The probe was
+corrected to verify the local release identity plus publicly served asset bytes.
+The retry completed successfully, including stop-before-start source fencing.
+
+- Source 192.168.100.101: Web inactive, PID zero, service persistently masked;
+  watchdog timer and restart path disabled.
+- Destination 192.168.100.123: Web healthy at the unchanged public origin;
+  Web and Host both run immutable `d835f00` / v0.27.
+- Host PID 1871718 remained unchanged; native tasks were not restarted.
+- Cross-machine HTTP health, workbench asset checks, expected Gitea callback,
+  anonymous restart denial, and both local watchdog health targets passed.
+- Full source check: 140 test files / 1,168 tests plus the browser probes passed.
+- New browser login and interactive checks by both real users remain manual
+  acceptance items; no user conversation contents or model turns were inspected.
+
+The separately committed browser connection-establishment fix is not included in
+this topology-only activation. Private operator plans, unit/config backups and
+migration state remain outside Git. A rollback also requires restoring LAN DNS.
