@@ -32,9 +32,10 @@ wsServer.on('connection',ws=>{connections++;ws.on('message',raw=>{
   if(f.type==='list_sessions')ws.send(JSON.stringify({v:1,type:'sessions',sessions:tasks}));
   if(f.type==='open'){
     ws.taskId=f.sessionId;
-    ws.send(JSON.stringify({v:1,type:'opened',engine:'codex',sessionId:f.sessionId,capabilities:{models:true,tools:true,stop:true},state:{isStreaming:false}}));
+    ws.send(JSON.stringify({v:1,type:'opened',engine:'codex',sessionId:f.sessionId,capabilities:{models:true,tools:true,stop:true,commands:true},state:{isStreaming:false}}));
     ws.send(JSON.stringify({v:1,type:'history',sessionId:f.sessionId,entries:[{kind:'user',text:'Synthetic history '+f.sessionId},{kind:'assistant',text:latest}]}));
   }
+  if(f.type==='get_commands')ws.send(JSON.stringify({v:1,type:'commands',commands:[{name:'refocus',invocation:'$refocus',source:'skill',description:'Re-anchor requirements'}]}));
   if(f.type==='get_models'&&models.has(ws.taskId))ws.send(JSON.stringify({...modelFrame(ws.taskId),requestId:f.requestId}));
 });});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -101,8 +102,19 @@ try{
   await new Promise(resolve=>setTimeout(resolve,50));await page.clock.runFor(32);
   if(connections!==recoveredConnections)throw Error('Obsolete identity response replaced recovered socket');
   if(await page.locator('#prompt').inputValue()!=='Preserved background draft')throw Error('Recovery lost unsent draft');
+  // A transient catalog failure recovers inside the same composer.
+  for(const ws of wsServer.clients)if(ws.taskId==='b'&&ws.readyState===1){
+    ws.send(JSON.stringify({v:1,type:'commands',commands:[]}));
+    ws.send(JSON.stringify({v:1,type:'error',code:'metadata_unavailable',operation:'get_commands',message:'Synthetic catalog timeout'}));
+  }
+  await new Promise(resolve=>setTimeout(resolve,50));await page.clock.runFor(32);
+  await page.locator('#prompt').fill('/refocus');
+  await page.getByRole('button',{name:'重新读取命令',exact:true}).click();
+  await new Promise(resolve=>setTimeout(resolve,50));await page.clock.runFor(32);
+  await page.locator('#slash .slash-name').filter({hasText:'$refocus'}).waitFor({timeout:2000});
+  if(new URL(page.url()).pathname!=='/conversations/b')throw Error('Skill retry navigated away');
   if(errors.length)throw Error(JSON.stringify(errors));
-  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,identityTimeoutRestoresLatest:true,lateIdentityIgnored:true,errors};
+  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,identityTimeoutRestoresLatest:true,lateIdentityIgnored:true,skillRetryInPlace:true,errors};
   await writeFile(join(evidence,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({...result,evidence}));
 }finally{
   await browser?.close();for(const ws of wsServer.clients)ws.terminate();await new Promise(resolve=>wsServer.close(resolve));

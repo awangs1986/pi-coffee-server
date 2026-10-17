@@ -1529,7 +1529,9 @@ describe("Host WebSocket seam", () => {
       expect(await frames.next()).toMatchObject({type:"ack",requestId:"original"});
       expect(await frames.next()).toMatchObject({type:"event",event:{type:"agent_start"}});await frames.next();
       socket.send(encodeFrame({v:1,type:"prompt",requestId:"queued",mode,text:"/harness work"}));
-      expect(await frames.next()).toMatchObject({type:"ack",operation:mode,requestId:"queued"});
+      // Follow-up admission now requires a valid, durably stored payload.
+      // A rejected extension command must produce an error without a false ACK.
+      if(mode==="steer")expect(await frames.next()).toMatchObject({type:"ack",operation:mode,requestId:"queued"});
       expect(await frames.next()).toMatchObject({type:"error",code:"operation_failed",requestId:"queued",message:"Extension commands cannot be queued."});
       socket.send(encodeFrame({v:1,type:"prompt",requestId:"parallel",text:"must not replace the active run"}));
       expect(await frames.next()).toMatchObject({type:"error",code:"busy",requestId:"parallel"});

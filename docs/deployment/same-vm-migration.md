@@ -87,7 +87,7 @@ The retry completed successfully, including stop-before-start source fencing.
 - Host PID 1871718 remained unchanged; native tasks were not restarted.
 - Cross-machine HTTP health, workbench asset checks, expected Gitea callback,
   anonymous restart denial, and both local watchdog health targets passed.
-- Full source check: 140 test files / 1,168 tests plus the browser probes passed.
+- Complete source check: 140 test files / 1,168 tests plus the browser probes passed.
 - New browser login and interactive checks by both real users remain manual
   acceptance items; no user conversation contents or model turns were inspected.
 
