@@ -162,6 +162,21 @@ describe('idle connection recovery at the app-controller seam', () => {
   });
 });
 
+describe('Skill menu recovery',()=>{
+ it('offers a retry after command discovery fails and then shows refocus without navigating',async()=>{
+  const app=await setup();const socket=await app.select('a');
+  socket.receive({type:'opened',sessionId:'a',engine:'codex',capabilities:{...capabilities,commands:true},state:{isStreaming:false}});await tick();
+  socket.receive({type:'error',code:'metadata_unavailable',operation:'get_commands',message:'timeout'});
+  draft('/refocus');await tick();
+  const retry=[...document.querySelectorAll<HTMLButtonElement>('#slash button')].find(b=>b.textContent==='重新读取命令');
+  expect(retry,'a transient metadata failure needs a local recovery action').toBeDefined();
+  const before=allFrames.filter(f=>f.type==='get_commands').length;retry!.click();await tick();
+  expect(allFrames.filter(f=>f.type==='get_commands')).toHaveLength(before+1);
+  socket.receive({type:'commands',commands:[{name:'refocus',invocation:'$refocus',source:'skill',description:'Re-anchor requirements'}]});await tick();
+  expect(document.querySelector('#slash')?.textContent).toContain('$refocus');expect(location.pathname).toBe('/conversations/a');
+ });
+});
+
 describe('actual app local-first live output', () => {
   it.each([false,true])('places an older task with today’s conversation under Today in grouped=%s',async grouped=>{
     const app=await setup('codex',2,network=>{network.showGroups=grouped;});

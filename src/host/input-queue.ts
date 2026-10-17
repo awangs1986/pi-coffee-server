@@ -1,3 +1,4 @@
+import type {StoredInput} from './queue-store.js';
 import {randomUUID} from 'node:crypto';
 import type {ImageInput, QueueAction, QueueItem} from '../shared/protocol.js';
 /** Generic queue fairness policy; notification consumers advertise this same bound. */
@@ -13,16 +14,27 @@ export class InputQueue {
  private stopped=false;
  private generation=0;
  private inFlight?:Promise<void>;
- constructor(private readonly options:{busy:()=>boolean;validate:(text:string)=>Promise<void>;deliver:(text:string,images:ImageInput[]|undefined,promote:boolean,requestId?:string)=>Promise<void>;changed:()=>void}){}
+ private persistence:Promise<void>=Promise.resolve();
+ private checkpoint(){
+  const rows=this.rows.filter(row=>!row.internal).map(({internal,cancel,...row})=>structuredClone(row));
+  const next=this.persistence.catch(()=>{}).then(()=>this.options.persist?.(rows));this.persistence=next;return next;
+ }
+ async flush(){await this.persistence;}
+ restore(rows:StoredInput[]){
+  if(this.rows.length||this.sending)throw Error("Queue already initialized");
+  this.rows=rows.map(row=>({id:row.id,requestId:row.requestId,revision:row.revision+1,text:row.text,images:row.images,imageCount:row.images?.length??0,status:"failed",error:"Host 已重启；请检查历史后手动重试，系统不会自动重发。"}));
+ }
+ constructor(private readonly options:{busy:()=>boolean;validate:(text:string)=>Promise<void>;deliver:(text:string,images:ImageInput[]|undefined,promote:boolean,requestId?:string)=>Promise<void>;changed:()=>void;persist?:(rows:StoredInput[])=>Promise<void>}){}
  get items():QueueItem[]{return this.rows.map(({images,internal,cancel,...item})=>({...item}));}
  get active(){return this.sending;}
- async add(text:string,images?:ImageInput[],requestId?:string){
+ async add(text:string,images?:ImageInput[],requestId?:string,accepted?:()=>void){
   const generation=this.generation;await this.options.validate(text);
   if(this.stopped||generation!==this.generation)throw Error('Session has stopped');
   if(this.rows.length>=100)throw Error('队列最多保留 100 条指令');
   this.checkSize(text,images);
-  this.rows.push({id:randomUUID(),requestId,revision:1,text,status:'pending',imageCount:images?.length??0,...(images?{images:structuredClone(images)}:{})});
-  this.options.changed();this.wake();
+  const added:Input={id:randomUUID(),requestId,revision:1,text,status:'pending',imageCount:images?.length??0,...(images?{images:structuredClone(images)}:{})};this.rows.push(added);
+  if(this.options.persist){try{await this.checkpoint();}catch(error){this.rows=this.rows.filter(row=>row!==added);throw error;}if(this.stopped||generation!==this.generation)throw Error("Session has stopped");}
+  accepted?.();this.options.changed();this.wake();
  }
  addInternal(text:string,deliver:()=>Promise<void>,cancel:()=>Promise<void>){
   if(this.stopped||this.rows.length>=100)throw Error('Queue unavailable');this.checkSize(text);
@@ -46,10 +58,10 @@ export class InputQueue {
   if(action.action==='edit'){
    if(!action.text?.trim())throw Error('指令不能为空');
    await this.options.validate(action.text);row=this.find(action.id,action.revision);
-   this.checkSize(action.text,row.images,row);row.text=action.text;row.revision++;this.options.changed();return;
+   this.checkSize(action.text,row.images,row);row.text=action.text;row.revision++;if(this.options.persist)await this.checkpoint();this.options.changed();return;
   }
   if(action.action==='cancel'){
-   this.rows=this.rows.filter(item=>item!==row);this.options.changed();this.wake();return;
+   this.rows=this.rows.filter(item=>item!==row);if(this.options.persist)await this.checkpoint();this.options.changed();this.wake();return;
   }
   if(action.action==='move'){
    // Reorders pending user rows only; Host notification rows keep their fairness slot.
@@ -59,7 +71,7 @@ export class InputQueue {
    const pending=others.filter(item=>item.status!=='sending');
    if(action.to==='front'){const first=pending.find(item=>!item.internal);const at=first?others.indexOf(first):others.length;others.splice(at,0,row);}
    else others.push(row);
-   this.rows=others;this.options.changed();this.wake();return;
+   this.rows=others;if(this.options.persist)await this.checkpoint();this.options.changed();this.wake();return;
   }
   if(this.sending)throw Error('另一条指令正在发送，请稍后重试');
   await this.deliver(row,true);
@@ -79,6 +91,8 @@ export class InputQueue {
   this.foregroundBurst=row.internal?0:this.foregroundBurst+1;
   this.sending=true;row.status='sending';row.revision++;this.options.changed();
   try{
+   if(this.options.persist)await this.checkpoint();
+   if(this.stopped||generation!==this.generation)throw Error("Session has stopped");
    this.inFlight=row.internal?row.internal():row.requestId===undefined?this.options.deliver(row.text,row.images,promote):this.options.deliver(row.text,row.images,promote,row.requestId);
    await this.inFlight;
    this.rows=this.rows.filter(item=>item!==row);
@@ -86,10 +100,10 @@ export class InputQueue {
    // A transport error can mean "accepted but response lost". Never auto-retry.
    if(generation===this.generation){row.status='failed';row.revision++;row.error='发送未确认，请先检查对话记录，再决定是否重试。';}
    throw error;
-  }finally{this.inFlight=undefined;this.sending=false;this.options.changed();this.wake();}
+  }finally{try{if(this.options.persist)await this.checkpoint();}finally{this.inFlight=undefined;this.sending=false;this.options.changed();this.wake();}}
  }
  async waitForDelivery(){await this.inFlight?.catch(()=>undefined);}
- clear(){this.generation++;const old=this.rows.length;this.rows=[];if(old)this.options.changed();}
+ clear(){this.generation++;const old=this.rows.length;this.rows=[];if(this.options.persist)void this.checkpoint().catch(()=>{});if(old)this.options.changed();}
  pause(){this.generation++;this.stopped=true;for(const row of this.rows){if(row.status!=='sending'){row.status='failed';row.revision++;row.error='Agent 已中断；请检查历史后手动重试。';}}if(this.rows.length)this.options.changed();}
  resume(){this.stopped=false;}
  stop(){this.generation++;this.stopped=true;}

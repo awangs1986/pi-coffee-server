@@ -1,7 +1,8 @@
 # PI Coffee domain model
 
-Reviewed 2026-10-13 against published main `789a0d1` and local v0.24 candidate
-`e7f8ce5`. See the [weekly source/spec map](docs/reviews/spec-freshness-20261013.md)
+Last verified topology receipt: same-VM Web/Host v0.27 / `d835f00`; live release
+metadata owns current version identity. October 17 stability
+changes are tracked in docs/development/stability-20261017.md. Earlier review: 2026-10-13 against `789a0d1` / `e7f8ce5`. See the [weekly source/spec map](docs/reviews/spec-freshness-20261013.md)
 for source, installed-package and deployment distinctions. The earlier
 [project refocus](docs/reviews/spec-freshness-20261006.md) remains historical evidence. Start with
 [REPOSITORIES.md](REPOSITORIES.md) for source ownership; use the linked feature
@@ -118,7 +119,7 @@ and [SSHME](docs/spec/sshme.md).
 
 ## Transport and operations
 
-**Conversation Display Mode**: the local v0.24 candidate offers Compact (default)
+**Conversation Display Mode**: the Browser offers Compact (default)
 and Detailed below Speed, persisted per Web account. It changes browser delivery
 and presentation, not native model context, token capacity or execution. See
 [the delivery contract](docs/spec/conversation-delivery.md).

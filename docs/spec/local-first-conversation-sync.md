@@ -1,6 +1,6 @@
 # Local-first conversation display and durable synchronization
 
-> Source candidate v0.24 (2026-10-13), not deployed: [conversation-first delivery](conversation-delivery.md). Its versioned compact projection must preserve this document's revision, authorization and freshness guarantees; current v2 alone does not imply reduced tool-payload transmission.
+> Deployed with Server v0.27 (original source candidate v0.24): [conversation-first delivery](conversation-delivery.md). Its versioned compact projection must preserve this document's revision, authorization and freshness guarantees; current v2 alone does not imply reduced tool-payload transmission.
 
 
 Implementation started from GitHub main `6cb1d3244fdf6305d2b798f48082c5d27e03a831`

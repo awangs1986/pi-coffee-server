@@ -1652,3 +1652,26 @@ it('rejects clear-context during native work and restores the source on binding 
   expect((await workspaces.lookup(task.id))?.nativeBinding).toBeUndefined();expect(original.history).toContainEqual({kind:'user',id:'old',text:'retained question'});
  }finally{await host?.close();rmSync(root,{recursive:true,force:true});}
 });
+
+it('recovers accepted queued input after Host replacement without automatically sending it',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'coffee-host-queue-recovery-'));
+ const workspaces=new Workspaces(join(root,'workspaces'),{ownerId:'queue-owner'});
+ const task=await workspaces.createChatConversation();
+ const firstFactory=new FakeFactory();let socket:WebSocket|undefined;
+ try{
+  server=new HostServer({port:0,host:'127.0.0.1',factory:firstFactory,workspaces});await server.start();
+  socket=await connect(server.address().port);let frames=new FrameQueue(socket);
+  const next=async(type:string)=>{for(;;){const frame=await frames.next();if(frame.type===type)return frame as any;}};
+  socket.send(encodeFrame({v:1,type:'open',sessionId:task.id}));await next('opened');await next('history');
+  firstFactory.sessions.get(task.id)!.holdAfterDelta=true;
+  socket.send(encodeFrame({v:1,type:'prompt',requestId:'active-run',text:'working'}));await next('ack');await next('event');
+  socket.send(encodeFrame({v:1,type:'prompt',requestId:'durable-input',mode:'follow_up',text:'recover this instruction',images:[{type:'image',mimeType:'image/png',data:'aGVsbG8='}]}));await next('ack');const saved=await next('queue_state');
+  socket.close();await once(socket,'close');await server.close();
+  const secondFactory=new FakeFactory();server=new HostServer({port:0,host:'127.0.0.1',factory:secondFactory,workspaces});await server.start();
+  socket=await connect(server.address().port);frames=new FrameQueue(socket);
+  socket.send(encodeFrame({v:1,type:'open',sessionId:task.id}));await next('opened');await next('history');const recovered=await next('queue_state');
+  expect(recovered.items).toMatchObject([{id:saved.items[0].id,text:'recover this instruction',status:'failed',imageCount:1}]);
+  expect(secondFactory.sessions.get(task.id)!.history).toEqual([]);
+  socket.send(encodeFrame({v:1,type:'queue_action',requestId:'cancel-recovered',action:'cancel',id:recovered.items[0].id,revision:recovered.items[0].revision}));await next('ack');
+ }finally{socket?.terminate();await server?.close();server=undefined;rmSync(root,{recursive:true,force:true});}
+},15000);

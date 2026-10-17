@@ -49,3 +49,39 @@ it('keeps failed foreground input for inspection without starving an independent
  queue.addInternal('safe notification',async()=>{delivered.push('notification');},async()=>{});await tick();await tick();
  expect(delivered).toEqual(['notification']);expect(queue.items).toMatchObject([{text:'uncertain foreground',status:'failed'}]);
 });
+
+it('restores durable queued text/images paused and never replays after process replacement',async()=>{
+ const {mkdtemp,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {QueueStore}=await import('../src/host/queue-store.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-queue-recovery-'));try{
+ const store=new QueueStore(root),deliver=vi.fn(async()=>{});
+ const options={busy:()=>true,validate:async()=>{},deliver,changed:()=>{},persist:(rows:any[])=>store.write('task-a',rows)};
+ const first=new InputQueue(options);await first.add('retain this',[{type:'image',mimeType:'image/png',data:'aGVsbG8='}],'request-a');
+ const second=new InputQueue({...options,busy:()=>false});second.restore(await store.read('task-a'));second.wake();await tick();
+ expect(second.items).toMatchObject([{text:'retain this',status:'failed',imageCount:1}]);expect(deliver).not.toHaveBeenCalled();
+ await second.change({...second.items[0],action:'promote'});expect(deliver).toHaveBeenCalledWith('retain this',[{type:'image',mimeType:'image/png',data:'aGVsbG8='}],true,'request-a');
+ expect(await store.read('task-a')).toEqual([]);expect(await store.read('task-b')).toEqual([]);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+it('does not deliver an input when its sending checkpoint fails',async()=>{
+ const deliver=vi.fn(async()=>{});let fail=false;
+ const q=new InputQueue({busy:()=>true,validate:async()=>{},deliver,changed:()=>{},persist:async()=>{if(fail)throw Error('disk unavailable');}});
+ await q.add('must stay recoverable');fail=true;
+ await expect(q.change({...q.items[0],action:'promote'})).rejects.toThrow('disk unavailable');
+ expect(deliver).not.toHaveBeenCalled();expect(q.items[0].status).toBe('failed');
+});
+it('persists cancellation before acknowledging it and fails closed on corrupt recovery',async()=>{
+ const {mkdtemp,rm,writeFile,readdir,stat}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {QueueStore}=await import('../src/host/queue-store.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-queue-cancel-'));try{
+ const store=new QueueStore(root);const q=new InputQueue({busy:()=>true,validate:async()=>{},deliver:async()=>{},changed:()=>{},persist:rows=>store.write('task',rows)});
+ await q.add('cancel');await q.change({...q.items[0],action:'cancel'});expect(await store.read('task')).toEqual([]);
+ const path=join(root,(await readdir(root))[0]);expect((await stat(path)).mode&0o777).toBe(0o600);
+ await writeFile(path,'broken');await expect(store.read('task')).rejects.toThrow();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+it('withholds admission confirmation until the queued payload is durable',async()=>{
+ let finish!:()=>void;const accepted=vi.fn(),changed=vi.fn();
+ const q=new InputQueue({busy:()=>true,validate:async()=>{},deliver:async()=>{},changed,persist:()=>new Promise<void>(resolve=>{finish=resolve;})});
+ const adding=q.add('durable before acknowledgement',undefined,'receipt',accepted);await tick();
+ expect(accepted).not.toHaveBeenCalled();expect(changed).not.toHaveBeenCalled();
+ finish();await adding;expect(accepted).toHaveBeenCalledTimes(1);expect(changed).toHaveBeenCalledTimes(1);
+});

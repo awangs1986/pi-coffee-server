@@ -1,9 +1,16 @@
 # PI Coffee documentation map
 
-Current weekly source/spec baseline: [2026-10-06 through 2026-10-13](reviews/spec-freshness-20261013.md). Published Server main is v0.23; Compact/Detailed remains the local v0.24 candidate. The report distinguishes source, installed Skills and last recorded deployment; read it before interpreting older dated delivery notes.
+Last verified deployment at the start of the October 17 close-out: v0.27 / `d835f00`.
+Web and Host share one VM. Read live `/api/release` and deployment receipts for
+actual activation; source VERSION alone is not a running-service claim.
+The October 13 audit below is historical. The v0.28 stability work is tracked in
+[the six-gap close-out](development/stability-20261017.md), including connection
+recovery, same-VM OAuth configuration, Skill retries and recoverable queued input.
+Source publication and actual activation remain separate states.
 
-- Source candidate v0.24, not deployed: [conversation-first browser delivery](spec/conversation-delivery.md). Host sends dialogue and essential controls by default; default Compact shows dialogue/results; Detailed retains existing process cards. Native evidence remains intact; performance must be measured.
-
+- Compact/Detailed browser delivery is deployed in v0.27: [contract](spec/conversation-delivery.md).
+- Same-VM migration and rollback: [runbook/evidence](deployment/same-vm-migration.md).
+- Native CLI version qualification: [procedure](deployment/native-cli-qualification.md).
 
 - Native Codex Skill namespaces and Cat Skills installation: [catalog, invocation and reconciliation contract](spec/skill-management.md#codex-skill-namespaces-2026-10-13), [Server #126](https://github.com/awangs1986/pi-coffee-server/issues/126). Keep complete plugin names, search by Skill name, and distinguish installed files from native discovery and deployed Host behavior.
 
@@ -241,3 +248,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Bounded identity/handshake recovery after background suspension: [contract](spec/conversation-switching.md#bounded-connection-establishment-2026-10-16-server-117), Server #117.
 
 - Same-VM Web/Host deployment: [migration protocol and staged status](deployment/same-vm-migration.md). Preserves two-user scope and independent services; source must be persistently stopped before target activation.
+
+- Consistent state backups and staged recovery: [operator procedure](deployment/state-backup.md).

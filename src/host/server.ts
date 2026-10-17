@@ -1,3 +1,4 @@
+import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
 import {compactEntry,compactEvent} from "./conversation-projection.js";
@@ -585,7 +586,7 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({ factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues')):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
@@ -1242,12 +1243,12 @@ class HostSocket implements SessionSink {
         if(frame.mode==='steer')await this.mishu?.validateSteer(this.session.id);
         // Durable acceptance precedes ACK; native/queue events still follow it.
         await this.session.acceptCommand(frame.requestId,frame.mode);
-        this.send({v:1,type:"ack",operation:frame.mode,requestId:frame.requestId});
+        if(frame.mode==='steer')this.send({v:1,type:"ack",operation:frame.mode,requestId:frame.requestId});
         const engine=(await this.workspaces?.lookup(this.session.id))?.engine??'pi';
         const capabilities=await this.factory.capabilities?.(this.session.id)??capabilitiesFor(engine);
         if(frame.mode==='follow_up'&&!capabilities.followUp)throw new Error('Queueing unavailable for this Agent');
         if(originSession&&originGeneration!==undefined)originSession.assertCommandGeneration(originGeneration);
-        await this.session.enqueue(frame.mode, frame.text, frame.images,frame.requestId,true);
+        await this.session.enqueue(frame.mode, frame.text, frame.images,frame.requestId,true,()=>this.send({v:1,type:"ack",operation:"follow_up",requestId:frame.requestId}));
         return;
       }
     }

@@ -1,3 +1,4 @@
+import {QueueStore} from './queue-store.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
 import {InputQueue} from "./input-queue.js";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,7 @@ export interface SessionSink {
 }
 
 export interface HostSessionOptions {
+  queueStore?:QueueStore;
   completionForHistory?:(id:string)=>Promise<string|null>;
   runnerGuidance?:(id:string)=>Promise<{revision:string;text?:string}|undefined>;
   id?: string;
@@ -59,6 +61,8 @@ export class HostSession {
   readRunEvidence(runId?:string){return this.pi?.readRunEvidence?.(runId);}
   readonly id: string;
   private readonly inputs:InputQueue;
+  private readonly queueStore?:QueueStore;
+  private queueLoaded=false;
   private readonly runnerGuidance?:HostSessionOptions['runnerGuidance'];
   private runnerRevision?:string;
   private readonly factory: PiSessionFactory;
@@ -101,9 +105,9 @@ export class HostSession {
   private externalTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: HostSessionOptions) {
-    this.runnerGuidance=options.runnerGuidance;
+    this.runnerGuidance=options.runnerGuidance;this.queueStore=options.queueStore;
     this.id = options.id ?? randomUUID();
-    this.inputs=new InputQueue({busy:()=>this.executionBusy,
+    this.inputs=new InputQueue({persist:options.queueStore?rows=>options.queueStore!.write(this.id,rows):undefined,busy:()=>this.executionBusy,
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
       deliver:async(text,images,promote,queuedRequestId)=>{
         const generation=this.deliveryGeneration;
@@ -136,6 +140,7 @@ export class HostSession {
     if (this.started) return;
     if (this.startPromise) return this.startPromise;
     this.startPromise = (async () => {
+      if(!this.queueLoaded){this.inputs.restore(await this.queueStore?.read(this.id)??[]);this.queueLoaded=true;}
       this.pi = await this.factory.create({ sessionId: this.id });
       this.unsubscribe = this.pi.onEvent((event) => this.handlePiEvent(event));
       try {
@@ -295,7 +300,7 @@ export class HostSession {
   async acceptCommand(requestId:string,mode:string){const generation=this.deliveryGeneration;await this.onCommand?.(this.id,requestId,"accepted",mode);if(generation!==this.deliveryGeneration)void this.onCommand?.(this.id,requestId,"cancelled").catch(()=>undefined);this.assertDelivery(generation);}
 
   /** Join a busy run: steer interrupts after current tool calls, follow_up waits for the end. */
-  async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[],requestId?:string,accepted=false): Promise<void> {
+  async enqueue(mode: "steer" | "follow_up", text: string, images?: ImageInput[],requestId?:string,accepted=false,onQueued?:()=>void): Promise<void> {
     if (!this.pi || !this.started) throw new Error("Session is not ready");
     if (this.compacting || this.contextChanging || this.reportOrigin && mode === "steer") throw new SessionBusyError();
     const generation=this.deliveryGeneration;
@@ -307,7 +312,7 @@ export class HostSession {
         this.assertDelivery(generation);
         if(requestId)this.runCommands.add(requestId);
         await this.deliverWithRunnerGuidance(text,value=>this.ready().steer(value,images),generation);
-      }else await this.inputs.add(text, images,requestId);
+      }else await this.inputs.add(text, images,requestId,onQueued);
     }catch(error){if(requestId)void this.onCommand?.(this.id,requestId,error instanceof DeliveryCancelledError?"cancelled":"uncertain").catch(()=>undefined);throw error;}
   }
 
@@ -332,7 +337,7 @@ export class HostSession {
     const nativeAbort=this.pi.abort();
     void this.inputs.waitForDelivery();
     for(const id of new Set(cancelled))void this.onCommand?.(this.id,id,"cancelled").catch(()=>undefined);
-    await nativeAbort;
+    await nativeAbort;await this.inputs.flush();
   }
 
   async rename(name: string): Promise<void> {
@@ -470,8 +475,7 @@ export class HostSession {
     }
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    await this.historyExport;
-    if (this.pi) await this.pi.stop();
+    try{await this.inputs.flush();await this.historyExport;}finally{if(this.pi)await this.pi.stop();}
     this.pi = undefined;
     this.started = false;
     this.sinks.clear();
@@ -643,7 +647,7 @@ export class HostSessionRegistry {
 
   async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
   async readRunEvidence(id:string,runId?:string){return await this.sessions.get(id)?.readRunEvidence(runId)??await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
-  constructor(private options: { runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { queueStore?:QueueStore;runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -668,6 +672,7 @@ export class HostSessionRegistry {
     const session=new HostSession({
       ...(id === undefined ? {} : { id }),
       factory: this.factory,
+      queueStore:this.options.queueStore,
       runnerGuidance:this.options.runnerGuidance,
       eventBufferSize: this.eventBufferSize,
       idleTimeoutMs: this.idleTimeoutMs,

@@ -1,6 +1,6 @@
 # Conversation-first browser delivery
 
-Status: implemented source candidate v0.24 (2026-10-13); not deployed.
+Status: deployed with Server v0.27 / d835f00; the v0.24 source acceptance below is historical.
 Owner decision: default synchronization carries the conversation and necessary
 controls in the default Compact mode. Compact shows only user messages, assistant
 replies and output results, without work-process groups, tool cards or command

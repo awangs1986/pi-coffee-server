@@ -106,7 +106,7 @@ compaction behavior is owned by Codex, not reimplemented by the Web gateway.
 ## Distinct display controls (2026-10-13)
 
 The context-capacity selector still means nominal 272K or fixed 500K. Codex Speed
-selects the native service tier, with its own cost confirmation. The local v0.24
+selects the native service tier, with its own cost confirmation. The deployed
 “上下文显示” row below Speed selects Compact or Detailed browser delivery only.
 It does not alter tokens, compaction, model input, context attribution or cost tier.
 See [display modes](conversation-delivery.md) and [Speed](codex-speed-and-queued-input.md).

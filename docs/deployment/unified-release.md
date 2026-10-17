@@ -176,3 +176,12 @@ can make the audit appear clean while an upstream shrinkwrap still installs the
 older dependency. Fresh `npm ci`, native Pi/subagent integration and the complete
 Server check remain release gates. Source pins do not prove production activation;
 record the actual deployed Pi version and served assets in the Issue.
+
+## Same-VM deployment (2026-10-17)
+
+The current installation runs separate Web and Host user services on one VM.
+Use [the template](../../deploy/single-vm/README.md), immutable release identity,
+and [backup/restore](state-backup.md). Do not use the retired remote Web activation
+procedure on 192.168.100.101. Preserve public origin/DNS and validate authenticated
+Host-to-Web GitHub renewal as well as Web-to-Host health. Both Web entrypoints now
+share OAuth option parsing; the unified `dist/src/main.js web` entry is preferred.

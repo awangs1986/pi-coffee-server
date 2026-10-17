@@ -289,3 +289,14 @@ v0.22 / `1139720`. Installing Skill files alone did not activate the new general
 Host namespace parser. Other engine installations were not silently updated.
 See [#126 source evidence](https://github.com/awangs1986/pi-coffee-server/issues/126#issuecomment-6152119487)
 and the [weekly audit](../reviews/spec-freshness-20261013.md).
+
+### Command discovery recovery (2026-10-17)
+
+Browser command reads have a twelve-second deadline. A failed/timed-out read shows
+an explicit “重新读取命令” action in the current slash menu. Retrying does not
+navigate, reinstall Skills, create a task or send a prompt. A successful response
+clears the error; switching tasks resets the deadline and catalog. Native
+`disable-model-invocation` remains unchanged: explicit user commands are distinct
+from automatically advertised Skills. The transient refocus report had existing
+files and live catalogs; this fix covers a reproduced menu recovery gap, without
+claiming the exact production trigger was proven.

@@ -1,3 +1,4 @@
+import {githubOAuthOptions} from './web/github-oauth.js';
 import {savedMishuScopes} from './host/mishu-recovery.js';
 import {githubRenewalClient} from './host/github-renewal.js';
 import {homedir} from "node:os";
@@ -230,13 +231,11 @@ async function run(selectedRole: Role): Promise<void> {
     };
   }
 
-  const githubOAuthClient=process.env.PI_COFFEE_GITHUB_CLIENT_ID?.trim();
-  const githubOAuthSecret=process.env.PI_COFFEE_GITHUB_CLIENT_SECRET?.trim();
-  if(wantWeb&&Boolean(githubOAuthClient)!==Boolean(githubOAuthSecret))throw new Error('Configure both GitHub OAuth client ID and secret');
+  const githubOAuth=wantWeb?githubOAuthOptions():undefined;
   const web = !wantWeb ? undefined : new WebServer({
     restart:restartOptions(),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
-    ...(githubOAuthClient&&githubOAuthSecret?{githubOAuth:{clientId:githubOAuthClient,clientSecret:githubOAuthSecret,publicUrl:envString('PI_COFFEE_PUBLIC_URL','')}}:{}),
+    githubOAuth,
     host: envString("PI_COFFEE_WEB_BIND", "127.0.0.1"),
     port: envNumber("PI_COFFEE_WEB_PORT", 3000),
     hostUrl: process.env.PI_COFFEE_HOST_URL ?? `ws://127.0.0.1:${host?.address().port ?? envNumber("PI_COFFEE_HOST_PORT", 8788)}/host`,

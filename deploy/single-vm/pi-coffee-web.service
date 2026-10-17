@@ -1,0 +1,16 @@
+[Unit]
+Description=PI Coffee Web (same-VM deployment)
+After=network-online.target
+StartLimitIntervalSec=1800
+StartLimitBurst=3
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/pi-coffee-server/current
+EnvironmentFile=%h/.config/pi-coffee/web.env
+ExecStart=/usr/bin/node dist/src/main.js web
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+UMask=0077
+[Install]
+WantedBy=default.target

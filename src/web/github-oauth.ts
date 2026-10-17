@@ -3,6 +3,12 @@ import {createHash,randomBytes} from 'node:crypto';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 import {json} from '../shared/http.js';
 export interface GitHubOAuthOptions {clientId:string;clientSecret:string;publicUrl:string;providerUrl?:string;}
+/** Shared by unified and compatibility Web entrypoints. */
+export function githubOAuthOptions(env:NodeJS.ProcessEnv=process.env):GitHubOAuthOptions|undefined {
+ const clientId=env.PI_COFFEE_GITHUB_CLIENT_ID?.trim(),clientSecret=env.PI_COFFEE_GITHUB_CLIENT_SECRET?.trim();
+ if(Boolean(clientId)!==Boolean(clientSecret))throw Error('Configure both GitHub OAuth client ID and secret');
+ return clientId&&clientSecret?{clientId,clientSecret,publicUrl:env.PI_COFFEE_PUBLIC_URL?.trim()??''}:undefined;
+}
 /** Short-lived OAuth transactions only. Durable account credentials belong to Host. */
 export class GitHubOAuth {
   private readonly pending=new Map<string,{user:string;browser:string;verifier:string;expires:number}>();

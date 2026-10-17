@@ -1837,7 +1837,7 @@ function afterOpened() {
       renderAgentSettings();refreshComposer();
     },8000);
   }
-  if(supports('commands')){commandState='loading';send({ v: 1, type: 'get_commands' });}
+  if(supports('commands')){beginCommandRead();send({ v: 1, type: 'get_commands' });}
   if(supports('stats'))send({ v: 1, type: 'get_stats' });
   if (pluginsWaiting && supports('extensions')) send({ v: 1, type: 'get_extensions' });
 }
@@ -1955,9 +1955,9 @@ function handleFrame(frame, ws) {
       return;
     case 'command_catalog':
       if(opened||activeId||frame.engine!==$('#task-engine').value||frame.requestId!==commandRequest)return;
-      commandRequest=null;commandState='ready';commands=Array.isArray(frame.commands)?frame.commands:[];renderSlash();return;
+      finishCommandRead();commandRequest=null;commandState='ready';commands=Array.isArray(frame.commands)?frame.commands:[];renderSlash();return;
     case 'commands':
-      commandState='ready';
+      finishCommandRead();commandState='ready';
       commands = Array.isArray(frame.commands) ? frame.commands : [];
       renderSlash();
       return;
@@ -2025,8 +2025,8 @@ function handleFrame(frame, ws) {
       void loadRuntimeStatus();
       if(frame.code==='metadata_unavailable'){
         if(modelConfirmation&&frame.requestId===modelConfirmation){abandonPendingSettings();toast('模型设置确认失败，输入已保留');refreshComposer();return;}
-        if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令超时或失败';renderSlash();}
-        if(frame.operation==='get_commands'){commandState='error';commandError='读取命令超时或失败';renderSlash();}
+        if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;finishCommandRead();commandState='error';commandError='读取命令超时或失败';renderSlash();}
+        if(frame.operation==='get_commands'){finishCommandRead();commandState='error';commandError='读取命令超时或失败';renderSlash();}
         if(frame.operation==='get_model_catalog'&&frame.requestId===catalogRequest){catalogRequest=null;refreshComposer();}
         toast('辅助信息读取失败，当前任务仍可继续：'+frame.message,5000);return;
       }
@@ -2036,7 +2036,7 @@ function handleFrame(frame, ws) {
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
       if(thinkingPending&&frame.requestId===thinkingPending){thinkingPending=null;thinkingToApply=null;restoreQueuedPrompt();toast('思考强度设置失败：'+frame.message);renderModels();refreshComposer();return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
-      if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
+      if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;finishCommandRead();commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
       const rejectedPrompt=promptOutbox.get(frame.requestId);
@@ -2531,13 +2531,15 @@ function chooseThinking(level){
 ui.thinking.addEventListener('change',()=>chooseThinking(ui.thinking.value));
 
 // ---------- slash commands ----------
-let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null;
-function resetSlashCommands(){commands=[];commandRequest=null;commandState='idle';commandError='';ui.slash.classList.add('hidden');}
+let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null, commandTimer=null;
+function beginCommandRead(){clearTimeout(commandTimer);commandState='loading';commandError='';commandTimer=setTimeout(()=>{commandState='error';commandError='读取命令超时，请重试';renderSlash();},12000);}
+function finishCommandRead(){clearTimeout(commandTimer);commandTimer=null;commandError='';}
+function resetSlashCommands(){finishCommandRead();commands=[];commandRequest=null;commandState='idle';commandError='';ui.slash.classList.add('hidden');}
 function loadSlashCommands(){
   if(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)||!connected||commandState!=='idle')return;
-  if(opened){if(supports('commands')){commandState='loading';send({v:1,type:'get_commands'});}return;}
+  if(opened){if(supports('commands')){beginCommandRead();send({v:1,type:'get_commands'});}return;}
   if(activeId||pendingOpenId||!['pi','codex','claude'].includes($('#task-engine').value))return;
-  commandRequest=requestId('commands');commandState='loading';send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest});
+  commandRequest=requestId('commands');beginCommandRead();send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest});
 }
 function slashItems() {
   const value = ui.prompt.value;
@@ -2552,6 +2554,7 @@ function renderSlash() {
   const querying=ui.prompt.value.startsWith('/')&&!/\s/.test(ui.prompt.value);
   ui.slash.classList.toggle('hidden',!querying);
   if(!querying)return;
+  if(commandState==='error'){const retry=el('button','btn small');retry.type='button';retry.textContent='重新读取命令';retry.disabled=!connected;retry.addEventListener('click',()=>{commandState='idle';commandError='';loadSlashCommands();renderSlash();});ui.slash.appendChild(retry);}
   if(skillReloadScope&&opened){
     const reload=el('button','btn small');reload.type='button';reload.textContent='新安装或变更的 Skills 需要重新加载（仅空闲时）';
     reload.addEventListener('click',async()=>{const targetId=activeId,targetScope=skillReloadScope;reload.disabled=true;try{

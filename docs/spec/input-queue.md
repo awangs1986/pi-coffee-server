@@ -40,12 +40,24 @@ snapshots restore rows after refresh or reconnection. Pending text, images and
 mutations are never saved in browser storage. The queue holds at most 100 rows,
 512 KiB of UTF-8 text and 16 MiB of encoded image data per live session.
 
-Like the previous native follow-up queues, this is live Host memory, not a new
-persistent job scheduler. Browser disconnects do not lose it. Pending/failed rows
-prevent idle retirement, task lifecycle changes and context replacement. Session
-summaries expose a queued count so deployments wait for both active turns and
-queued instructions. Host restart must not be used to cancel or edit a queue.
-An unexpected native exit pauses remaining instructions for explicit recovery.
+Accepted user text and images are persisted before queue admission is acknowledged,
+in private atomic files under the account workspace registry's `.coffee/input-queues`.
+Sending state is persisted before native delivery. On Host replacement, opening the
+Conversation restores every retained row as failed/needs-confirmation with a new
+revision. It never automatically resends, including a row that was pending before
+shutdown. A delivery accepted just before a crash may still appear uncertain;
+users inspect native history before explicit retry. Cancel/edit/promote retain their
+existing scoped revision checks. Corrupt or oversized recovery data fails closed
+and is retained for inspection. Internal callback notifications remain owned by
+their existing MISHU journal and are not serialized as executable callbacks.
+
+Browser disconnects retain the live queue. Pending/failed rows prevent idle
+retirement and unsafe context replacement. Restored rows become visible when the
+Conversation opens; no native task is awakened solely to restore a sidebar badge.
+Explicit Stop still cancels pending instructions and persists that cancellation;
+service shutdown preserves them. This is recoverable user input, not an automatic
+persistent job scheduler. Browser-unsent drafts remain page-memory and are not
+covered by Host queue persistence.
 
 Pi extension commands are rejected before buffering. Native input hooks, Skill
 expansion and prompt templates run when an instruction is actually delivered,
