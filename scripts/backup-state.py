@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import stat
 from pathlib import Path
 
 
@@ -48,14 +49,19 @@ def create(config, destination):
             raise ValueError('Backup destination must be outside source roots')
     destination.mkdir(mode=0o700, parents=False, exist_ok=False)
     # An interrupted snapshot has no committed manifest and cannot pass verify.
+    omitted = []
+    def transient_files(directory, names):
+        skip = [name for name in names if stat.S_ISSOCK((Path(directory)/name).lstat().st_mode) or stat.S_ISFIFO((Path(directory)/name).lstat().st_mode)]
+        omitted.extend(str(Path(directory)/name) for name in skip)
+        return skip
     for label, value in roots.items():
         source = Path(value)
         if source.is_dir():
-            shutil.copytree(source, destination / label, symlinks=True)
+            shutil.copytree(source, destination / label, symlinks=True, ignore=transient_files)
         else:
             shutil.copy2(source, destination / label)
     subprocess.run(config['quiesceCheck'], check=True, capture_output=True, timeout=30)
-    manifest = {'version': 1, 'roots': roots, 'files': inventory(destination)}
+    manifest = {'version': 1, 'roots': roots, 'omittedTransientEndpoints': omitted, 'files': inventory(destination)}
     path = destination / 'manifest.json'
     with path.open('x') as file:
         json.dump(manifest, file)

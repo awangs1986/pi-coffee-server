@@ -22,7 +22,8 @@ Generated display indexes are rebuildable; queued-input recovery files are durab
 `create --config ... --destination NEW_DIRECTORY` requires the writer check before
 and after copying. Pause watchdog/restart triggers and stop writers for the entire
 snapshot. The destination must be outside source roots and must not already exist.
-Files are hashed, symlinks are retained without following them, and only a completed
+Files are hashed, symlinks are retained without following them, transient Unix
+sockets/FIFOs are excluded and listed privately in the manifest, and only a completed
 manifest makes the backup verifiable. Restrict the parent directory and snapshot
 permissions because native and authorization stores contain sensitive data.
 
