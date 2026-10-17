@@ -31,3 +31,13 @@ Service impact: Web restart disconnects browser transport without stopping Host
 runs. Host activation waits for other active/queued tasks; the deploying conversation
 is reported separately. Consistent backups require writers stopped. Source fixes
 and staged configuration are not claimed active before service/asset verification.
+
+## Observed Codex compaction notice regression
+
+A completed native contextCompaction item was translated to compaction_end without
+a result, while the Browser treated a missing result as failure. The adapter now
+includes an explicit native completion result without inventing summary text. The
+adapter-to-presentation regression test fails before the fix and passes after it;
+error, cancelled and genuinely absent-result events retain their failure behavior.
+This establishes a false failure notice, not that every reported provider
+compaction failure has the same cause. No context limits were reduced.

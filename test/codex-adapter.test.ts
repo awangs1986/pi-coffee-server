@@ -1,3 +1,4 @@
+import { compactionNotice } from "../public/context-status.js";
 import {HostSessionRegistry} from '../src/host/session.js';
 import { HostServer } from '../src/host/server.js';
 import { WebSocket } from 'ws';
@@ -272,7 +273,8 @@ describe("Codex app-server adapter", () => {
     const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'compact-test'});
     const events=recorder(session);let finished=false;const pending=session.compact().then(()=>{finished=true;});
     await new Promise(resolve=>setTimeout(resolve,15));expect(finished).toBe(false);
-    await pending;expect(events.events.some(e=>e.type==='compaction_end')).toBe(true);
+    await pending;const completed=events.events.find(e=>e.type==='compaction_end');expect(completed).toBeDefined();
+    expect(compactionNotice(completed).failure).toBe(false);
   });
 
   it("rejects pending compaction when its native process exits",async()=>{

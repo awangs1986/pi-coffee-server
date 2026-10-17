@@ -1082,7 +1082,8 @@ class CodexSession implements PiSession {
       case "contextCompaction":
         for (const entry of projectTurns([{ items: [item] }])) this.emit({ type: "sync_entity", entry });
         if(this.compactionPending)this.compactionPending.observed=true;
-        this.emit({ type: "compaction_end" });
+        // Native item completion is the result; Codex does not expose a Pi summary.
+        this.emit({ type: "compaction_end", result: { native: true } });
         return;
       default: {
         const tool = toolCallOf(item);
