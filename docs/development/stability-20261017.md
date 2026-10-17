@@ -41,3 +41,12 @@ adapter-to-presentation regression test fails before the fix and passes after it
 error, cancelled and genuinely absent-result events retain their failure behavior.
 This establishes a false failure notice, not that every reported provider
 compaction failure has the same cause. No context limits were reduced.
+
+## Identity login alias after migration
+
+Identity deployments retain GET /login as a no-store redirect to /auth/login.
+Older Browser tabs and saved login links can reach /login after a session expires;
+without the alias they received HTTP 404 even though the root shell still worked.
+Only the canonical conversation return destination is carried through OAuth;
+external URLs and noncanonical paths fall back to the root. This fixes the dead
+login destination, not the separate cause of a session expiring or losing transport.

@@ -1,4 +1,4 @@
-import {conversationReturnTo} from './conversation-route.js';
+import {conversationReturnTo,loginDestination} from './conversation-route.js';
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -79,9 +79,13 @@ export class Identity {
   }
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? '/', this.origin);
-    if (!['/auth/login','/auth/callback','/auth/logout','/api/me'].includes(url.pathname)) return false;
+    if (!['/login','/auth/login','/auth/callback','/auth/logout','/api/me'].includes(url.pathname)) return false;
     res.setHeader('cache-control','no-store');
     try {
+      if (url.pathname === '/login' && req.method === 'GET') {
+        res.writeHead(302,{location:loginDestination('/auth/login',conversationReturnTo(url.searchParams.get('returnTo')))});
+        res.end();return true;
+      }
       if (url.pathname === '/auth/login' && req.method === 'GET') {
         for (const [k,v] of this.states) if(v.expires < Date.now()) this.states.delete(k);
         if (this.states.size >= 1000) throw new Error('Try again later');

@@ -4,6 +4,23 @@ import { parseUserRoutes, type UserRoute } from '../src/web/identity.js';
 import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
 describe('Gitea identity and fixed VM routing',()=> {
+ it('recovers legacy login deep links after identity expiry without an open redirect',async()=> {
+  const web=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity:{giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'fixture',publicUrl:'http://coffee.test',routes:()=>({'7':{hostUrl:'ws://127.0.0.1:1/host',hostToken:'fixture'}}),fetch:(async(url)=>new Response(JSON.stringify(String(url).includes('access_token')?{access_token:'fixture'}:{id:7,login:'owner',active:true}))) as typeof fetch}});
+  await web.start();const base=`http://127.0.0.1:${web.address().port}`;
+  try {
+   expect((await fetch(base+'/auth/me',{headers:{cookie:'coffee_session=expired'}})).status).toBe(401);
+   const legacy=await fetch(base+'/login?returnTo=%2Fconversations%2Ftask',{redirect:'manual'});
+   expect(legacy.status).toBe(302);expect(legacy.headers.get('location')).toBe('/auth/login?returnTo=%2Fconversations%2Ftask');expect(legacy.headers.get('cache-control')).toBe('no-store');
+   const login=await fetch(base+legacy.headers.get('location'),{redirect:'manual'});
+   const state=new URL(login.headers.get('location')!).searchParams.get('state');
+   const callback=await fetch(base+`/auth/callback?state=${state}&code=x`,{redirect:'manual',headers:{cookie:login.headers.get('set-cookie')!.split(';')[0]}});
+   expect(callback.headers.get('location')).toBe('/conversations/task');
+   for(const target of ['https://evil.test','//evil.test','/conversations/task/extra']) {
+    const invalid=await fetch(base+'/login?returnTo='+encodeURIComponent(target),{redirect:'manual'});
+    expect(invalid.headers.get('location')).toBe('/auth/login');
+   }
+  }finally{await web.close();}
+ });
  it('accepts the UTF-8 BOM emitted by Windows PowerShell route files',()=> {
   expect(parseUserRoutes('\uFEFF{"4":{"hostUrl":"ws://127.0.0.1:8788/host","hostToken":"token"}}')).toEqual({
    '4':{hostUrl:'ws://127.0.0.1:8788/host',hostToken:'token'},
