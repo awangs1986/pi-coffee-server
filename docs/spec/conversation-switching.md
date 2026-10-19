@@ -167,13 +167,35 @@ See [Server #92](https://github.com/awangs1986/pi-coffee-server/issues/92).
 ## Temporary directories
 
 Host startup allocates a private directory under
-`~/.cache/pi-coffee/runtime-tmp/` (override with `PI_COFFEE_TMP_ROOT`). `TMPDIR`,
-`TMP`, and `TEMP` point there for native children. Use a disk-backed path; this
-avoids consuming tmpfs RAM for ordinary native temporary-file APIs. Graceful Host
-shutdown closes native factories before removing that Host's temporary directory.
-A crash may leave its directory for inspection; do not remove another live Host's
-or task's files. Programs that explicitly hardcode `/tmp` do not obey TMPDIR and
-are outside this routing guarantee.
+`~/.cache/pi-coffee/runtime-tmp/` by default (`PI_COFFEE_TMP_ROOT` overrides it).
+The opt-in `PI_COFFEE_TMP_STORAGE=memory` mode requires a separately mounted,
+owner-only tmpfs of at most 2 GiB and 131,072 inodes; an ordinary disk directory,
+shared large `/tmp`, or missing mount is rejected. Provision with
+`scripts/install-runtime-tmpfs.sh <host-system-user>` as root, then select
+`PI_COFFEE_TMP_ROOT=/run/picoffeetmp`. The mount uses `noswap`, `nodev` and `nosuid`;
+no broad `/tmp` migration or CLI prewarming is performed.
+
+Only disposable native scratch inherits `TMPDIR`, `TMP`, and `TEMP`. The cap is
+shared by this Host's users, not a per-user quota. Exhausted storage produces filesystem
+allocation errors; do not grow the mount, silently spill to disk, or restart in a
+loop. This is temporary storage, not an evictable conversation cache: a live
+process's files cannot safely be deleted based on age or high memory usage.
+
+Each Host directory contains an owner lease (PID, process start identity, boot ID,
+and cgroup). Graceful shutdown closes native factories before cleanup; surviving
+processes using the directory prevent deletion. Startup and a non-overlapping
+five-minute collector reclaim leased directories whose owner is gone and no
+relevant process retains the temporary-directory environment. PID reuse is not
+ownership. Unreadable relevant processes, unknown/malformed directories and
+symlinks are retained. Pre-existing protected daemons in unrelated cgroups cannot
+have inherited a later directory. This is an inherited-environment lifecycle
+boundary, not a guarantee for arbitrary privileged processes that hide/change
+their environment or explicitly copy/open another run's temporary paths.
+Systemd must retain `KillMode=control-group` for Host shutdown. Reboot clears the
+mount; crashes do not authorize deleting durable data. An active long-lived Host
+can retain native scratch until shutdown; the hard capacity bound contains this
+risk, and native producers remain responsible for prompt cleanup of their files.
+Programs hardcoding `/tmp` bypass this routing and remain outside this guarantee.
 
 `npm run check` allocates one private disk-backed run directory under
 `~/.cache/pi-coffee/checks/` (override with `PI_COFFEE_CHECK_TMP_ROOT`), passes it to

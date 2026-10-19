@@ -13,7 +13,8 @@ import {GitHubAccounts} from "./host/github-accounts.js";
 import { HostPiRuntime } from "./host/pi-runtime.js";
 import { parseUserRoutes, type IdentityOptions } from "./web/identity.js";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import {createRuntimeTemp} from "./host/runtime-temp.js";
 import { dirname, join, resolve } from "node:path";
 import { CodexSessionFactory } from "./host/codex-adapter.js";
 import { HostServer, type UserScope } from "./host/server.js";
@@ -66,13 +67,12 @@ async function run(selectedRole: Role): Promise<void> {
 
   const wantHost = selectedRole !== "web" && selectedRole !== "relay";
   const workdir = process.env.PI_COFFEE_WORKDIR ?? process.cwd();
-  let runtimeTemp:string|undefined;
+  let runtimeTemp:Awaited<ReturnType<typeof createRuntimeTemp>>|undefined;
   if(wantHost){
     const tempRoot=process.env.PI_COFFEE_TMP_ROOT || join(homedir(),'.cache','pi-coffee','runtime-tmp');
-    await mkdir(tempRoot,{recursive:true,mode:0o700});
-    runtimeTemp=await mkdtemp(join(tempRoot,'host-'));
-    // Native children and their ordinary temporary-file APIs inherit disk storage.
-    process.env.TMPDIR=process.env.TMP=process.env.TEMP=runtimeTemp;
+    runtimeTemp=await createRuntimeTemp(tempRoot,process.env.PI_COFFEE_TMP_STORAGE);
+    // Only disposable native scratch inherits this directory.
+    process.env.TMPDIR=process.env.TMP=process.env.TEMP=runtimeTemp.path;
   }
   // Optional HTTPS route (internal CA). 0.1 runs plain HTTP; when a
   // certificate is given, both browser-facing surfaces must use one, because a
@@ -253,7 +253,7 @@ async function run(selectedRole: Role): Promise<void> {
     await host?.close();
     await transfer?.close();
     await relay?.close();
-    if(runtimeTemp)await rm(runtimeTemp,{recursive:true,force:true});
+    await runtimeTemp?.close();
   };
   process.once("SIGINT", () => void shutdown().finally(() => process.exit(0)));
   process.once("SIGTERM", () => void shutdown().finally(() => process.exit(0)));

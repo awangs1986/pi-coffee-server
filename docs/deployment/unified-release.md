@@ -131,13 +131,25 @@ arbitrary programs launched in the owner's unrestricted VM.
 
 ## Temporary storage and live-task rollout
 
-Host allocates temporary storage on disk under `~/.cache/pi-coffee/runtime-tmp`;
-`PI_COFFEE_TMP_ROOT` can select another private disk-backed directory. Native
-children inherit TMPDIR/TMP/TEMP. Do not point this root at tmpfs, task workspaces,
-or native account stores. Graceful shutdown removes only the current Host's run
-directory after native shutdown. Retain crash remnants until confirmed unused.
-The check runner owns and removes its separate temporary run directory even when
-tests fail. Explicit `/tmp` paths in user commands bypass these environment settings.
+Disk-backed native scratch remains the default. For the approved large-memory VM,
+provision the dedicated capped tmpfs with `sudo scripts/install-runtime-tmpfs.sh
+awang`; it mounts `/run/picoffeetmp` with a 2 GiB byte limit, 131,072 inode limit,
+0700 ownership and `noswap`. This does not change `/tmp` or restart Host.
+After idle-gated release activation, append an EnvironmentFile containing
+`PI_COFFEE_TMP_STORAGE=memory` and `PI_COFFEE_TMP_ROOT=/run/picoffeetmp` to the Host
+unit. EnvironmentFiles override Environment=; verify effective process settings,
+mount options and child TMPDIR after restart. Keep KillMode=control-group.
+
+Host checks the mount and creates a private leased run directory. Normal shutdown
+cleans it after native processes stop; startup/every five minutes reclaims only
+provably abandoned leased directories. Active files are never age-evicted. Exhausted
+capacity fails allocation without automatic growth/restart/spillover. See the
+[lifecycle boundaries](../spec/conversation-switching.md#temporary-directories).
+Builds/tests, attachments, repositories, durable native histories, Skills, account
+stores and release artifacts remain on disk. Explicit `/tmp` paths bypass routing.
+To roll back, drain tasks, stop Host, remove the memory-mode environment override,
+and restart in the default disk mode. Do not unmount a filesystem in use. Provisioning
+and source verification are not proof that production has selected the new mode.
 
 Before replacing a Host, query all routed user scopes for active turns and queued
 input. A conversation delivering the deployment itself also counts as active.
