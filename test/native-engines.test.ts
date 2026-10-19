@@ -254,7 +254,7 @@ it('does not treat an unknown Task identifier as a new Pi Session',async()=>{
  const app=await start(undefined,true);const client=await connect(app.host,'unknown-task');expect(await client.next(f=>f.type==='error'||f.type==='opened')).toMatchObject({type:'error',message:expect.stringContaining('Unknown Task')});client.socket.close();
 });
 
-it.each(['0.156.1','0.159.1'])('discovers verified Codex %s and opens a Task with empty native history',async(version)=>{
+it.each(['0.156.1','0.159.1','0.163.0'])('discovers verified Codex %s and opens a Task with empty native history',async(version)=>{
  const app=await start(undefined,true,'codex',{FIXTURE_VERSION:'codex-cli '+version});
  const response=await fetch(`http://127.0.0.1:${app.host.address().port}/api/engines`,{headers:{authorization:'Bearer test-token'}});
  expect((await response.json()).engines.find((e:any)=>e.id==='codex')).toMatchObject({available:true,authentication:'configured'});

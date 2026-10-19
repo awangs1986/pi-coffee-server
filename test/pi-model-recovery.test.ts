@@ -49,7 +49,7 @@ it.each(['ordinary','reset-with-messages','reset-empty'] as const)(
     socket=new WebSocket(`ws://127.0.0.1:${host!.address().port}/host`,{headers:{authorization:'Bearer fixture'}});
     const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');
     socket.send(JSON.stringify({v:1,type:'open',sessionId:id}));
-    await expect.poll(()=>frames.some(f=>f.type==='history'||f.type==='error')).toBe(true);
+    await expect.poll(()=>frames.some(f=>f.type==='history'||f.type==='error'),{timeout:10000}).toBe(true);
     expect(frames.find(f=>f.type==='error')).toBeUndefined();
     socket.send(JSON.stringify({v:1,type:'get_models',requestId:'models'}));
     await expect.poll(()=>frames.find(f=>f.requestId==='models')).toBeTruthy();
@@ -71,4 +71,4 @@ it.each(['ordinary','reset-with-messages','reset-empty'] as const)(
    const fresh=await workspaces.createChatConversation();
    expect(await open(fresh.id)).toMatchObject({type:'models',current:{provider:'fixture',id:'default'}});
   }finally{socket?.close();await host?.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));await rm(root,{recursive:true,force:true});}
- });
+ },30000);

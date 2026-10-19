@@ -34,3 +34,11 @@ the configured auto-compaction threshold remains 475K. Version age or a 500K
 selection alone does not establish the cause of the earlier reported failure.
 Latest-source provenance fields are not permission to infer precise context
 categories from cumulative usage or parse another user's native sessions.
+
+The verified Codex version must also appear in NativeAgentFactory's readiness
+allowlist and the HTTP engine-discovery regression matrix. An isolated App Server
+probe is insufficient: after activation, query the owner's authenticated
+/api/engines endpoint and require Codex available=true with the expected version.
+This metadata-only probe must not create a conversation or send a model turn.
+The 0.163.0 entry was missing after its initial installation; this caused the Web
+readiness gate to reject a compatible executable despite successful --version.

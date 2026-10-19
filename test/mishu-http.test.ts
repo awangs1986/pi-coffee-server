@@ -791,7 +791,9 @@ for(const mode of ['late','disabled','busy','revoked','restart-queued','restart-
   if(mode==='queue-recover'){
    await expect.poll(async()=>(await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports?.[0]?.admissionFailures,{timeout:10000}).toBe(1);
    for(const row of src.frames.filter(f=>f.type==='queue_state').at(-1).items)src.ws.send(JSON.stringify({v:1,type:'queue_action',requestId:randomUUID(),id:row.id,revision:row.revision,action:'cancel'}));
-   await expect.poll(()=>src.frames.filter(f=>f.type==='queue_state').at(-1)?.items.some((q:any)=>q.readOnly),{timeout:10000}).toBe(true);
+   // Wait for every user cancellation to commit before finishing the foreground.
+   // Admission of the internal row can happen after only the first free slot.
+   await expect.poll(()=>{const rows=src.frames.filter(f=>f.type==='queue_state').at(-1)?.items;return rows?.length===1&&rows[0].readOnly===true;},{timeout:10000}).toBe(true);
    expect((await(await req({...base,operation:'get',taskId:brief.taskId})).json()).task.reports[0]).toMatchObject({state:'admitted',recoveries:1});finishForeground();
   }
   if(mode==='budget'||mode==='queue-full'){

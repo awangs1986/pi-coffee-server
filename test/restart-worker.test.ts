@@ -12,7 +12,7 @@ afterEach(async()=>{await new Promise<void>(done=>server?server.close(()=>done()
 async function fixture(failHost=false){
  root=await mkdtemp(join(tmpdir(),'coffee-restart-worker-'));const id=randomUUID(),now=Date.now();
  const op={id,owner:'login:owner',phase:'scheduled',createdAt:now,updatedAt:now};
- for(const file of ['operation.json','request.json'])await writeFile(join(root,file),JSON.stringify(op));
+ for(const file of ['operation.json','request.json'])await writeFile(join(root,file),JSON.stringify(op),{mode:0o600});
  const program=join(root,'service.mjs');await writeFile(program,`import {appendFileSync,writeFileSync} from 'node:fs';import {join} from 'node:path';const [root,step]=process.argv.slice(2);appendFileSync(join(root,'log'),step+'\\n');if(step==='host')writeFileSync(join(root,'host-ready'),'1');if(step==='web')writeFileSync(join(root,'web-ready'),'1');`);
  server=createServer((req,res)=>{const role=req.url==='/healthz?role=host'?'host':'web';if(!existsSync(join(root,role+'-ready'))||(failHost&&role==='host')){res.writeHead(503).end();return;}res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({ok:true,role}));});
  await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));const port=(server.address() as {port:number}).port;
@@ -32,13 +32,13 @@ it('stops after failed Host health, records failure and resumes paused watchdogs
  await f.run();expect((await readFile(join(root,'log'),'utf8')).split('\n').filter(x=>x==='host')).toHaveLength(1);
 });
 it('records an interrupted prior attempt instead of repeating unknown service actions',async()=>{
- const f=await fixture(),op=await f.status();await writeFile(join(root,'operation.json'),JSON.stringify({...op,phase:'running'}));
+ const f=await fixture(),op=await f.status();await writeFile(join(root,'operation.json'),JSON.stringify({...op,phase:'running'}),{mode:0o600});
  await expect(f.run()).rejects.toThrow();expect(await f.status()).toMatchObject({phase:'failed',reason:'interrupted_attempt'});expect(existsSync(join(root,'log'))).toBe(false);
  await f.run();expect(existsSync(join(root,'log'))).toBe(false);
 });
 it('reconciles a terminal current state with a stranded receipt without executing services again',async()=>{
- const f=await fixture(),op=await f.status();await mkdir(join(root,'receipts'));await writeFile(join(root,'receipts',f.id+'.json'),JSON.stringify({...op,phase:'running'}));
- await writeFile(join(root,'operation.json'),JSON.stringify({...op,phase:'succeeded'}));await f.run();
+ const f=await fixture(),op=await f.status();await mkdir(join(root,'receipts'),{mode:0o700});await writeFile(join(root,'receipts',f.id+'.json'),JSON.stringify({...op,phase:'running'}),{mode:0o600});
+ await writeFile(join(root,'operation.json'),JSON.stringify({...op,phase:'succeeded'}),{mode:0o600});await f.run();
  expect(JSON.parse(await readFile(join(root,'receipts',f.id+'.json'),'utf8'))).toMatchObject({phase:'succeeded'});expect(existsSync(join(root,'log'))).toBe(false);
 });
 it('rejects a symlinked receipt directory before any service or outside-file mutation',async()=>{

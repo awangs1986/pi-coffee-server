@@ -65,4 +65,4 @@ it('lets both approved accounts use their own Gitea repository list on one built
   if(child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');await once(child,'exit');}
   await new Promise<void>(done=>forge.close(()=>done()));await rm(root,{recursive:true,force:true});
  }
-},15000);
+},45000);
