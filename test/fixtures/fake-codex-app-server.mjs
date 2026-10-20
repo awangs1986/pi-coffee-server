@@ -211,6 +211,7 @@ async function runTurn(thread, input, options) {
   notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
 }
 
+let experimentalApi = false;
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let message;
@@ -225,7 +226,7 @@ rl.on("line", (line) => {
   const reply = (result) => send({ id, result });
   const fail = (text) => send({ id, error: { code: -32000, message: text } });
   switch (method) {
-    case "initialize": return reply({ userAgent: "fake", codexHome: home, platformFamily: "unix", platformOs: "linux" });
+    case "initialize": experimentalApi = params.capabilities?.experimentalApi === true; return reply({ userAgent: "fake", codexHome: home, platformFamily: "unix", platformOs: "linux" });
     case "initialized": return;
     case "account/read": return reply(rateLimits ? { account: { type: "chatgpt", email: "vm-owner@example.com", planType: rateLimits.planType }, requiresOpenaiAuth: true } : { account: null, requiresOpenaiAuth: false });
     case "getAuthStatus": return reply({ authMethod: rateLimits ? "chatgpt" : "apiKey", requiresOpenaiAuth: true });
@@ -344,6 +345,7 @@ rl.on("line", (line) => {
       void runTurn(thread,[{type:'text',text:'NATIVE_REVIEW:'+params.target.type+':'+thread.model}],{});return;
     }
     case "turn/start": {
+      if (params.collaborationMode && !experimentalApi) return fail("turn/start.collaborationMode requires experimentalApi capability");
       writeFileSync(join(home,"fake-service-tier.json"),JSON.stringify(params.serviceTier??null));
       writeFileSync(join(home,"fake-input.json"),JSON.stringify(params.input));
       const thread = threads[params.threadId];

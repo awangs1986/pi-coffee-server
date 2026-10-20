@@ -6,6 +6,8 @@ Source inventory: [Codex rust-v0.163.0 slash_command.rs](https://github.com/open
 
 ## Contract
 
+- Codex App Server execution connections declare `capabilities.experimentalApi: true` during initialize before sending native goals or turn collaborationMode. Ordinary prompts and resumed Plan turns use the same initialized connection.
+
 - Native commands have precedence over matching Skill names; Skills remain explicitly invocable via their native dollar-name syntax. Pi command handling is unchanged.
 - Recognized commands are routed before normal prompt delivery. Unknown or unavailable slash commands retain the draft and show a reason. Attachments are not silently sent with command operations.
 - Engine-neutral command frames accept only a name and bounded argument string. Host selects the authenticated socket's open Session; client-supplied native thread IDs and arbitrary RPC methods are never accepted. Results are request/selection/account fenced and bounded to 64 KiB. No automatic mutation retry after timeout or reconnect.
