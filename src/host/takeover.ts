@@ -60,7 +60,20 @@ export async function priorHistory(root:string,segment:TakeoverSegment):Promise<
  const history:AgentHistory=JSON.parse(await readFile(join(dir,segment.id+'-history.json'),'utf8'));
  return [...history.entries.map(e=>({...e,id:segment.id+':'+e.id})),{kind:'note',id:segment.id+':switch',at:segment.at,text:`Agent 交接：${segment.from==='pi'?'Pi':'Codex'} → ${segment.to==='pi'?'Pi':'Codex'}。历史保留；新 Agent 使用独立原生会话。`}];
 }
-export function withPriorHistory(session:AgentSession,previous:HistoryEntry[]):AgentSession{
- return new Proxy(session,{get(target,key){if(key==='getHistory')return async()=>{const history=await target.getHistory();return {...history,entries:[...previous,...history.entries.filter(e=>!(e.kind==='user'&&e.text.startsWith(TAKEOVER_PREFIX))).map(e=>e.kind==='assistant'?{...e,text:e.text.replace(/\n?\[TAKEOVER_(READY|BLOCKED)\]\s*$/,'')}:e)]};};const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;}});
+export function withPriorHistory(session:AgentSession,previous:HistoryEntry[]|(()=>Promise<HistoryEntry[]>)):AgentSession{
+ const prior=()=>typeof previous==='function'?previous():Promise.resolve(previous);
+ const hasPrior=typeof previous==='function'||previous.length>0;
+ const visible=(entries:HistoryEntry[])=>entries.filter(e=>!(e.kind==='user'&&e.text.startsWith(TAKEOVER_PREFIX))).map(e=>e.kind==='assistant'?{...e,text:e.text.replace(/\n?\[TAKEOVER_(READY|BLOCKED)\]\s*$/,'')}:e);
+ return new Proxy(session,{get(target,key){
+  if(key==='getHistory')return async()=>{const history=await target.getHistory();return {...history,entries:[...await prior(),...visible(history.entries)]};};
+  if(key==='getHistoryPage'&&target.getHistoryPage)return async(cursor?:string)=>{
+   if(cursor?.startsWith('prefix:')){const entriesBefore=await prior();const end=cursor==='prefix:latest'?entriesBefore.length:Number(cursor.slice(7));if(!Number.isSafeInteger(end)||end<0||end>entriesBefore.length)throw Error('history_page_expired');const entries=entriesBefore.slice(Math.max(0,end-40),end);return {entries,leafId:entries.at(-1)?.id??null,coverage:'recent' as const,olderCursor:end>40?'prefix:'+(end-40):null};}
+   if(cursor&&!cursor.startsWith('native:'))throw Error('history_page_expired');
+   const page=await target.getHistoryPage!(cursor?decodeURIComponent(cursor.slice(7)):undefined);
+   return {...page,entries:visible(page.entries),olderCursor:page.olderCursor?'native:'+encodeURIComponent(page.olderCursor):hasPrior?'prefix:latest':null};
+  };
+  const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+ }});
 }
+
 export const takeoverId=()=>randomUUID();

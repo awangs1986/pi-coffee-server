@@ -2,22 +2,23 @@
 // histories are different sources; neither may repaint a later selection.
 export class ConversationDisplay {
   constructor({repository,view,status,renderNative,onIndex=()=>{},onState=()=>{}}) {
-    Object.assign(this,{repository,view,status,renderNative,onIndex,onState});this.generation=0;this.recent=[];this.id=null;this.scope=null;this.mode='preview';this.hasIndex=false;
+    Object.assign(this,{repository,view,status,renderNative,onIndex,onState});this.generation=0;this.recent=[];this.id=null;this.scope=null;this.mode='preview';this.hasIndex=false;this.nativeRecent=new Set();
   }
   select(id) {
     this.generation++;this.unsubscribe?.();this.unsubscribe=null;
     this.id=id;this.indexed=false;this.mode='preview';this.hasIndex=false;this.view.select(id);this.status.select(id);
-    if(this.scope!==this.repository.scope){this.scope=this.repository.scope;this.recent=[];}
+    if(this.scope!==this.repository.scope){this.scope=this.repository.scope;this.recent=[];this.nativeRecent.clear();}
     if(!id||!this.scope)return;
     const generation=this.generation,scope=this.scope;
     const current=()=>generation===this.generation&&scope===this.repository.scope;
-    const update=(state,details={})=>{if(current())this.update(state,details);};
+    const update=(state,details={})=>{if(current()&&!this.nativeRecent.has(id))this.update(state,details);};
     this.unsubscribe=this.repository.subscribe(id,update);
     this.status.update({conversationId:id,state:'syncing'});
-    const cached=this.repository.peek(id);if(cached)update(cached,{reason:'local'});
-    void this.repository.getLocal(id).then(state=>{if(state&&current()&&!this.hasIndex)this.update(state,{reason:'local'});}).catch(()=>{});
+    const cached=this.nativeRecent.has(id)?undefined:this.repository.peek(id);if(cached)update(cached,{reason:'local'});
+    if(!this.nativeRecent.has(id))void this.repository.getLocal(id).then(state=>{if(state&&current()&&!this.hasIndex)this.update(state,{reason:'local'});}).catch(()=>{});
     this.recent=[id,...this.recent.filter(key=>key!==id)].slice(0,5);
-    this.repository.watch(this.recent);void this.repository.sync(id,{priority:0});
+    this.nativeRecent=new Set([...this.nativeRecent].filter(key=>this.recent.includes(key)));
+    this.repository.watch(this.recent.filter(key=>!this.nativeRecent.has(key)));if(!this.nativeRecent.has(id))void this.repository.sync(id,{priority:0});
   }
   update(state,details) {
     if(state.conversationId!==this.id||this.mode==='native')return;
@@ -35,6 +36,7 @@ export class ConversationDisplay {
     if(frame.sessionId!==this.id)return false;
     const id=this.id,generation=this.generation;
     this.indexed=frame.syncProtocol===2;
+    if(frame.recentPage){this.nativeRecent.add(id);this.repository.unwatch?.(id);}else if(this.nativeRecent.delete(id))this.repository.watch(this.recent.filter(key=>!this.nativeRecent.has(key)));
     if(this.indexed){
       this.mode='index';
       void this.repository.ingestSnapshot(id,{...frame,conversationId:id,appliedRevision:frame.baseRevision}).then(()=>{
@@ -49,5 +51,5 @@ export class ConversationDisplay {
   }
   invalidate(id){if(id!==this.id)return;this.hasIndex=false;this.mode='preview';this.view.select(id);}
   preview(render) {if(this.mode!=='preview'||this.hasIndex)return false;return render();}
-  dispose(){this.select(null);this.recent=[];}
+  dispose(){this.select(null);this.recent=[];this.nativeRecent.clear();}
 }

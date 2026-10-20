@@ -275,23 +275,29 @@ export class HostServer {
       }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
     }
     const readUrl=new URL(req.url??'/', 'http://host');
-    const syncRoute=/^\/api\/conversations\/([^/]+)\/(meta|page|changes|content|commands)$/.exec(readUrl.pathname);
+    const syncRoute=/^\/api\/conversations\/([^/]+)\/(meta|page|changes|content|commands|recent-page|recent-content)$/.exec(readUrl.pathname);
     if(syncRoute){
       res.setHeader('cache-control','no-store');
       if(req.method!=='GET'){json(res,405,{error:'Use GET'});return;}
-      if(!slot.index||!this.syncV2Enabled){json(res,503,{error:'sync_unavailable'});return;}
+      if((!slot.index||!this.syncV2Enabled)&&!syncRoute[2].startsWith('recent-')){json(res,503,{error:'sync_unavailable'});return;}
       try {
         const id=decodeURIComponent(syncRoute[1]);if(!id||id.length>256||/[\/\\\x00]/.test(id)){json(res,400,{error:'invalid_conversation'});return;}
         if(slot.workspaces && ((!await slot.workspaces.lookup(id)&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
         const args=Object.fromEntries(readUrl.searchParams);if(args.displayMode!==undefined&&!['compact','detailed'].includes(args.displayMode)){json(res,400,{error:'invalid_display_mode'});return;}if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
         let value:unknown;
-        if(syncRoute[2]==='meta')value=await slot.index.meta(id);
-        else if(syncRoute[2]==='page')value=await slot.index.page(id,args);
-        else if(syncRoute[2]==='changes')value=await slot.index.changes(id,args);
-        else if(syncRoute[2]==='commands')value=await slot.index.commands(id,args);
-        else value=await slot.index.content(id,args);
+        if(syncRoute[2].startsWith('recent-')){
+          const session=slot.registry.get(id),task=await slot.workspaces?.lookup(id);
+          if(!session||task?.nativeBinding?.id&&session.displayBinding()!==task.nativeBinding.id){json(res,409,{error:'history_page_expired'});return;}
+          value=syncRoute[2]==='recent-page'?await session.displayPage(args.displayMode==='detailed'?'detailed':'compact',args.cursor):session.displayContent(args.token??'');
+          if(slot.workspaces){const current=await slot.workspaces.lookup(id);if(!current||current.archived||current.cleanupStarted||current.workspaceRemoved||current.nativeBinding?.id!==task?.nativeBinding?.id){json(res,409,{error:'history_page_expired'});return;}}
+        }
+        else if(syncRoute[2]==='meta')value=await slot.index!.meta(id);
+        else if(syncRoute[2]==='page')value=await slot.index!.page(id,args);
+        else if(syncRoute[2]==='changes')value=await slot.index!.changes(id,args);
+        else if(syncRoute[2]==='commands')value=await slot.index!.commands(id,args);
+        else value=await slot.index!.content(id,args);
         json(res,200,value);
-      }catch(error){const code=error instanceof ConversationIndexError?error.code:'index_unavailable';json(res,['reset_required','entity_changed','entity_deleted','conversation_deleted'].includes(code)?409:code.startsWith('invalid')||code==='limit_too_small'?400:503,{error:code,...(error instanceof ConversationIndexError?error.meta:{})});}
+      }catch(error){const code=error instanceof ConversationIndexError?error.code:syncRoute[2].startsWith('recent-')&&error instanceof Error&&['history_page_expired','history_read_busy','history_page_too_large'].includes(error.message)?error.message:'index_unavailable';json(res,['reset_required','entity_changed','entity_deleted','conversation_deleted','history_page_expired'].includes(code)?409:code.startsWith('invalid')||code==='limit_too_small'?400:503,{error:code,...(error instanceof ConversationIndexError?error.meta:{})});}
       return;
     }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
@@ -798,6 +804,7 @@ class HostSocket implements SessionSink {
   private syncProtocol?:2;
   private displayRead?:Promise<unknown>;
   private displayEpoch=0;
+  private recentHistory=false;
   private displayMode:"compact"|"detailed"="detailed";
   private bindingEpoch?:string;
   private index?:ConversationIndex;
@@ -891,7 +898,7 @@ class HostSocket implements SessionSink {
     const current=()=>!this.closed&&this.session===target&&this.bindingEpoch===binding&&this.displayEpoch===epoch;
     const work=this.syncProtocol===2&&this.index
       ? this.index.page(id,{displayMode:frame.mode}).then(page=>({page,legacy:undefined}))
-      : this.registry.open(id).then(legacy=>({page:undefined,legacy}));
+      : this.registry.open(id,undefined,this.recentHistory?this.displayMode:undefined).then(legacy=>({page:undefined,legacy}));
     this.displayRead=work;
     const timer=setTimeout(()=>{expired=true;if(current())this.send({v:1,type:'error',code:'display_read_timeout',message:'Display history read timed out; native task continues',...rid(frame)});},this.metadataTimeoutMs);timer.unref();
     void work.then(result=>{
@@ -905,7 +912,7 @@ class HostSocket implements SessionSink {
       }else if(result.legacy){
         const snapshot=result.legacy;
         const entries=frame.mode==='compact'?snapshot.history.entries.map(compactEntry).filter(Boolean):snapshot.history.entries;
-        this.send({...boundedHistoryFrame(id,entries,snapshot.history.leafId),displayRefresh:true,completionId:snapshot.completionId});
+        this.send({...boundedHistoryFrame(id,entries,snapshot.history.leafId),displayRefresh:true,completionId:snapshot.completionId,...(snapshot.recentPage?{recentPage:snapshot.recentPage,truncated:Boolean(snapshot.recentPage.olderCursor)}:{})});
         for(const replay of snapshot.session.filterReplay(snapshot.replay))if(replay.type==='event'&&isTranscriptEvent(replay.event))this.send(replay);
         if(snapshot.resync)this.send({v:1,type:'resync_required',sessionId:id,...snapshot.resync});
       }
@@ -1141,7 +1148,7 @@ class HostSocket implements SessionSink {
     const sessionId = frame.sessionId ?? randomUUID();
     const capabilities = await this.factory.capabilities?.(sessionId) ?? capabilitiesFor(engine);
     if (this.closed) return;
-    this.displayMode=frame.displayMode??"detailed";
+    this.displayMode=frame.displayMode??"detailed";this.recentHistory=frame.recentHistory===true;
     let syncPage:any;
     let useSync=frame.syncProtocol===2&&this.syncV2Enabled&&Boolean(this.index);
     if(useSync){
@@ -1158,10 +1165,11 @@ class HostSocket implements SessionSink {
       // the admission snapshot. Recheck the page that will actually be sent.
       if(!syncPage.lastSourceCheckAt || syncPage.sourceFreshness!=='current'){
         useSync=false;syncPage=undefined;
-        return this.registry.open(sessionId,frame.after);
+        return this.registry.open(sessionId,frame.after,this.recentHistory?this.displayMode:undefined);
       }
-      return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},completionId:null,replay:[] as ServerFrame[],resync:undefined};
-    })() : await this.registry.open(sessionId, frame.after);
+      return {session,history:{entries:syncPage.entries,leafId:syncPage.entries.at(-1)?.id??null},completionId:null,recentPage:undefined,replay:[] as ServerFrame[],resync:undefined};
+    })() : await this.registry.open(sessionId, frame.after,this.recentHistory?this.displayMode:undefined);
+    void this.index?.recentDisplay(sessionId,Boolean(result.recentPage)).catch(()=>undefined);
     this.syncProtocol=useSync?2:undefined;
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
@@ -1182,7 +1190,7 @@ class HostSocket implements SessionSink {
       cursor: result.session.currentCursor,
       state,
     });
-    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:{...boundedHistoryFrame(result.session.id, this.displayMode==='compact'?result.history.entries.map(compactEntry).filter(Boolean):result.history.entries, result.history.leafId),completionId:result.completionId});
+    this.send(syncPage?{v:1,type:'history',sessionId:result.session.id,entries:syncPage.entries,leafId:result.history.leafId,truncated:Boolean(syncPage.olderCursor),syncProtocol:2,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision,headRevision:syncPage.headRevision,lastSourceCheckAt:syncPage.lastSourceCheckAt,snapshotId:syncPage.snapshotId,olderCursor:syncPage.olderCursor,sourceFreshness:syncPage.sourceFreshness}:{...boundedHistoryFrame(result.session.id, this.displayMode==='compact'?result.history.entries.map(compactEntry).filter(Boolean):result.history.entries, result.history.leafId),completionId:result.completionId,...(result.recentPage?{recentPage:result.recentPage,truncated:Boolean(result.recentPage.olderCursor)}:{})});
     if(syncPage)this.index!.scheduleAudit(sessionId,true);
 
     if (result.resync) {

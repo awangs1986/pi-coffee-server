@@ -44,7 +44,7 @@ function boundedWeight(value:unknown):number {
   while(pending.length&&bytes<=256*1024){const item=pending.pop();if(++visited>2048)return 256*1024+1;if(typeof item==='string')bytes+=item.length*3+16;else if(item&&typeof item==='object'){const keys=Object.keys(item);if(keys.length>2048)return 256*1024+1;bytes+=keys.length*16;for(const key of keys)pending.push((item as any)[key]);}else bytes+=16;}
   return bytes;
 }
-interface Actor {tail:Promise<any>;bytes:number;audit?:Promise<void>;lastAccess:number;lastAudit:number;deleted:boolean;}
+interface Actor {tail:Promise<any>;bytes:number;audit?:Promise<void>;lastAccess:number;lastAudit:number;deleted:boolean;auditsSuspended?:boolean;}
 export interface ConversationIndexOptions { root:string; factory:AgentSessionFactory; userScope:string; onChange?:(meta:ConversationMeta)=>void; auditIntervalMs?:number; retainBytes?:number; }
 /** Per-conversation single writer; no native Session ownership and no prompt delivery. */
 export class ConversationIndex {
@@ -78,9 +78,15 @@ export class ConversationIndex {
   private async write(id:string,action:string,args:any,weight=0,touch=true):Promise<ConversationMeta> {
     const actor=this.actor(id,touch);if(actor.bytes+weight>256*1024)return Promise.reject(new ConversationIndexError('index_overloaded'));
     actor.bytes+=weight;
-    const work=actor.tail.then(()=>{if(actor.deleted)throw new ConversationIndexError('conversation_deleted');return this.request(id,action,args);});
+    const work=actor.tail.then(()=>{if(actor.deleted)throw new ConversationIndexError('conversation_deleted');if(action==='reconcile'&&actor.auditsSuspended)throw new ConversationIndexError('audit_suspended');return this.request(id,action,args);});
     actor.tail=work.catch(()=>undefined).finally(()=>{actor.bytes-=weight;});
     return this.track(work.then(meta=>{this.options.onChange?.(meta);return meta;}));
+  }
+  async recentDisplay(id:string,enabled:boolean):Promise<void>{
+    const existing=this.actors.get(id);if(!enabled&&!existing?.auditsSuspended)return;
+    const actor=this.actor(id);actor.auditsSuspended=enabled;
+    if(enabled)await this.request(id,'freshness',{freshness:'unknown'});
+    else this.scheduleAudit(id,true);
   }
   async meta(id:string):Promise<ConversationMeta> {this.actor(id);const value=await this.request(id,'meta');this.scheduleAudit(id);return value;}
   async page(id:string,args:any={}) {this.actor(id);const value=await this.request(id,'page',args);this.scheduleAudit(id);return value;}
@@ -101,7 +107,7 @@ export class ConversationIndex {
   scheduleAudit(id:string,force=false) {
     if(this.closing||this.closed||!this.options.factory.readHistory)return;
     let actor:Actor;try{actor=this.actors.get(id)??this.actor(id);}catch{return;}
-    if(actor.audit||this.auditing>=2||(!force&&Date.now()-actor.lastAudit<1000))return;
+    if(actor.auditsSuspended||actor.audit||this.auditing>=2||(!force&&Date.now()-actor.lastAudit<1000))return;
     actor.lastAudit=Date.now();this.auditing++;
     actor.audit=(async()=>{
       // Capture before reading. Stream writes or rebinding invalidate a late audit.
@@ -109,9 +115,9 @@ export class ConversationIndex {
       // Completed-only native projections cannot overwrite an in-flight tail.
       if(this.closing||this.closed||actor.deleted||before.runState==='running')return;
       await this.request(id,'freshness',{freshness:'reconciling'});
-      if(this.closing||this.closed||actor.deleted)return;
+      if(this.closing||this.closed||actor.deleted||actor.auditsSuspended)return;
       const source=await this.options.factory.readHistory!(id);
-      if(this.closing||this.closed||actor.deleted)return;
+      if(this.closing||this.closed||actor.deleted||actor.auditsSuspended)return;
       if(source.sourceFreshness!=='current'){await this.request(id,'freshness',{freshness:'unknown'});return;}
       await this.write(id,'reconcile',{entries:source.history.entries,binding:source.binding,sourceGeneration:source.sourceGeneration,sourceFreshness:source.sourceFreshness,checkedAt:source.checkedAt,expectedEpoch:before.bindingEpoch,expectedRevision:before.headRevision},0,false);
     })().catch(async()=>{if(!this.closing&&!this.closed&&!actor.deleted)await this.request(id,'freshness',{freshness:'unknown'}).catch(()=>undefined);}).finally(()=>{actor.audit=undefined;this.auditing--;});

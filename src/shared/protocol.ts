@@ -220,6 +220,7 @@ export type ClientFrame = (
       sessionId?: string;
       after?: number;
       nativeProtocol?: 1;
+      recentHistory?:boolean;
       syncProtocol?: 2;
       displayMode?: "compact" | "detailed";
     }
@@ -388,6 +389,7 @@ export type ServerFrame = (
        */
       v: typeof PROTOCOL_VERSION;
       type: "history";
+      recentPage?:{olderCursor:string|null;coverage:"recent"};
       displayRefresh?:boolean;
       syncProtocol?: 2;
       displayMode?: "compact" | "detailed";
@@ -561,10 +563,12 @@ function parseOpen(value: Record<string, unknown>): ClientFrame {
   const after = optionalNonNegativeInteger(value.after, "after");
   if(value.nativeProtocol!==undefined && value.nativeProtocol!==1)throw new ProtocolError("unsupported_version","Unsupported native Agent presentation protocol");
   if(value.displayMode!==undefined && !["compact","detailed"].includes(value.displayMode as string))throw new ProtocolError("invalid_frame","Invalid display mode");
+  if(value.recentHistory!==undefined&&typeof value.recentHistory!=="boolean")throw new ProtocolError("invalid_frame","Invalid recent history capability");
   if(value.syncProtocol!==undefined && value.syncProtocol!==2)throw new ProtocolError("unsupported_version","Unsupported conversation sync protocol");
   return {
     v: PROTOCOL_VERSION,
     type: "open",
+    ...(value.recentHistory===true?{recentHistory:true}:{}),
     ...(value.displayMode ? {displayMode:value.displayMode as "compact"|"detailed"}:{}),
     ...(value.syncProtocol === 2 ? {syncProtocol:2 as const} : {}),
     ...(sessionId === undefined ? {} : { sessionId }),

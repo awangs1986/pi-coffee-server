@@ -307,7 +307,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
       };
     }
     if(!segment)return session;
-    try{return withPriorHistory(session,await priorHistory(await this.options.workspaces.dataRoot(sessionId),segment));}
+    try{return withPriorHistory(session,async()=>priorHistory(await this.options.workspaces.dataRoot(sessionId),segment));}
     catch(error){await session.stop();throw error;}
   }
   private async createNative(sessionId:string):Promise<AgentSession> {

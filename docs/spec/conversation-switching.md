@@ -1,3 +1,5 @@
+> Codex unverified-history fallback on Browser open is superseded by the [recent-first display contract](recent-native-history.md). Complete-history operations retain their original semantics.
+
 # Fast conversation switching and temporary resource lifetime
 
 > Current source contract: [conversation-first delivery](conversation-delivery.md) changes default Host-to-browser payloads, with default Compact and optional Detailed process display. This supersedes default process delivery below for clients explicitly selecting Compact; Detailed preserves existing behavior.

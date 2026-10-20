@@ -256,6 +256,7 @@ rl.on("line", (line) => {
       return notify("thread/started", { thread: threadView(thread, false) });
     }
     case "thread/resume": {
+      if(existsSync(join(home,"capture-history-requests")))writeFileSync(join(home,"resume-request.json"),JSON.stringify(params));
       if(params.config?.mcp_servers?.coffee_mishu&&!params.config.mcp_servers.coffee_mishu.command)return fail('failed to load configuration: invalid transport in `mcp_servers.coffee_mishu`');
       if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
@@ -270,7 +271,7 @@ rl.on("line", (line) => {
       if (params.config?.model_reasoning_effort) thread.effort = params.config.model_reasoning_effort;
       save(thread.id);
       settings.set(thread.id, { approvalPolicy: params.approvalPolicy ?? "never",sandbox:params.sandbox,config:params.config,developerInstructions:params.developerInstructions });
-      return reply({ thread: threadView(thread, true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
+      return reply({ thread: threadView(thread, params.excludeTurns!==true), model: thread.model, modelProvider: "openai", serviceTier: null, disabledPluginIds: [], cwd: thread.cwd, instructionSources: [], approvalPolicy: params.approvalPolicy ?? "never", approvalsReviewer: "user", sandbox: { type: "dangerFullAccess" }, reasoningEffort: null, collaborationMode: null, turnsBackwardsCursor: null, itemsBackwardsCursor: null });
     }
     case "thread/fork": {
       const source=threads[params.threadId];if(!source)return fail('no such thread');
@@ -299,6 +300,7 @@ rl.on("line", (line) => {
       return notify("thread/deleted", { threadId: params.threadId });
     }
     case "thread/turns/list": {
+      if(existsSync(join(home,"capture-history-requests")))appendFileSync(join(home,"history-requests.jsonl"),JSON.stringify(params)+"\n");
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       // Native Codex 0.156.1 materializes history only after the first user turn.

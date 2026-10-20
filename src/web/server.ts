@@ -253,7 +253,7 @@ export class WebServer {
         json(response,result.status,{...await result.json(),oauthConfigured:Boolean(this.githubOAuth)});
       }catch{json(response,502,{error:'GitHub account management unavailable'});}return;
     }
-    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands)$/.test(path)) {
+    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content)$/.test(path)) {
       response.setHeader('cache-control','no-store');
       if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
       try {

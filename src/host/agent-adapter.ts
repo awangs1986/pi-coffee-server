@@ -35,6 +35,8 @@ export interface AgentHistory {
   leafId: string | null;
 }
 
+export interface HistoryDisplayPage extends AgentHistory { olderCursor:string|null; coverage:"recent"; }
+
 /** A read-only native-source audit. Unknown history must never replace a good index. */
 export interface AgentHistoryRead {
   history: AgentHistory;
@@ -74,6 +76,9 @@ export interface AgentSession {
   getState(): Promise<SessionState>;
   /** Completed conversation entries from the durable session, display-ready. */
   getHistory(): Promise<AgentHistory>;
+  /** One native display window; requires getHistoryBinding; never a complete export. */
+  getHistoryPage?(cursor?:string):Promise<HistoryDisplayPage>;
+  getHistoryBinding?():string;
   rename(name: string): Promise<void>;
   getModels(): Promise<AgentModels>;
   setModel(provider: string, id: string): Promise<void>;

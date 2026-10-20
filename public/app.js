@@ -1,3 +1,4 @@
+import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
@@ -886,6 +887,10 @@ function renderHistory(frame) {
   resetThread({preserveQueue:frame.displayRefresh===true});
   historyBatch=document.createDocumentFragment();
   const source=frame.entries||[];
+  const pageId=activeId,pageUser=currentUser,pageSelection=taskSelectionEpoch,pageMode=displayMode;
+  const pageCurrent=()=>activeId===pageId&&currentUser===pageUser&&taskSelectionEpoch===pageSelection&&displayMode===pageMode;
+  if(frame.recentPage)historyBatch.append(recentHistoryPanel({id:pageId,cursor:frame.recentPage.olderCursor,mode:pageMode,isCurrent:pageCurrent,
+    renderEntry:item=>item.kind==='user'?userBubble(item):item.kind==='assistant'?assistantNode(item,{done:true}):item.kind==='tool'?toolCard({...item,done:true}):noteNode(item)}));
   lastUserText='';
   for(let index=source.length-1;index>=0;index--)if(source[index].kind==='user'){lastUserText=splitUploadedFilesText(source[index].text||'').text;break;}
   historyPrefix=source.slice(0,-40).map(item=>({k:item.kind,text:item.text,name:item.name,result:item.result}));
@@ -898,7 +903,7 @@ function renderHistory(frame) {
     });
   }
   try {
-  if (frame.truncated) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
+  if (frame.truncated&&!frame.recentPage) pushNote('更早的记录仍保存在 User VM 中，这里只显示最近的部分。');
   const latest=boundedTranscriptWindow(source);
   const visibleSource=source.slice(latest.startIndex);
   const viewCost=item=>new TextEncoder().encode(String(item.kind==='tool'?item.result||'':item.text||'').slice(0,8192)).byteLength;
@@ -906,6 +911,7 @@ function renderHistory(frame) {
   while(visibleSource.length>1&&visibleBytes>65536)visibleBytes-=Math.min(8192,viewCost(visibleSource.shift()));
   let visibleBudget=65536;
   for (const item of visibleSource) {
+    const beforeCount=entries.length;
     const length=Math.min(8192,String(item.kind==='tool'?item.result||'':item.text||'').length);
     if(length>visibleBudget)break;visibleBudget-=length;
     if (item.kind === 'user') {
@@ -919,6 +925,7 @@ function renderHistory(frame) {
     else if (item.kind === 'assistant') nativeItems.set(item.id,pushAssistant(item.text || ''));
     else if (item.kind === 'tool') nativeItems.set(item.id,pushTool({ name: item.name, args: item.args, result: item.result || '', done: true, error: Boolean(item.isError), details: item.diff ? { patch: item.diff } : undefined }));
     else if (item.kind === 'note') pushNote(item.text || '');
+    if(frame.recentPage&&entries.length>beforeCount)addHistoryDownload(entries.at(-1).node,{id:pageId,token:item.contentToken,isCurrent:pageCurrent});
   }
   // History groups are finished work: collapse them.
   for (const group of historyBatch.querySelectorAll('.activity')) { group.open = false; group.classList.remove('running'); }
@@ -927,7 +934,7 @@ function renderHistory(frame) {
   }
   currentActivity = undefined;
   if (uploadLog.length) renderUploadLogCard();
-  if (entries.length === 0) renderHero();
+  if (entries.length === 0&&!frame.recentPage?.olderCursor) renderHero();
   if (streaming) showThinking(true);
   scrollToEnd();
   addRegenerateButton();
@@ -1820,7 +1827,7 @@ async function openSession(id) {
   }
   if(!isCurrent())return;
   pendingOpenId = id || 'new';
-  const frame = { v: 1, type: 'open', nativeProtocol:1, displayMode, ...(preferDurableSync?{syncProtocol:2}:{}) };
+  const frame = { v: 1, type: 'open', nativeProtocol:1, recentHistory:true, displayMode, ...(preferDurableSync?{syncProtocol:2}:{}) };
   if (id) frame.sessionId = id;
   if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); }
 }

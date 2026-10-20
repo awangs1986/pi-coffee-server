@@ -339,7 +339,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       // Deployment defaults only seed new threads. A resumed thread keeps its
       // native selection, unless a confirmed browser choice is pending for it.
       const originalBase=owned&&preferences.mishuRole?await originalCodexBase(server,known,this.options.cwd):undefined;
-      if (owned) response = await server.request("thread/resume", { threadId: known, ...common,
+      if (owned) response = await server.request("thread/resume", { threadId: known, excludeTurns:true, ...common,
         ...(originalBase===undefined?{}:{baseInstructions:originalBase}),
         ...(preferences.model?{model:preferences.model}:{}),
         config:{...common.config,...(preferences.reasoningEffort?{model_reasoning_effort:preferences.reasoningEffort}:{})},
@@ -773,6 +773,19 @@ class CodexSession implements PiSession {
    * Full history via the paginated `thread/turns/list` (oldest first, items
    * loaded); `thread/read {includeTurns}` still works but is deprecated.
    */
+  getHistoryBinding(){return this.threadId;}
+  async getHistoryPage(cursor?:string):Promise<import('./agent-adapter.js').HistoryDisplayPage>{
+    const result=await this.server.request('thread/turns/list',{threadId:this.threadId,limit:5,sortDirection:'desc',itemsView:'full',...(cursor?{cursor}:{})}).catch((error:unknown)=>{
+      const empty=`thread ${this.threadId} is not materialized yet; thread/turns/list is unavailable before first user message`;
+      const lineage=`invalid paginated history lineage for ${this.threadId}: missing source rollout`;
+      if(!cursor&&this.settings.freshEmpty&&!this.nativeInputSeen&&error instanceof Error&&(error.message===empty||error.message===lineage))return {data:[],nextCursor:null};
+      throw error;
+    }) as Obj;
+    if(!Array.isArray(result.data)||(result.nextCursor!==null&&(typeof result.nextCursor!=='string'||!result.nextCursor))||cursor&&result.nextCursor===cursor)throw Error('Invalid native history page');
+    const entries=projectTurns([...(result.data as Obj[])].reverse());
+    return {entries,leafId:entries.at(-1)?.id??null,olderCursor:typeof result.nextCursor==='string'?result.nextCursor:null,coverage:'recent'};
+  }
+
   async getHistory(): Promise<PiHistory> {
     const turns: Obj[] = [];
     let cursor: Json | undefined;

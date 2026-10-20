@@ -84,6 +84,18 @@ describe("Codex app-server adapter", () => {
     }
   });
 
+  it('reads the newest native window without resuming or exporting every old turn',async()=>{
+    const b=setup(),first=b.factory();await first.create({sessionId:'recent-page'});await first.close();
+    const file=join(b.codexHome,'fake-threads.json'),store=JSON.parse(readFileSync(file,'utf8'));const thread=Object.values(store)[0] as any;
+    thread.turns=Array.from({length:120},(_,i)=>({id:'turn-'+i,status:'completed',items:[{id:'m-'+i,type:'agentMessage',text:'answer '+i},{id:'reason-'+i,type:'reasoning',summary:[]},{id:'activity-'+i,type:'subAgentActivity',kind:'status'}]}));writeFileSync(file,JSON.stringify(store));
+    writeFileSync(join(b.codexHome,'capture-history-requests'),'');const resumed=await b.factory().create({sessionId:'recent-page'});
+    expect(JSON.parse(readFileSync(join(b.codexHome,'resume-request.json'),'utf8')).excludeTurns).toBe(true);
+    const recent=await resumed.getHistoryPage!();expect(recent.entries.filter(e=>e.kind==='assistant').map(e=>e.id)).toEqual(['m-115','m-116','m-117','m-118','m-119']);
+    const requests=readFileSync(join(b.codexHome,'history-requests.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x));expect(requests).toEqual([expect.objectContaining({limit:5,sortDirection:'desc',itemsView:'full'})]);
+    const older=await resumed.getHistoryPage!(recent.olderCursor!);expect(older.entries.filter(e=>e.kind==='assistant').map(e=>e.id)).toEqual(['m-110','m-111','m-112','m-113','m-114']);
+    expect((await resumed.getHistory()).entries.filter(e=>e.kind==='assistant')).toHaveLength(120);
+  });
+
   it("bounds a silent native model lookup without killing the live conversation",async()=>{
     const b=setup();const factory=b.factory();const session=await factory.create({sessionId:'metadata-timeout'});
     writeFileSync(join(b.codexHome,'fake-hang-model-list'),'');

@@ -1,3 +1,5 @@
+> Recent-first Codex display (2026-10-20): [contract](docs/spec/recent-native-history.md), tracked with [Server #128](https://github.com/awangs1986/pi-coffee-server/issues/128). New Browser capability avoids complete-history fallback; publication and activation evidence are separate.
+
 > Current weekly reconciliation: [2026-10-13 source/spec map](docs/reviews/spec-freshness-20261013.md). Read current topical contracts before older milestone notes; source publication, installed data and production activation are distinct.
 
 > Source candidate v0.24 (2026-10-13), not deployed: [conversation-first browser delivery](docs/spec/conversation-delivery.md). Owner approved Host-side reduction of default process payloads, default Compact / optional Detailed display and bounded detail access and preserved reliable controls/native history. Public Issue/publication require available scoped GitHub credentials; source acceptance is linked from the contract.

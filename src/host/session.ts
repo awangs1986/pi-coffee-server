@@ -1,3 +1,4 @@
+import {RecentHistoryPager} from './recent-history.js';
 import {QueueStore} from './queue-store.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
 import {InputQueue} from "./input-queue.js";
@@ -48,6 +49,7 @@ export interface SessionOpenResult {
   session: HostSession;
   history: PiHistory;
   completionId?: string|null;
+  recentPage?:{olderCursor:string|null;coverage:"recent"};
   replay: ServerFrame[];
   resync?: { oldestCursor: number; newestCursor: number };
 }
@@ -80,6 +82,11 @@ export class HostSession {
   assertCommandGeneration(generation:number):void {this.assertDelivery(generation);}
   private assertDelivery(generation:number):void {if(generation!==this.deliveryGeneration)throw new DeliveryCancelledError();}
   private historyExport:Promise<void>=Promise.resolve();
+  private recentPager?:RecentHistoryPager;
+  private recentOwner?:PiSession;
+  displayPage(mode:"compact"|"detailed",cursor?:string){const pi=this.ready();if(!pi.getHistoryPage||!pi.getHistoryBinding)throw Error("history_page_unavailable");if(this.recentOwner!==pi){this.recentPager?.close();this.recentPager=new RecentHistoryPager(pi);this.recentOwner=pi;}return this.recentPager!.page(mode,cursor);}
+  displayBinding(){return this.pi?.getHistoryBinding?.();}
+  displayContent(token:string){if(!this.recentPager||this.recentOwner!==this.pi)throw Error("history_page_expired");return this.recentPager.content(token);}
   private readonly onLifecycle?: (session: HostSession) => void;
   private readonly sinks = new Set<SessionSink>();
   private readonly events: ServerFrame[] = [];
@@ -162,7 +169,7 @@ export class HostSession {
     }
   }
 
-  async prepare(after?: number): Promise<SessionOpenResult> {
+  async prepare(after?: number,displayMode?:"compact"|"detailed"): Promise<SessionOpenResult> {
     if (this.interrupted) {
       this.recoveryPromise ??= this.stop().then(()=>{this.interrupted=false;});
       try {await this.recoveryPromise;} finally {this.recoveryPromise=undefined;}
@@ -172,15 +179,16 @@ export class HostSession {
     if(after!==undefined && after>this.cursor)throw new Error("Future session cursor");
     // Capture a proven completion boundary BEFORE asynchronous export. A completion
     // racing the history RPC requires another read, never an invented watermark.
-    let history:PiHistory;let historyCursor:number;let completionId:string|null;let attempts=0;
+    let recentPage:SessionOpenResult["recentPage"];let history:PiHistory;let historyCursor:number;let completionId:string|null;let attempts=0;
     do {
       historyCursor=this.lastMessageEndCursor;
       completionId=await this.completionForHistory?.(this.id)??null;
-      history=await this.pi.getHistory();
+      if(displayMode&&this.pi.getHistoryPage&&this.pi.getHistoryBinding){const page=await this.displayPage(displayMode);history=page;recentPage={olderCursor:page.olderCursor,coverage:"recent"};}
+      else history=await this.pi.getHistory();
       if(historyCursor===this.lastMessageEndCursor)break;
       if(++attempts>=3)throw new Error("History changed while loading; retry the read");
     } while(true);
-    await this.exportHistory(history);
+    if(!recentPage)await this.exportHistory(history);
     // The durable history already contains every completed message, so the
     // browser only needs the events of the message that is still in flight.
     // A returning browser's `after` cursor can only move that boundary later.
@@ -192,7 +200,7 @@ export class HostSession {
     const replay = resync
       ? []
       : this.filterReplay(this.events.filter((frame) => frame.type === "event" && frame.cursor > replayFrom));
-    return { session: this, history, completionId, replay, ...(resync === undefined ? {} : { resync }) };
+    return { session: this, history, completionId, ...(recentPage?{recentPage}:{}), replay, ...(resync === undefined ? {} : { resync }) };
   }
 
   attach(sink: SessionSink): void {
@@ -461,6 +469,7 @@ export class HostSession {
   }
 
   async stop(): Promise<void> {
+    this.recentPager?.close();this.recentPager=undefined;this.recentOwner=undefined;
     this.deliveryGeneration++;
     this.inputs.stop();
     this.clearIdleTimer();
@@ -548,6 +557,7 @@ export class HostSession {
       if(status!=='running')this.runCommands.clear();
     }
     let settled = false;
+    if(isRecord(safeEvent)&&safeEvent.type==='compaction_end'){this.recentPager?.close();this.recentPager=undefined;this.recentOwner=undefined;}
     let lifecycle = false;
     if (isRecord(safeEvent) && typeof safeEvent.type === "string") {
       if ((safeEvent.type === "agent_interrupted" || safeEvent.type === "run_interrupted")) {
@@ -691,11 +701,11 @@ export class HostSessionRegistry {
   /** v2 control attachment does not load, project or export full native history. */
   async connect(id:string):Promise<HostSession> {const session=this.sessionFor(id);await session.start();return session;}
 
-  async open(id?: string, after?: number): Promise<SessionOpenResult> {
+  async open(id?: string, after?: number,displayMode?:"compact"|"detailed"): Promise<SessionOpenResult> {
     const existing=id===undefined?undefined:this.sessions.get(id);
     const session=this.sessionFor(id);
     try {
-      const result = await session.prepare(after);
+      const result = await session.prepare(after,displayMode);
       if (!existing) this.notifyChange();
       return result;
     } catch (error) {
