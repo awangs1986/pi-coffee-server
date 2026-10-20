@@ -3,7 +3,7 @@ import {join,resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
 const leaseName='.coffee-temp-owner.json';
-const maxMemoryBytes=2*1024**3;
+const maxMemoryBytes=16*1024**3;
 type Lease={version:1;pid:number;start:string;boot:string;cgroup:string};
 async function identity(pid:number):Promise<string>{
  const value=await readFile(`/proc/${pid}/stat`,'utf8');
@@ -57,7 +57,7 @@ export async function createRuntimeTemp(root:string,storage:string='disk'){
  if(!['disk','memory'].includes(storage))throw Error('PI_COFFEE_TMP_STORAGE must be disk or memory');
  if(storage==='memory'){
   const info=await lstat(root),fs=await statfs(root);
-  if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid?.()||(info.mode&0o077)!==0||fs.type!==0x01021994||fs.blocks<=0||fs.blocks*fs.bsize>maxMemoryBytes||fs.files<=0||fs.files>131072)throw Error('Memory temporary storage requires a private tmpfs capped at 2 GiB');
+  if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid?.()||(info.mode&0o077)!==0||fs.type!==0x01021994||fs.blocks<=0||fs.blocks*fs.bsize>maxMemoryBytes||fs.files<=0||fs.files>131072)throw Error('Memory temporary storage requires a private tmpfs capped at 16 GiB');
  }else await mkdir(root,{recursive:true,mode:0o700});
  const boot=await readFile('/proc/sys/kernel/random/boot_id','utf8');
  await reap(root,boot);

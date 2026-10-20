@@ -133,8 +133,17 @@ arbitrary programs launched in the owner's unrestricted VM.
 
 Disk-backed native scratch remains the default. For the approved large-memory VM,
 provision the dedicated capped tmpfs with `sudo scripts/install-runtime-tmpfs.sh
-awang`; it mounts `/run/picoffeetmp` with a 2 GiB byte limit, 131,072 inode limit,
-0700 ownership and `noswap`. This does not change `/tmp` or restart Host.
+awang`; it mounts `/run/picoffeetmp` with a 16 GiB byte limit, 131,072 inode limit,
+0700 ownership and `noswap`. Capacity is a ceiling, not an upfront reservation. This does not change `/tmp` or restart Host.
+When increasing an existing mount, stage and verify a compatible release, configure
+it as the next Host startup directory, reload systemd and verify that setting
+before updating the mount unit and remounting with `size=16G`. The guard is checked
+at startup only, so existing processes and files can remain running during this
+capacity-only expansion. Record their actual older release separately; configuring
+a next-start release is not a claim that its code is already running. Never enlarge
+the mount while a rejected older startup configuration remains in place. Preserve
+ownership, inode limit and `noswap`; no unmount or file deletion is required. Any
+rollback to an older guard must likewise reconcile capacity before restarting.
 After idle-gated release activation, append an EnvironmentFile containing
 `PI_COFFEE_TMP_STORAGE=memory` and `PI_COFFEE_TMP_ROOT=/run/picoffeetmp` to the Host
 unit. EnvironmentFiles override Environment=; verify effective process settings,

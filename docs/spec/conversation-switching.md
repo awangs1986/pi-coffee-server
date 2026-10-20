@@ -169,7 +169,7 @@ See [Server #92](https://github.com/awangs1986/pi-coffee-server/issues/92).
 Host startup allocates a private directory under
 `~/.cache/pi-coffee/runtime-tmp/` by default (`PI_COFFEE_TMP_ROOT` overrides it).
 The opt-in `PI_COFFEE_TMP_STORAGE=memory` mode requires a separately mounted,
-owner-only tmpfs of at most 2 GiB and 131,072 inodes; an ordinary disk directory,
+owner-only tmpfs of at most 16 GiB and 131,072 inodes; an ordinary disk directory,
 shared large `/tmp`, or missing mount is rejected. Provision with
 `scripts/install-runtime-tmpfs.sh <host-system-user>` as root, then select
 `PI_COFFEE_TMP_ROOT=/run/picoffeetmp`. The mount uses `noswap`, `nodev` and `nosuid`;

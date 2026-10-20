@@ -24,7 +24,7 @@ Before=user@${owner_uid}.service
 What=tmpfs
 Where=/run/picoffeetmp
 Type=tmpfs
-Options=rw,nosuid,nodev,noswap,size=2G,nr_inodes=131072,mode=0700,uid=${owner_uid},gid=${owner_gid}
+Options=rw,nosuid,nodev,noswap,size=16G,nr_inodes=131072,mode=0700,uid=${owner_uid},gid=${owner_gid}
 
 [Install]
 WantedBy=local-fs.target

@@ -1,6 +1,6 @@
 # PI Coffee documentation map
 
-- Bounded optional RAM scratch and crash reclamation: [temporary storage](spec/conversation-switching.md#temporary-directories). Builds and durable task data remain on disk; activation requires the dedicated capped mount.
+- Bounded optional RAM scratch (16 GiB maximum, allocated on demand) and crash reclamation: [temporary storage](spec/conversation-switching.md#temporary-directories). Builds and durable task data remain on disk; activation requires the dedicated capped mount.
 
 Last verified deployment at the start of the October 17 close-out: v0.27 / `d835f00`.
 Web and Host share one VM. Read live `/api/release` and deployment receipts for

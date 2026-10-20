@@ -51,5 +51,5 @@ it('reclaims a crashed Host directory on restart without deleting a live Host di
 it('refuses memory mode on an ordinary disk rather than silently claiming a RAM cap',async()=>{
  const root=await mkdtemp(join(tmpdir(),'coffee-temp-cap-'));
  const child=spawn(process.execPath,['dist/src/main.js','host'],{env:{PATH:process.env.PATH,HOME:root,PI_COFFEE_TMP_ROOT:root,PI_COFFEE_TMP_STORAGE:'memory'},stdio:['ignore','pipe','pipe']});let error='';child.stderr.on('data',d=>error+=String(d));
- try{const [code]=await once(child,'exit');expect(code).not.toBe(0);expect(error).toContain('private tmpfs capped at 2 GiB');}finally{await rm(root,{recursive:true,force:true});}
+ try{const [code]=await once(child,'exit');expect(code).not.toBe(0);expect(error).toContain('private tmpfs capped at 16 GiB');}finally{await rm(root,{recursive:true,force:true});}
 },10000);
