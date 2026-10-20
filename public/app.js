@@ -1,3 +1,4 @@
+import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
@@ -37,7 +38,7 @@ import { initSkills } from "./skills.js";
 // local transcript cache is disposable, user-scoped and never authoritative.
 import {
 
-  boundedTranscriptWindow, renderBoundedText, renderMarkdown, timeGroup, activityGroup, assistantNode, el, fillToolCard, formatBytes, installCopyHandlers,
+  copyText, boundedTranscriptWindow, renderBoundedText, renderMarkdown, timeGroup, activityGroup, assistantNode, el, fillToolCard, formatBytes, installCopyHandlers,
   noteNode, relativeTime, toolCard, toolResultDetails, toolResultText, updateActivity, updateAssistant, userBubble,
 
 } from './render.js';
@@ -97,6 +98,7 @@ let connected = false, opened = false, streaming = false, compacting = false, mo
 let activeId = null;
 let currentUser = null;
 const completionReads=new CompletionReads();
+let closeNativeCommandResult;
 let completionProof=null, completionIndexState=null, openCompletionKey=null, openedEventCursor=0, receivedEventCursor=0, liveCompletionStart=null, liveCompletionSettled=false;
 const loginCoffee=createLoginCoffee();
 let activeBindingEpoch=null, syncHintTimer=null;
@@ -121,7 +123,7 @@ const conversationDisplay=new ConversationDisplay({onState:state=>{completionInd
 }});
 function selectConversationView(id){
   clearTimeout(displayTimer);displayRequest=null;displayAnchor=null;
-  completionProof=null;completionIndexState=null;openCompletionKey=null;openedEventCursor=0;receivedEventCursor=0;liveCompletionStart=null;liveCompletionSettled=false;
+  closeNativeCommandResult?.();completionProof=null;completionIndexState=null;openCompletionKey=null;openedEventCursor=0;receivedEventCursor=0;liveCompletionStart=null;liveCompletionSettled=false;
   clearTimeout(syncHintTimer);syncHintTimer=null;
   viewScheduler.setView(currentRenderView());conversationDisplay.select(id);
 }
@@ -1968,6 +1970,13 @@ function handleFrame(frame, ws) {
       commands = Array.isArray(frame.commands) ? frame.commands : [];
       renderSlash();
       return;
+    case 'agent_command_result': {
+      const pending=nativeCommandRequests.get(frame.requestId);if(!pending)return;
+      nativeCommandRequests.delete(frame.requestId);clearTimeout(pending.timer);
+      if(pending.id!==activeId||pending.user!==currentUser||pending.epoch!==taskSelectionEpoch||frame.sessionId!==activeId)return;
+      if(ui.prompt.value.trim()===pending.text){ui.prompt.value='';autoGrow();refreshComposer();}
+      showNativeCommandResult(frame.name,frame.text);return;
+    }
     case 'stats':
       if (frame.sessionId === activeId) { statsCache = frame.stats; renderStats(); }
       return;
@@ -2027,6 +2036,8 @@ function handleFrame(frame, ws) {
       maybeReadCompletion();scheduleRecentThread();
       return;
     case 'error':
+      if(nativeCommandRequests.has(frame.requestId)){const pending=nativeCommandRequests.get(frame.requestId);nativeCommandRequests.delete(frame.requestId);clearTimeout(pending.timer);if(pending.id===activeId&&pending.user===currentUser&&pending.epoch===taskSelectionEpoch)toast(frame.message);return;}
+
       if(frame.requestId?.startsWith('display-')){if(frame.requestId===displayRequest){clearTimeout(displayTimer);displayRequest=null;toast('上下文显示读取失败，可重新选择当前模式重试：'+frame.message);}return;}
       if(speedPending&&frame.requestId===speedPending.id){clearSpeedPending();speedToApply=null;restoreQueuedPrompt();toast('速度设置失败：'+frame.message);renderAgentSettings();refreshComposer();return;}
       void loadRuntimeStatus();
@@ -2537,6 +2548,60 @@ function chooseThinking(level){
 }
 ui.thinking.addEventListener('change',()=>chooseThinking(ui.thinking.value));
 
+const nativeCommandRequests=new Map();
+function showNativeCommandResult(name,text){
+ closeNativeCommandResult?.();
+ try{const value=JSON.parse(text);if(name==='goal'){const goal=value.goal;text=goal?`目标：${goal.objective}\n状态：${({active:'进行中',paused:'已暂停',blocked:'遇到阻碍',usageLimited:'用量受限',budgetLimited:'预算受限',complete:'已完成'})[goal.status]||goal.status}${typeof goal.tokensUsed==='number'?'\n已用 Token：'+goal.tokensUsed:''}${goal.tokenBudget!=null?'\nToken 预算：'+goal.tokenBudget:''}\n\n修改：/goal edit 新目标\n暂停：/goal pause\n继续：/goal resume\n清除：/goal clear`:'当前没有设置目标。输入 /goal 目标内容 即可设置。';}else if(name==='plan')text=value.mode==='plan'?'原生规划模式已开启，后续消息将使用 Plan mode；重启后保留。\n输入 /plan off 返回默认模式。':'当前使用默认模式。输入 /plan 开启原生规划模式。';else if(name==='pwd')text=value.cwd;}catch{}
+ const backdrop=el('div','modal-backdrop'),panel=el('div','modal'),title=el('h2','','Codex /'+name),body=el('pre','',text),button=el('button','btn primary','关闭');
+ backdrop.id='native-command-result';panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Codex 命令结果');body.style.cssText='max-height:60vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere';button.type='button';panel.append(title,body,button);backdrop.append(panel);document.body.append(backdrop);
+ const close=()=>{dialogs.hide(backdrop);backdrop.remove();if(closeNativeCommandResult===close)closeNativeCommandResult=null;};closeNativeCommandResult=close;button.onclick=close;dialogs.show(backdrop,close,button,{nonModal:true});
+}
+function handleCodexSlash(text){
+ if((opened?engine:draftModelEngine())!=='codex')return false;
+ const command=parseCodexCommand(text);if(!command||['restart','sshme','mishu','mishu-setup','mishu-tasks','mishu-disable'].includes(command.name))return false;
+ const {entry,name,args}=command;
+ if(!entry||entry.route==='unavailable'){toast(entry?.description||'未知 Codex 原生命令；未发送给模型',7000);return true;}
+ if(draftFiles.length||attachments.length||uploads.length||filesAwaitingTransfer.length){toast('原生命令不发送附件，请先处理附件草稿');return true;}
+ if(entry.route==='turn'){
+  if(!opened||!activeId||streaming||compacting||takeoverBusy()){toast('请先打开空闲的 Codex 对话');return true;}
+  if(['review','init'].includes(name)&&currentTask()?.workspaceKind!=='project'){toast('此命令需要 Work 项目');return true;}
+  submitPrompt(text,[]);return true;
+ }
+ if(name==='plan'&&args&&!['on','off','status'].includes(args)){
+  if(!opened||streaming||compacting){toast('请先打开空闲的 Codex 对话');return true;}submitPrompt(text,[]);return true;
+ }
+ if(entry.route==='native'){
+  if(!opened||!activeId){toast('请先打开已有 Codex 对话，再使用原生命令');return true;}
+  if([...nativeCommandRequests.values()].some(p=>p.id===activeId)){toast('上一条原生命令尚未确认，请勿重复提交');return true;}
+  const id=requestId('native'),pending={id:activeId,user:currentUser,epoch:taskSelectionEpoch,text};
+  pending.timer=setTimeout(()=>{if(nativeCommandRequests.get(id)!==pending)return;nativeCommandRequests.delete(id);if(pending.id===activeId&&pending.user===currentUser)toast('原生命令结果未确认；请先查询状态，不要重复执行');},30000);
+  nativeCommandRequests.set(id,pending);if(!send({v:1,type:'agent_command',requestId:id,name,args})){clearTimeout(pending.timer);nativeCommandRequests.delete(id);toast('未连接，命令未发送');}return true;
+ }
+ if(args&&!['new','clear','resume','rename'].includes(name)){toast('/'+name+' 请通过打开的网页面板操作，不接受行内参数');return true;}
+ if(!opened&&!['new','clear','resume','model','skills','config'].includes(name)){toast('请先打开已有对话');return true;}
+ const task=sessions.find(t=>t.id===activeId)||currentTask(),id=activeId;
+ const consume=()=>{if(ui.prompt.value.trim()===text){ui.prompt.value='';ui.slash.classList.add('hidden');autoGrow();refreshComposer();}};
+ if(name==='model'){consume();openAgentPane('model');}
+ else if(name==='config'){consume();$('#agent-menu-btn').click();}
+ else if(name==='skills'){consume();$('#skills-btn').click();}
+ else if(['new','clear','quit','exit'].includes(name)){consume();newSession(false);if(args){ui.prompt.value=args;autoGrow();refreshComposer();}}
+ else if(name==='resume'){consume();setSearchOpen(true);ui.search.value=args;ui.search.dispatchEvent(new Event('input'));}
+ else if(name==='rename'){consume();if(args){const request=requestId('rename');pendingRenames.set(request,{sessionId:id,name:args});send({v:1,type:'rename_session',requestId:request,sessionId:id,name:args});}else void renameSession(task);}
+ else if(name==='archive'){consume();void workspaceApi({action:'archive',id}).then(()=>loadWorkspace()).then(()=>{if(activeId===id)newSession(false);}).catch(e=>toast(e.message));}
+ else if(name==='fork'){if(streaming||takeoverBusy()){toast('请等待当前任务结束');return true;}consume();forkControls.open(task);}
+ else if(name==='compact'){consume();void requestLocalCompaction();}
+ else if(name==='status'){consume();showStatsPop();}
+ else if(name==='diff'){consume();void showWorkspaceReview('diff');}
+ else if(name==='mention'){consume();setWorkspaceOpen(true);renderWorkspaceList();}
+ else if(name==='export'){
+  if(streaming||compacting){toast('请等当前任务结束再导出');return true;}
+  const epoch=taskSelectionEpoch,user=currentUser;toast('正在读取完整对话导出…');
+  void fetch('/api/conversations/'+encodeURIComponent(id)+'/native-export',{signal:AbortSignal.timeout(120000)}).then(async response=>{if(!response.ok)throw Error('导出失败，请确认任务空闲并重试');const blob=await response.blob();if(activeId!==id||currentUser!==user||taskSelectionEpoch!==epoch)return;const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='conversation-'+id+'.md';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);consume();}).catch(e=>toast(e.message));
+ }
+ else if(name==='copy'){const latest=[...entries].reverse().find(e=>e.k==='assistant');const indexed=completionIndexState?.entries?.findLast(e=>e.kind==='assistant');const content=indexed?.text??latest?.text;if(!content){toast('当前显示窗口没有可复制的回答');return true;}void copyText(content).then(ok=>{if(ok){consume();toast('已复制当前显示的最近回答');}else toast('浏览器拒绝剪贴板访问，请手动复制');});}
+ return true;
+}
+
 // ---------- slash commands ----------
 let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null, commandTimer=null;
 function beginCommandRead(){clearTimeout(commandTimer);commandState='loading';commandError='';commandTimer=setTimeout(()=>{commandState='error';commandError='读取命令超时，请重试';renderSlash();},12000);}
@@ -2553,7 +2618,8 @@ function slashItems() {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const query = value.slice(1).toLowerCase();
   const mishuItems=currentTask()?.engine==='codex'?[{name:'mishu-setup',invocation:'/mishu-setup',description:'配置 MISHU 联系对象与权限',source:'web'},{name:'mishu-tasks',invocation:'/mishu-tasks',description:'查看 MISHU 跟踪事实',source:'web'},{name:'mishu',invocation:'/mishu',description:'查看秘书身份和当前状态',source:'web'},{name:'mishu-disable',invocation:'/mishu-disable',description:'停用秘书协调',source:'web'}]:[];
-  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...commands.filter(c=>!['sshme','restart'].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^.*:/,'').toLowerCase().startsWith(query)));
+  const native=(opened?engine:draftModelEngine())==='codex'?CODEX_COMMANDS:[];
+  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...native,...commands.filter(c=>!['sshme','restart',...native.map(n=>n.name)].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^.*:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
@@ -2580,7 +2646,7 @@ function renderSlash() {
     row.innerHTML = '<span class="slash-name"></span><span class="slash-desc"></span><span class="slash-src"></span>';
     row.querySelector('.slash-name').textContent=c.invocation||'/'+c.name;
     row.querySelector('.slash-desc').textContent = c.description || '';
-    row.querySelector('.slash-src').textContent = c.source === 'web' ? '网页' : c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
+    row.querySelector('.slash-src').textContent = c.route ? (c.route==='unavailable'?'不可用':'原生') : c.source === 'web' ? '网页' : c.source === 'extension' ? '扩展' : c.source === 'skill' ? '技能' : '模板';
     row.addEventListener('mousedown', (e) => { e.preventDefault(); applySlash(c); });
     ui.slash.appendChild(row);
   });
@@ -3041,6 +3107,7 @@ $('#composer').addEventListener('submit', (event) => {
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
   if(!opened && draftModelEngine() && !models){toast('正在加载模型和思考强度，请稍后发送');return;}
   const text = ui.prompt.value.trim();
+  if(handleCodexSlash(text))return;
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;

@@ -77,6 +77,30 @@ const text = (events: Event[]) => events
 describe("Codex app-server adapter", () => {
   const benches: Bench[] = [];
   const setup = () => { const b = bench(); benches.push(b); return b; };
+  it('runs explicit goals without a model turn and rejects raw slash commands as prompts',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'goal-test'});
+    expect(await session.runCommand!('goal','Finish tests')).toMatchObject({goal:{objective:'Finish tests',status:'active'}});
+    expect(await session.runCommand!('goal','pause')).toMatchObject({goal:{status:'paused'}});
+    expect(await session.runCommand!('goal','resume')).toMatchObject({goal:{status:'active'}});
+    expect(await session.runCommand!('goal','')).toMatchObject({goal:{objective:'Finish tests'}});
+    await expect(session.prompt('/goal something')).rejects.toThrow('command');
+    await expect(session.prompt('/logout')).rejects.toThrow('command');
+    expect((await session.getHistory()).entries).toHaveLength(0);
+    expect(await session.runCommand!('goal','clear')).toEqual({goal:null});
+  });
+
+  it('uses native inline review and persists native planning mode across resume',async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'native-command-test'}),events=recorder(session);
+    await session.setModel('codex','gpt-fake-mini');await session.prompt('/review');await events.until(e=>e.type==='agent_settled');
+    expect((await session.getHistory()).entries.some(e=>e.kind==='assistant'&&e.text.includes('NATIVE_REVIEW:uncommittedChanges:gpt-fake-mini'))).toBe(true);
+    expect(await session.runCommand!('plan','on')).toMatchObject({mode:'plan'});
+    await session.stop();const resumed=await b.factory().create({sessionId:'native-command-test'}),after=recorder(resumed);
+    expect(await resumed.runCommand!('plan','status')).toMatchObject({mode:'plan'});
+    await resumed.prompt('report planning mode');await after.until(e=>e.type==='agent_settled');
+    expect((await resumed.getHistory()).entries.some(e=>e.kind==='assistant'&&e.text.includes('mode=plan'))).toBe(true);
+    await resumed.runCommand!('plan','off');expect(await resumed.runCommand!('plan','status')).toMatchObject({mode:'default'});
+  });
+
   afterEach(async () => {
     for (const b of benches.splice(0)) {
       for (const factory of b.factories) await factory.close();
@@ -688,6 +712,7 @@ describe("Codex app-server adapter", () => {
 describe("Codex app-server adapter: usage meters and native threads", () => {
   const benches: Bench[] = [];
   const setup = () => { const b = bench(); benches.push(b); return b; };
+
   afterEach(async () => {
     for (const b of benches.splice(0)) {
       for (const factory of b.factories) await factory.close();

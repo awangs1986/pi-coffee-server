@@ -445,6 +445,8 @@ export class HostSession {
     try{await adapter.setContextPreset(preset);}finally{this.contextChanging=false;}
   }
   setThinkingLevel(level: string): Promise<void> { if(this.compacting||this.contextChanging)throw new SessionBusyError(); return this.ready().setThinkingLevel(level); }
+  async exportConversation():Promise<string>{if(this.isBusy)throw new SessionBusyError();const history=await this.ready().getHistory();let bytes=0;const parts:string[]=[];for(const entry of history.entries){if(entry.kind!=="user"&&entry.kind!=="assistant")continue;const block=`## ${entry.kind==='user'?'User':'Assistant'}\n\n${entry.text}\n\n`;bytes+=Buffer.byteLength(block);if(bytes>32*1024*1024)throw Error("Conversation export exceeds 32 MiB");parts.push(block);}return parts.join('');}
+  async runCommand(name:string,args:string):Promise<string>{if(name==='plan'&&args!=='status'&&this.isBusy)throw new SessionBusyError();const adapter=this.ready();if(!adapter.runCommand)throw Error("Native commands are unavailable for this Agent");if(this.compacting||this.contextChanging)throw new SessionBusyError();const result=JSON.stringify(await adapter.runCommand(name,args),null,2);if(Buffer.byteLength(result)>65536)throw Error("Command result exceeds the display limit; use narrower native queries");return result;}
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
   getStats(): Promise<SessionStats> { return this.ready().getStats(); }

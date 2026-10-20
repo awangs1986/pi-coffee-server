@@ -584,3 +584,7 @@ support does not confer durable dispatch/recovery parity on non-Pi targets.
 ## Codex Skill namespace correction
 
 Server [#126](https://github.com/awangs1986/pi-coffee-server/issues/126): preserve native plugin names in catalogs and explicit invocation, search by Skill name, and reconcile the approved Cat Skills installation with backups. Source publication and service activation remain separate. See [the current contract](docs/spec/skill-management.md#codex-skill-namespaces-2026-10-13).
+
+## Codex native command Web adaptation (2026-10-20)
+
+See [the contract and complete inventory](docs/spec/codex-native-commands.md). Web-compatible operations are mapped explicitly; terminal-only, shared-login and fixed-workspace conflicts are surfaced rather than sent as prompts. This is not complete TUI equivalence.

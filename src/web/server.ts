@@ -253,7 +253,7 @@ export class WebServer {
         json(response,result.status,{...await result.json(),oauthConfigured:Boolean(this.githubOAuth)});
       }catch{json(response,502,{error:'GitHub account management unavailable'});}return;
     }
-    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content)$/.test(path)) {
+    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content|native-export)$/.test(path)) {
       response.setHeader('cache-control','no-store');
       if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
       try {
@@ -261,7 +261,8 @@ export class WebServer {
         if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
         const upstreamUrl=new URL(route.hostUrl);upstreamUrl.protocol=upstreamUrl.protocol==='wss:'?'https:':'http:';upstreamUrl.pathname=path;upstreamUrl.search=new URL(request.url??'/', 'http://web').search;
-        const upstream=await fetch(upstreamUrl,{headers:{authorization:`Bearer ${route.hostToken}`,...(route.user?{[USER_HEADER]:route.user}:{})},signal:AbortSignal.timeout(path.endsWith('/meta')?3000:10000),redirect:'error'});
+        const upstream=await fetch(upstreamUrl,{headers:{authorization:`Bearer ${route.hostToken}`,...(route.user?{[USER_HEADER]:route.user}:{})},signal:AbortSignal.timeout(path.endsWith('/native-export')?120000:path.endsWith('/meta')?3000:10000),redirect:'error'});
+        if(path.endsWith('/native-export')&&upstream.ok){const body=Buffer.from(await upstream.arrayBuffer());response.writeHead(200,{'content-type':'text/markdown; charset=utf-8','content-disposition':upstream.headers.get('content-disposition')??'attachment; filename=conversation.md'});response.end(body);return;}
         const userScope=session?`gitea-${session.id}`:this.auth?.principalOf(request)?.user??this.defaultUser??null;
         json(response,upstream.status,{...await upstream.json(),userScope});
       }catch{json(response,502,{error:'sync_unavailable'});}

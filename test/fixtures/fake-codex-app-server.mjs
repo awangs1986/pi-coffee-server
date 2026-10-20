@@ -186,7 +186,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text==='report planning mode' ? `mode=${options.collaborationMode?.mode??'unset'}` : text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: text.startsWith('run delayed final tracking')?'final_answer':null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
@@ -313,6 +313,12 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < ordered.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/unsubscribe": return reply({});
+    case "thread/goal/get": return reply({goal:threads[params.threadId].goal??null});
+    case "thread/goal/set": {
+      if(params.origin!=='user')return fail('explicit user provenance required');
+      const t=threads[params.threadId];t.goal={...(t.goal??{status:'active'}),...(params.objective?{objective:params.objective}:{}),...(params.status?{status:params.status}:{})};save(params.threadId);return reply({goal:t.goal});
+    }
+    case "thread/goal/clear": {if(params.origin!=='user')return fail('explicit user provenance required');delete threads[params.threadId].goal;save(params.threadId);return reply({});}
     case "thread/compact/start": {
       reply({});
       const item = { type: "contextCompaction", id: uid("item") };
@@ -331,6 +337,12 @@ rl.on("line", (line) => {
         { id: "gpt-fake", model: "gpt-fake", serviceTiers:[{id:"fast",name:"Fast",description:"Fixture tier"}], displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },
       ], nextCursor: null });
+    case "review/start": {
+      if(params.delivery!=='inline')return fail('Review must not create a detached thread');
+      const thread=threads[params.threadId];if(!thread)return fail('no such thread');
+      reply({turn:{id:uid('review'),status:'inProgress'},reviewThreadId:thread.id});
+      void runTurn(thread,[{type:'text',text:'NATIVE_REVIEW:'+params.target.type+':'+thread.model}],{});return;
+    }
     case "turn/start": {
       writeFileSync(join(home,"fake-service-tier.json"),JSON.stringify(params.serviceTier??null));
       writeFileSync(join(home,"fake-input.json"),JSON.stringify(params.input));

@@ -262,3 +262,7 @@ service tiers, availability and confirmation. Standard is explicit even when a
 VM-wide configuration defaults to Fast. Pi customization, native tool permissions
 and other engines' model settings are unaffected. This is unverified source, not
 a production release.
+
+### Codex native command Web adaptation (2026-10-20)
+
+The [Codex command contract](codex-native-commands.md) adds an explicit native/Web command inventory alongside the Skill catalog. Native commands are dispatched as operations, never blindly forwarded as text; the contract lists supported routes and unavailable terminal/shared-setting operations.

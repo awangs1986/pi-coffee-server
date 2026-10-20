@@ -254,3 +254,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Same-VM Web/Host deployment: [migration protocol and staged status](deployment/same-vm-migration.md). Preserves two-user scope and independent services; source must be persistently stopped before target activation.
 
 - Consistent state backups and staged recovery: [operator procedure](deployment/state-backup.md).
+
+- [Codex native command Web adaptation](spec/codex-native-commands.md): explicit dispatch, goals, planning, review and supported/unsupported inventory.

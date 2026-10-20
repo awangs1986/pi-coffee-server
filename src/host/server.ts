@@ -142,6 +142,7 @@ export class HostServer {
   private readonly scopeForUser?: (user: string) => UserScope | Promise<UserScope>;
   private readonly requireUser: boolean;
   private readonly sharedSkillOwner?:string;
+  private activeExports=0;
   private readonly registryOptions: { eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number };
   /** Key: normalised user name, or "" for identity-less connections. */
   private readonly slots = new Map<string, Promise<UserSlot>>();
@@ -277,6 +278,18 @@ export class HostServer {
       }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
     }
     const readUrl=new URL(req.url??'/', 'http://host');
+    const exportRoute=/^\/api\/conversations\/([a-zA-Z0-9-]+)\/native-export$/.exec(readUrl.pathname);
+    if(exportRoute){
+      res.setHeader('cache-control','no-store');if(req.method!=='GET'){json(res,405,{error:'Use GET'});return;}
+      if(this.activeExports>=2){json(res,429,{error:'Export busy'});return;}
+      const id=exportRoute[1],session=slot.registry.get(id),task=await slot.workspaces?.lookup(id);
+      if(!session||!task||task.engine!=='codex'||task.archived||task.cleanupStarted||task.workspaceRemoved||slot.lifecycleLocks.has(id)){json(res,409,{error:'Open an active Codex conversation first'});return;}
+      const binding=session.displayBinding(),taskBinding=task.nativeBinding?.id,cursor=session.currentCursor;this.activeExports++;
+      try{const text=await session.exportConversation();const current=await slot.workspaces!.lookup(id);if(session.isBusy||session.currentCursor!==cursor||!current||current.archived||current.cleanupStarted||current.workspaceRemoved||current.nativeBinding?.id!==taskBinding||slot.registry.get(id)!==session||session.displayBinding()!==binding)throw Error('Conversation changed during export');
+        res.writeHead(200,{'content-type':'text/markdown; charset=utf-8','content-disposition':'attachment; filename="conversation-'+id+'.md"'});res.end(text);
+      }catch{json(res,409,{error:'Export failed or conversation changed; original records retained'});}finally{this.activeExports--;}
+      return;
+    }
     const syncRoute=/^\/api\/conversations\/([^/]+)\/(meta|page|changes|content|commands|recent-page|recent-content)$/.exec(readUrl.pathname);
     if(syncRoute){
       res.setHeader('cache-control','no-store');
@@ -1069,6 +1082,14 @@ class HostSocket implements SessionSink {
           await this.session.setThinkingLevel(frame.level);this.metadataEpoch++;
           this.send({ v: 1, type: "ack", operation: "set_thinking", ...rid(frame) });
           break;
+        case "agent_command": {
+          if(!this.session||!this.opened)throw new NotOpenError();
+          const target=this.session;
+          if(this.lifecycleLocks.has(target.id)||await this.workspaces?.isArchived(target.id))throw Error('Conversation is unavailable');
+          const text=await target.runCommand(frame.name,frame.args);
+          if(this.session===target)this.send({v:1,type:'agent_command_result',sessionId:target.id,name:frame.name,text,...rid(frame)});
+          break;
+        }
         case "get_commands": {
           if (!this.session || !this.opened) throw new NotOpenError();
           const target=this.session;

@@ -1497,3 +1497,15 @@ it('does not restore a legacy rich preview into default Compact mode',async()=>{
  sessionStorage.setItem('pi-coffee.active.v2:owner','old-mode');await setup(false,false,true,false,'owner');await vi.advanceTimersByTimeAsync(100);
  expect(document.querySelector('#thread')!.textContent).not.toContain('OLD TOOL LOG');
 });
+
+it('dispatches Codex native commands without sending prompts and keeps unsupported drafts',async()=>{
+ const app=await setup();chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;engine.value='codex';engine.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ ws.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{commands:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(20);
+ const input=document.querySelector<HTMLTextAreaElement>('#prompt')!,form=document.querySelector('#composer')!;
+ input.value='/goal Finish this task';form.dispatchEvent(new Event('submit',{cancelable:true}));
+ expect(app.frames.filter(f=>f.type==='agent_command')).toHaveLength(1);expect(app.frames.at(-1)).toMatchObject({name:'goal',args:'Finish this task'});
+ expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+ input.value='/logout';form.dispatchEvent(new Event('submit',{cancelable:true}));expect(input.value).toBe('/logout');expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+});

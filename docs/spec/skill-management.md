@@ -310,3 +310,7 @@ clears the error; switching tasks resets the deadline and catalog. Native
 from automatically advertised Skills. The transient refocus report had existing
 files and live catalogs; this fix covers a reproduced menu recovery gap, without
 claiming the exact production trigger was proven.
+
+### Codex native command Web adaptation (2026-10-20)
+
+The [Codex command contract](codex-native-commands.md) adds an explicit native/Web command inventory alongside the Skill catalog. Native commands are dispatched as operations, never blindly forwarded as text; the contract lists supported routes and unavailable terminal/shared-setting operations.

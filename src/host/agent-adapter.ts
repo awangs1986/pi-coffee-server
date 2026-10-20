@@ -86,6 +86,7 @@ export interface AgentSession {
   setSpeed?(mode: import("../shared/protocol.js").CodexSpeed): Promise<void>;
   setContextPreset?(preset: import("../shared/protocol.js").ContextPreset): Promise<void>;
   getCommands(): Promise<CommandInfo[]>;
+  runCommand?(name:string,args:string):Promise<unknown>;
   /** Extensions exposed by the selected engine (Pi only in this release). */
   getExtensions(): Promise<ExtensionInfo[]>;
   getStats(): Promise<SessionStats>;

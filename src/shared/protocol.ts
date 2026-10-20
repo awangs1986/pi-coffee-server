@@ -258,6 +258,7 @@ export type ClientFrame = (
   | { v: typeof PROTOCOL_VERSION; type: "set_context"; requestId?: string; preset: ContextPreset }
   | { v: typeof PROTOCOL_VERSION; type: "set_thinking"; requestId?: string; level: string }
   | { v: typeof PROTOCOL_VERSION; type: "get_command_catalog"; engine: AgentEngine; requestId?: string }
+  | { v: typeof PROTOCOL_VERSION; type: "agent_command"; requestId?:string; name:string; args:string }
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
   | { v: typeof PROTOCOL_VERSION; type: "get_extensions" }
   | { v: typeof PROTOCOL_VERSION; type: "get_stats" }
@@ -279,6 +280,7 @@ export type ClientFrame = (
     }) & {conversationId?:string;bindingEpoch?:string};
 
 export type ServerFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"agent_command_result";sessionId:string;requestId?:string;name:string;text:string}
   | {v:typeof PROTOCOL_VERSION;type:"mishu_watch";panel?:{counts:Record<string,number>;items:{key:string;kind:string;conv?:string;text:string;link?:string;priority:number}[]};notice?:{text:string;link?:string;conv?:string;kind:string}}
   | {v:typeof PROTOCOL_VERSION;type:"sync_changed";sessionId:string;conversationId:string;bindingEpoch:string;headRevision:string;sourceFreshness:"unknown"|"reconciling"|"current"}
   | {v:typeof PROTOCOL_VERSION;type:"queue_state";sessionId:string;items:QueueItem[]}
@@ -457,6 +459,9 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "set_context":
       if(value.preset!=="272k" && value.preset!=="maximum")throw new ProtocolError("invalid_frame","Context preset must be 272k or maximum");
       return {v:PROTOCOL_VERSION,type:"set_context",preset:value.preset,...withRequestId(value)};
+    case "agent_command":
+      if(typeof value.name!=="string"||! /^[a-z][a-z0-9-]{0,63}$/.test(value.name)||typeof value.args!=="string"||value.args.length>8192)throw new ProtocolError("invalid_frame","Invalid native command");
+      return {v:PROTOCOL_VERSION,type:"agent_command",name:value.name,args:value.args,...withRequestId(value)};
     case "get_commands":
       return { v: PROTOCOL_VERSION, type: "get_commands" };
     case "get_extensions":

@@ -1,3 +1,4 @@
+import {codexNativeCommand} from './codex/commands.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
@@ -217,6 +218,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       return {preset:saved.preset==='maximum'?'maximum':'272k',speed:saved.speed==='fast'?'fast':'standard',
         ...(typeof saved.emptyContext==='boolean'?{emptyContext:saved.emptyContext}:{}),
         ...(saved.mishuRole===true?{mishuRole:true}:{}),
+        ...(saved.planMode===true?{planMode:true}:{}),
         ...(typeof saved.model==='string' && saved.model?{model:saved.model}:{}),
         ...(typeof saved.reasoningEffort==='string' && saved.reasoningEffort?{reasoningEffort:saved.reasoningEffort}:{})};
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;return {preset:'272k',speed:'standard'};}
@@ -368,6 +370,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       cwd: this.options.cwd,
       preset,
       speed:preferences.speed??'standard',
+      planMode:preferences.planMode===true,
       developerInstructions,
       sandbox:this.options.sandbox,
       preparation:this.options.preparation,
@@ -553,6 +556,7 @@ function nativeThreadConfig(preset:ContextPreset):Obj {
   return {model_context_window:limit,model_auto_compact_token_limit:Math.floor(limit*0.95),'features.default_mode_request_user_input':true};
 }
 interface CodexPreferences {
+  planMode?:boolean;
   mishuRole?:boolean;
   emptyContext?:boolean;
   preset:ContextPreset;
@@ -561,6 +565,7 @@ interface CodexPreferences {
   reasoningEffort?:string;
 }
 interface CodexSessionSettings {
+  planMode?:boolean;
   freshEmpty?:boolean;
   developerInstructions?:string;
   mishuContext?:()=>Promise<MishuSourceContext|undefined>;
@@ -592,6 +597,7 @@ class CodexSession implements PiSession {
   private settings:CodexSessionSettings;
   private preset:ContextPreset;
   private speed:CodexSpeed;
+  private planMode=false;
   private model?: string;
   private effort?: string;
   private preferenceWrites:Promise<void>=Promise.resolve();
@@ -617,7 +623,7 @@ class CodexSession implements PiSession {
   private readonly cwd: string;
 
   constructor(server: CodexAppServer, threadId: string, settings: CodexSessionSettings) {
-    this.settings=settings;this.preset=settings.preset;this.speed=settings.speed;
+    this.settings=settings;this.preset=settings.preset;this.speed=settings.speed;this.planMode=settings.planMode===true;
     this.server = server;
     this.cwd = settings.cwd;
     this.threadId = threadId;
@@ -655,12 +661,14 @@ class CodexSession implements PiSession {
     return {
       // Explicit standard clears any native/global Fast default for this task.
       serviceTier:this.speed==='fast'?'fast':'default',
+      ...(this.model?{collaborationMode:{mode:this.planMode?'plan':'default',settings:{model:this.model,reasoning_effort:this.effort??null,developer_instructions:null}}}:{}),
       ...(this.model === undefined ? {} : { model: this.model }),
       ...(this.effort === undefined ? {} : { effort: this.effort }),
     };
   }
 
   private async input(text: string, images?: ImageInput[]): Promise<Json[]> {
+    if(/^\/[a-z][a-z0-9-]*(?:\s|$)/i.test(text.trim()))throw Error("Native command cannot be sent as conversational input");
     const input=toUserInput(text,images);
     const mention=codexSkillMention(text);
     if(mention){
@@ -698,12 +706,24 @@ class CodexSession implements PiSession {
   }
 
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    const command=/^\/(review|init|plan|recap)(?:\s+([\s\S]*))?$/.exec(text.trim());
+    if(/^\/[a-z][a-z0-9-]*(?:\s|$)/i.test(text.trim())&&!command)throw Error("Native command requires the Web command dispatcher; no prompt was sent");
+    if(command&&images?.length)throw Error('Native command does not accept attachments');
+    if(command?.[1]==='plan'){if(!command[2])throw Error('Use the Plan mode command interface');await this.updatePreferences({planMode:true});text=command[2];}
+    if(command?.[1]==='recap'){if(command[2])throw Error('/recap does not accept arguments');text='Summarize this conversation concisely: the current goal, confirmed decisions, completed work, open questions, and next steps. Do not perform project work or create additional agent sessions. This is a recap only; do not clear or compact the original history.';}
+    if(command?.[1]==='init'){
+      if(command[2])throw Error('/init does not accept arguments');
+      text='Inspect this project and create or update AGENTS.md with concise, accurate repository instructions. Read existing guidance first; preserve existing rules and do not overwrite unrelated content. Include development, validation and repository conventions supported by the actual project.';
+    }
 
     if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
     const sourceOverrides=await this.refreshMishuContext();
     this.nativeInputSeen=true;
     await this.updatePreferences({});
-    const result = await this.server.request("turn/start", {
+    if(command?.[1]==='review')await this.server.request('thread/resume',{threadId:this.threadId,excludeTurns:true,cwd:this.cwd,model:this.model??null,serviceTier:this.speed==='fast'?'fast':'default',approvalPolicy:this.settings.approvalPolicy,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{}),config:{...nativeThreadConfig(this.preset),...(this.effort?{model_reasoning_effort:this.effort}:{})}});
+    const result = command?.[1]==='review'
+      ? await this.server.request('review/start',{threadId:this.threadId,delivery:'inline',target:command[2]?{type:'custom',instructions:command[2]}:{type:'uncommittedChanges'}}) as Obj
+      : await this.server.request("turn/start", {
       threadId: this.threadId,
       input: await this.input(text, images),
       ...this.turnOverrides(),
@@ -725,7 +745,9 @@ class CodexSession implements PiSession {
     this.emit({ type: "queue_update", steering: [text], followUp: this.followUps.map((item) => item.text) });
   }
 
+  validateFollowUp(text:string){if(/^\/[a-z][a-z0-9-]*(?:\s|$)/i.test(text.trim()))throw Error("Native command cannot be queued as conversational input");return Promise.resolve();}
   async followUp(text: string, images?: ImageInput[]): Promise<void> {
+    await this.validateFollowUp(text);
     if (!this.streaming) return this.prompt(text, images);
     this.followUps.push({ text, ...(images === undefined ? {} : { images }) });
     this.emit({ type: "queue_update", steering: [], followUp: this.followUps.map((item) => item.text) });
@@ -839,15 +861,15 @@ class CodexSession implements PiSession {
     await this.updatePreferences({speed:mode});
   }
 
-  private updatePreferences(change:{model?:string;reasoningEffort?:string;speed?:CodexSpeed}):Promise<void>{
+  private updatePreferences(change:{model?:string;reasoningEffort?:string;speed?:CodexSpeed;planMode?:boolean}):Promise<void>{
     const write=this.preferenceWrites.then(async()=>{
-      const next={mishuRole:this.settings.mishuRoleApplied===true,preset:this.preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
+      const next={planMode:this.planMode,mishuRole:this.settings.mishuRoleApplied===true,preset:this.preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen),...change};
       if(next.speed==='fast'&&(change.speed!==undefined||change.model!==undefined)){
         const models=codexModelChoices(await this.server.request('model/list',{},10000) as Obj,next.model,next.reasoningEffort);
         if(!models.models.some(m=>m.id===models.current?.id&&m.fastMode===true))throw new Error('This model does not advertise Fast mode; choose 1x first');
       }
       await this.settings.savePreferences(this.threadId,next);
-      this.model=next.model;this.effort=next.reasoningEffort;this.speed=next.speed;
+      this.model=next.model;this.effort=next.reasoningEffort;this.speed=next.speed;this.planMode=next.planMode;
     });
     this.preferenceWrites=write.catch(()=>undefined);return write;
   }
@@ -872,12 +894,22 @@ class CodexSession implements PiSession {
     if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
       this.settings.freshEmpty=history.entries.length===0;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
-    await this.settings.savePreferences(id,{mishuRole:this.settings.mishuRoleApplied===true,preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
+    await this.settings.savePreferences(id,{planMode:this.planMode,mishuRole:this.settings.mishuRoleApplied===true,preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
     this.absorbThread(thread);
   }
 
   async setThinkingLevel(level: string): Promise<void> {
     await this.updatePreferences({reasoningEffort:level});
+  }
+
+  async runCommand(name:string,args:string){
+    if(name==='plan'){
+      if(args!=='status'&&(this.streaming||this.asyncQuestion))throw Error('Wait for the current turn before changing Plan mode');
+      if(args&&!['on','off','status'].includes(args))throw Error('Use /plan, /plan on, /plan off, or /plan status');
+      if(args!=='status')await this.updatePreferences({planMode:args!=='off'});
+      return {mode:this.planMode?'plan':'default',appliesTo:'next turn',persisted:true};
+    }
+    return codexNativeCommand(this.server,this.threadId,this.cwd,name,args);
   }
 
   async getCommands(): Promise<CommandInfo[]> {
