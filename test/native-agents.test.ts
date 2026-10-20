@@ -207,11 +207,13 @@ it('creates and selects a Gitea project beside the Work selector without changin
  document.querySelector<HTMLInputElement>('#modal-input')!.value='new-demo';document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.filter(r=>r.action==='project')).toEqual([{action:'project',name:'new-demo'}]);
  expect(document.querySelector<HTMLSelectElement>('#project-select')!.value).toBe('new-project');
- expect(document.querySelector<HTMLInputElement>('#start-branch')!.value).toBe('main');
+ expect(document.querySelector<HTMLInputElement>('#start-branch')!.value).toBe('');
+ expect(document.querySelector<HTMLInputElement>('#start-branch')!.placeholder).toBe('main');
  expect(engine.value).toBe('codex');expect(prompt.value).toBe('keep this draft');
  expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
  document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
- expect(app.requests.find(r=>r.action==='conversation')).toMatchObject({projectId:'new-project',engine:'codex',branch:'main'});
+ expect(app.requests.find(r=>r.action==='conversation')).toMatchObject({projectId:'new-project',engine:'codex'});
+ expect(app.requests.find(r=>r.action==='conversation')).not.toHaveProperty('branch');
  expect(button.classList.contains('hidden')).toBe(true);
 });
 it.each(['cancel','failure'])('retains the Work selection when Gitea creation ends with %s',async(outcome)=>{

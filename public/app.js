@@ -3368,7 +3368,7 @@ ui.projectSelect.addEventListener('change',async()=>{
   const selectedProject=workspaceState?.projects.find(p=>p.id===ui.projectSelect.value);if(selectedProject)draftProjectForge=projectForge(selectedProject);
   creationRequest=null;saveCreation();ui.startBranch.value='';showArchived=false;renderProjectContext();renderAgentSettings();renderSessionList();
   const id=ui.projectSelect.value,list=$('#remote-branches');list.replaceChildren();if(!id || activeId)return;
-  try{const branches=await workspaceApi({action:'branches',projectId:id});if(ui.projectSelect.value!==id || activeId)return;for(const branch of branches){const option=document.createElement('option');option.value=branch;list.append(option);}ui.startBranch.value=workspaceState.projects.find(p=>p.id===id)?.branch || branches[0] || '';}
+  try{const branches=await workspaceApi({action:'branches',projectId:id});if(ui.projectSelect.value!==id || activeId)return;for(const branch of branches){const option=document.createElement('option');option.value=branch;list.append(option);}ui.startBranch.placeholder=workspaceState.projects.find(p=>p.id===id)?.branch || branches[0] || '默认项目分支';}
   catch(e){toast('分支列表不可用，可填写已知远端分支：'+e.message);}
 });
 $('#show-archive').addEventListener('click',()=>{closeBrandMenu();showArchived=true;renderSessionList();});

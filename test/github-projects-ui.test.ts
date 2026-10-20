@@ -10,8 +10,8 @@ const REPOS=[
   {id:'102',fullName:'acme/tools',private:false,archived:false,defaultBranch:'trunk',cloneUrl:'https://github.com/acme/tools.git',webUrl:'https://github.com/acme/tools',canPush:true,description:'Build helpers'},
   {id:'103',fullName:'acme/readonly',private:true,archived:false,defaultBranch:'main',cloneUrl:'https://github.com/acme/readonly.git',webUrl:'https://github.com/acme/readonly',canPush:false},
 ];
-type Options={accounts?:boolean;github?:boolean;task?:Record<string,unknown>|null;reposError?:string;registrationGate?:Promise<void>};
-async function setup({accounts=false,github=true,task=null,reposError,registrationGate}:Options={}){
+type Options={accounts?:boolean;github?:boolean;task?:Record<string,unknown>|null;reposError?:string;registrationGate?:Promise<void>;branchGate?:Promise<void>};
+async function setup({accounts=false,github=true,task=null,reposError,registrationGate,branchGate}:Options={}){
   document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
   Object.defineProperty(window,'matchMedia',{value:()=>({matches:false,addEventListener(){}}),configurable:true});Element.prototype.scrollTo=vi.fn();
   const projects:any[]=[{id:'p',name:'demo',branch:'main',webUrl:'https://gitea.example/owner/demo'}];
@@ -40,7 +40,7 @@ async function setup({accounts=false,github=true,task=null,reposError,registrati
       const project={id:'github-'+(known?.id ?? '900'),name,branch:known?.defaultBranch ?? 'main',forge:'github',repoId:known?.id ?? '900',webUrl:'https://github.com/'+name};
       projects.push(project);return json(project);
     }
-    if(body.action==='branches')return json(['main','trunk','dev']);
+    if(body.action==='branches'){await branchGate;return json(['main','trunk','dev']);}
     if(body.action==='files')return json({url:'http://vm.example',scope:'task-1',token:'t',files:[]});
     if(body.action==='status')return json({state:'synced',dirty:false,branch:'coffee/vm/task-1'});
     if(body.action==='changes')return json({scope:'branch',files:[{path:'a.ts',status:'M',additions:1,deletions:0}],patch:'',checks:[],checkpointPaths:[]});
@@ -78,7 +78,9 @@ it('groups the repository dropdown by forge and switches the strip icon with the
   await selectProject('github-101');
   expect(q('.strip-repo-icon').dataset.forge).toBe('github');expect(q('.strip-repo-icon').title).toBe('GitHub 仓库');
   expect(app.requests.filter(r=>r.action==='branches')).toEqual([{action:'branches',projectId:'github-101'}]);
-  expect(q<HTMLInputElement>('#start-branch').value).toBe('main');
+  expect(q<HTMLInputElement>('#start-branch').value).toBe('');
+  expect(q<HTMLInputElement>('#start-branch').placeholder).toBe('main');
+  expect([...q<HTMLDataListElement>('#remote-branches').options].map(o=>o.value)).toEqual(['main','trunk','dev']);
   await selectProject('p');expect(q('.strip-repo-icon').dataset.forge).toBe('gitea');
 });
 
@@ -98,7 +100,7 @@ it('adds a GitHub repository from the "＋" menu, then selects it for the new ta
   search.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter'}));await vi.advanceTimersByTimeAsync(20);
   expect(app.requests.filter(r=>r.action==='github_project')).toEqual([{action:'github_project',repository:'acme/tools'}]);
   expect(hidden('#github-modal')).toBe(true);
-  expect(q<HTMLSelectElement>('#project-select').value).toBe('github-102');expect(q<HTMLInputElement>('#start-branch').value).toBe('trunk');
+  expect(q<HTMLSelectElement>('#project-select').value).toBe('github-102');expect(q<HTMLInputElement>('#start-branch').value).toBe('');expect(q<HTMLInputElement>('#start-branch').placeholder).toBe('trunk');
   expect(q('#toast').textContent).toContain('GitHub 仓库已添加：acme/tools');
   expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
 });
@@ -155,7 +157,7 @@ it('finds an existing Gitea repository without creating a remote or losing the d
   expect(rows().map(row=>row.dataset.repo)).toContain('awangs/ArenaModels');
   rows()[0].click();await vi.advanceTimersByTimeAsync(20);
   expect(q<HTMLSelectElement>('#project-select').value).toBe('gitea-88');
-  expect(q<HTMLInputElement>('#start-branch').value).toBe('trunk');
+  expect(q<HTMLInputElement>('#start-branch').value).toBe('');expect(q<HTMLInputElement>('#start-branch').placeholder).toBe('trunk');
   expect(q<HTMLTextAreaElement>('#prompt').value).toBe('Keep this draft');
   expect(app.requests.filter(r=>r.action==='gitea_project')).toEqual([{action:'gitea_project',repository:'awangs/ArenaModels'}]);
   expect(app.requests.some(r=>['project','discover','conversation'].includes(r.action))).toBe(false);
@@ -204,4 +206,13 @@ it('requires an explicit connected account before listing or registering GitHub 
  expect(app.requests.filter(r=>r.action==='github_repos')).toEqual([{action:'github_repos',accountId:'work'}]);
  rows().find(row=>row.dataset.repo==='acme/tools')!.click();await vi.advanceTimersByTimeAsync(30);
  expect(app.requests.find(r=>r.action==='github_project')).toMatchObject({accountId:'work',repository:'acme/tools'});
+});
+
+it('preserves a branch typed while remote suggestions are loading',async()=>{
+  let release!:()=>void;const branchGate=new Promise<void>(resolve=>{release=resolve;});
+  await setup({branchGate});await chooseWork();await selectProject('github-101');
+  q<HTMLInputElement>('#start-branch').value='arena/feature';
+  release();await vi.advanceTimersByTimeAsync(20);
+  expect(q<HTMLInputElement>('#start-branch').value).toBe('arena/feature');
+  expect([...q<HTMLDataListElement>('#remote-branches').options].map(o=>o.value)).toEqual(['main','trunk','dev']);
 });

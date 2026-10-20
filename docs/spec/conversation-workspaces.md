@@ -142,3 +142,7 @@ and history are not migrated or relabeled by this change.
 Pi account import into Web Server is a possible future direction only. No
 credentials move in this change; native Codex/Claude authentication and VM data
 ownership remain unchanged.
+
+### Starting-branch picker (2026-10-20)
+
+The new Work draft keeps the starting-branch search input empty and shows the repository default branch as its placeholder. Loading branch suggestions must not prefill the default branch: native datalist filtering would hide other branches. An empty submitted value continues to use the project default; an explicit selection or manually entered branch is preserved. Existing Conversations keep their recorded starting branch and task checkout unchanged.
