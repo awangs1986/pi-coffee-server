@@ -34,8 +34,18 @@ is displayed as a read-only bundled Pi Skill, not injected into native engines.
 Cursor/Grok mappings supplement the initial three-engine implementation; see
 [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md). Native compatibility
 discovery may also find shared `.agents`/`.claude` roots; this manager does not
-silently remove those sources. Machine-level mutations require the configured
-`PI_COFFEE_SKILL_OWNER`; other Web identities use their owned Work project scope.
+silently remove those sources. Machine-level listing and mutations require the configured `PI_COFFEE_SKILL_OWNER`
+or an authenticated identity explicitly listed in `PI_COFFEE_SKILL_MANAGERS`
+(comma-separated Host identity keys, not display names). These managers share the
+same registry and native Skill directories: installation, updates and disabling
+affect all participants using that library. Unlisted identities retain only their
+owned Work project scope. This does not grant access to another user's tasks,
+credentials or project Skills. Existing native agents discover changes on their
+next start; reloading is limited to the caller's own idle task.
+
+Accepted 2026-10-20: awangs and fengge share the VM Skill library; deploy with
+`PI_COFFEE_SKILL_MANAGERS=gitea-2` for fengge's authenticated identity. The existing
+default owner scope keeps its access. Do not duplicate or migrate the library.
 
 Project means the selected active Work Conversation's independent checkout, not
 all clones of a registered Project. The Task's currently active Agent must match; takeover does not copy Skills across engines. Its copied

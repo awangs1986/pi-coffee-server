@@ -104,10 +104,10 @@
         <section id="skills-page" class="skills-page hidden" aria-label="Skills 管理">
           <header class="search-heading"><h1>Skills</h1><button id="skills-close" class="icon-btn" type="button" aria-label="关闭 Skills">×</button></header>
           <div class="skills-body">
-            <p class="skills-intro">在 Web 管理，在你的 VM 安装和执行。每个 Agent 保留自己的 Skill 加载方式。</p>
+            <p class="skills-intro">在 Web 管理，在 VM 安装和执行。共享库的安装、更新与停用影响共用此 VM 的用户；项目级仅影响当前任务。</p>
             <div class="skills-toolbar">
               <label>Agent <select id="skills-engine" aria-label="Skill Agent"><option value="pi">Pi</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="cursor">Cursor</option><option value="grok">Grok Build</option></select></label>
-              <label>范围 <select id="skills-scope" aria-label="Skill 范围"><option value="user">用户级 · 所有任务</option><option value="project">项目级 · 当前 Work 目录</option></select></label>
+              <label>范围 <select id="skills-scope" aria-label="Skill 范围"><option value="user">共享库 · 所有任务</option><option value="project">项目级 · 当前 Work 目录</option></select></label>
               <button id="skills-refresh" class="btn small" type="button">刷新</button>
               <button id="skills-reload" class="btn small" type="button">重新加载当前任务</button>
             </div>

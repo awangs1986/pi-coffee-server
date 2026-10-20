@@ -84,6 +84,8 @@ export interface HostServerOptions {
   /** Existing saved coordination scopes; recovery starts only after runtime HTTP listens. */
   savedMishuScopes?: () => AsyncIterable<string | undefined>;
   sharedSkillOwner?: string;
+  /** Additional authenticated identities allowed to manage the shared native Skill library. */
+  sharedSkillManagers?: string[];
   eventBufferSize?: number;
   /** Stop idle Pi processes after this long; the conversation stays in Pi's session store. */
   idleTimeoutMs?: number;
@@ -329,7 +331,7 @@ export class HostServer {
       if(req.method!=="POST"){json(res,405,{error:"Use POST for scoped Skill requests"});return;}
       try {
         const input=await readJson(req);
-        if(input.scope==='user' && user && user!==this.sharedSkillOwner){json(res,403,{error:'Machine-wide Skills are managed by the VM owner; select project scope for task Skills'});return;}
+        if(input.scope==='user' && user && user!==this.sharedSkillOwner && !this.options.sharedSkillManagers?.includes(user)){json(res,403,{error:'Shared Skills require owner or shared Skill manager access; select project scope for task Skills'});return;}
         if(input.action==='reload') {
           const id=input.conversationId,task=typeof id==='string'?await slot.workspaces?.lookup(id):undefined;
           if(!task || task.archived || (task.engine??'pi')!==input.engine)throw new Error('Select an active Task using this Agent');

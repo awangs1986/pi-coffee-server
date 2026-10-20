@@ -1,5 +1,5 @@
 import {request as httpRequest} from "node:http";
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -39,4 +39,24 @@ it('keeps task APIs, file grants and logout inside the authenticated shared Host
   for(const action of ['list','disable_native','restore_native'])expect((await call('bob','/api/skills',{action,scope:'user',engine:'codex',id:'external'})).status).toBe(403);
   for(const action of ['disable_native','restore_native'])expect((await call('bob','/api/skills',{action,scope:'project',engine:'pi',conversationId:a.id,id:'external'})).status).toBe(409);
  } finally {await host.close();await transfer.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('shares the native Skill library only with explicitly configured managers', async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-shared-skills-'));
+ const home=join(root,'home'),directory=join(home,'.agents/skills/demo');
+ await mkdir(directory,{recursive:true});await writeFile(join(directory,'SKILL.md'),'---\nname: demo\ndescription: Shared fixture\n---\nShared instructions.\n');
+ const host=new HostServer({port:0,token:'transport',requireUser:true,sharedSkillOwner:'alice',sharedSkillManagers:['bob'],factory:new RpcPiSessionFactory(),scopeForUser:user=>({factory:new RpcPiSessionFactory(),workspaces:new Workspaces(join(root,user,'projects')),skills:{home,root:join(root,'registry')}})});
+ await host.start();
+ const call=(user:string,body:any)=>fetch(`http://127.0.0.1:${host.address().port}/api/skills`,{method:'POST',headers:{authorization:'Bearer transport','x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify({scope:'user',engine:'codex',...body})});
+ try{
+  const owner=await (await call('alice',{action:'list'})).json();
+  const response=await call('bob',{action:'list'});expect(response.status).toBe(200);const shared=await response.json();
+  expect(shared.directory).toBe(owner.directory);expect(shared.skills.map((s:any)=>s.name)).toContain('demo');
+  const skill=shared.skills.find((s:any)=>s.name==='demo');
+  expect((await call('bob',{action:'disable_native',id:skill.id})).status).toBe(200);
+  expect((await (await call('alice',{action:'list'})).json()).skills.find((s:any)=>s.name==='demo').enabled).toBe(false);
+  expect((await call('eve',{action:'list'})).status).toBe(403);
+  expect((await call('eve',{action:'disable_native',id:skill.id})).status).toBe(403);
+  expect((await call('bob',{action:'list',scope:'project',conversationId:'alice-task'})).status).toBe(409);
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
 });

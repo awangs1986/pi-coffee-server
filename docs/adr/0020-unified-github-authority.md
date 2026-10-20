@@ -10,7 +10,7 @@ Gitea `http://gitea:3000/awangs/pi-coffee-server` mirrors the identical main com
 
 The deployment supports one physical owner, one native machine login, and separately authenticated Web participants submitting into distinct conversations and directories. These directories provide application-level privacy, not an OS sandbox. Native provider login stays on the Host. Per-user routing to independent Hosts remains compatible.
 
-Every shared Host API selects the same authenticated user scope as WebSocket sessions. Workspace state, lifecycle locks, file grants and broadcasts belong to that scope. Project Skills belong to the immutable task engine. Machine-level Skills are shared native settings and can be managed only by the configured VM owner (`PI_COFFEE_SKILL_OWNER`); other Web participants use project scope.
+Every shared Host API selects the same authenticated user scope as WebSocket sessions. Workspace state, lifecycle locks, file grants and broadcasts belong to that scope. Project Skills belong to the immutable task engine. Machine-level Skills are shared native settings and can be managed by the configured VM owner (`PI_COFFEE_SKILL_OWNER`) and, since the 2026-10-20 shared-library decision, explicit additional identities in `PI_COFFEE_SKILL_MANAGERS`; other Web participants use project scope. Shared Skill management does not grant cross-account task or credential access.
 
 ## Reconciliation and release
 

@@ -174,6 +174,7 @@ async function run(selectedRole: Role): Promise<void> {
     transfer,
     ...defaultScope!,
     sharedSkillOwner:process.env.PI_COFFEE_SKILL_OWNER,
+    sharedSkillManagers:envList("PI_COFFEE_SKILL_MANAGERS"),
     scopeForUser,
     savedMishuScopes:()=>savedMishuScopes(workdir,defaultScope!.workspaces!.root),
   });
