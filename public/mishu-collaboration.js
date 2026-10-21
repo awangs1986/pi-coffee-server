@@ -5,7 +5,7 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
  const overlay=document.createElement('div');overlay.className='modal-overlay hidden';overlay.dataset.mishuCollaboration='';
  Object.assign(overlay.style,{position:'fixed',inset:'0',display:'grid',placeItems:'center',padding:'12px',background:'rgba(0,0,0,.5)'});
  const panel=document.createElement('section');panel.setAttribute('role','dialog');panel.setAttribute('aria-label','MISHU 协作与待决定事项');panel.setAttribute('aria-modal','true');
- Object.assign(panel.style,{display:'flex',flexDirection:'column',gap:'12px',width:'min(720px,100%)',maxHeight:'calc(100dvh - 24px)',minHeight:'0',background:'var(--panel,#202124)',color:'var(--text,#eee)',padding:'16px',borderRadius:'12px',boxSizing:'border-box'});
+ Object.assign(panel.style,{display:'flex',flexDirection:'column',gap:'12px',width:'min(720px,100%)',maxHeight:'calc(100dvh - 24px)',minHeight:'0',background:'var(--bg,#ffffff)',color:'var(--text,#171717)',padding:'16px',borderRadius:'12px',boxSizing:'border-box'});
  overlay.append(panel);document.body.append(overlay);
  const heading=document.createElement('h2');heading.textContent='MISHU 协作';panel.append(heading);
  const tabs=document.createElement('nav');tabs.setAttribute('aria-label','MISHU 协作内容');panel.append(tabs);
