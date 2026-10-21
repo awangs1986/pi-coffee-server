@@ -5,6 +5,8 @@ Build the matching integration candidate, then run the installed immutable packa
 ```sh
 npm run build
 node scripts/probe-mishu-experience.mjs
+node scripts/probe-mishu-collaboration.mjs
+node scripts/probe-mishu-answer.mjs
 MISHU_NOTIFICATION_ORDINARY_PENDING=1 node scripts/probe-mishu-notifications.mjs
 ```
 
@@ -37,3 +39,19 @@ feature tickets alongside public HTTP/WS/controller regressions. Synthetic provi
 requests verify wiring, isolation and mechanics; they do not prove an unrestricted
 model will choose the right tool. Each actual criterion receives PASS/FAIL/UNVERIFIABLE
 with evidence. No probe claims production activation. Kill only processes it starts.
+
+The collaboration probe downloads the exact immutable artifact named in the local
+lockfile, verifies SHA512 and compares installed critical files. Set
+`MISHU_COLLAB_ARTIFACT` only for an explicit local artifact override; an override
+never changes the consumed dependency. The usage/evidence Browser probe takes the
+private synthetic output directory of a completed genuine collaboration probe; it
+passively verifies retained native usage and forbids new native sessions/model calls.
+Read its required selector at the script entry.
+
+Genuine-provider probes require explicit `MISHU_LIVE_AGENT_DIR`,
+`MISHU_LIVE_PROVIDER` and `MISHU_LIVE_MODEL`; they never choose an alternative.
+They use only their own synthetic conversations. The live memory probe trusts its
+new private project settings with native `--approve` for bounded retry/compaction
+configuration and never changes a global profile. Do not run these paid probes as
+part of automatic canonical checks. Source/installed/genuine/production claims
+remain distinct in [the acceptance record](../reviews/mishu-experience-candidate.md).
