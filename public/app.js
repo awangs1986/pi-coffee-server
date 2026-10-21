@@ -3,6 +3,8 @@ import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
+import {initMishuEvidence} from './mishu-evidence.js';
+import {initMishuUsage} from './mishu-usage.js';
 import {initMishuMemory} from './mishu-memory.js';
 import {initMishuCommands} from './mishu-commands.js';
 import {initMishuCollaboration} from './mishu-collaboration.js';
@@ -269,7 +271,8 @@ function showRecentThread(id){
   });
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;let mishuMemory=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;let mishuMemory=null;let mishuEvidence=null;let mishuUsage=null;let mishuCollaboration=null;
+function closeMishuPanels(){mishuMemory?.close();mishuEvidence?.close();mishuUsage?.close();mishuCollaboration?.close();}
 // Unacknowledged requests stay in this tab, scoped to their owner and task.
 // Never infer acceptance from matching history text or resend automatically.
 const promptOutbox=new Map();
@@ -763,7 +766,7 @@ function taskSource() {
 }
 function chooseTaskSource(source) {
   if(currentTask() || pendingOpenId || (source!=='chat' && !forgeCapabilities()[source]))return;
-  taskSelectionEpoch++;closeAgentMenu();closeGitHubPicker();
+  taskSelectionEpoch++;closeMishuPanels();closeAgentMenu();closeGitHubPicker();
   const project=workspaceState?.projects.find(p=>p.id===ui.projectSelect.value);
   if(source==='chat' || (project && projectForge(project)!==source)){
     ui.projectSelect.value='';ui.projectSelect.dispatchEvent(new Event('change'));
@@ -1539,7 +1542,7 @@ function revokeCachedIdentity(){
   clearConnectionDeadline();
   conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
-  connectionEpoch++;taskSelectionEpoch++;modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
+  connectionEpoch++;taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
@@ -3150,6 +3153,8 @@ $('#composer').addEventListener('submit', (event) => {
 const restartControls=createRestartController({notify:toast,accepted:text=>{if(ui.prompt.value===text){ui.prompt.value='';ui.slash.classList.add('hidden');autoGrow();refreshComposer();}}});
 void restartControls.restore();
 function submitPrompt(text, images) {
+  if(text.trim()==='/mishu-evidence'){closeBrandMenu();void mishuEvidence?.open();ui.prompt.value='';autoGrow();return true;}
+  if(text.trim()==='/mishu-usage'){closeBrandMenu();void mishuUsage?.open();ui.prompt.value='';autoGrow();return true;}
   if(mishuMemory?.handle(text)||mishuCommands?.handle(text)){ui.prompt.value='';autoGrow();return true;}
   if(activeId&&!historyReady)return false;
   if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return false;
@@ -3197,11 +3202,16 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
-const mishuRequest=async body=>{const response=await fetch('/api/mishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
+const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
 const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
-initMishuCollaboration({button:mishuCollaborationButton,context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,dialogs,toast});
+mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});
+mishuCollaboration=initMishuCollaboration({button:mishuCollaborationButton,context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,dialogs,toast});
 
-mishuMemory=initMishuMemory({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,button:$('#mishu-memory'),onOpen:closeBrandMenu,toast});
+const mishuPanelContext=()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch});
+mishuEvidence=initMishuEvidence({context:mishuPanelContext,request:mishuRequest,toast});
+mishuUsage=initMishuUsage({context:mishuPanelContext,request:mishuRequest,toast});
+for(const [id,label,panel] of [['mishu-evidence','MISHU 原话与证据',mishuEvidence],['mishu-usage','MISHU 分类用量',mishuUsage]]){const button=document.createElement('button');button.type='button';button.className='brand-menu-item';button.id=id;button.textContent=label;button.onclick=()=>{closeBrandMenu();closeSidebarOnMobile();void panel.open();};$('#mishu-toggle')?.after(button);}
+mishuMemory=initMishuMemory({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,button:$('#mishu-memory'),onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},toast});
 mishuCommands=initMishuCommands({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}),request:mishuRequest,dialogs,configureButton:$('#mishu-configure'),onOpen:closeBrandMenu,onChanged:()=>void mishuControls.refresh(),toast});
 mishuControls=initMishuControls({button:$('#mishu-toggle'),configureButton:$('#mishu-configure'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
   request:mishuRequest,
@@ -3235,7 +3245,7 @@ function applySessionSelection(id) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;modelsRequestEpoch++;clearModelsSyncTimer();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;workspaceSync=null;
+  taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearModelsSyncTimer();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;workspaceSync=null;
   activeId = id;
   models=null;restoreModelPreview();
   engine=currentTask()?.engine||sessions.find(s=>s.id===id)?.engine||modelPreview?.engine||'pi';capabilities=null;
@@ -3263,7 +3273,7 @@ function applyNewSession(focus = true) {
   closeTaskDetails();
   setWorkspaceOpen(false);closeDiffDialog();
   clearExtensionUi();
-  taskSelectionEpoch++;catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;
+  taskSelectionEpoch++;closeMishuPanels();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;
   engine='pi';capabilities=null;models=null;modelPreview=null;commands=[];$('#task-engine').value='pi';
   $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
   activeId = null;
