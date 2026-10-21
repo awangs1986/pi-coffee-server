@@ -14,7 +14,7 @@ export function initMishuConsolidation({parent,context,source,request,toast}){
    const auto=document.createElement('div');auto.dataset.mishuAutomatic='';section.append(auto);
    if(typeof state.automatic?.supported==='boolean'){
     text(auto,`空闲自动整理：${state.automatic.enabled?'已开启':'默认关闭'}。只读取开启后的当前秘书新消息。${state.automatic.pending||''}`);
-    if(state.automatic.supported){button(auto,state.automatic.enabled?'暂停自动整理':'设置自动整理',async()=>{if(state.automatic.enabled){await call({operation:'configure',enabled:false,operationId:randomId()});await refresh();return;}const form=document.createElement('div');text(form,'开启后仅处理当前秘书此刻之后的新消息；每批 20 条、12000 字符、10 条变更，辅助调用每小时最多 12 次。用户新输入优先。确定的明确偏好可保存，其他内容保留候选。');button(form,'开启当前秘书的空闲整理',async()=>{await call({operation:'configure',enabled:true,operationId:randomId()});await refresh();});button(form,'取消设置',()=>form.remove());auto.append(form);});}
+    if(state.automatic.supported||state.automatic.enabled){button(auto,state.automatic.enabled?'暂停自动整理':'设置自动整理',async()=>{if(state.automatic.enabled){await call({operation:'configure',enabled:false,operationId:randomId()});await refresh();return;}const form=document.createElement('div');text(form,'开启后仅处理当前秘书此刻之后的新消息；每批 20 条、12000 字符、10 条变更，辅助调用每小时最多 12 次。用户新输入优先。确定的明确偏好可保存，其他内容保留候选。');button(form,'开启当前秘书的空闲整理',async()=>{await call({operation:'configure',enabled:true,operationId:randomId()});await refresh();});button(form,'取消设置',()=>form.remove());auto.append(form);});}
     else text(auto,state.automatic.reason||'当前来源无法证明安全后台整理能力。');
    }
    const labels={reserved:'已预留调用',running:'正在原生整理',ready:'候选待查看',adopting:'正在保存选择',adopted:'所选候选已采纳',cancelled:'已取消',uncertain:'结果待核实，未重新生成'};
