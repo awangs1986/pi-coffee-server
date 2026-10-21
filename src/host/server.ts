@@ -270,7 +270,8 @@ export class HostServer {
         else if(input.action==='select'&&typeof input.selected==='boolean'){
           result=await slot.mishu.select(input.id,input.selected);
           for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
-        }else if(input.action==='evidence')result=await slot.mishu.evidence(input.id,input);
+        }else if(input.action==='usage')result=await slot.mishu.usage(input.id,input);
+        else if(input.action==='evidence')result=await slot.mishu.evidence(input.id,input);
         else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
         else if(input.action==='setup_lookup')result=await slot.mishu.browserLookup(input.id,input);
         else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
