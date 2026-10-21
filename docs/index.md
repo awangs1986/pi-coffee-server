@@ -1,6 +1,6 @@
 # PI Coffee documentation map
 
-- MISHU #7–#15 secretary experience candidate: [Host contracts](spec/mishu.md), [independent product authority](spec/mishu-secretary-experience.md), [installed-package/native/Browser acceptance](development/mishu-experience.md). Memory scope filters retain full-binding capacity counts including tombstones. Pi Chat remains the only secretary source; candidate publication and production activation are separate.
+- MISHU #7–#15 secretary experience candidate: [source and acceptance record](reviews/mishu-experience-candidate.md), [Host contracts](spec/mishu.md), [independent product authority](spec/mishu-secretary-experience.md), [installed-package/native/Browser acceptance](development/mishu-experience.md). Memory scope filters retain full-binding capacity counts including tombstones. Pi Chat remains the only secretary source; candidate publication and production activation are separate.
 
 - Recent-first Codex display reads: [contract](spec/recent-native-history.md). Complete history remains separate from Browser navigation.
 
