@@ -31,3 +31,10 @@ it('requires explicit task/question/counts to enable a finite plan, and exposes 
  (document.querySelector('[data-plan-create]') as HTMLButtonElement).click();await vi.waitFor(()=>expect(request).toHaveBeenCalledWith(expect.objectContaining({action:'followups',operation:'create',taskIds:['a'],maxTotal:1,maxPerTarget:1})));
  (document.querySelector('[data-plan-stop]') as HTMLButtonElement).click();await vi.waitFor(()=>expect(request).toHaveBeenCalledWith(expect.objectContaining({action:'followups',operation:'stop',planId:'p',expectedRevision:2})));ui.close();
 });
+
+it('shows the already authorized action before answering and labels questions with no frozen action as read-only',async()=>{
+ document.body.innerHTML='<button id="open">MISHU 协作</button>';
+ const request=vi.fn(async()=>({questions:[{questionId:'a',question:'A格式？',state:'pending',revision:1,options:[],execution:{text:'仅修复A并验证'}},{questionId:'b',question:'B时间？',state:'pending',revision:1,options:[]}]}));
+ const ui=initMishuCollaboration({button:document.querySelector('#open'),context:()=>({id:'source',engine:'pi',workspaceKind:'chat',epoch:1}),request,dialogs:{show:vi.fn(),hide:vi.fn()},toast:vi.fn()});await ui.open();
+ expect(document.body.textContent).toContain('回答后将继续此前已授权的行动：仅修复A并验证');expect(document.body.textContent).toContain('此问题未预授权行动；回答后秘书只读说明，不会派工。');ui.close();
+});
