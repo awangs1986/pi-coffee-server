@@ -1124,13 +1124,23 @@ Production and real desktop/mobile acceptance remain separate integration gates.
 
 ## Secretary experience candidate: unified collaboration (#11)
 
-`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
-Assignment, task-linked information receipts and ordinary questions. It adds no
-executor. Every item has one current contact and immutable original secretary/task
-reply destination. Title refresh does not alter binding. State separates recorded,
-queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
-reported and stopped. Execution end, report commit, unknown read receipt and pending
-user acceptance remain distinct. Missing replies never count as success.
+## Natural memory candidate (#8)
+
+Pi `mishu` tool action `memory` exposes status/list/get/export/save/delete, with
+memoryKind, stable operationId, entryId/expectedRevision and memoryQuote. Host derives
+requestId and exact quote offsets from the current direct delivered user message;
+caller-supplied source/account fields, report origin, expired turns, forged quotes,
+model opt-in and model old-note restoration are refused. Nonextractive statements
+become separate candidates and cannot replace an existing confirmed fact. A strict
+candidate is excluded from transient context until the user explicitly edits it.
+Every new Pi context request reads the current ledger, excludes deleted/candidate
+entries and unrelated project facts, and clips to 6000 characters. Current user
+corrections prevail; no memory operation changes live execution authorization.
+
+Native Pi public WS + synthetic provider verification exercises tool save,
+correction, fresh transient context, forged-source refusal and deletion. This is
+real native Pi transport/plugin integration with deterministic model output, not
+proof of a real model's language understanding or native compaction behavior.
 
 An optional `send.taskId` links an information contact to its exact saved task and
 target. Host refuses wrong-target links; linked live task receipts are protected
@@ -1168,6 +1178,7 @@ automatically enable notifications or unattended secretary model execution.
 The integration candidate's scoped public tests use deterministic native fixtures;
 actual source-model/desktop/mobile acceptance and final review remain release gates.
 
+
 ### Usage and auxiliary admission resource (MISHU #13)
 
 Runtime/browser `usage` v1 accepts optional purpose (`foreground/report/memory/context`),
@@ -1189,3 +1200,21 @@ report cooldown, queue fairness and report budget. Corrupt schema/version/file i
 preserved and blocks new auxiliary admission; ordinary conversation continues.
 Evidence incremental scan mode returns only complete entries and the exact last
 consumed nextId. Missing cursor/over-capacity next message never advances the cursor.
+
+
+## Secretary experience candidate: unified collaboration (#11)
+
+`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
+Assignment, task-linked information receipts and ordinary questions. It adds no
+executor. Every item has one current contact and immutable original secretary/task
+reply destination. Title refresh does not alter binding. State separates recorded,
+queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
+reported and stopped. Execution end, report commit, unknown read receipt and pending
+user acceptance remain distinct. Missing replies never count as success.
+
+An optional `send.taskId` links an information contact to its exact saved task and
+target. Host refuses wrong-target links; linked live task receipts are protected
+from rotation. Ordinary bridge messages keep their original idempotency fingerprints
+when taskId is omitted. No private memory/history is automatically included.
+The Browser collaboration tab and `/mishu-collaboration` show readable responsible
+parties, expected results, remaining responsibility, timestamps and reply destination.

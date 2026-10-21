@@ -306,7 +306,7 @@ export class MishuCoordinator {
    if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
   }
   if(op==='configure'&&input.enabled===false)this.consolidation.abort(id);
-  return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&this.foreground.get(id)!==evidence.requestId)throw Error('Memory user turn ended');});
+  return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&(this.foreground.get(id)!==evidence.requestId||!(await this.status(id)).enabled||!this.state.chats[id]?.userInstructions?.some(entry=>entry.requestId===evidence.requestId)))throw Error('Memory user turn ended or authorization revoked');});
  }
  async consolidationOperation(id:string,input:Record<string,unknown>,manual=false){
   if(input.version!==1||Object.keys(input).some(k=>['sourceId','user','binding','generation','source','prompt','provider','model','sessionFile'].includes(k)))throw Error('Invalid memory consolidation interface');
