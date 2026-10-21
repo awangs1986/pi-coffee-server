@@ -1071,27 +1071,6 @@ role, original/model/historical-note label, redaction marker and returned range.
 Coverage/freshness, lost anchor and truncation are explicit. No persistent search
 index is introduced. UI/native model acceptance is separate from fixture proof.
 
-## Secretary experience candidate: ordinary decisions (#10)
-
-`clarifications` runtime v1 supports list/get/create/cancel. Creation is explicitly
-`kind:ordinary`; it saves a bounded question (2000 chars, 12 options) before the
-model tool returns. It never adapts native approvals or setup questions. The Pi
-plugin is instructed to settle after saving and leave unrelated work available.
-`/mishu-questions` and the Browser coffee-menu collaboration panel let the direct
-user answer or cancel an exact question/revision. Answers have a Host-created
-user event and are available to the next genuine user turn, rather than injecting
-a fabricated tool reply or promising unattended resumption. Answers carry no
-execution authority. Codex secretary entry remains unavailable under #122.
-
-Host persists at most 100 questions and 1000 operation identities. Exact retries
-are idempotent; conflicting answers, expiry, old revisions, source rebinding and
-changed setup generations fail. Unrelated questions remain pending. Current
-answers are included as untrusted facts in the next foreground manager context.
-First journal creation keeps a private state backup; old Hosts reject the new
-optional state fields rather than silently ignoring them. Public HTTP and Browser
-controller tests cover recovery, exact answers, expiry, revocation and stale UI.
-Native capability and real Browser acceptance remain separate final quality gates.
-
 ## Secretary private memory (#7 implementation candidate)
 
 Pi Chat is the only secretary source (Server #122); other engines remain targets.
@@ -1122,8 +1101,6 @@ isolation, revision conflict, tombstone/restart, failed save and old-binding
 note-only restore. Browser controller test covers model-free entry and cancel.
 Production and real desktop/mobile acceptance remain separate integration gates.
 
-## Secretary experience candidate: unified collaboration (#11)
-
 ## Natural memory candidate (#8)
 
 Pi `mishu` tool action `memory` exposes status/list/get/export/save/delete, with
@@ -1141,6 +1118,37 @@ Native Pi public WS + synthetic provider verification exercises tool save,
 correction, fresh transient context, forged-source refusal and deletion. This is
 real native Pi transport/plugin integration with deterministic model output, not
 proof of a real model's language understanding or native compaction behavior.
+
+## Secretary experience candidate: ordinary decisions (#10)
+
+`clarifications` runtime v1 supports list/get/create/cancel. Creation is explicitly
+`kind:ordinary`; it saves a bounded question (2000 chars, 12 options) before the
+model tool returns. It never adapts native approvals or setup questions. The Pi
+plugin is instructed to settle after saving and leave unrelated work available.
+`/mishu-questions` and the Browser coffee-menu collaboration panel let the direct
+user answer or cancel an exact question/revision. Answers have a Host-created
+user event and are available to the next genuine user turn, rather than injecting
+a fabricated tool reply or promising unattended resumption. Answers carry no
+execution authority. Codex secretary entry remains unavailable under #122.
+
+Host persists at most 100 questions and 1000 operation identities. Exact retries
+are idempotent; conflicting answers, expiry, old revisions, source rebinding and
+changed setup generations fail. Unrelated questions remain pending. Current
+answers are included as untrusted facts in the next foreground manager context.
+First journal creation keeps a private state backup; old Hosts reject the new
+optional state fields rather than silently ignoring them. Public HTTP and Browser
+controller tests cover recovery, exact answers, expiry, revocation and stale UI.
+Native capability and real Browser acceptance remain separate final quality gates.
+
+## Secretary experience candidate: unified collaboration (#11)
+
+`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
+Assignment, task-linked information receipts and ordinary questions. It adds no
+executor. Every item has one current contact and immutable original secretary/task
+reply destination. Title refresh does not alter binding. State separates recorded,
+queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
+reported and stopped. Execution end, report commit, unknown read receipt and pending
+user acceptance remain distinct. Missing replies never count as success.
 
 An optional `send.taskId` links an information contact to its exact saved task and
 target. Host refuses wrong-target links; linked live task receipts are protected
@@ -1178,7 +1186,6 @@ automatically enable notifications or unattended secretary model execution.
 The integration candidate's scoped public tests use deterministic native fixtures;
 actual source-model/desktop/mobile acceptance and final review remain release gates.
 
-
 ### Usage and auxiliary admission resource (MISHU #13)
 
 Runtime/browser `usage` v1 accepts optional purpose (`foreground/report/memory/context`),
@@ -1200,21 +1207,3 @@ report cooldown, queue fairness and report budget. Corrupt schema/version/file i
 preserved and blocks new auxiliary admission; ordinary conversation continues.
 Evidence incremental scan mode returns only complete entries and the exact last
 consumed nextId. Missing cursor/over-capacity next message never advances the cursor.
-
-
-## Secretary experience candidate: unified collaboration (#11)
-
-`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
-Assignment, task-linked information receipts and ordinary questions. It adds no
-executor. Every item has one current contact and immutable original secretary/task
-reply destination. Title refresh does not alter binding. State separates recorded,
-queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
-reported and stopped. Execution end, report commit, unknown read receipt and pending
-user acceptance remain distinct. Missing replies never count as success.
-
-An optional `send.taskId` links an information contact to its exact saved task and
-target. Host refuses wrong-target links; linked live task receipts are protected
-from rotation. Ordinary bridge messages keep their original idempotency fingerprints
-when taskId is omitted. No private memory/history is automatically included.
-The Browser collaboration tab and `/mishu-collaboration` show readable responsible
-parties, expected results, remaining responsibility, timestamps and reply destination.
