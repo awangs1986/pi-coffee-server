@@ -1143,3 +1143,20 @@ report cooldown, queue fairness and report budget. Corrupt schema/version/file i
 preserved and blocks new auxiliary admission; ordinary conversation continues.
 Evidence incremental scan mode returns only complete entries and the exact last
 consumed nextId. Missing cursor/over-capacity next message never advances the cursor.
+
+## Secretary experience candidate: unified collaboration (#11)
+
+`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
+Assignment, task-linked information receipts and ordinary questions. It adds no
+executor. Every item has one current contact and immutable original secretary/task
+reply destination. Title refresh does not alter binding. State separates recorded,
+queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
+reported and stopped. Execution end, report commit, unknown read receipt and pending
+user acceptance remain distinct. Missing replies never count as success.
+
+An optional `send.taskId` links an information contact to its exact saved task and
+target. Host refuses wrong-target links; linked live task receipts are protected
+from rotation. Ordinary bridge messages keep their original idempotency fingerprints
+when taskId is omitted. No private memory/history is automatically included.
+The Browser collaboration tab and `/mishu-collaboration` show readable responsible
+parties, expected results, remaining responsibility, timestamps and reply destination.

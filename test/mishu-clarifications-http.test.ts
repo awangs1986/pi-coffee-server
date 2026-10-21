@@ -43,3 +43,17 @@ it('rejects expiry, stale revision, native approvals and post-revocation answers
  await new Promise(r=>setTimeout(r,1050));expect((await f.browser({...answer,expectedRevision:1})).status).toBe(409);
  await f.browser({action:'select',selected:false});expect((await f.browser({...answer,expectedRevision:1})).status).toBe(409);
 });
+it('joins each existing task with its own contact, unanswered decisions and original reply destination without inferring success',async()=>{
+ const f=await fixture(),directory=await (await f.runtime({action:'directory'})).json();
+ async function register(targetId:string,operationId:string,purpose:string){const binding=directory.conversations.find((t:any)=>t.id===targetId).binding;const r=await f.runtime({action:'tasks',version:1,operation:'register',operationId,targetId,binding,purpose,scope:'仅询问当前进展，不执行',summary:'等待联系',nextStep:'等待负责人回信'});expect(r.status).toBe(200);return (await r.json()).task;}
+ const a=await register(f.a.id,'brief-a','A 的验证'),b=await register(f.b.id,'brief-b','B 的验证');
+ await f.runtime({action:'clarifications',version:1,operation:'create',operationId:'q-a',kind:'ordinary',taskId:a.taskId,question:'A 用哪种格式？'});
+ const result=await f.browser({action:'collaboration',version:1,operation:'list'});expect(result.status).toBe(200);const rows=(await result.json()).items;
+ expect(rows.find((r:any)=>r.taskId===a.taskId)).toMatchObject({purpose:'A 的验证',state:'waiting-user',target:{id:f.a.id},destination:{sourceId:f.source.id,taskId:a.taskId},contacted:false,read:'unknown',acceptance:'pending'});
+ expect(rows.find((r:any)=>r.taskId===b.taskId)).toMatchObject({state:'recorded',contacted:false,execution:'not-started',report:'not-reported'});
+ expect((await f.browser({action:'collaboration',version:1,operation:'list',destination:'other-secretary'})).status).toBe(409);
+ expect((await f.browser({action:'collaboration',version:1,operation:'list'},'other')).status).toBe(409);
+ const wrong=await f.runtime({action:'send',targetId:f.b.id,binding:directory.conversations.find((t:any)=>t.id===f.b.id).binding,taskId:a.taskId,messageId:'wrong-related-message',kind:'information-only',text:'只问进度'});expect(wrong.status).toBe(409);
+ const contact=await f.runtime({action:'send',targetId:f.b.id,binding:directory.conversations.find((t:any)=>t.id===f.b.id).binding,taskId:b.taskId,messageId:'b-progress',kind:'information-only',text:'只问进度，不修改任何内容'});expect(contact.status).toBe(200);
+ const contacted=await (await f.runtime({action:'collaboration',version:1,operation:'get',taskId:b.taskId})).json();expect(contacted).not.toHaveProperty('error');expect(contacted.item).toMatchObject({contacted:true,destination:{sourceId:f.source.id},relatedMessages:[{messageId:'b-progress'}]});
+});
