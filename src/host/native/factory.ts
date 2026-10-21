@@ -29,6 +29,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  async extractMemory(id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
+    const source=await this.options.workspaces.lookup(id);
+    if(!source||source.workspaceKind!=='chat'||(source.engine??'pi')!=='pi'||!this.options.pi.extractMemory)throw Error('Isolated native memory extraction unavailable for this source');
+    return this.options.pi.extractMemory(id,input);
+  }
   async mishuSourceCapabilities(id:string):Promise<import('../mishu-source.js').MishuSourceCapabilities> {
     const task=await this.options.workspaces.lookup(id),engine=task?.engine??'pi';
     if(engine==='pi'&&task?.workspaceKind==='chat')return {coordination:'supported',reports:'supported'};

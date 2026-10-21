@@ -1,4 +1,5 @@
 import type { HostPiRuntime } from './pi-runtime.js';
+import {runPiMemoryExtraction} from './pi-memory-runner.js';
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -95,6 +96,15 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   constructor(options: RpcPiSessionFactoryOptions = {}) {
     if(options.allowedModels && (options.allowedModels.length===0 || options.allowedModels.some(id=>!/^([^\s/]+)\/(\S+)$/.test(id))))throw new Error("Pi allowedModels must contain exact provider/model IDs");
     this.options = options;
+  }
+
+  async extractMemory(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
+    if(this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
+    // An explicit provider registration is the sole optional extension. The normal
+    // Harness, MISHU, MCP, project resources and subagents are never loaded here.
+    const providerExtension=input.provider==='antigravity'?this.extensions().find(path=>path.endsWith('/pi-antigravity')):undefined;
+    if(input.provider==='antigravity'&&!providerExtension)throw Error('Selected native provider unavailable for isolated memory extraction');
+    return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:this.options.cliPath,agentDir:this.options.agentDir,env:buildHostChildEnv(this.options.env),providerExtension});
   }
 
   private extensions(): string[] { return this.options.runtime?.extensions() ?? this.options.extensions ?? []; }
