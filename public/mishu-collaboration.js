@@ -38,9 +38,8 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
  }
  function renderProgress(data){
   text(body,'各事项沿用已有任务简报、派工和回执。未回信保持待回信；运行结束、报告交付、已读和验收分别显示。');
-  const labels={recorded:'已记录，尚未联系',queued:'排队中',running:'执行中','awaiting-reply':'待回信','waiting-user':'等你决定',failed:'失败或不完整',uncertain:'不确定，需核实','reply-available':'已有回信',reported:'已回报',stopped:'已停止记录'};
   if(!data.items?.length)text(body,'暂无已登记的协作事项。');
-  for(const item of data.items||[]){const card=document.createElement('article');card.style.borderBottom='1px solid #777';card.style.padding='12px 0';body.append(card);text(card,item.purpose,'h3');text(card,`负责人：${item.target.title} · ${item.target.engine}`);text(card,`状态：${labels[item.state]||item.state} · ${item.evidenceAt||'证据时间未知'}`);text(card,`期待结果：${item.expectedResult||'见任务简报'}`);text(card,`执行：${item.execution||'尚未开始'}；汇报：${item.report||'尚未汇报'}；已读：未知；验收：待用户确认`);text(card,`汇报去向：${item.destination.label}`);text(card,item.remainingResponsibility||'尚待核实责任');
+  for(const item of data.items||[]){const card=document.createElement('article');card.style.borderBottom='1px solid #777';card.style.padding='12px 0';body.append(card);text(card,item.purpose,'h3');text(card,`负责人：${item.target.title} · ${item.target.engine}`);text(card,`状态：${item.stateLabel||item.state} · ${item.evidenceAt||'证据时间未知'}`);text(card,`期待结果：${item.expectedResult||'见任务简报'}`);text(card,`执行：${item.execution||'尚未开始'}；汇报：${item.report||'尚未汇报'}；已读：未知；验收：待用户确认`);text(card,`汇报去向：${item.destination.label}`);text(card,item.remainingResponsibility||'尚待核实责任');
    if(item.reply){text(card,item.reply,'blockquote');if(item.truncated!==false)text(card,item.truncated?'回信已截断，请查看目标原生记录。':'回信完整性未知，请核对原生记录。');}
    const link=document.createElement('a');link.href=item.destination.link;link.textContent='返回原秘书';card.append(link);
   }

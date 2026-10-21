@@ -1209,3 +1209,9 @@ report cooldown, queue fairness and report budget. Corrupt schema/version/file i
 preserved and blocks new auxiliary admission; ordinary conversation continues.
 Evidence incremental scan mode returns only complete entries and the exact last
 consumed nextId. Missing cursor/over-capacity next message never advances the cursor.
+
+Candidate presentation ownership: followup contact prompts and collaboration state/
+responsibility labels come from the independent package's pure Host policy export.
+Host passes only already-authorized facts and retains all state/admission/delivery.
+The collaboration DTO adds stateLabel for Browser rendering; original state codes,
+reply destinations, counts and native command behavior are preserved.
