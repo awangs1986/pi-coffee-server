@@ -1,5 +1,6 @@
 import {queryEvidence} from './mishu-evidence.js';
 import type {AgentHistoryRead} from './agent-adapter.js';
+import {clarificationOperation,type Clarifications} from './mishu-clarifications.js';
 import {managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
@@ -24,7 +25,7 @@ import type {ConversationIndex} from './conversation-index.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
 interface Receipt {messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
-interface Config {userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
+interface Config {clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
 interface State {version:2;chats:Record<string,Config>}
 /** Authorization and contacts share the same state.json transaction. */
 interface ManagerChat {sourceBinding:string;viewAll:boolean;watchCursor:number}
@@ -53,6 +54,9 @@ export class MishuCoordinator {
  private tokens=new Map<string,string>();
  private active=new Map<string,{source:string;receipt:Receipt}>();
  private registry?:HostSessionRegistry;
+ private clarificationWindows=new Map<string,string>();
+ beginClarifications(id:string,requestId:string){this.clarificationWindows.set(id,requestId);}
+ endClarifications(id:string,requestId:string){if(this.clarificationWindows.get(id)===requestId)this.clarificationWindows.delete(id);}
  private setupWindows=new Map<string,string>();
  beginSetup(id:string,requestId:string){this.setupWindows.set(id,requestId);}
  endSetup(id:string,requestId:string){if(this.setupWindows.get(id)===requestId)this.setupWindows.delete(id);}
@@ -143,7 +147,7 @@ export class MishuCoordinator {
  private receipts:ReceiptArchive;
  private quick:QuickConfirmations;
  private quickEpoch=new Map<string,number>();
- private revokeQuick(id:string){this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
+ private revokeQuick(id:string){if(this.state.chats[id])this.state.chats[id].coordinationGeneration=(this.state.chats[id].coordinationGeneration??0)+1;this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
  private receiptLimits:typeof RECEIPT_LIMITS;
  private index?:ConversationIndex;
  private watchListeners=new Set<(frame:MishuWatchFrame)=>void>();
@@ -294,6 +298,7 @@ export class MishuCoordinator {
   if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='evidence')return this.evidence(id,input);
+  if(input.action==='clarifications')return this.clarifications(id,input,this.clarificationWindows.has(id)?'command':undefined);
   if(input.action==='overview')return {version:1,conversations:await this.overview(id)};
   if(input.action==='events')return this.events(id,input);
   if(input.action==='peek')return this.peek(id,input);
@@ -318,6 +323,25 @@ export class MishuCoordinator {
   if((this.quickEpoch.get(id)??0)!==epoch||binding(currentSource)!==sourceBinding||!current?.selected||!current.enabled||current.sourceBinding!==sourceBinding||!currentTarget||!visible(currentTarget)||binding(currentTarget)!==targetBinding||targetId!==id&&!current.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence authorization or binding changed during read');
   return queryEvidence(targetId,read,input);
  }
+ async browserClarifications(id:string,input:Record<string,unknown>){
+  const {id:_,...body}=input;
+  if(!['list','get','answer','cancel'].includes(String(body.operation)))throw Error('Browser may list, answer or cancel ordinary questions');
+  return this.clarifications(id,body,'browser');
+ }
+ private clarifications(id:string,input:Record<string,unknown>,channel?:'browser'|'command'){
+  return this.change(async()=>{
+   const source=await this.source(id),c=this.state.chats[id];
+   if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source)||this.registry?.get(id)?.isReportRun)throw Error('Ordinary clarification authority unavailable');
+   if(!c.clarifications){const bytes=Buffer.from(JSON.stringify(this.state));this.migration??={bytes,name:'state.before-coordination.'+createHash('sha256').update(bytes).digest('hex')+'.json'};}
+   const journal:Clarifications=structuredClone(c.clarifications??{version:1,questions:[],operations:[]});
+   const taskId=input.operation==='create'?input.taskId:journal.questions.find(q=>q.questionId===input.questionId)?.taskId;
+   if(taskId!==undefined){const task=c.taskJournal?.tasks.find(t=>t.taskId===taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task)throw Error('Question task unavailable');await this.authorize(id,task.targetId,task.binding,'information-only');}
+   const result=clarificationOperation(journal,c.sourceBinding,c.coordinationGeneration??0,input,channel);
+   // Recheck current source and generation after any asynchronous target audit.
+   if(binding(await this.source(id))!==c.sourceBinding||!c.enabled||!c.selected)throw Error('Question authority changed');
+   c.clarifications=journal;return result;
+  });
+ }
  // ---- Manager (tier 1) -------------------------------------------------
  private async setManager(id:string,value:{sourceBinding:string;viewAll:boolean}){
   await this.watch.start();
@@ -336,6 +360,7 @@ export class MishuCoordinator {
   const panel=this.watch.panel();
   const result:Record<string,unknown>={version:1,viewAll,quick:{enabled:this.watch.rules.quick.enabled,maxLength:this.watch.rules.quick.maxLength},grant:{active:Boolean(grant),...(grant?{remaining:Math.max(0,3-grant.uses.size)}:{})},legacyAuthorization:legacyAuthorization(),panel:{counts:panel.counts,open:panel.items.length},stats:{...this.watch.stats},...(this.watch.configProblem?{rulesError:this.watch.configProblem}:{})};
   if(digest){
+   const c=this.state.chats[id];result.clarifications=c?.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===(c.coordinationGeneration??0)&&['pending','answered'].includes(q.state)).slice(-20).map(q=>({questionId:q.questionId,taskId:q.taskId,question:q.question,state:q.state,answer:q.answer?.text,notice:'普通事项，不是执行授权；只继续对应事项。'}))??[];
    const head=this.watch.journal.head,after=cursor??head;
    const summary=await this.watch.digest(after,undefined,viewAll?undefined:new Set((await this.contactTargets(id)).keys()));
    this.pendingCursor.set(id,summary.head);
