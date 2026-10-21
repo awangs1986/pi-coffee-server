@@ -13,3 +13,24 @@ it('deduplicates exact native usage across repeated reads and Host restart, with
   expect((await call()).total).toBe(2);await host.close();host=new HostServer({port:0,token:'fixture',workspaces:new Workspaces(workspaces.root),factory});await host.start();expect((await call()).total).toBe(2);expect((await call({purpose:'report'})).totals.output).toBe(30);expect((await call({since:'2026-10-21T00:00:00Z'})).totals.input).toBeNull();expect(reads).toBeGreaterThan(2);
  }finally{await host.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('meters actual passive Pi source log messages and report markers through the public usage interface',async()=>{
+ const {RpcPiSessionFactory}=await import('../src/host/pi-adapter.js');
+ const root=await mkdtemp(join(tmpdir(),'mishu-native-meter-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),target=await workspaces.createChatConversation();
+ const stateRoot=join(workspaces.root,'.coffee','mishu');await mkdir(stateRoot,{recursive:true});await writeFile(join(stateRoot,'state.json'),JSON.stringify({version:2,chats:{[source.id]:{selected:true,enabled:true,allowInstructions:false,sourceBinding:binding(source),targets:[{id:target.id,binding:binding(target),title:'target',engine:'pi'}],messages:[]}}}));
+ const sessionDir=join(root,'sessions');await mkdir(sessionDir);const at='2026-10-21T12:00:00.000Z';
+ const rows=[{type:'session',version:3,id:source.id,timestamp:at,cwd:source.cwd},{type:'message',id:'u1',parentId:null,timestamp:at,message:{role:'user',content:[{type:'text',text:'hello'}]}},{type:'message',id:'a1',parentId:'u1',timestamp:at,message:{role:'assistant',provider:'synthetic',model:'model-1',stopReason:'aborted',content:[{type:'text',text:'partial'}],usage:{input:100,output:7,cacheRead:20,cacheWrite:5}}},{type:'custom',customType:'coffee-native-run',id:'report-start',parentId:'a1',timestamp:at,data:{version:1,runId:'report-1',origin:'task-report'}},{type:'message',id:'r1',parentId:'report-start',timestamp:at,message:{role:'assistant',provider:'synthetic',model:'model-1',stopReason:'stop',content:[{type:'text',text:'report'}],usage:{input:30,output:9,cacheRead:0,cacheWrite:0}}}];
+ await writeFile(join(sessionDir,`2026-10-21_${source.id}.jsonl`),rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+ const host=new HostServer({port:0,token:'fixture',workspaces,factory:new RpcPiSessionFactory({sessionDir,cliPath:'/must-never-launch'})});
+ try{await host.start();const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'usage',version:1,id:source.id})});expect(response.status).toBe(200);const data=await response.json();expect(data.total).toBe(2);expect(data.totals).toEqual({input:130,output:16,cacheRead:20,cacheWrite:5});expect(data.records.find((r:any)=>r.callId==='a1')).toMatchObject({purpose:'foreground',status:'aborted',inputIncludesCache:false});expect(data.records.find((r:any)=>r.callId==='r1')).toMatchObject({purpose:'report',source:'native-log'});
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('preserves a corrupt nested usage journal and reports a gap instead of zero counters',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-usage-corrupt-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),target=await workspaces.createChatConversation();
+ const stateRoot=join(workspaces.root,'.coffee','mishu');await mkdir(stateRoot,{recursive:true});await writeFile(join(stateRoot,'state.json'),JSON.stringify({version:2,chats:{[source.id]:{selected:true,enabled:true,allowInstructions:false,sourceBinding:binding(source),targets:[{id:target.id,binding:binding(target),title:'target',engine:'pi'}],messages:[]}}}));
+ const raw=JSON.stringify({version:1,startedAt:new Date().toISOString(),records:{forged:{input:0}},reservations:{}});await writeFile(join(stateRoot,'usage-v1.json'),raw);
+ const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No CLI');}};const host=new HostServer({port:0,token:'fixture',workspaces,factory});
+ try{await host.start();const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'usage',version:1,id:source.id})});const data=await response.json();expect(data).toMatchObject({available:false,coverage:'unknown',records:[]});const {readFile}=await import('node:fs/promises');expect(await readFile(join(stateRoot,'usage-v1.json'),'utf8')).toBe(raw);
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
+});
