@@ -1,0 +1,15 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';import {join} from 'node:path';import {createHash} from 'node:crypto';
+import {HostServer} from '../src/host/server.js';import {Workspaces,type Conversation} from '../src/host/workspaces.js';
+const binding=(c:Conversation)=>createHash('sha256').update(JSON.stringify([c.id,c.createdAt,c.cwd,c.engine??'pi',c.nativeBinding?.id??c.nativeBinding?.requestedId??c.id])).digest('hex');
+it('deduplicates exact native usage across repeated reads and Host restart, with unknown coverage separated from zero Host Watch',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-usage-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),target=await workspaces.createChatConversation();
+ const stateRoot=join(workspaces.root,'.coffee','mishu');await mkdir(stateRoot,{recursive:true});await writeFile(join(stateRoot,'state.json'),JSON.stringify({version:2,chats:{[source.id]:{selected:true,enabled:true,allowInstructions:false,sourceBinding:binding(source),targets:[{id:target.id,binding:binding(target),title:'target',engine:'pi'}],messages:[]}}}));
+ let reads=0;const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Usage query cannot start runtime');},readHistory:async(id:string)=>{reads++;expect(id).toBe(source.id);return {history:{entries:[],leafId:null},usage:[{callId:'native-message-1',model:'pi-model',at:'2026-10-20T10:00:00Z',purpose:'foreground' as const,source:'native-log' as const,input:100,output:20,cacheRead:40,cacheWrite:5,status:'cancelled',inputIncludesCache:true},{callId:'native-message-2',model:'pi-model',at:'2026-10-20T11:00:00Z',purpose:'report' as const,source:'native-log' as const,input:80,output:30}],binding:'native',sourceGeneration:'g1',sourceFreshness:'current' as const,checkedAt:new Date().toISOString()};}};
+ let host=new HostServer({port:0,token:'fixture',workspaces,factory});
+ try{await host.start();const call=async(body:object={})=>await(await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'usage',id:source.id,version:1,...body})})).json();
+  const initial=await call();expect(initial.total).toBe(2);expect(initial.totals).toEqual({input:180,output:50,cacheRead:null,cacheWrite:null});expect(initial.records.find((r:any)=>r.callId==='native-message-1').status).toBe('cancelled');expect(initial.hostWatch).toEqual({modelCalls:0,known:true});expect(initial.coverage).toBe('partial');expect(initial.currency).toBeNull();
+  expect((await call()).total).toBe(2);await host.close();host=new HostServer({port:0,token:'fixture',workspaces:new Workspaces(workspaces.root),factory});await host.start();expect((await call()).total).toBe(2);expect((await call({purpose:'report'})).totals.output).toBe(30);expect((await call({since:'2026-10-21T00:00:00Z'})).totals.input).toBeNull();expect(reads).toBeGreaterThan(2);
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
+});

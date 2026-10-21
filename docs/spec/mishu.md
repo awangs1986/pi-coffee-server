@@ -1070,3 +1070,25 @@ Entries carry exact conversation/message identity, native time or explicit null,
 role, original/model/historical-note label, redaction marker and returned range.
 Coverage/freshness, lost anchor and truncation are explicit. No persistent search
 index is introduced. UI/native model acceptance is separate from fixture proof.
+
+### Usage and auxiliary admission resource (MISHU #13)
+
+Runtime/browser `usage` v1 accepts optional purpose (`foreground/report/memory/context`),
+exact model, ISO since/until and pagination (50 records/page maximum). Returned known
+native input/output/cache fields are separate; absent counters are null/unknown,
+Host Watch is known zero model calls, target costs excluded, monetary estimates absent.
+Native Pi passive history adds exact message identity and coffee-native-run report
+classification; streaming/final/reread/restart merge one identity, including cancelled
+or failed responses with returned usage. Other engine/historical auxiliary gaps remain
+partial coverage. Current secretary sources remain Pi only (Server #122).
+
+The account-scoped Host stores `usage-v1.json`: 20,000 usage identities and 20,000
+auxiliary admission identities, 32 MiB maximum. Dedup/admission identities never expire
+or silently prune; reaching capacity blocks budgeted auxiliary work with a diagnostic.
+A durable reservation precedes any automatic report or new auxiliary native call;
+started/uncertain calls never return quota, only proven not-started cancellation can
+release. Shared per-secretary/binding limit is 12 calls/hour, in addition to unchanged
+report cooldown, queue fairness and report budget. Corrupt schema/version/file is
+preserved and blocks new auxiliary admission; ordinary conversation continues.
+Evidence incremental scan mode returns only complete entries and the exact last
+consumed nextId. Missing cursor/over-capacity next message never advances the cursor.
