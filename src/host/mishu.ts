@@ -1,3 +1,5 @@
+import {queryEvidence} from './mishu-evidence.js';
+import type {AgentHistoryRead} from './agent-adapter.js';
 import {managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
@@ -167,6 +169,8 @@ export class MishuCoordinator {
    onPanel:panel=>this.emitWatch({type:'panel',panel}),
    onNotice:notice=>this.emitWatch({type:'notice',notice})});
  }
+ private historyReader?: (id:string)=>Promise<AgentHistoryRead>;
+ attachHistoryReader(read:((id:string)=>Promise<AgentHistoryRead>)|undefined){this.historyReader=read;}
  attachIndex(index:ConversationIndex|undefined){this.index=index;}
  onWatch(listener:(frame:MishuWatchFrame)=>void){this.watchListeners.add(listener);return ()=>this.watchListeners.delete(listener);}
  /** The watch only runs for users who enabled at least one secretary: zero overhead otherwise. */
@@ -289,6 +293,7 @@ export class MishuCoordinator {
   });
   if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
+  if(input.action==='evidence')return this.evidence(id,input);
   if(input.action==='overview')return {version:1,conversations:await this.overview(id)};
   if(input.action==='events')return this.events(id,input);
   if(input.action==='peek')return this.peek(id,input);
@@ -300,6 +305,18 @@ export class MishuCoordinator {
   if(input.action==='tasks'&&input.operation==='dispatch')return this.dispatch(id,input);
   if(input.action==='tasks')return this.tasks(id,input);
   throw Error('Unknown MISHU operation');
+ }
+ async evidence(id:string,input:Record<string,unknown>){
+  await this.tail;await this.load();const source=await this.source(id),sourceBinding=binding(source),config=this.state.chats[id];
+  if(!config?.selected||!config.enabled||config.sourceBinding!==sourceBinding)throw Error('MISHU must be enabled');
+  const targetId=input.targetId===undefined?id:this.lookupTargetId(input.targetId),target=await this.workspaces.lookup(targetId);
+  const targetBinding=target&&binding(target),epoch=this.quickEpoch.get(id)??0;
+  if(!target||!visible(target)||targetId!==id&&!config.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence requires a current configured target; view-all does not grant transcript access');
+  // Cursor/Grok have no verified passive source reader. Never open a session for evidence.
+  const read=['cursor','grok'].includes(target.engine??'pi')?undefined:await this.historyReader?.(targetId);
+  const currentSource=await this.source(id),currentTarget=await this.workspaces.lookup(targetId),current=this.state.chats[id];
+  if((this.quickEpoch.get(id)??0)!==epoch||binding(currentSource)!==sourceBinding||!current?.selected||!current.enabled||current.sourceBinding!==sourceBinding||!currentTarget||!visible(currentTarget)||binding(currentTarget)!==targetBinding||targetId!==id&&!current.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence authorization or binding changed during read');
+  return queryEvidence(targetId,read,input);
  }
  // ---- Manager (tier 1) -------------------------------------------------
  private async setManager(id:string,value:{sourceBinding:string;viewAll:boolean}){

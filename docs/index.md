@@ -256,3 +256,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - Consistent state backups and staged recovery: [operator procedure](deployment/state-backup.md).
 
 - [Codex native command Web adaptation](spec/codex-native-commands.md): explicit dispatch, goals, planning, review and supported/unsupported inventory.
+
+- MISHU #9 bounded evidence resource: [contract](spec/mishu.md#bounded-evidence-resource-mishu-9).
