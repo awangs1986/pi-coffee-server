@@ -18,6 +18,7 @@ it('searches exact native evidence without starting a runtime and fences contact
   expect((await call({action:'evidence',version:1,targetId:other.id,mode:'recent'})).status).toBe(409);expect(reads).toBe(2);
   expect((await (await call({action:'evidence',version:1,mode:'search',query:'no match'})).json()).entries).toEqual([]);
   expect((await (await call({action:'evidence',version:1,mode:'anchor',anchorId:'lost'})).json()).missingAnchor).toBe(true);
+  const scan=await(await call({action:'evidence',version:1,mode:'scan',afterId:'decision',limit:1})).json();expect(scan.entries.map((e:any)=>e.messageId)).toEqual(['summary']);expect(scan.nextId).toBe('summary');expect(scan.hasMore).toBe(false);
   gate=new Promise(r=>{release=r;});const pending=call({action:'evidence',version:1,mode:'recent',targetId:target.id});await new Promise(r=>setTimeout(r,30));await call({action:'disable'});release();expect((await pending).status).toBe(409);expect(creates).toBe(0);
  }finally{release();await host.close();await rm(root,{recursive:true,force:true});}
 });

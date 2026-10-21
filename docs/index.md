@@ -258,3 +258,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [Codex native command Web adaptation](spec/codex-native-commands.md): explicit dispatch, goals, planning, review and supported/unsupported inventory.
 
 - MISHU #9 bounded evidence resource: [contract](spec/mishu.md#bounded-evidence-resource-mishu-9).
+
+- MISHU #13 native usage and persistent auxiliary admission: [contract](spec/mishu.md#usage-and-auxiliary-admission-resource-mishu-13).
