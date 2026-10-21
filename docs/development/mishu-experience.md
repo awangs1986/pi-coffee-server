@@ -1,22 +1,39 @@
-# MISHU experience acceptance probe
+# MISHU experience acceptance probes
 
-Build the integration source, then run:
+Build the matching integration candidate, then run the installed immutable package:
 
 ```sh
 npm run build
-MISHU_PLUGIN_ROOT=/absolute/path/to/the/matching/plugin node scripts/probe-mishu-experience.mjs
+node scripts/probe-mishu-experience.mjs
+MISHU_NOTIFICATION_ORDINARY_PENDING=1 node scripts/probe-mishu-notifications.mjs
 ```
 
-The probe boots isolated real Web/Host/native Pi, real Chromium and a deterministic
-localhost synthetic provider. It creates its own synthetic secretary and target;
-no production services, user conversations or paid model credentials are used.
-Coffee menu opt-in, cancel, manual memory CRUD/history/export, desktop/mobile/short
-scrollability, native remember/correct/reopen/forget/off rejection, nonblocking
-persistent question and mobile explicit answer, target reply evidence panel and
-native evidence tool are walked. It records screenshots, exact synthetic native
-requests, API receipts and a JSON verdict under the OS temporary directory.
+The experience probe defaults to `node_modules/pi-coffee-mishu`. For source-only
+diagnosis, explicitly set `MISHU_PLUGIN_ROOT=/absolute/plugin`; record that override
+as source evidence rather than installed-artifact evidence.
 
-Source package and immutable production package acceptance are separate. This probe
-does not prove a real model's semantic interpretation or native compaction, and
-never claims production activation. Native transport, current user quote checks,
-fresh transient context and no-tool evidence isolation are observed separately.
+The probe boots isolated real Web/Host/native Pi, actual Chromium and a deterministic
+localhost synthetic provider. It owns synthetic source/targets and captures source,
+installed package, native version and provider identities. Production services, genuine
+conversations and paid credentials are not used. Screenshots, bounded native request
+evidence and JSON verdicts are written under a private OS temporary directory.
+
+Experience scenarios include desktop/mobile/short-window memory CRUD, cancel/export,
+source-bound natural remember/correct/reopen/forget and disabled rejection, actual
+no-tools native candidate preview/cancel/adopt, automatic default-off/configuration
+cancel/enable/new fact application/pause, and mobile context-clear with explicit old
+note-only restore that cannot restore authorization. The notification variant keeps
+ordinary question A pending while source chat and target B run and B's automatic
+report commits; it observes desktop/mobile/reconnect question persistence.
+
+`test/mishu-memory-native.test.ts` separately loads the installed package and uses
+real native `RpcClient.compact()` plus same-binding Host restart. It proves native
+context/compaction continuity with a synthetic provider, not real-model interpretation.
+A bounded real-provider semantic probe is separate and must record its configured
+provider/model, exact synthetic user story and observed result without fallback.
+
+Collaboration/finite-plan and answer-alone continuation probes are recorded in the
+feature tickets alongside public HTTP/WS/controller regressions. Synthetic provider
+requests verify wiring, isolation and mechanics; they do not prove an unrestricted
+model will choose the right tool. Each actual criterion receives PASS/FAIL/UNVERIFIABLE
+with evidence. No probe claims production activation. Kill only processes it starts.

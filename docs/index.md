@@ -1,5 +1,7 @@
 # PI Coffee documentation map
 
+- MISHU #7–#15 secretary experience candidate: [Host contracts](spec/mishu.md), [independent product authority](spec/mishu-secretary-experience.md), [installed-package/native/Browser acceptance](development/mishu-experience.md). Pi Chat remains the only secretary source; candidate publication and production activation are separate.
+
 - Recent-first Codex display reads: [contract](spec/recent-native-history.md). Complete history remains separate from Browser navigation.
 
 - Bounded optional RAM scratch (16 GiB maximum, allocated on demand) and crash reclamation: [temporary storage](spec/conversation-switching.md#temporary-directories). Builds and durable task data remain on disk; activation requires the dedicated capped mount.
