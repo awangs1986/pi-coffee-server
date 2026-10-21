@@ -1,3 +1,4 @@
+import {validateFollowups} from './mishu-followups.js';
 import {validateClarifications} from './mishu-clarifications.js';
 import {createHash} from 'node:crypto';
 import {lstat,open,writeFile} from 'node:fs/promises';
@@ -40,14 +41,15 @@ export function validateMishuState(v:unknown):asserts v is {version:1|2;chats:Re
  if(row(v)&&v.version!==1&&v.version!==2)throw new MishuStateError('unsupported-version');
  object(v,['version','chats']);check(row(v.chats));
  for(const [id,c] of Object.entries(v.chats)){
-  check(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id));object(c,['selected','enabled','allowInstructions','sourceBinding','targets','messages'],['clarifications','coordinationGeneration','notificationError','notificationBudget','notifications','notificationGeneration','taskJournal','assignments','notes','manager','userInstructions']);
+  check(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id));object(c,['selected','enabled','allowInstructions','sourceBinding','targets','messages'],['followups','clarifications','coordinationGeneration','notificationError','notificationBudget','notifications','notificationGeneration','taskJournal','assignments','notes','manager','userInstructions']);
   for(const k of ['selected','enabled','allowInstructions'])check(typeof c[k]==='boolean');check(text(c.sourceBinding));optional(c,'notifications',x=>typeof x==='boolean');optional(c,'notificationGeneration',num);optional(c,'notificationError',text);
+  if(c.followups!==undefined){try{validateFollowups(c.followups);}catch{throw new MishuStateError('invalid-state');}}
   optional(c,'coordinationGeneration',num);if(c.clarifications!==undefined){try{validateClarifications(c.clarifications);}catch{throw new MishuStateError('invalid-state');}}
   if(c.notificationBudget!==undefined){object(c.notificationBudget,['startedAt','used']);check(num(c.notificationBudget.startedAt)&&num(c.notificationBudget.used));}
   if(c.userInstructions!==undefined)array(c.userInstructions,200,value=>{object(value,['requestId','text']);check(text(value.requestId)&&text(value.text,4000));});
   if(c.manager!==undefined){object(c.manager,['sourceBinding','viewAll','watchCursor']);check(text(c.manager.sourceBinding)&&typeof c.manager.viewAll==='boolean'&&num(c.manager.watchCursor));}
   array(c.targets,20,t=>{object(t,['id','binding','title','engine']);strings(t,['id','binding','title','engine']);});
-  array(c.messages,1000,m=>{object(m,['messageId','targetId','binding','kind','state','requestId','fingerprint','text','createdAt'],['taskId','authorizationRef','result','truncated','error']);strings(m,['messageId','targetId','binding','kind','state','requestId','fingerprint','createdAt']);check(text(m.text,4000));for(const k of ['taskId','authorizationRef','result','error'])optional(m,k,text);optional(m,'truncated',x=>typeof x==='boolean');});
+  array(c.messages,1000,m=>{object(m,['messageId','targetId','binding','kind','state','requestId','fingerprint','text','createdAt'],['followupPlanId','followupGeneration','taskId','authorizationRef','result','truncated','error']);strings(m,['messageId','targetId','binding','kind','state','requestId','fingerprint','createdAt']);check(text(m.text,4000));optional(m,'followupGeneration',num);for(const k of ['followupPlanId','taskId','authorizationRef','result','error'])optional(m,k,text);optional(m,'truncated',x=>typeof x==='boolean');});
   if(c.taskJournal!==undefined){object(c.taskJournal,['tasks','operations']);array(c.taskJournal.tasks,200,task);check(new Set(c.taskJournal.tasks.map((t:Row)=>t.taskId)).size===c.taskJournal.tasks.length);array(c.taskJournal.operations,2200,o=>{object(o,['id','fingerprint'],['task','stoppedTaskId']);strings(o,['id','fingerprint']);check((o.task!==undefined)!==(o.stoppedTaskId!==undefined));if(o.task!==undefined)task(o.task);else check(text(o.stoppedTaskId)&&c.taskJournal.tasks.some((t:Row)=>t.taskId===o.stoppedTaskId&&t.workState==='stopped'));});check(new Set(c.taskJournal.operations.map((o:Row)=>o.id)).size===c.taskJournal.operations.length);}
   if(c.assignments!==undefined)array(c.assignments,1000,assignment);if(c.notes!==undefined)array(c.notes,200,note);
  }

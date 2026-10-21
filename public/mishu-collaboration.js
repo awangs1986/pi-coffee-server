@@ -17,7 +17,25 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
  function current(){const c=context();return source&&c&&c.id===source.id&&c.user===source.user&&c.epoch===source.epoch;}
  function close(){sequence++;source=null;dialogs.hide(overlay);}
  async function call(input){if(!current())throw Error('秘书已切换，请重新打开');const result=await request({id:source.id,...input});if(!current())throw Error('秘书已切换，请重新打开');return result;}
- async function refresh(){const ticket=++sequence;body.replaceChildren();text(body,'正在读取…');try{const data=await call({action:tab,version:1,operation:'list'});if(ticket!==sequence||!current())return;body.replaceChildren();if(tab==='collaboration')renderProgress(data);else renderQuestions(data);}catch(error){if(ticket===sequence&&current()){body.replaceChildren();text(body,error.message);}}}
+ async function refresh(){const ticket=++sequence;body.replaceChildren();text(body,'正在读取…');try{const data=await call({action:tab,version:1,operation:'list'});if(ticket!==sequence||!current())return;body.replaceChildren();if(tab==='collaboration')renderProgress(data);else if(tab==='followups'){const related=await call({action:'collaboration',version:1,operation:'list',limit:50});if(ticket===sequence&&current())renderPlans(data,related.items||[]);}else renderQuestions(data);}catch(error){if(ticket===sequence&&current()){body.replaceChildren();text(body,error.message);}}}
+ function renderPlans(data,tasks){
+  text(body,'默认没有自动往返。只有你在这里明确授权的既有事项，收到相关新回信后才进行有限信息联系；不会执行新任务、创建会话或代答原生审批。没有新事实保持安静。停止计划不会停止目标工作。');
+  for(const plan of data.plans||[]){const card=document.createElement('article');body.append(card);text(card,plan.text,'h3');text(card,`${plan.state} · 已用 ${plan.used} / ${plan.maxTotal} 次；每负责人最多 ${plan.maxPerTarget} 次`);
+   for(const target of plan.targets||[])text(card,`${tasks.find(t=>t.taskId===target.taskId)?.purpose||'已登记事项'}：已用 ${target.used} 次`);
+   text(card,plan.reason||'剩余责任：等待相关新回信；无新证据不联系。');
+   const last=plan.attempts?.at(-1);if(last)text(card,`最后联系证据：${last.createdAt} · ${last.state||'已记录'}`);
+   if(['active','exhausted'].includes(plan.state)){const stop=makeButton('停止计划（不停止目标工作）',async()=>{stop.disabled=true;try{await call({action:'followups',version:1,operation:'stop',operationId:randomId(),planId:plan.planId,expectedRevision:plan.revision});await refresh();}catch(error){if(current()){toast(error.message);stop.disabled=false;}}});stop.dataset.planStop='';card.append(stop);}
+  }
+  text(body,'新建有限信息联系计划','h3');const form=document.createElement('form');form.style.display='grid';form.style.gap='10px';body.append(form);
+  const choices=tasks.filter(t=>t.state!=='stopped');for(const task of choices){const label=document.createElement('label'),checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.dataset.planTask=task.taskId;label.append(checkbox,document.createTextNode(` ${task.purpose} · ${task.target.title}`));form.append(label);}
+  if(!choices.length){text(form,'请先保存任务简报。');return;}
+  const label=document.createElement('label');label.textContent='每次新回信后要询问的问题（只信息联系）';const question=document.createElement('textarea');question.dataset.planQuestion='';question.maxLength=1000;question.rows=3;question.style.width='100%';label.append(question);form.append(label);
+  function count(labelText,maximum){const label=document.createElement('label');label.textContent=labelText;const select=document.createElement('select');for(let n=1;n<=maximum;n++){const option=document.createElement('option');option.value=String(n);option.textContent=String(n);select.append(option);}label.append(select);form.append(label);return select;}
+  const total=count('总联系次数上限：',5),each=count('每负责人次数上限：',3);
+  text(form,'停止条件：次数到限、你停止计划、事项停止、撤权或换绑。开启后不补跑旧回信；到限保留剩余责任。');
+  const create=makeButton('明确开启有限信息联系计划',()=>{});create.type='submit';create.dataset.planCreate='';form.append(create);
+  form.addEventListener('submit',async event=>{event.preventDefault();const taskIds=[...form.querySelectorAll('[data-plan-task]:checked')].map(c=>c.dataset.planTask);if(!taskIds.length||!question.value.trim())return toast('请选择已有事项并明确填写问题');if(Number(each.value)>Number(total.value))return toast('每负责人次数不能超过总次数');create.disabled=true;try{await call({action:'followups',version:1,operation:'create',operationId:randomId(),taskIds,text:question.value.trim(),maxTotal:Number(total.value),maxPerTarget:Number(each.value),trigger:'new-reply',stopCondition:'budget-user-or-access'});await refresh();}catch(error){if(current()){toast(error.message);create.disabled=false;}}});
+ }
  function renderProgress(data){
   text(body,'各事项沿用已有任务简报、派工和回执。未回信保持待回信；运行结束、报告交付、已读和验收分别显示。');
   const labels={recorded:'已记录，尚未联系',queued:'排队中',running:'执行中','awaiting-reply':'待回信','waiting-user':'等你决定',failed:'失败或不完整',uncertain:'不确定，需核实','reply-available':'已有回信',reported:'已回报',stopped:'已停止记录'};
@@ -41,6 +59,7 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
   }
  }
  async function open(){const c=context();if(!c||c.engine&&c.engine!=='pi'||c.workspaceKind!=='chat'){toast('MISHU 协作仅适用于 Pi Chat 秘书');return;}source={...c};dialogs.show(overlay,close,closeButton,{nonModal:true});await refresh();}
+ tabs.append(makeButton('有限后续联系',()=>{tab='followups';return refresh();}));
  tabs.append(makeButton('协作进度',()=>{tab='collaboration';return refresh();}));
  tabs.append(makeButton('待决定事项',()=>{tab='clarifications';return refresh();}));
  button?.addEventListener('click',()=>void open());return {open,close};
