@@ -291,7 +291,7 @@ export class MishuCoordinator {
   const source=await this.source(id),initial=binding(source),status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
   const op=String(input.operation??'status');
   if(!manual&&op!=='status'&&(!status.enabled||!(await this.memory.snapshot(id,initial)).enabled))throw Error('MISHU memory or secretary is disabled');
-  if(!manual&&input.allProjects!==undefined)throw Error('Memory project scope cannot be broadened by model');
+  if(!manual&&(input.allProjects!==undefined||input.onlyProject!==undefined))throw Error('Memory project scope cannot be broadened by model');
   if(Object.keys(input).some(key=>['user','sourceId','source','requestId','userMessageId','sourceRunId','threadId','turnId'].includes(key)))throw Error('Memory source authority cannot be supplied');
   if(!manual&&op==='history')throw Error('Old-source notes require direct user selection');
   let evidence:MemorySource|undefined;
