@@ -181,7 +181,7 @@ export class MishuCoordinator {
    authority:async id=>{const source=await this.source(id),status=await this.status(id),live=this.registry?.get(id),models=await live?.getModels().catch(()=>undefined);return {binding:binding(source),generation:this.state.chats[id]?.coordinationGeneration??0,enabled:status.selected&&status.enabled,idle:!live?.isBusy&&live?.attention!=='waiting',manualCommand:Boolean(this.memoryWindows.get(id)&&this.memoryWindows.get(id)===live?.currentRequestId&&!live?.isReportRun),...(models?.current&&this.memoryExtractor?{model:models.current}:{}),project:source.projectId};},
    evidence:async(id,input)=>await this.evidence(id,input) as unknown as ConsolidationEvidence,
    reserve:(id,op)=>this.reserveAuxiliary(id,op,'memory'),started:(id,op)=>this.markAuxiliaryStarted(id,op),
-   record:async(id,op,result)=>{await this.recordAuxiliaryUsage(id,op,'memory',{model:result.provider+'/'+result.model,at:new Date().toISOString(),...result.usage});},
+   record:async(id,op,result)=>{await this.recordReservedAuxiliaryUsage(id,op,'memory',{model:result.provider+'/'+result.model,at:new Date().toISOString(),...result.usage});},
    extract:(id,input)=>{if(!this.memoryExtractor)throw Error('Native isolated memory extraction unavailable');return this.memoryExtractor(id,input);},
   });
   this.capabilities=typeof capabilitiesOrOptions==='function'?capabilitiesOrOptions:undefined;
