@@ -1,3 +1,4 @@
+import {MishuMemory,type MemorySource} from './mishu-memory.js';
 import {managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
@@ -44,6 +45,7 @@ const currentTitle=(summary:{name?:string;preview?:string}|undefined,fallback:st
 
 /** Host-owned scoped coordination. It never exposes a Host token or creates tasks. */
 export class MishuCoordinator {
+ readonly memory:MishuMemory;
  private state:State={version:2,chats:{}};
  private loaded?:Promise<void>;
  private writer?:DatabaseSync;
@@ -57,6 +59,9 @@ export class MishuCoordinator {
  private notificationSetupWindows=new Map<string,string>();
  beginNotifications(id:string,requestId:string){this.notificationSetupWindows.set(id,requestId);}
  endNotifications(id:string,requestId:string){if(this.notificationSetupWindows.get(id)===requestId)this.notificationSetupWindows.delete(id);}
+ private memoryWindows=new Map<string,string>();
+ beginMemory(id:string,requestId:string){this.memoryWindows.set(id,requestId);}
+ endMemory(id:string,requestId:string){if(this.memoryWindows.get(id)===requestId)this.memoryWindows.delete(id);}
  private historyWindows=new Map<string,string>();
  beginHistory(id:string,requestId:string){this.historyWindows.set(id,requestId);}
  endHistory(id:string,requestId:string){if(this.historyWindows.get(id)===requestId)this.historyWindows.delete(id);}
@@ -152,6 +157,7 @@ export class MishuCoordinator {
  endTodo(id:string,requestId:string){if(this.todoWindows.get(id)===requestId)this.todoWindows.delete(id);}
  private quickWindows=new Map<string,{requestId:string;text:string}>();
  constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>,capabilitiesOrOptions?:((id:string)=>Promise<MishuSourceCapabilities>)|MishuCoordinatorOptions,options:MishuCoordinatorOptions={}){
+  this.memory=new MishuMemory(root);
   this.capabilities=typeof capabilitiesOrOptions==='function'?capabilitiesOrOptions:undefined;
   if(capabilitiesOrOptions&&typeof capabilitiesOrOptions!=='function')options=capabilitiesOrOptions;
   const now=options.now??Date.now;
@@ -246,13 +252,34 @@ export class MishuCoordinator {
   return {PI_COFFEE_MISHU_URL:url,PI_COFFEE_MISHU_TOKEN:token};
  }
  accepts(token:string){return this.tokens.has(token);}
+ private async memoryContext(id:string){const source=await this.source(id),initial=binding(source);if(!(await this.status(id)).enabled)return {enabled:false,text:''};const context=await this.memory.context(id,initial,source.projectId);if(binding(await this.source(id))!==initial||!(await this.status(id)).enabled)return {enabled:false,text:''};return context;}
+ async memoryOperation(id:string,input:Record<string,unknown>,manual=false){
+  const source=await this.source(id),initial=binding(source),status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
+  const op=String(input.operation??'status');
+  if(!manual&&op!=='status'&&(!status.enabled||!(await this.memory.snapshot(id,initial)).enabled))throw Error('MISHU memory or secretary is disabled');
+  if(!manual&&input.allProjects!==undefined)throw Error('Memory project scope cannot be broadened by model');
+  if(Object.keys(input).some(key=>['user','sourceId','source','requestId','userMessageId','sourceRunId','threadId','turnId'].includes(key)))throw Error('Memory source authority cannot be supplied');
+  if(!manual&&op==='history')throw Error('Old-source notes require direct user selection');
+  let evidence:MemorySource|undefined;
+  if(manual)evidence={kind:'manual',at:new Date().toISOString()};
+  else if(!['status','list','get','export'].includes(op)){
+   if(['configure','restore'].includes(op))throw Error('Only direct user memory settings may enable or restore notes');
+   const live=this.registry?.get(id),requestId=this.foreground.get(id),text=this.state.chats[id]?.userInstructions?.find(e=>e.requestId===requestId)?.text;
+   if(!status.enabled||!live||live.isReportRun||!requestId||!text||typeof input.quote!=='string'||!input.quote.trim())throw Error('Memory mutation requires the current direct user message');
+   const start=text.indexOf(input.quote);if(start<0||input.quote.length>2000||!/(记住|记着|以后|纠正|改为|忘记|删除|remember|forget|correct)/i.test(input.quote))throw Error('Memory source quote does not prove a lasting user request');
+   if(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}|\b(?:Bearer|password|api[_-]?key|token)\s*[:= ]\s*\S+/i.test(input.quote))throw Error('Sensitive evidence cannot be saved in memory');
+   evidence={kind:'user-message',at:new Date().toISOString(),requestId,quote:input.quote,start,end:start+input.quote.length};
+   if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
+  }
+  return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&this.foreground.get(id)!==evidence.requestId)throw Error('Memory user turn ended');});
+ }
  async runtime(token:string,input:Record<string,unknown>):Promise<unknown>{
   if(this.codexTokens.has(token)&&this.codexInvocation.getStore()!==token)return this.codexInvocation.run(token,()=>this.runtime(token,input));
   await this.checkCodexInvocation();
   if(this.codexInvocation.getStore()&&(!['status','directory','send','inbox','tasks','overview','events','peek','panel','queue'].includes(String(input.action))||Object.keys(input).some(key=>['sourceId','user','userMessageId','sourceRunId','threadId','turnId'].includes(key))))throw Error('Secretary tools cannot configure grants or supply source authority');
   const id=this.tokens.get(token);if(!id)throw Error('Invalid MISHU capability');
   const status=await this.status(id);if(!status.selected)throw Error('MISHU is not selected');
-  if(input.action==='status'){const origin=this.registry?.get(id)?.isReportRun?'task-report':'user-intent';return {...status,origin,manager:status.enabled?await this.managerStatus(id,input.digest===true&&origin==='user-intent'):{version:1,viewAll:false}};}
+  if(input.action==='status'){const origin=this.registry?.get(id)?.isReportRun?'task-report':'user-intent';return {...status,origin,memory:await this.memoryContext(id).catch(()=>({enabled:false,error:'Memory unavailable; ordinary Chat remains available'})),manager:status.enabled?await this.managerStatus(id,input.digest===true&&origin==='user-intent'):{version:1,viewAll:false}};}
   if((await this.source(id)).engine==='codex'&&['report','notifications'].includes(String(input.action)))throw Error('Codex 全工具禁用和原生汇报恢复尚未验证；自动提醒不可用，请人工查询任务和回执');
   if(input.action==='report'&&this.notificationWindows.has(id))return this.report(id,input);
   if(this.registry?.get(id)?.isReportRun)throw Error('Report runs cannot invoke coordination or capability-changing operations');
@@ -272,6 +299,8 @@ export class MishuCoordinator {
    const source=await this.source(id),c=this.state.chats[id];if(!c?.selected)throw Error('MISHU is not selected');
    const notes=structuredClone(c.notes??[]),result=historyOperation(c.taskJournal?.tasks??[],notes,binding(source),input);c.notes=notes;return result;
   },false);
+  if(input.action==='memory-ui'){if(!this.memoryWindows.has(id))throw Error('Memory settings require direct /mishu-memory');return this.memoryOperation(id,input,true);}
+  if(input.action==='memory')return this.memoryOperation(id,input);
   if(input.action==='directory')return this.directory(id,input.targetId===undefined?undefined:[this.lookupTargetId(input.targetId)]);
   if(input.action==='setup')return this.change(async()=>{
    if(!this.setupWindows.has(id))throw Error('Setup requires a direct user /mishu-setup command');

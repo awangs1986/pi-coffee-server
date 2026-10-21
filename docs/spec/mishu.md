@@ -1054,3 +1054,33 @@ The queue_action protocol gains move (to: front|back); mishu_watch frames are
 ignored by older clients. Source, artifact installation, Browser acceptance and
 production activation remain separate. See [implementation](../development/mishu-manager.md)
 and [repair evidence](../development/mishu-manager-repairs.md).
+
+## Secretary private memory (#7 implementation candidate)
+
+Pi Chat is the only secretary source (Server #122); other engines remain targets.
+The authenticated Browser `/api/mishu` action `memory` and direct native
+`/mishu-memory` operate Host-owned `.coffee/mishu/memory.json` schema 1. Default
+off; selection/setup grants neither memory opt-in nor sharing. All requests derive
+account from the existing scoped slot and secretary from its exact current binding.
+Reads: status/list/get/export/history (old binding notes only). Mutations:
+configure/save/delete/restore require operationId, edits/deletes require revision.
+Conflicting IDs or revisions reject. Deleted entries retain tombstones and cannot
+be edited or restored from the same binding. New bindings start off and empty;
+explicit old-note restoration copies a selected live note to a new ID only.
+
+Capacity is 500 entries including tombstones per binding, 2000 chars/entry,
+20 historical revisions/entry, 2000 retained idempotency receipts/binding, 4 MiB
+whole scoped file, and 50 entries/export page. Capacity fails without committing;
+no receipt is silently evicted. Revision operations serialize and atomically rename
+only after final scope/binding/selection validation. A mode-0600 previous-save
+backup is kept. Schema 1 is initial; unknown versions/corruption remain untouched,
+produce a diagnostic and do not block ordinary Chat. Recovery is offline from a
+private backup with the service safely quiescent; no automatic rollback resurrects
+deleted entries. No claim of erasing copies in native history or backups is made.
+Credentials are rejected from memory text. Sources retain manual origin or exact
+Host-verified user message excerpts, never caller-supplied account identities.
+
+Candidate validation: public HTTP test covers explicit opt-in, source/account
+isolation, revision conflict, tombstone/restart, failed save and old-binding
+note-only restore. Browser controller test covers model-free entry and cancel.
+Production and real desktop/mobile acceptance remain separate integration gates.

@@ -3,6 +3,7 @@ import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
 import {CompletionReads,completionKey} from './completion-reads.js';
+import {initMishuMemory} from './mishu-memory.js';
 import {initMishuCommands} from './mishu-commands.js';
 import {initMishuControls} from './mishu.js';
 import {randomId} from './ids.js';
@@ -267,7 +268,7 @@ function showRecentThread(id){
   });
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;let mishuMemory=null;
 // Unacknowledged requests stay in this tab, scoped to their owner and task.
 // Never infer acceptance from matching history text or resend automatically.
 const promptOutbox=new Map();
@@ -3148,7 +3149,7 @@ $('#composer').addEventListener('submit', (event) => {
 const restartControls=createRestartController({notify:toast,accepted:text=>{if(ui.prompt.value===text){ui.prompt.value='';ui.slash.classList.add('hidden');autoGrow();refreshComposer();}}});
 void restartControls.restore();
 function submitPrompt(text, images) {
-  if(mishuCommands?.handle(text)){ui.prompt.value='';autoGrow();return true;}
+  if(mishuMemory?.handle(text)||mishuCommands?.handle(text)){ui.prompt.value='';autoGrow();return true;}
   if(activeId&&!historyReady)return false;
   if(takeoverBusy()||(mishuChangingId&&mishuChangingId===activeId))return false;
   if(compacting){toast('请等待压缩完成，或先停止');return false;}
@@ -3196,6 +3197,7 @@ function submitPrompt(text, images) {
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
 const mishuRequest=async body=>{const response=await fetch('/api/mishu',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
+mishuMemory=initMishuMemory({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,button:$('#mishu-memory'),onOpen:closeBrandMenu,toast});
 mishuCommands=initMishuCommands({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}),request:mishuRequest,dialogs,configureButton:$('#mishu-configure'),onOpen:closeBrandMenu,onChanged:()=>void mishuControls.refresh(),toast});
 mishuControls=initMishuControls({button:$('#mishu-toggle'),configureButton:$('#mishu-configure'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
   request:mishuRequest,
