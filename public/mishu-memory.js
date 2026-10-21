@@ -1,16 +1,17 @@
 import {randomId} from './ids.js';
 /** Browser memory remains usable when the native model is unavailable. All values are text nodes. */
 export function initMishuMemory({context,request,button,toast,onOpen}) {
- let dialog=null;
+ let dialog=null,controller=null;
+ function close(){controller?.abort();controller=null;dialog?.close();dialog?.remove();dialog=null;}
  async function open(){
   const source=context();if(!source?.id||(source.engine||'pi')!=='pi'){toast('记忆仅适用于已选择 MISHU 的 Pi Chat');return;}
-  onOpen?.();dialog?.remove();dialog=document.createElement('dialog');dialog.className='mishu-memory-dialog';dialog.setAttribute('aria-label','MISHU 私有记忆');
+  onOpen?.();close();controller=new AbortController();const activeController=controller;dialog=document.createElement('dialog');dialog.className='mishu-memory-dialog';dialog.setAttribute('aria-label','MISHU 私有记忆');const modal=dialog;modal.addEventListener('cancel',event=>{event.preventDefault();close();});
   const wrap=document.createElement('div');wrap.style.cssText='display:flex;flex-direction:column;gap:12px;max-height:80dvh;max-width:min(650px,85vw);min-width:min(500px,80vw);overflow:auto;padding:16px';dialog.append(wrap);
   const title=document.createElement('h2');title.textContent='MISHU 私有记忆';wrap.append(title);
   const notice=document.createElement('p');notice.textContent='仅当前账号和秘书可见。删除保留墓碑；原生历史和私有备份中的副本不会同步擦除。更换上下文后必须明确恢复笔记。';wrap.append(notice);
   const controls=document.createElement('div'),list=document.createElement('div'),status=document.createElement('p');wrap.append(status,controls,list);
-  const call=async(body)=>{const current=context();if(current?.id!==source.id||current?.user!==source.user||current?.epoch!==source.epoch)throw Error('对话已切换，请重新打开记忆');return request({action:'memory',id:source.id,...body});};
-  const action=(label,fn,parent=controls)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>Promise.resolve(fn()).catch(e=>toast(e.message));parent.append(b);return b;};
+  const call=async(body)=>{const current=context();if(current?.id!==source.id||current?.user!==source.user||current?.epoch!==source.epoch)throw Error('对话已切换，请重新打开记忆');const value=await request({action:'memory',id:source.id,...body},activeController.signal);if(context()?.id!==source.id||context()?.user!==source.user||context()?.epoch!==source.epoch)throw Error('秘书已切换，旧记忆结果已丢弃');return value;};
+  const action=(label,fn,parent=controls)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>Promise.resolve(fn()).catch(e=>{if(!activeController.signal.aborted)toast(e.message);});parent.append(b);return b;};
   let offset=0;
   async function render(){const state=await call({operation:'status'}),page=await call({operation:'list',offset,limit:20,allProjects:true});status.textContent=`记忆${state.enabled?'已开启':'默认关闭'}；容量 ${page.total}/${state.limits.entries}，单条 ${state.limits.text} 字符，历史保留 ${state.limits.history} 版。`;controls.replaceChildren();list.replaceChildren();
    action(state.enabled?'关闭记忆':'开启记忆',async()=>{await call({operation:'configure',operationId:randomId(),enabled:!state.enabled});await render();});
@@ -21,7 +22,7 @@ export function initMishuMemory({context,request,button,toast,onOpen}) {
    if(offset>0)action('上一页',async()=>{offset=Math.max(0,offset-20);await render();});if(page.nextOffset!==null)action('下一页',async()=>{offset=page.nextOffset;await render();});
   }
   function edit(row){const form=document.createElement('form'),kind=document.createElement('select'),text=document.createElement('textarea'),project=document.createElement('input');for(const [value,label] of [['preference','偏好'],['agreement','沟通约定'],['project-fact','项目事实'],['summary','摘要']]){const o=document.createElement('option');o.value=value;o.textContent=label;kind.append(o);}kind.value=row?.kind||'preference';text.value=row?.text||'';text.maxLength=2000;text.rows=5;text.setAttribute('aria-label','记忆内容');project.placeholder='项目 ID（项目事实必填）';project.value=row?.project||'';form.append(kind,text,project);list.prepend(form);action('保存',async()=>{await call({operation:'save',operationId:randomId(),...(row?{entryId:row.id,expectedRevision:row.revision}:{}),kind:kind.value,text:text.value,...(kind.value==='project-fact'?{project:project.value}:{})});await render();},form);action('取消',()=>form.remove(),form);}
-  action('关闭',()=>{dialog.close();dialog.remove();dialog=null;},wrap);document.body.append(dialog);dialog.showModal();try{await render();}catch(e){toast(e.message);dialog.close();dialog.remove();dialog=null;}
+  action('关闭',close,wrap);document.body.append(dialog);dialog.showModal();try{await render();}catch(e){if(dialog===modal){toast(e.message);close();}}
  }
- button?.addEventListener('click',()=>void open());return {open,handle(text){if(text.trim()!=='/mishu-memory')return false;void open();return true;},close(){dialog?.close();dialog?.remove();dialog=null;}};
+ button?.addEventListener('click',()=>void open());return {open,handle(text){if(text.trim()!=='/mishu-memory')return false;void open();return true;},close};
 }
