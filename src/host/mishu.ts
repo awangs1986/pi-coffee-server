@@ -4,6 +4,8 @@ import type {AgentHistoryRead} from './agent-adapter.js';
 import {clarificationOperation,type Clarifications} from './mishu-clarifications.js';
 
 import {MishuMemory,type MemorySource} from './mishu-memory.js';
+import {MishuConsolidation,type ConsolidationEvidence} from './mishu-consolidation.js';
+import type {AgentSessionFactory} from './agent-adapter.js';
 import {managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
@@ -51,6 +53,7 @@ const currentTitle=(summary:{name?:string;preview?:string}|undefined,fallback:st
 /** Host-owned scoped coordination. It never exposes a Host token or creates tasks. */
 export class MishuCoordinator {
  readonly memory:MishuMemory;
+ readonly consolidation:MishuConsolidation;
  private state:State={version:2,chats:{}};
  private loaded?:Promise<void>;
  private writer?:DatabaseSync;
@@ -154,7 +157,7 @@ export class MishuCoordinator {
  private receipts:ReceiptArchive;
  private quick:QuickConfirmations;
  private quickEpoch=new Map<string,number>();
- private revokeQuick(id:string){if(this.state.chats[id])this.state.chats[id].coordinationGeneration=(this.state.chats[id].coordinationGeneration??0)+1;this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
+ private revokeQuick(id:string){this.consolidation?.abort(id);if(this.state.chats[id])this.state.chats[id].coordinationGeneration=(this.state.chats[id].coordinationGeneration??0)+1;this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
  private receiptLimits:typeof RECEIPT_LIMITS;
  private index?:ConversationIndex;
  private watchListeners=new Set<(frame:MishuWatchFrame)=>void>();
@@ -166,6 +169,14 @@ export class MishuCoordinator {
  private quickWindows=new Map<string,{requestId:string;text:string}>();
  constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>,capabilitiesOrOptions?:((id:string)=>Promise<MishuSourceCapabilities>)|MishuCoordinatorOptions,options:MishuCoordinatorOptions={}){
   this.memory=new MishuMemory(root);
+  this.consolidation=new MishuConsolidation(root,{
+   memory:this.memory,
+   authority:async id=>{const source=await this.source(id),status=await this.status(id),live=this.registry?.get(id),models=await live?.getModels().catch(()=>undefined);return {binding:binding(source),generation:this.state.chats[id]?.coordinationGeneration??0,enabled:status.selected&&status.enabled,idle:!live?.isBusy&&!live?.attention,...(models?.current?{model:models.current}:{}),project:source.projectId};},
+   evidence:async(id,input)=>await this.evidence(id,input) as unknown as ConsolidationEvidence,
+   reserve:(id,op)=>this.reserveAuxiliary(id,op,'memory'),started:(id,op)=>this.markAuxiliaryStarted(id,op),
+   record:async(id,op,result)=>{await this.recordAuxiliaryUsage(id,op,'memory',{model:result.provider+'/'+result.model,at:new Date().toISOString(),...result.usage});},
+   extract:(id,input)=>{if(!this.memoryExtractor)throw Error('Native isolated memory extraction unavailable');return this.memoryExtractor(id,input);},
+  });
   this.capabilities=typeof capabilitiesOrOptions==='function'?capabilitiesOrOptions:undefined;
   if(capabilitiesOrOptions&&typeof capabilitiesOrOptions!=='function')options=capabilitiesOrOptions;
   const now=options.now??Date.now;
@@ -185,6 +196,8 @@ export class MishuCoordinator {
  private usageLedger:MishuUsage;
  private usageRecoveries=new Map<string,Promise<void>>();
  private historyReader?: (id:string)=>Promise<AgentHistoryRead>;
+ private memoryExtractor?:NonNullable<AgentSessionFactory['extractMemory']>;
+ attachMemoryExtractor(extract:AgentSessionFactory['extractMemory']){this.memoryExtractor=extract;}
  attachHistoryReader(read:((id:string)=>Promise<AgentHistoryRead>)|undefined){this.historyReader=read;}
  attachIndex(index:ConversationIndex|undefined){this.index=index;}
  onWatch(listener:(frame:MishuWatchFrame)=>void){this.watchListeners.add(listener);return ()=>this.watchListeners.delete(listener);}
@@ -284,7 +297,18 @@ export class MishuCoordinator {
    evidence={kind:'user-message',at:new Date().toISOString(),requestId,quote:input.quote,start,end:start+input.quote.length};
    if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
   }
+  if(op==='configure'&&input.enabled===false)this.consolidation.abort(id);
   return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&this.foreground.get(id)!==evidence.requestId)throw Error('Memory user turn ended');});
+ }
+ async consolidationOperation(id:string,input:Record<string,unknown>,manual=false){
+  if(input.version!==1||Object.keys(input).some(k=>['sourceId','user','binding','generation','source','prompt','provider','model','sessionFile'].includes(k)))throw Error('Invalid memory consolidation interface');
+  if(input.operation==='status'||input.operation==='list')return this.consolidation.status(id);
+  if(input.operation==='get')return this.consolidation.get(id,input.jobId);
+  if(!manual)throw Error('Only the user can organize or adopt memory candidates');
+  if(input.operation==='prepare')return this.consolidation.prepare(id,input);
+  if(input.operation==='adopt')return this.consolidation.adopt(id,input);
+  if(input.operation==='cancel')return this.consolidation.cancel(id,input);
+  throw Error('Unknown memory consolidation operation');
  }
  async runtime(token:string,input:Record<string,unknown>):Promise<unknown>{
   if(this.codexTokens.has(token)&&this.codexInvocation.getStore()!==token)return this.codexInvocation.run(token,()=>this.runtime(token,input));
@@ -313,6 +337,7 @@ export class MishuCoordinator {
    const notes=structuredClone(c.notes??[]),result=historyOperation(c.taskJournal?.tasks??[],notes,binding(source),input);c.notes=notes;return result;
   },false);
   if(input.action==='memory-ui'){if(!this.memoryWindows.has(id))throw Error('Memory settings require direct /mishu-memory');return this.memoryOperation(id,input,true);}
+  if(input.action==='memory_consolidation')return this.consolidationOperation(id,input,this.memoryWindows.has(id));
   if(input.action==='memory')return this.memoryOperation(id,input);
   if(input.action==='directory')return this.directory(id,input.targetId===undefined?undefined:[this.lookupTargetId(input.targetId)]);
   if(input.action==='setup')return this.change(async()=>{
@@ -367,7 +392,7 @@ export class MishuCoordinator {
   const read=['cursor','grok'].includes(target.engine??'pi')?undefined:await this.historyReader?.(targetId);
   const currentSource=await this.source(id),currentTarget=await this.workspaces.lookup(targetId),current=this.state.chats[id];
   if((this.quickEpoch.get(id)??0)!==epoch||binding(currentSource)!==sourceBinding||!current?.selected||!current.enabled||current.sourceBinding!==sourceBinding||!currentTarget||!visible(currentTarget)||binding(currentTarget)!==targetBinding||targetId!==id&&!current.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence authorization or binding changed during read');
-  return queryEvidence(targetId,read,input);
+  const result=queryEvidence(targetId,read,input);return {...result,entries:result.entries.map(entry=>({...entry,sourceBinding:targetBinding!}))};
  }
  async browserClarifications(id:string,input:Record<string,unknown>){
   const {id:_,...body}=input;
@@ -576,6 +601,7 @@ export class MishuCoordinator {
  }
  /** Called by the Host for each direct Web user message to a selected secretary Chat. */
  async userInput(id:string,requestId:string,text:string,mode:'prompt'|'steer'|'follow_up'){
+  this.consolidation.abort(id);
   if(!this.state.chats[id]?.enabled||text.trimStart().startsWith('/'))return;
   await this.change(async()=>{const c=this.state.chats[id],source=await this.source(id);if(!c?.enabled||c.sourceBinding!==binding(source))throw Error('Secretary authorization changed');c.userInstructions=[...(c.userInstructions??[]).filter(entry=>entry.requestId!==requestId),{requestId,text:text.slice(0,4000)}].slice(-200);},false);
   if(mode!=='steer')await this.grants.issue(id,requestId,text);
@@ -950,5 +976,5 @@ export class MishuCoordinator {
   this.watch.noteTier2Run();
   void this.change(async()=>{const m=this.state.chats[id]?.manager;if(m&&pending>m.watchCursor)m.watchCursor=pending;},false).catch(()=>undefined);
  }
- async close(){this.closing=true;await this.watch.close().catch(()=>undefined);if(this.notificationTimer)clearTimeout(this.notificationTimer);for(const id of this.notificationQueued.keys())this.cancelNotificationQueue(id);this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;await Promise.allSettled([...this.usageRecoveries.values()]);await this.usageLedger.flush();await this.receipts.close();this.writer?.close();this.writer=undefined;}
+ async close(){this.closing=true;await this.consolidation.close();await this.watch.close().catch(()=>undefined);if(this.notificationTimer)clearTimeout(this.notificationTimer);for(const id of this.notificationQueued.keys())this.cancelNotificationQueue(id);this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;await Promise.allSettled([...this.usageRecoveries.values()]);await this.usageLedger.flush();await this.receipts.close();this.writer?.close();this.writer=undefined;}
 }
