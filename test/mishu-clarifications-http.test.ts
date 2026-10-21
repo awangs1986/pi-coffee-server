@@ -77,7 +77,7 @@ it('serializes racing answers and makes a source authorization generation obsole
  const answer=(text:string,operationId:string)=>({action:'clarifications',version:1,operation:'answer',questionId:q.questionId,expectedRevision:q.revision,answer:text,operationId});
  const results=await Promise.all([f.browser(answer('A','race-a')),f.browser(answer('B','race-b'))]);expect(results.map(r=>r.status).sort()).toEqual([200,409]);
  const winner=await results.find(r=>r.status===200)!.json();expect((await (await f.browser(answer(winner.question.answer.text,'same-answer-new-request'))).json()).question.answer.eventId).toBe(winner.question.answer.eventId);
- await f.browser({action:'select',selected:false});expect((await f.runtime({action:'clarifications',version:1,operation:'list'})).status).toBe(401);
+ await f.restart();expect((await f.browser({action:'select',selected:false})).status).toBe(200);expect((await f.runtime({action:'clarifications',version:1,operation:'list'})).status).toBe(401);
 });
 it('does not spend another contact when a new native message contains the same facts',async()=>{
  const f=await fixture('SYNTHETIC_NO_NEW_FINDINGS'),directory=await (await f.runtime({action:'directory'})).json(),target=directory.conversations.find((t:any)=>t.id===f.a.id);

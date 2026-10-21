@@ -9,4 +9,4 @@
 
 此文件保留旧链接。Server 仍拥有认证 scope、Host 执行/持久账本、原生 Agent Adapter 和网页集成，
 通过不可变 MISHU 包消费纯产品策略；不能在这里重新维护第二份角色、模板或产品规格。
-新增体验要求仍待实现；Codex 后台报告能力限制见[源合同](mishu-codex-secretary.md)。
+2026-10-21 的 #7–#15 实现候选在 `feat/mishu-secretary-experience`；[Host 资源合同](mishu.md)与[验收方式](../development/mishu-experience.md)记录集成。最终通过、不可变包与生产分别记录，不因源码存在推断上线。当前秘书源由 Server #122 限定为 Pi Chat；其他引擎保留目标身份。

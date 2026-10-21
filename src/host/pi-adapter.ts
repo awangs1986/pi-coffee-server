@@ -274,7 +274,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       const start=branch.indexOf(marker),range=[];let settled=false,inputSeen=false,closedByBoundary=false,aborted:boolean|undefined;
       for(const e of branch.slice(start+1)){
         if(e.type==='custom'&&e.customType==='coffee-native-run'){closedByBoundary=true;break;}
-        if(report&&e.type==='custom_message'&&e.customType==='coffee-task-report'&&e.details?.processingId===marker.data.runId){inputSeen=true;continue;}
+        if(report&&e.type==='custom_message'&&['coffee-task-report','coffee-clarification-answer'].includes(e.customType)&&e.details?.processingId===marker.data.runId){inputSeen=true;continue;}
         if(e.type==='message'&&e.message?.role==='user'){if(inputSeen||report){closedByBoundary=true;break;}inputSeen=true;continue;}
         if(e.type==='custom'&&e.customType==='coffee-native-settled'&&e.data?.runId===marker.data.runId){
           if(e.data.aborted!==undefined&&typeof e.data.aborted!=='boolean')return unknown;
