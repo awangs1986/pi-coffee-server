@@ -1267,3 +1267,5 @@ conflicting confirmed fact; assistant/third-party/uncertain claims remain candid
 Product extraction/intent policy belongs to the independent MISHU package. Source
 candidate, immutable installed artifact, genuine provider semantics and production
 activation are separate evidence. Current sources remain Pi Chat only (#122).
+
+记忆界面的容量显示当前秘书绑定下的全部占用条目（含删除墓碑）；筛选结果条数单独显示，不用筛选子集伪装剩余容量。
