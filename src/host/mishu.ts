@@ -387,6 +387,9 @@ export class MishuCoordinator {
  async markAuxiliaryStarted(id:string,operationId:string){const source=await this.usageSource(id);const result=await this.usageLedger.transition(id,source.binding,operationId,true);if((await this.usageSource(id)).binding!==source.binding)throw Error('Auxiliary source changed');return result;}
  async releaseAuxiliaryBeforeStart(id:string,operationId:string){const source=await this.usageSource(id);return this.usageLedger.transition(id,source.binding,operationId,false);}
  async recordAuxiliaryUsage(id:string,operationId:string,purpose:Exclude<UsagePurpose,'foreground'>,row:Omit<UsageRecord,'callId'|'purpose'|'source'>){const source=await this.usageSource(id);await this.usageLedger.record(id,source.binding,{...row,callId:'aux:'+operationId,purpose,source:'native-event'});}
+ /** Completion metering cannot regain execution authority. The account ledger
+  * resolves the original accepted binding even after source revoke/reset. */
+ async recordReservedAuxiliaryUsage(id:string,operationId:string,purpose:Exclude<UsagePurpose,'foreground'>,row:Omit<UsageRecord,'callId'|'purpose'|'source'>){await this.usageLedger.recordReserved(id,operationId,purpose,row);}
  private recoverUsage(id:string){
   const existing=this.usageRecoveries.get(id);if(existing)return existing;
   const work=(async()=>{const source=await this.usageSource(id),read=await this.historyReader?.(id);if(!read||read.sourceFreshness!=='current')return;const current=await this.usageSource(id);if(current.binding!==source.binding)throw Error('Usage source changed');if(read.usage?.length)await this.usageLedger.recordMany(id,source.binding,read.usage);})();
