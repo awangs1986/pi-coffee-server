@@ -1,9 +1,9 @@
-import {memoryExtractionInstructions,memoryExtractionPrompt} from 'pi-coffee-mishu/host-policy';
+import {memoryExtractionPrompt} from 'pi-coffee-mishu/host-policy';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,lstat,readFile,writeFile,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {MishuMemory,MemoryChange,MemoryEntry} from './mishu-memory.js';
-import type {MemoryExtractionOutput} from './pi-memory-runner.js';
+import {MemoryExtractionFailure,type MemoryExtractionOutput} from './pi-memory-runner.js';
 
 export const CONSOLIDATION_LIMITS={messages:20,inputChars:12000,changes:10,jobs:100,bytes:8*1024*1024,hourlyCalls:12};
 export interface ConsolidationAuthority {binding:string;generation:number;enabled:boolean;idle:boolean;manualCommand?:boolean;model?:{provider:string;id:string};project?:string}
@@ -68,13 +68,13 @@ export class MishuConsolidation {
    await this.check(id,authority);if(controller.signal.aborted)throw Error('Consolidation cancelled');
    await this.port.started(id,job.id);await this.transaction(()=>{job.state='running';});
    let memoryChars=0;const memory=[];for(const {id,revision,kind,text,project,deleted} of snapshot.entries){if(deleted)continue;const row={id,revision,kind,text,project},size=JSON.stringify(row).length;if(memoryChars+size>6000)break;memoryChars+=size;memory.push(row);}
-   const prompt=memoryExtractionInstructions+'\n'+memoryExtractionPrompt({entries:sources,memory});
+   const prompt=memoryExtractionPrompt({entries:sources,memory});
    const result=await this.port.extract(id,{sessionFile:join(this.root,'extractions',job.id+'.jsonl'),prompt,provider:job.model.provider,model:job.model.id,signal:controller.signal});
    if(result.provider!==job.model.provider||result.model!==job.model.id)throw Error('Native model identity changed');await this.port.record(id,job.id,result);await this.check(id,authority);if(controller.signal.aborted)throw Error('Consolidation cancelled');
    const changes=this.candidates(result.text,sources,snapshot.entries);
    await this.transaction(async()=>{await this.check(id,authority);if(job.state==='cancelled')throw Error('Consolidation cancelled');job.changes=changes;job.state='ready';});
    return {job:this.present(job)};
-  }catch(error){await this.transaction(()=>{const current=this.state.jobs.find(j=>j.id===job.id);if(current&&current.state!=='cancelled'){current.state='uncertain';current.error='原生整理未能安全完成；原请求和证据保留，不自动再次生成。';}}).catch(()=>undefined);throw Error('Memory consolidation unavailable or uncertain; inspect saved job, no automatic retry');}
+  }catch(error){if(error instanceof MemoryExtractionFailure)await this.port.record(id,job.id,error.output).catch(()=>undefined);await this.transaction(()=>{const current=this.state.jobs.find(j=>j.id===job.id);if(current&&current.state!=='cancelled'){current.state='uncertain';current.error='原生整理未能安全完成；原请求和证据保留，不自动再次生成。';}}).catch(()=>undefined);throw Error('Memory consolidation unavailable or uncertain; inspect saved job, no automatic retry');}
   finally{if(this.active.get(id)?.jobId===job.id)this.active.delete(id);}
  }
  async cancel(id:string,input:Record<string,unknown>){const job=await this.owned(id,input.jobId);if(job.state==='adopted')throw Error('Already adopted; edit memory explicitly');if(this.active.get(id)?.jobId===job.id)this.active.get(id)?.controller.abort();await this.transaction(()=>{job.state='cancelled';});return {job:this.present(job)};}
