@@ -274,6 +274,7 @@ export class HostServer {
         else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
         else if(input.action==='setup_lookup')result=await slot.mishu.browserLookup(input.id,input);
         else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
+        else if(input.action==='collaboration')result=await slot.mishu.browserCollaboration(input.id,input);
         else if(input.action==='clarifications')result=await slot.mishu.browserClarifications(input.id,input);
         else if(input.action==='inspect'&&['status','tasks','disable'].includes(String(input.operation)))result=await slot.mishu.browserInspect(input.id,String(input.operation));
         else throw Error('Use /mishu-setup explicitly inside the selected conversation');

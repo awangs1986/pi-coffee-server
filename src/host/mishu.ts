@@ -1,3 +1,4 @@
+import {collaborationItem} from './mishu-collaboration.js';
 import {queryEvidence} from './mishu-evidence.js';
 import type {AgentHistoryRead} from './agent-adapter.js';
 import {clarificationOperation,type Clarifications} from './mishu-clarifications.js';
@@ -26,7 +27,7 @@ import {templateValue} from './mishu-rules.js';
 import type {ConversationIndex} from './conversation-index.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
-interface Receipt {messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
+interface Receipt {taskId?:string;messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
 interface Config {clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
 interface State {version:2;chats:Record<string,Config>}
 /** Authorization and contacts share the same state.json transaction. */
@@ -328,6 +329,7 @@ export class MishuCoordinator {
   if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='evidence')return this.evidence(id,input);
+  if(input.action==='collaboration')return this.collaboration(id,input);
   if(input.action==='clarifications')return this.clarifications(id,input,this.clarificationWindows.has(id)?'command':undefined);
   if(input.action==='overview')return {version:1,conversations:await this.overview(id)};
   if(input.action==='events')return this.events(id,input);
@@ -352,6 +354,24 @@ export class MishuCoordinator {
   const currentSource=await this.source(id),currentTarget=await this.workspaces.lookup(targetId),current=this.state.chats[id];
   if((this.quickEpoch.get(id)??0)!==epoch||binding(currentSource)!==sourceBinding||!current?.selected||!current.enabled||current.sourceBinding!==sourceBinding||!currentTarget||!visible(currentTarget)||binding(currentTarget)!==targetBinding||targetId!==id&&!current.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence authorization or binding changed during read');
   return queryEvidence(targetId,read,input);
+ }
+ async browserCollaboration(id:string,input:Record<string,unknown>){const {id:_,...body}=input;return this.collaboration(id,body);}
+ private collaboration(id:string,input:Record<string,unknown>){
+  return this.change(async()=>{
+   if(input.version!==1||!['list','get'].includes(String(input.operation))||Object.keys(input).some(k=>!['action','version','operation','taskId','offset','limit'].includes(k)))throw Error('Unsupported collaboration view');
+   const source=await this.source(id),c=this.state.chats[id];if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source))throw Error('MISHU collaboration unavailable');
+   const journal=structuredClone(c.taskJournal??{tasks:[],operations:[]});await this.refreshTasks(id,journal);
+   const summaries=await this.registry!.list(),items=[];
+   for(const task of journal.tasks){if(task.sourceBinding!==c.sourceBinding||input.operation==='get'&&task.taskId!==input.taskId)continue;try{await this.authorize(id,task.targetId,task.binding,'information-only',true);}catch{continue;}
+    const target=c.targets.find(t=>t.id===task.targetId&&t.binding===task.binding)!;
+    const questions=c.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===(c.coordinationGeneration??0))??[];
+    items.push(collaborationItem(id,task,{id:target.id,title:currentTitle(summaries.find(row=>row.id===target.id),target.title),engine:target.engine},c.messages,questions));
+   }
+   c.taskJournal=journal;
+   if(input.operation==='get'){if(!items[0])throw Error('Collaboration task unavailable');return {version:1,item:items[0]};}
+   const offset=input.offset??0,limit=input.limit??20;if(!Number.isSafeInteger(offset)||Number(offset)<0||!Number.isSafeInteger(limit)||Number(limit)<1||Number(limit)>50)throw Error('Invalid collaboration page');
+   const end=Number(offset)+Number(limit);return {version:1,items:items.slice(Number(offset),end),nextOffset:end<items.length?end:null,total:items.length};
+  });
  }
  async browserClarifications(id:string,input:Record<string,unknown>){
   const {id:_,...body}=input;
@@ -836,7 +856,7 @@ export class MishuCoordinator {
    const a=result.assignment,previous={taskJournal:c.taskJournal,assignments:c.assignments,messages:c.messages},journal=structuredClone(c.taskJournal!);
    const updated=journal.tasks.find(t=>t.taskId===task.taskId)!;
    updated.assignment={...a};updated.obligation={runId:a.requestId,nativeBinding:'',watermark:'',state:'pending',generation:(task.obligation?.generation??0)+1};updated.observation='watching';updated.fact=undefined;updated.notification=undefined;updated.revision++;updated.updatedAt=a.createdAt;
-   const receipt:Receipt={messageId:a.messageId,targetId:a.targetId,binding:a.binding,kind:'authorized-execution',state:'accepted',requestId:a.requestId,fingerprint:a.fingerprint,text:a.text,authorizationRef:a.authorizationRef,createdAt:a.createdAt};
+   const receipt:Receipt={taskId:task.taskId,messageId:a.messageId,targetId:a.targetId,binding:a.binding,kind:'authorized-execution',state:'accepted',requestId:a.requestId,fingerprint:a.fingerprint,text:a.text,authorizationRef:a.authorizationRef,createdAt:a.createdAt};
    c.taskJournal=journal;c.assignments=[...(c.assignments??[]),a];c.messages=[...c.messages,receipt];
    try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
    created=receipt;return {version:1,assignment:{...a},task:structuredClone(updated)};
@@ -849,9 +869,9 @@ export class MishuCoordinator {
   if(input.kind==='authorized-execution'&&typeof auth?.quote!=='string'&&!(legacyAuthorization()&&typeof input.authorizationRef==='string'&&input.authorizationRef.trim()&&input.authorizationRef.length<=500))throw Error('Execution instruction requires version 2 authorization.quote from the user\'s current message');
   const messageId=input.messageId,targetId=input.targetId,expected=input.binding,kind=String(input.kind),text=clean(input.text);
   const authorizationRef=kind!=='authorized-execution'?undefined:typeof auth?.quote==='string'?quoteRef(templateValue(auth.quote,200).normalize('NFKC')):clean(String(input.authorizationRef));
-  const fingerprint=createHash('sha256').update(JSON.stringify([targetId,expected,kind,text,authorizationRef])).digest('hex');let created=false;
+  const fingerprint=createHash('sha256').update(JSON.stringify([targetId,expected,kind,text,authorizationRef,...(input.taskId?[input.taskId]:[])])).digest('hex');let created=false;
   const receipt=await this.change(async()=>{
-   await this.authorize(sourceId,targetId,expected,kind);const c=this.state.chats[sourceId],prior=c.messages.find(m=>m.messageId===messageId);
+   await this.authorize(sourceId,targetId,expected,kind);const c=this.state.chats[sourceId];if(input.taskId!==undefined&&!c.taskJournal?.tasks.some(t=>t.taskId===input.taskId&&t.sourceBinding===c.sourceBinding&&t.targetId===targetId&&t.binding===expected&&t.workState!=='stopped'))throw Error('Message must match the exact saved task and target');const prior=c.messages.find(m=>m.messageId===messageId);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('messageId already belongs to different content');return prior;}
    const archived=await this.receipts.lookup(sourceId,messageId);
    if(archived){if(archived.fingerprint!==fingerprint)throw Error('messageId already belongs to different content');return {...archived,binding:expected,text:'',archived:true} as Receipt;}
@@ -859,7 +879,7 @@ export class MishuCoordinator {
    if(kind==='authorized-execution')this.useGrant(sourceId,input,'send:'+messageId);
    await this.rotateReceipts(sourceId,c);
    if(c.messages.length>=this.receiptLimits.live)throw Error('MISHU receipt capacity reached; no terminal receipts can be archived yet');
-   const m:Receipt={messageId,targetId,binding:expected,kind,text,authorizationRef,requestId:'mishu-'+createHash('sha256').update(sourceId+':'+messageId).digest('hex'),fingerprint,state:'accepted',createdAt:new Date().toISOString()};c.messages.push(m);created=true;return m;
+   const m:Receipt={...(input.taskId?{taskId:String(input.taskId)}:{}),messageId,targetId,binding:expected,kind,text,authorizationRef,requestId:'mishu-'+createHash('sha256').update(sourceId+':'+messageId).digest('hex'),fingerprint,state:'accepted',createdAt:new Date().toISOString()};c.messages.push(m);created=true;return m;
   });
   if(created){const work=this.codexInvocation.exit(()=>this.deliver(sourceId,receipt));this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}
   return {messageId:receipt.messageId,targetId:receipt.targetId,state:receipt.state,...((receipt as Receipt&{archived?:boolean}).archived?{archived:true}:{})};
@@ -867,6 +887,7 @@ export class MishuCoordinator {
  /** Archive old terminal receipts/assignments before the live cap is hit (P9). Archive first, then shrink state. */
  private async rotateReceipts(sourceId:string,c:Config){
   const protectedIds=new Set((c.taskJournal?.tasks??[]).map(t=>t.assignment?.requestId).filter((v):v is string=>Boolean(v)));
+  for(const receipt of c.messages)if(receipt.taskId&&c.taskJournal?.tasks.some(t=>t.taskId===receipt.taskId&&t.workState!=='stopped'))protectedIds.add(receipt.requestId);
   for(const active of this.active.values())if(active.source===sourceId)protectedIds.add(active.receipt.requestId);
   const receipts=receiptsToRotate(c.messages,protectedIds,this.receiptLimits);
   if(receipts.length){

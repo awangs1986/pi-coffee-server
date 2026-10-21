@@ -17,7 +17,17 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
  function current(){const c=context();return source&&c&&c.id===source.id&&c.user===source.user&&c.epoch===source.epoch;}
  function close(){sequence++;source=null;dialogs.hide(overlay);}
  async function call(input){if(!current())throw Error('秘书已切换，请重新打开');const result=await request({id:source.id,...input});if(!current())throw Error('秘书已切换，请重新打开');return result;}
- async function refresh(){const ticket=++sequence;body.replaceChildren();text(body,'正在读取…');try{const data=await call({action:tab,version:1,operation:'list'});if(ticket!==sequence||!current())return;body.replaceChildren();renderQuestions(data);}catch(error){if(ticket===sequence&&current()){body.replaceChildren();text(body,error.message);}}}
+ async function refresh(){const ticket=++sequence;body.replaceChildren();text(body,'正在读取…');try{const data=await call({action:tab,version:1,operation:'list'});if(ticket!==sequence||!current())return;body.replaceChildren();if(tab==='collaboration')renderProgress(data);else renderQuestions(data);}catch(error){if(ticket===sequence&&current()){body.replaceChildren();text(body,error.message);}}}
+ function renderProgress(data){
+  text(body,'各事项沿用已有任务简报、派工和回执。未回信保持待回信；运行结束、报告交付、已读和验收分别显示。');
+  const labels={recorded:'已记录，尚未联系',queued:'排队中',running:'执行中','awaiting-reply':'待回信','waiting-user':'等你决定',failed:'失败或不完整',uncertain:'不确定，需核实','reply-available':'已有回信',reported:'已回报',stopped:'已停止记录'};
+  if(!data.items?.length)text(body,'暂无已登记的协作事项。');
+  for(const item of data.items||[]){const card=document.createElement('article');card.style.borderBottom='1px solid #777';card.style.padding='12px 0';body.append(card);text(card,item.purpose,'h3');text(card,`负责人：${item.target.title} · ${item.target.engine}`);text(card,`状态：${labels[item.state]||item.state} · ${item.evidenceAt||'证据时间未知'}`);text(card,`期待结果：${item.expectedResult||'见任务简报'}`);text(card,`执行：${item.execution||'尚未开始'}；汇报：${item.report||'尚未汇报'}；已读：未知；验收：待用户确认`);text(card,`汇报去向：${item.destination.label}`);text(card,item.remainingResponsibility||'尚待核实责任');
+   if(item.reply){text(card,item.reply,'blockquote');if(item.truncated!==false)text(card,item.truncated?'回信已截断，请查看目标原生记录。':'回信完整性未知，请核对原生记录。');}
+   const link=document.createElement('a');link.href=item.destination.link;link.textContent='返回原秘书';card.append(link);
+  }
+  if(data.nextOffset!==null&&data.nextOffset!==undefined)body.append(makeButton('查看更多事项',async()=>{try{const next=await call({action:'collaboration',version:1,operation:'list',offset:data.nextOffset,limit:50});renderProgress(next);}catch(error){if(current())toast(error.message);}}));
+ }
  function renderQuestions(data){
   text(body,'普通待决定事项只影响相关工作。其他事情可以继续聊；原生审批仍到目标对话处理。');
   const questions=data.questions||[];if(!questions.length)text(body,'暂无普通待决定事项。');
@@ -31,6 +41,7 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
   }
  }
  async function open(){const c=context();if(!c||c.engine&&c.engine!=='pi'||c.workspaceKind!=='chat'){toast('MISHU 协作仅适用于 Pi Chat 秘书');return;}source={...c};dialogs.show(overlay,close,closeButton,{nonModal:true});await refresh();}
+ tabs.append(makeButton('协作进度',()=>{tab='collaboration';return refresh();}));
  tabs.append(makeButton('待决定事项',()=>{tab='clarifications';return refresh();}));
  button?.addEventListener('click',()=>void open());return {open,close};
 }
