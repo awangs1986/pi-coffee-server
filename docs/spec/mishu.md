@@ -1129,14 +1129,20 @@ model tool returns. It never adapts native approvals or setup questions. The Pi
 plugin is instructed to settle after saving and leave unrelated work available.
 `/mishu-questions` and the Browser coffee-menu collaboration panel let the direct
 user answer or cancel an exact question/revision. Answers have a Host-created
-user event and are available to the next genuine user turn, rather than injecting
-a fabricated tool reply or promising unattended resumption. Answers carry no
-execution authority. Codex secretary entry remains unavailable under #122.
+user event. Host persists a stable answer processing identity before entering the
+existing serial internal input queue. Pi resumes only that answered matter through
+a platform report-only native turn; the final platform hook blocks every tool. No
+extra user prompt or confirmation is needed. Answers carry no new execution
+authority or native permission reply. Codex secretary remains unavailable (#122).
 
 Host persists at most 100 questions and 1000 operation identities. Exact retries
 are idempotent; conflicting answers, expiry, old revisions, source rebinding and
 changed setup generations fail. Unrelated questions remain pending. Current
-answers are included as untrusted facts in the next foreground manager context.
+answers remain untrusted facts. Continuation states are pending/admitted/processing/
+committed/uncertain/cancelled; native output references prove commit. Restart requeues
+only work not delivered; an attempted run is passively audited, never blindly replayed.
+Historical available answers are retained without automatic replay. Source generation,
+exact binding and task scope are rechecked at admission; other questions stay pending.
 First journal creation keeps a private state backup; old Hosts reject the new
 optional state fields rather than silently ignoring them. Public HTTP and Browser
 controller tests cover recovery, exact answers, expiry, revocation and stale UI.

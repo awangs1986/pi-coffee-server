@@ -260,3 +260,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - MISHU #9 bounded evidence resource: [contract](spec/mishu.md#bounded-evidence-resource-mishu-9).
 
 - MISHU #13 native usage and persistent auxiliary admission: [contract](spec/mishu.md#usage-and-auxiliary-admission-resource-mishu-13).
+
+- MISHU ordinary decisions #10: [answer continuation](spec/mishu.md#secretary-experience-candidate-ordinary-decisions-10) persists a question-bound answer identity and uses the serial native report-only queue; no extra user prompt, new execution grant or native approval reply. Candidate source and Browser acceptance remain separately evidenced.
