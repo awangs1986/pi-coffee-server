@@ -265,7 +265,8 @@ export class HostServer {
         const input=await readJson(req,32768);
         if(typeof input.id!=='string'||!input.id||input.id.length>128)throw Error('Select a secretary conversation first');
         let result:unknown;
-        if(input.action==='status')result=await slot.mishu.status(input.id);
+        if(input.action==='memory')result=await slot.mishu.memoryOperation(input.id,input,true);
+        else if(input.action==='status')result=await slot.mishu.status(input.id);
         else if(input.action==='select'&&typeof input.selected==='boolean'){
           result=await slot.mishu.select(input.id,input.selected);
           for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
@@ -1297,6 +1298,8 @@ class HostSocket implements SessionSink {
     setImmediate(() => {
       const setup=frame.text.trim()==='/mishu-setup';
       if(frame.text.trim()==='/mishu-questions')this.mishu?.beginClarifications(session.id,frame.requestId);
+
+      if(frame.text.trim()==='/mishu-memory')this.mishu?.beginMemory(session.id,frame.requestId);
       if(frame.text.trim()==='/mishu-history')this.mishu?.beginHistory(session.id,frame.requestId);
       if(frame.text.trim()==='/mishu-notifications')this.mishu?.beginNotifications(session.id,frame.requestId);
       if(setup)this.mishu?.beginSetup(session.id,frame.requestId);
@@ -1312,7 +1315,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      }).finally(()=>{this.mishu?.endClarifications(session.id,frame.requestId);this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);this.mishu?.endTodo(session.id,frame.requestId);this.mishu?.endQuick(session.id,frame.requestId);});
+      }).finally(()=>{this.mishu?.endMemory(session.id,frame.requestId);this.mishu?.endClarifications(session.id,frame.requestId);this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);this.mishu?.endTodo(session.id,frame.requestId);this.mishu?.endQuick(session.id,frame.requestId);});
     });
   }
 
