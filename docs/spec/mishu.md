@@ -1109,8 +1109,10 @@ Capacity is 500 entries including tombstones per binding, 2000 chars/entry,
 20 historical revisions/entry, 2000 retained idempotency receipts/binding, 4 MiB
 whole scoped file, and 50 entries/export page. Capacity fails without committing;
 no receipt is silently evicted. Revision operations serialize and atomically rename
-only after final scope/binding/selection validation. A mode-0600 previous-save
-backup is kept. Schema 1 is initial; unknown versions/corruption remain untouched,
+only after final scope/binding/selection validation. At most 32 mode-0600 content-addressed predecessor snapshots are kept; they are
+immutable and never restored automatically. Reads reject symlinks/nonfiles, use a
+bounded no-follow descriptor, and writes use exclusive random temporary files.
+The authority gate is rechecked after staging and immediately before atomic rename. Schema 1 is initial; unknown versions/corruption remain untouched,
 produce a diagnostic and do not block ordinary Chat. Recovery is offline from a
 private backup with the service safely quiescent; no automatic rollback resurrects
 deleted entries. No claim of erasing copies in native history or backups is made.
