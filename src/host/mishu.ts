@@ -8,7 +8,7 @@ import {clarificationOperation,type Clarifications} from './mishu-clarifications
 import {MishuMemory,type MemorySource} from './mishu-memory.js';
 import {MishuConsolidation,type ConsolidationEvidence} from './mishu-consolidation.js';
 import type {AgentSessionFactory} from './agent-adapter.js';
-import {formatFollowupContact,managerInstructions} from 'pi-coffee-mishu/host-policy';
+import {memoryUserIntent,formatFollowupContact,managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
 import {historyOperation,type HistoricalNote} from './mishu-history.js';
@@ -300,7 +300,7 @@ export class MishuCoordinator {
    if(['configure','restore'].includes(op))throw Error('Only direct user memory settings may enable or restore notes');
    const live=this.registry?.get(id),requestId=this.foreground.get(id),text=this.state.chats[id]?.userInstructions?.find(e=>e.requestId===requestId)?.text;
    if(!status.enabled||!live||live.isReportRun||!requestId||!text||typeof input.quote!=='string'||!input.quote.trim())throw Error('Memory mutation requires the current direct user message');
-   const start=text.indexOf(input.quote);if(start<0||input.quote.length>2000||!/(记住|记着|以后|纠正|改为|忘记|删除|remember|forget|correct)/i.test(input.quote))throw Error('Memory source quote does not prove a lasting user request');
+   const start=text.indexOf(input.quote);if(start<0||input.quote.length>2000||!memoryUserIntent(input.quote,op))throw Error('Memory source quote does not prove a lasting user request');
    if(/(?:sk-|xai-)[A-Za-z0-9_-]{8,}|\b(?:Bearer|password|api[_-]?key|token)\s*[:= ]\s*\S+/i.test(input.quote))throw Error('Sensitive evidence cannot be saved in memory');
    evidence={kind:'user-message',at:new Date().toISOString(),requestId,quote:input.quote,start,end:start+input.quote.length};
    if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
