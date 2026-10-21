@@ -1132,8 +1132,18 @@ user answer or cancel an exact question/revision. Answers have a Host-created
 user event. Host persists a stable answer processing identity before entering the
 existing serial internal input queue. Pi resumes only that answered matter through
 a platform report-only native turn; the final platform hook blocks every tool. No
-extra user prompt or confirmation is needed. Answers carry no new execution
-authority or native permission reply. Codex secretary remains unavailable (#122).
+extra user prompt or confirmation is needed. If an existing unstarted TaskBrief
+only lacks a decision, create may include `continuation:{kind:'authorized-execution',
+text,authorizationQuote}`. At creation Host consumes the genuine current user
+grant and freezes the exact action, task phase, target binding and scope. At answer
+it rechecks setup/execution permission, generation, task phase/scope and native
+dispatch support, then atomically records one stable Assignment and receipt before
+using existing delivery. The answer itself mints no grant. Repeated answers or
+restart cannot create another Assignment. Changed/stopped tasks reject execution.
+Already dispatched/unproven tasks cannot use this initial-action descriptor; an
+explicit retry still follows existing dispatch rules. Without the descriptor the
+question has only read-only continuation, clearly shown in its card. Answers carry
+no new execution authority or native permission reply. Codex secretary remains unavailable (#122).
 
 Host persists at most 100 questions and 1000 operation identities. Exact retries
 are idempotent; conflicting answers, expiry, old revisions, source rebinding and

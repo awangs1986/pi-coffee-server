@@ -97,3 +97,11 @@ it('invalidates an explicit followup plan when its authorized task scope changes
  await expect.poll(async()=>((await (await f.browser({action:'followups',version:1,operation:'list'})).json()).plans?.[0]?.state)).toBe('invalidated');
  expect((await (await f.runtime({action:'inbox'})).json()).messages).toHaveLength(0);
 });
+
+it('does not let a model capability, unbound decision or fabricated quote freeze execution without a current direct user grant',async()=>{
+ const f=await fixture(),directory=await (await f.runtime({action:'directory'})).json(),target=directory.conversations.find((r:any)=>r.id===f.a.id);
+ const task=(await (await f.runtime({action:'tasks',version:1,operation:'register',operationId:'no-grant-task',targetId:f.a.id,binding:target.binding,purpose:'修复功能',scope:'仅修复这一功能',summary:'待选择',nextStep:'等答案'})).json()).task;
+ const input={action:'clarifications',version:1,operation:'create',operationId:'unauthorized-question',kind:'ordinary',taskId:task.taskId,question:'选择A或B',continuation:{kind:'authorized-execution',text:'修改代码',authorizationQuote:'虚构的执行授权'}};
+ expect((await f.runtime(input)).status).toBe(409);expect((await f.runtime({...input,taskId:undefined})).status).toBe(409);
+ expect((await (await f.browser({action:'clarifications',version:1,operation:'list'})).json()).questions).toEqual([]);
+});

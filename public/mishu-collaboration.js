@@ -50,6 +50,7 @@ export function initMishuCollaboration({button,context,request,dialogs,toast}){
   const questions=data.questions||[];if(!questions.length)text(body,'暂无普通待决定事项。');
   for(const q of questions){const card=document.createElement('article');card.style.borderBottom='1px solid #777';card.style.padding='12px 0';body.append(card);text(card,q.question,'h3');text(card,`${q.state==='pending'?'待你决定':q.state==='answered'?'已回答':q.state} · ${q.createdAt||''}`);
    if(q.answer){text(card,`已保存：${q.answer.text}`);text(card,({pending:'正在等待秘书串行续行。',admitted:'已排队，秘书将继续这一事项。',processing:'秘书正在继续这一事项。',committed:'秘书已继续对应事项，请查看对话回复。',uncertain:'续行结果待核实，请查看原生对话；未自动重放。',cancelled:'续行已取消；答案和其他事项仍保留。',available:'历史回答已保留，可在对话中继续。'})[q.answer.continuation]||'答案已保存。');text(card,'答案不授予新的执行权限。');}
+   if(q.execution)text(card,`回答后将继续此前已授权的行动：${q.execution.text}`);else if(q.state==='pending')text(card,'此问题未预授权行动；回答后秘书只读说明，不会派工。');
    if(q.state!=='pending')continue;
    const input=document.createElement('textarea');input.dataset.answer='';input.setAttribute('aria-label','明确回答');input.maxLength=2000;input.rows=3;input.style.width='100%';input.style.boxSizing='border-box';
    for(const option of q.options||[]){const pick=makeButton(option,()=>{input.value=option;input.focus();});pick.dataset.option='';card.append(pick);}card.append(input);

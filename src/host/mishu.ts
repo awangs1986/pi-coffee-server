@@ -8,7 +8,7 @@ import {clarificationOperation,type Clarification,type Clarifications} from './m
 import {MishuMemory,type MemorySource} from './mishu-memory.js';
 import {MishuConsolidation,type ConsolidationEvidence} from './mishu-consolidation.js';
 import type {AgentSessionFactory} from './agent-adapter.js';
-import {memoryUserIntent,formatClarificationAnswer,formatFollowupContact,managerInstructions} from 'pi-coffee-mishu/host-policy';
+import {memoryUserIntent,formatClarificationDispatch,formatClarificationAnswer,formatFollowupContact,managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
 import {historyOperation,type HistoricalNote} from './mishu-history.js';
@@ -493,7 +493,7 @@ export class MishuCoordinator {
   return this.clarifications(id,body,'browser');
  }
  private clarifications(id:string,input:Record<string,unknown>,channel?:'browser'|'command'){
-  return this.change(async()=>{
+  let created:Receipt|undefined;const operation=this.change(async()=>{
    const source=await this.source(id),c=this.state.chats[id];
    if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source))throw Error('Ordinary clarification authority unavailable');
    if(!c.clarifications){const bytes=Buffer.from(JSON.stringify(this.state));this.migration??={bytes,name:'state.before-coordination.'+createHash('sha256').update(bytes).digest('hex')+'.json'};}
@@ -504,10 +504,28 @@ export class MishuCoordinator {
    if(taskId!==undefined){const task=c.taskJournal?.tasks.find(t=>t.taskId===taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task)throw Error('Question task unavailable');await this.authorize(id,task.targetId,task.binding,'information-only');}
    const result=clarificationOperation(journal,c.sourceBinding,generation,input,channel);
    if(input.operation==='answer'&&result.question?.answer&&!result.question.answer.taskScope&&taskId){const task=c.taskJournal!.tasks.find(t=>t.taskId===taskId)!;result.question.answer.taskScope=this.clarificationTaskScope(task);}
+   if(input.operation==='create'&&input.continuation!==undefined&&result.question&&!result.question.execution){
+    const descriptor=input.continuation as Record<string,unknown>,q=result.question,task=c.taskJournal?.tasks.find(t=>t.taskId===q.taskId);
+    if(!descriptor||typeof descriptor!=='object'||Array.isArray(descriptor)||Object.keys(descriptor).some(k=>!['kind','text','authorizationQuote'].includes(k))||descriptor.kind!=='authorized-execution'||typeof descriptor.text!=='string'||!descriptor.text.trim()||descriptor.text.length>1000||typeof descriptor.authorizationQuote!=='string'||!descriptor.authorizationQuote.trim()||descriptor.authorizationQuote.length>200||!task||task.assignment||task.obligation)throw Error('Question execution requires one exact unstarted task and a bounded preauthorized action');
+    await this.authorize(id,task.targetId,task.binding,'authorized-execution');if(!await this.registry!.supportsDispatchCorrelation(task.targetId))throw Error('Question execution requires verified durable native dispatch');
+    const evidence=await this.registry!.readRunEvidence(id);if(evidence.freshness!=='current'||evidence.state!=='running'||!evidence.runId||!this.registry?.get(id)?.isBusy)throw Error('Question preauthorization requires the current native user request');
+    const grant=this.useGrant(id,{authorization:{quote:descriptor.authorizationQuote}},'clarification:'+createHash('sha256').update(JSON.stringify([input.operationId,task.taskId,this.clarificationTaskScope(task),descriptor])).digest('hex'));
+    q.execution={text:clean(descriptor.text),authorizationRef:grant.authorizationRef,grantId:grant.grantId,sourceRunId:evidence.runId,taskScope:this.clarificationTaskScope(task),expectedRevision:task.revision};
+   }
+   if(input.operation==='answer'&&result.question?.answer&&result.question.execution&&!result.question.execution.assignmentId){
+    const q=result.question,p=q.execution!,task=await this.clarificationAdmission(id,q);
+    if(!task||p.taskScope!==this.clarificationTaskScope(task)||p.expectedRevision!==task.revision)throw Error('Question task changed since its existing execution authorization');
+    await this.authorize(id,task.targetId,task.binding,'authorized-execution');if(!await this.registry!.supportsDispatchCorrelation(task.targetId))throw Error('Native dispatch capability changed');
+    if(c.messages.filter(m=>!['settled','cancelled','uncertain'].includes(m.state)).length>=20)throw Error('Wait for outstanding MISHU messages');
+    await this.rotateReceipts(id,c);if(c.messages.length>=this.receiptLimits.live)throw Error('Receipt capacity reached');
+    const assignment=prepareAssignment(task,{version:1,taskId:task.taskId,expectedRevision:p.expectedRevision,messageId:'answer-'+q.questionId,text:formatClarificationDispatch({text:p.text,questionId:q.questionId,question:q.question,answer:q.answer!.text}),authorizationRef:p.authorizationRef},p.sourceRunId,c.assignments??[]);
+    const a=assignment.assignment;p.assignmentId=a.id;
+    if(assignment.created){task.assignment={...a};task.obligation={runId:a.requestId,nativeBinding:'',watermark:'',state:'pending',generation:1};task.observation='watching';task.revision++;task.updatedAt=a.createdAt;const receipt:Receipt={taskId:task.taskId,messageId:a.messageId,targetId:a.targetId,binding:a.binding,kind:'authorized-execution',state:'accepted',requestId:a.requestId,fingerprint:a.fingerprint,text:a.text,authorizationRef:a.authorizationRef,createdAt:a.createdAt};(c.assignments??=[]).push(a);c.messages.push(receipt);created=receipt;}
+   }
    // Recheck current source and generation after any asynchronous target audit.
    if(binding(await this.source(id))!==c.sourceBinding||this.coordinationGeneration(id)!==generation||!c.enabled||!c.selected)throw Error('Question authority changed');
    c.clarifications=journal;return result;
-  });
+  });return operation.then(result=>{if(created){const work=this.deliver(id,created);this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}return result;});
  }
  private clarificationQueued=new Map<string,{eventId:string;requestId:string;row?:string}>();
  private clarificationScheduled=false;
@@ -515,7 +533,7 @@ export class MishuCoordinator {
  private async clarificationAdmission(id:string,q:Clarification){
   const source=await this.source(id),c=this.state.chats[id];
   if(this.closing||!c?.selected||!c.enabled||(source.engine??'pi')!=='pi'||q.state!=='answered'||!q.answer||q.sourceBinding!==binding(source)||q.sourceBinding!==c.sourceBinding||q.generation!==this.coordinationGeneration(id))throw Error('Ordinary answer source authorization changed');
-  if(q.taskId){const task=c.taskJournal?.tasks.find(t=>t.taskId===q.taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task||q.answer.taskScope!==this.clarificationTaskScope(task))throw Error('Answered task scope changed');await this.authorize(id,task.targetId,task.binding,'information-only');if(this.state.chats[id]!==c||!c.selected||!c.enabled||q.generation!==this.coordinationGeneration(id)||binding(await this.source(id))!==q.sourceBinding)throw Error('Answer authority changed during task audit');return task;}
+  if(q.taskId){const task=c.taskJournal?.tasks.find(t=>t.taskId===q.taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task||q.answer.taskScope!==this.clarificationTaskScope(task))throw Error('Answered task scope changed');await this.authorize(id,task.targetId,task.binding,'information-only',true);if(this.state.chats[id]!==c||!c.selected||!c.enabled||q.generation!==this.coordinationGeneration(id)||binding(await this.source(id))!==q.sourceBinding)throw Error('Answer authority changed during task audit');return task;}
  }
  private prepareClarification(id:string,input:Record<string,unknown>){
   return this.change(async()=>{
@@ -523,7 +541,7 @@ export class MishuCoordinator {
    const claim=this.clarificationQueued.get(id),session=this.registry?.get(id),q=this.state.chats[id]?.clarifications?.questions.find(q=>q.answer?.eventId===input.eventId),a=q?.answer;
    if(!claim||claim.eventId!==input.eventId||session?.currentRequestId!==claim.requestId||!session.isReportRun||!q||!a||a.continuation!=='admitted'||!a.deliveryAttempted)throw Error('Answer continuation requires exact Host queue admission');
    const task=await this.clarificationAdmission(id,q);a.continuation='processing';
-   return {processingId:a.processingId,content:formatClarificationAnswer({questionId:q.questionId,question:q.question,answer:a.text,...(task?{task:{taskId:task.taskId,purpose:task.purpose,scope:task.scope,summary:task.summary,nextStep:task.nextStep}}:{})})};
+   return {processingId:a.processingId,content:formatClarificationAnswer({questionId:q.questionId,question:q.question,answer:a.text,...(q.execution?{execution:{state:this.state.chats[id]?.assignments?.find(row=>row.id===q.execution?.assignmentId)?.state??'not-dispatched',assignmentId:q.execution.assignmentId}}:{}),...(task?{task:{taskId:task.taskId,purpose:task.purpose,scope:task.scope,summary:task.summary,nextStep:task.nextStep}}:{})})};
   },false);
  }
  private scheduleClarifications(){
