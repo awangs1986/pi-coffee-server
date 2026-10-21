@@ -1121,3 +1121,21 @@ Candidate validation: public HTTP test covers explicit opt-in, source/account
 isolation, revision conflict, tombstone/restart, failed save and old-binding
 note-only restore. Browser controller test covers model-free entry and cancel.
 Production and real desktop/mobile acceptance remain separate integration gates.
+
+## Natural memory candidate (#8)
+
+Pi `mishu` tool action `memory` exposes status/list/get/export/save/delete, with
+memoryKind, stable operationId, entryId/expectedRevision and memoryQuote. Host derives
+requestId and exact quote offsets from the current direct delivered user message;
+caller-supplied source/account fields, report origin, expired turns, forged quotes,
+model opt-in and model old-note restoration are refused. Nonextractive statements
+become separate candidates and cannot replace an existing confirmed fact. A strict
+candidate is excluded from transient context until the user explicitly edits it.
+Every new Pi context request reads the current ledger, excludes deleted/candidate
+entries and unrelated project facts, and clips to 6000 characters. Current user
+corrections prevail; no memory operation changes live execution authorization.
+
+Native Pi public WS + synthetic provider verification exercises tool save,
+correction, fresh transient context, forged-source refusal and deletion. This is
+real native Pi transport/plugin integration with deterministic model output, not
+proof of a real model's language understanding or native compaction behavior.

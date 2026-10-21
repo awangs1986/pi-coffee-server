@@ -280,7 +280,7 @@ export class MishuCoordinator {
    evidence={kind:'user-message',at:new Date().toISOString(),requestId,quote:input.quote,start,end:start+input.quote.length};
    if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
   }
-  return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&this.foreground.get(id)!==evidence.requestId)throw Error('Memory user turn ended');});
+  return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&(this.foreground.get(id)!==evidence.requestId||!(await this.status(id)).enabled||!this.state.chats[id]?.userInstructions?.some(entry=>entry.requestId===evidence.requestId)))throw Error('Memory user turn ended or authorization revoked');});
  }
  async runtime(token:string,input:Record<string,unknown>):Promise<unknown>{
   if(this.codexTokens.has(token)&&this.codexInvocation.getStore()!==token)return this.codexInvocation.run(token,()=>this.runtime(token,input));
