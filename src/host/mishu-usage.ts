@@ -27,13 +27,13 @@ export class MishuUsage {
  constructor(private root:string,private now:()=>number=Date.now){}
  private async load(){if(this.state)return;try{const file=join(this.root,'usage-v1.json'),stat=await lstat(file);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>USAGE_LIMITS.bytes)throw Error('capacity/file');const bytes=await readFile(file);const value:unknown=JSON.parse(bytes.toString());validate(value);this.state=value;this.failure=value.diagnostic;}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')this.state={version:1,startedAt:new Date(this.now()).toISOString(),records:{},reservations:{}};else throw Error('Usage storage unavailable; existing data preserved');}}
  private async persist(state:UsageState){validate(state);const bytes=JSON.stringify(state);if(Buffer.byteLength(bytes)>USAGE_LIMITS.bytes)throw Error('Usage storage capacity reached');await mkdir(this.root,{recursive:true,mode:0o700});const file=join(this.root,'usage-v1.json'),temp=file+'.'+randomUUID()+'.tmp';await writeFile(temp,bytes,{mode:0o600,flush:true,flag:'wx'});await rename(temp,file);}
- private transaction<T>(fn:(s:UsageState)=>T|Promise<T>,recover=false):Promise<T>{
+ private transaction<T>(fn:(s:UsageState)=>T|Promise<T>,recover=false,accounting=false):Promise<T>{
   const work=this.tail.then(async()=>{let phase:'load'|'operation'|'save'='load';try{
    await this.load();const next=structuredClone(this.state!);phase='operation';const result=await fn(next);if(recover)delete next.diagnostic;phase='save';await this.persist(next);this.state=next;if(recover)this.failure=undefined;return result;
   }catch(e){
    // Expected admission/release rejections are not metering loss. Failed native
    // accounting and storage errors remain latched across queries and restart.
-   if(phase!=='operation'||recover){this.failure='Usage metering unavailable; budgeted auxiliary runs are blocked';if(this.state){this.state.diagnostic=this.failure;try{await this.persist(this.state);}catch{/* Preserve the last saved journal if storage itself is unavailable. */}}}
+   if(phase!=='operation'||recover||accounting){this.failure='Usage metering unavailable; budgeted auxiliary runs are blocked';if(this.state){this.state.diagnostic=this.failure;try{await this.persist(this.state);}catch{/* Preserve the last saved journal if storage itself is unavailable. */}}}
    throw e;
   }});this.tail=work.catch(()=>undefined);return work;
  }
@@ -44,8 +44,13 @@ export class MishuUsage {
   if(prior&&(prior.model!==row.model||prior.purpose!==row.purpose))throw Error('Native usage identity changed category/model');
   const merged={...prior,...row,secretaryId,binding};for(const field of ['input','output','cacheRead','cacheWrite'] as const)if(prior?.[field]!==undefined)merged[field]=Math.max(prior[field]!,row[field]??0);s.records[id]=merged;
  }
- record(secretaryId:string,binding:string,row:UsageRecord){return this.recordMany(secretaryId,binding,[row]);}
+ record(secretaryId:string,binding:string,row:UsageRecord){return this.transaction(s=>this.applyRecord(s,secretaryId,binding,row),false,true);}
  recordMany(secretaryId:string,binding:string,rows:UsageRecord[]){return this.transaction(s=>{for(const row of rows)this.applyRecord(s,secretaryId,binding,row);},true);}
+ recordReserved(secretaryId:string,operationId:string,purpose:Reservation['purpose'],row:Omit<UsageRecord,'callId'|'purpose'|'source'>){return this.transaction(s=>{
+  const matches=Object.values(s.reservations).filter(r=>r.secretaryId===secretaryId&&r.operationId===operationId);
+  if(matches.length!==1||matches[0].purpose!==purpose||matches[0].state==='released')throw Error('Exact accepted auxiliary reservation unavailable');
+  const accepted=matches[0];this.applyRecord(s,secretaryId,accepted.binding,{...row,callId:'aux:'+operationId,purpose:accepted.purpose,source:'native-event'});
+ },false,true);}
  reserve(secretaryId:string,binding:string,operationId:string,purpose:Reservation['purpose'],limit=USAGE_LIMITS.hourlyCalls){return this.transaction(s=>{
   if(s.diagnostic||this.failure)throw Error('Usage metering unavailable; no new auxiliary calls');
   if(!operationId||operationId.length>256||!['report','memory','context'].includes(purpose)||!Number.isSafeInteger(limit)||limit<1||limit>USAGE_LIMITS.hourlyCalls)throw Error('Invalid auxiliary reservation');
