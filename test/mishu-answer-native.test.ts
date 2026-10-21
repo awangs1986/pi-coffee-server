@@ -1,0 +1,35 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {randomUUID} from 'node:crypto';
+import {WebSocket} from 'ws';
+import {HostServer} from '../src/host/server.js';
+import {Workspaces} from '../src/host/workspaces.js';
+import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
+import {RpcClient,SessionManager} from '@earendil-works/pi-coding-agent';
+import {resolveHostPiExtensions} from '../src/host/pi-extensions.js';
+it.each([false,true])('continues only the answered ordinary matter through native Pi without another user prompt, and never replays it after retry or restart (attempt tool: %s)',async attemptTool=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-answer-native-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),target=await workspaces.createChatConversation(),requests:any[]=[];
+ const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;requests.push(JSON.parse(raw));const toolAttempt=attemptTool&&requests.length===1;const frame={id:'answer-fixture',object:'chat.completion.chunk',created:1,model:'fixture'};res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({...frame,choices:[{index:0,delta:toolAttempt?{role:'assistant',tool_calls:[{index:0,id:'forbidden-answer-tool',type:'function',function:{name:'bash',arguments:JSON.stringify({command:'touch '+join(root,'forbidden-tool-ran')})}}]}:{role:'assistant',content:'ANSWER_A_CONTINUED'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({...frame,choices:[{index:0,delta:{},finish_reason:toolAttempt?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));
+ await mkdir(join(root,'pi-home'),{recursive:true});await writeFile(join(root,'pi-home','models.json'),JSON.stringify({providers:{fixture:{baseUrl:`http://127.0.0.1:${(provider.address() as {port:number}).port}/v1`,api:'openai-completions',apiKey:'synthetic',models:[{id:'fixture',name:'Fixture',reasoning:false,input:['text'],contextWindow:128000,maxTokens:1024}]}}}));await writeFile(join(root,'pi-home','settings.json'),JSON.stringify({retry:{enabled:false},compaction:{enabled:false}}));
+ let host:HostServer,socket:WebSocket|undefined;const frames:any[]=[];
+ const pi=new RpcPiSessionFactory({agentDir:join(root,'pi-home'),sessionDir:join(root,'sessions'),provider:'fixture',model:'fixture',extensions:resolveHostPiExtensions({PI_COFFEE_SUBAGENTS:'off',PI_COFFEE_LSP:'off',PI_COFFEE_WEB:'off',PI_COFFEE_HANDOFF:'off'}),args:['--no-extensions','--offline'],cwdForSession:id=>workspaces.file(id,''),extensionsForSession:async id=>{const runtime=await host.mishuRuntime(undefined,id);return process.env.MISHU_PLUGIN_ROOT?[resolve(process.env.MISHU_PLUGIN_ROOT)]:runtime.extensions;},envForSession:async id=>({...await workspaces.runtimeEnvironment(id),...(await host.mishuRuntime(undefined,id)).env})});
+ const start=async()=>{host=new HostServer({port:0,token:'fixture',factory:pi,workspaces});await host.start();};
+ const call=async(body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({id:source.id,...body})});expect(response.status).toBe(200);return response.json();};
+ const runtime=async(body:Record<string,unknown>)=>{const {env}=await host.mishuRuntime(undefined,source.id);const response=await fetch(env.PI_COFFEE_MISHU_URL,{method:'POST',headers:{authorization:'Bearer '+env.PI_COFFEE_MISHU_TOKEN,'content-type':'application/json'},body:JSON.stringify(body)});expect(response.status).toBe(200);return response.json();};
+ try{await start();await call({action:'select',selected:true});const directory=await runtime({action:'directory'});await host.close();const path=join(root,'work','.coffee','mishu','state.json'),state=JSON.parse(await readFile(path,'utf8'));Object.assign(state.chats[source.id],{enabled:true,targets:directory.conversations.filter((r:any)=>r.id===target.id).map(({id,binding,title,engine}:any)=>({id,binding,title,engine}))});await writeFile(path,JSON.stringify(state));await start();
+  socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer fixture'}});socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:source.id,nativeProtocol:1}));await expect.poll(()=>frames.some(f=>f.type==='opened'),{timeout:15000}).toBe(true);
+  const q=(await runtime({action:'clarifications',version:1,operation:'create',operationId:'question-a',kind:'ordinary',question:'A_REPORT_FORMAT',options:['SHORT_A','LONG_A']})).question;
+  const b=(await runtime({action:'clarifications',version:1,operation:'create',operationId:'question-b',kind:'ordinary',question:'B_UNANSWERED_SCHEDULE'})).question;
+  const answer={action:'clarifications',version:1,operation:'answer',operationId:'answer-a',questionId:q.questionId,expectedRevision:q.revision,answer:'SHORT_A'};
+  const answered=await call(answer);await expect.poll(()=>requests.length,{timeout:15000}).toBe(attemptTool?2:1);
+  if(attemptTool)expect(JSON.stringify(requests[1].messages)).toContain('Host report-only run: tools and new execution are forbidden');
+  expect(JSON.stringify(requests[0].messages)).toContain('A_REPORT_FORMAT');expect(JSON.stringify(requests[0].messages)).toContain('SHORT_A');expect(JSON.stringify(requests[0].messages)).not.toContain('B_UNANSWERED_SCHEDULE');
+  await expect.poll(async()=>{const list=await call({action:'clarifications',version:1,operation:'list'});return list.questions.find((r:any)=>r.questionId===q.questionId).answer.continuation;},{timeout:15000}).toBe('committed');
+  expect(frames.some(f=>f.event?.type==='agent_settled')).toBe(true);const list=await call({action:'clarifications',version:1,operation:'list'});expect(list.questions.find((r:any)=>r.questionId===b.questionId).state).toBe('pending');expect(list.questions).toHaveLength(2);await expect(readFile(join(root,'forbidden-tool-ran'))).rejects.toMatchObject({code:'ENOENT'});
+  expect((await call(answer)).question.answer.eventId).toBe(answered.question.answer.eventId);socket.close();await host.close();await start();await call(answer);await new Promise(r=>setTimeout(r,300));expect(requests).toHaveLength(attemptTool?2:1);
+ }finally{socket?.close();if(host!)await host.close();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));await rm(root,{recursive:true,force:true});}
+},60000);

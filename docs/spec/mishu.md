@@ -1129,14 +1129,20 @@ model tool returns. It never adapts native approvals or setup questions. The Pi
 plugin is instructed to settle after saving and leave unrelated work available.
 `/mishu-questions` and the Browser coffee-menu collaboration panel let the direct
 user answer or cancel an exact question/revision. Answers have a Host-created
-user event and are available to the next genuine user turn, rather than injecting
-a fabricated tool reply or promising unattended resumption. Answers carry no
-execution authority. Codex secretary entry remains unavailable under #122.
+user event. Host persists a stable answer processing identity before entering the
+existing serial internal input queue. Pi resumes only that answered matter through
+a platform report-only native turn; the final platform hook blocks every tool. No
+extra user prompt or confirmation is needed. Answers carry no new execution
+authority or native permission reply. Codex secretary remains unavailable (#122).
 
 Host persists at most 100 questions and 1000 operation identities. Exact retries
 are idempotent; conflicting answers, expiry, old revisions, source rebinding and
 changed setup generations fail. Unrelated questions remain pending. Current
-answers are included as untrusted facts in the next foreground manager context.
+answers remain untrusted facts. Continuation states are pending/admitted/processing/
+committed/uncertain/cancelled; native output references prove commit. Restart requeues
+only work not delivered; an attempted run is passively audited, never blindly replayed.
+Historical available answers are retained without automatic replay. Source generation,
+exact binding and task scope are rechecked at admission; other questions stay pending.
 First journal creation keeps a private state backup; old Hosts reject the new
 optional state fields rather than silently ignoring them. Public HTTP and Browser
 controller tests cover recovery, exact answers, expiry, revocation and stale UI.
@@ -1215,3 +1221,39 @@ responsibility labels come from the independent package's pure Host policy expor
 Host passes only already-authorized facts and retains all state/admission/delivery.
 The collaboration DTO adds stateLabel for Browser rendering; original state codes,
 reply destinations, counts and native command behavior are preserved.
+
+### Manual and optional incremental memory consolidation (MISHU #14/#15 candidate)
+
+Browser/runtime `memory_consolidation` v1 supports status/list/get plus trusted
+prepare/adopt/cancel/configure operations. A model may inspect candidates but cannot
+enable memory/automatic mode, start extraction or adopt its own output. The explicit
+`/mishu-memory` command uses a bounded Host command window. Current source must
+remain selected, enabled and memory-enabled with the same binding/generation.
+
+Host reserves one of the shared 12 auxiliary calls/hour before isolated native Pi
+extraction using the selected model. The run has an exclusive empty native session,
+no tools/context/Skills/templates/extensions (except reviewed provider registration),
+private retry/compaction settings and no Coffee capabilities. It never modifies the
+user's native profile. Attempt identity/output are durable; uncertain execution is
+not regenerated. Known usage returned after cancellation/revocation is recorded
+against its original admitted reservation without restoring authority.
+
+Each candidate has exact own-source message identity/range/quote and expected
+memory/entry revisions. Manual adoption applies only selected rows after current
+authority/evidence/tombstone checks. Cancellation does not save. Jobs retain failed
+or uncertain outcomes rather than pretending success. Limits: 20 messages/12,000
+input characters, 10 changes, 100 retained jobs/8 MiB and 2,000 settings-operation
+identities. Capacity/unsupported extraction is visible and preserves manual memory.
+
+Automatic mode is independently default off. Enable captures the current native
+message boundary rather than scanning old history. One source job runs only at a
+legal idle boundary; user input aborts it. The saved cursor acknowledges only fully
+scanned input after durable candidate/application results. Commit-before-cursor
+recovery reuses the existing job without a second call or duplicate write. Restart,
+pause, stale enable replay, revoke and rebind never revive old authority. Literal
+current-user remember facts may be confirmed only with exact evidence and no
+conflicting confirmed fact; assistant/third-party/uncertain claims remain candidates.
+
+Product extraction/intent policy belongs to the independent MISHU package. Source
+candidate, immutable installed artifact, genuine provider semantics and production
+activation are separate evidence. Current sources remain Pi Chat only (#122).

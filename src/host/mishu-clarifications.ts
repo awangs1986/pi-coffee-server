@@ -3,7 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 export interface Clarification {
  questionId:string;sourceBinding:string;generation:number;taskId?:string;revision:number;question:string;options:string[];createdAt:string;expiresAt?:string;
  state:'pending'|'answered'|'cancelled'|'superseded'|'expired';
- answer?:{text:string;eventId:string;channel:'browser'|'command';at:string;continuation:'available'};
+ answer?:{text:string;eventId:string;channel:'browser'|'command';at:string;continuation:'available'|'pending'|'admitted'|'processing'|'committed'|'uncertain'|'cancelled';processingId?:string;deliveryAttempted?:boolean;taskScope?:string;outputs?:{id:string;revision:string}[];nativeBinding?:string;error?:string};
 }
 export interface Clarifications {version:1;questions:Clarification[];operations:{id:string;fingerprint:string;questionId:string}[]}
 export const CLARIFICATION_LIMITS={questions:100,operations:1000,questionChars:2000,answerChars:2000,options:12,optionChars:200} as const;
@@ -14,7 +14,7 @@ export function clarificationOperation(journal:Clarifications,sourceBinding:stri
  if(input.version!==1||!allowed[op]||Object.keys(input).some(k=>!['action','version','operation',...allowed[op]].includes(k)))throw Error('Unsupported ordinary clarification operation or field');
  const current=journal.questions.filter(q=>q.sourceBinding===sourceBinding&&q.generation===generation);
  for(const q of current)if(q.state==='pending'&&q.expiresAt&&Date.parse(q.expiresAt)<=now){q.state='expired';q.revision++;}
- if(op==='list')return {version:1,questions:current,limits:CLARIFICATION_LIMITS,resumption:{available:true,mode:'next-user-turn',reason:'回答已保存；秘书在下一次用户消息中继续对应事项，不自动派工，也不回答原生审批。'}};
+ if(op==='list')return {version:1,questions:current,limits:CLARIFICATION_LIMITS,resumption:{available:true,mode:'native-answer-queue',reason:'明确回答已保存后，秘书串行继续对应事项的只读回复；不授予执行权限，也不回答原生审批。'}};
  if(op==='get'){const question=current.find(q=>q.questionId===input.questionId);if(!question)throw Error('Question unavailable');return {version:1,question};}
  if(op==='answer'&&!channel)throw Error('Only a direct user answer from Browser or /mishu-questions is accepted');
  if(!stableId(input.operationId))throw Error('Stable operationId required');
@@ -37,7 +37,7 @@ export function clarificationOperation(journal:Clarifications,sourceBinding:stri
   if(question.state!=='pending'||input.expectedRevision!==question.revision)throw Error('Question is closed, expired or revision changed');
   if(op==='answer'){
    if(!text(input.answer,CLARIFICATION_LIMITS.answerChars))throw Error('An explicit nonempty user answer is required; no default or timeout');
-   question.answer={text:input.answer,eventId:'mishu-answer-'+randomUUID(),channel:channel!,at:new Date(now).toISOString(),continuation:'available'};question.state='answered';
+   question.answer={text:input.answer,eventId:'mishu-answer-'+randomUUID(),channel:channel!,at:new Date(now).toISOString(),continuation:'pending'};question.answer.processingId=question.answer.eventId+'-continue';question.state='answered';
   }else question.state='cancelled';
   question.revision++;
  }
@@ -49,7 +49,7 @@ export function validateClarifications(value:unknown){
  const ids=new Set<string>();for(const q of j.questions){
   if(!stableId(q.questionId)||ids.has(q.questionId)||typeof q.sourceBinding!=='string'||!Number.isSafeInteger(q.generation)||q.generation<0||!Number.isSafeInteger(q.revision)||q.revision<1||!text(q.question,2000)||!Array.isArray(q.options)||q.options.length>12||q.options.some(o=>!text(o,200))||!Number.isFinite(Date.parse(q.createdAt))||!['pending','answered','cancelled','superseded','expired'].includes(q.state))throw Error('Invalid clarification');ids.add(q.questionId);
   if(Object.keys(q).some(k=>!['questionId','sourceBinding','generation','taskId','revision','question','options','createdAt','expiresAt','state','answer'].includes(k))||(q.taskId!==undefined&&!stableId(q.taskId))||(q.expiresAt!==undefined&&!Number.isFinite(Date.parse(q.expiresAt))))throw Error('Invalid clarification field');
-  if(q.answer){const a=q.answer;if(!text(a.text,2000)||!stableId(a.eventId)||!['browser','command'].includes(a.channel)||!Number.isFinite(Date.parse(a.at))||a.continuation!=='available'||q.state!=='answered'||Object.keys(a).some(k=>!['text','eventId','channel','at','continuation'].includes(k)))throw Error('Invalid clarification answer');}else if(q.state==='answered')throw Error('Missing answer evidence');
+  if(q.answer){const a=q.answer;if(!text(a.text,2000)||!stableId(a.eventId)||!['browser','command'].includes(a.channel)||!Number.isFinite(Date.parse(a.at))||!['available','pending','admitted','processing','committed','uncertain','cancelled'].includes(a.continuation)||q.state!=='answered'||Object.keys(a).some(k=>!['text','eventId','channel','at','continuation','processingId','deliveryAttempted','taskScope','outputs','nativeBinding','error'].includes(k)))throw Error('Invalid clarification answer');if(a.continuation!=='available'&&a.processingId!==a.eventId+'-continue'||a.deliveryAttempted!==undefined&&typeof a.deliveryAttempted!=='boolean'||a.taskScope!==undefined&&!/^[a-f0-9]{64}$/.test(a.taskScope)||a.nativeBinding!==undefined&&typeof a.nativeBinding!=='string'||a.error!==undefined&&typeof a.error!=='string'||a.outputs!==undefined&&(!Array.isArray(a.outputs)||a.outputs.length>64||a.outputs.some(o=>!o||typeof o.id!=='string'||typeof o.revision!=='string'||Object.keys(o).some(k=>!['id','revision'].includes(k)))))throw Error('Invalid clarification continuation');}else if(q.state==='answered')throw Error('Missing answer evidence');
  }
  const operations=new Set<string>();for(const o of j.operations){if(!stableId(o.id)||operations.has(o.id)||typeof o.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(o.fingerprint)||!ids.has(o.questionId)||Object.keys(o).some(k=>!['id','fingerprint','questionId'].includes(k)))throw Error('Invalid clarification operation');operations.add(o.id);}
 }

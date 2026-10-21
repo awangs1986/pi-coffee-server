@@ -93,6 +93,16 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
       pi.sendMessage({customType:'coffee-task-report',content:result.content,display:false,details:{processingId:runId}},{triggerTurn:true});
     }catch{reportOnly=false;runId=undefined;ctx.ui.notify('汇报未能开始或结果不确定；请查看任务记录，未自动重试。','error');}
   }});
+  if(process.env.PI_COFFEE_MISHU_TOKEN)pi.registerCommand('mishu-answer',{description:'Host 普通问题回答的只读续行',handler:async(args,ctx)=>{
+    try{
+      if(reportOnly||!/^mishu-answer-[A-Za-z0-9-]+$/.test(args.trim()))throw Error('Invalid answer continuation');
+      const result=await reportRequest({action:'clarification-continuation',eventId:args.trim()});
+      if(typeof result.processingId!=='string'||typeof result.content!=='string')throw Error('Answer admission unavailable');
+      reportOnly=true;runId=result.processingId;
+      pi.appendEntry('coffee-native-run',{version:1,runId,origin:'task-report',baselineId:ctx.sessionManager.getLeafId()});
+      pi.sendMessage({customType:'coffee-clarification-answer',content:result.content,display:false,details:{processingId:runId}},{triggerTurn:true});
+    }catch{reportOnly=false;runId=undefined;ctx.ui.notify('回答已保存，续行未能核实；未自动重放。','error');}
+  }});
   pi.on("before_agent_start",(event,ctx)=>{
     // Custom reports bypass this hook; real user turns restore ordinary tools.
     reportOnly=false;
