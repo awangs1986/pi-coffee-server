@@ -1,6 +1,6 @@
 import {memoryExtractionInstructions} from 'pi-coffee-mishu/host-policy';
 import {RpcClient,SessionManager} from '@earendil-works/pi-coding-agent';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {mkdir,readFile,writeFile,rename,lstat} from 'node:fs/promises';
@@ -81,7 +81,7 @@ export async function runPiMemoryExtraction(options:PiMemoryExtractionOptions):P
   await settled;
   const value=completed(options.sessionFile,options.provider,options.model);if(!value)throw Error('Native extraction output uncertain; no candidates committed');
   value.recovered=false;
-  const temp=output+'.tmp';await writeFile(temp,JSON.stringify({fingerprint,value}),{mode:0o600,flush:true});await rename(temp,output);
+  await privateDirectory(dirname(output));const temp=output+'.'+randomUUID();await writeFile(temp,JSON.stringify({fingerprint,value}),{flag:'wx',mode:0o600,flush:true});await privateDirectory(dirname(output));await rename(temp,output);
   return value;
  }catch(error){
   const file=await lstat(options.sessionFile).catch(()=>undefined);
