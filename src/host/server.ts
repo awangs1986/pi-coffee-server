@@ -269,7 +269,8 @@ export class HostServer {
         else if(input.action==='select'&&typeof input.selected==='boolean'){
           result=await slot.mishu.select(input.id,input.selected);
           for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===input.id)socket.close();
-        }else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
+        }else if(input.action==='evidence')result=await slot.mishu.evidence(input.id,input);
+        else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
         else if(input.action==='setup_lookup')result=await slot.mishu.browserLookup(input.id,input);
         else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
         else if(input.action==='inspect'&&['status','tasks','disable'].includes(String(input.operation)))result=await slot.mishu.browserInspect(input.id,String(input.operation));
@@ -612,7 +613,7 @@ export class HostServer {
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
-      mishu?.attach(registry);mishu?.attachIndex(index);
+      mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
       const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {

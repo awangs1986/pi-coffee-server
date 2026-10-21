@@ -1054,3 +1054,19 @@ The queue_action protocol gains move (to: front|back); mishu_watch frames are
 ignored by older clients. Source, artifact installation, Browser acceptance and
 production activation remain separate. See [implementation](../development/mishu-manager.md)
 and [repair evidence](../development/mishu-manager-repairs.md).
+
+### Bounded evidence resource (MISHU #9)
+
+Candidate integration adds runtime/browser `evidence` v1. `mode` is `recent` (default),
+`search` (1–200 literal keyword chars), or `anchor` (exact native message ID).
+Omitted targetId reads only the source secretary. Other targets require a current
+configured contact and native binding; view-all grants no transcript access.
+Source selection, enablement, lifecycle and both bindings are rechecked after I/O.
+The existing passive Adapter readHistory seam is used; Cursor/Grok return unavailable.
+No session open, CLI spawn, prompt, native compaction, or new execution grant occurs.
+Projection is derived on each query: at most 10,000 entries / 2,000,000 UTF-16 source
+chars scanned, 20 returned entries, 2,000 chars per entry and 12,000 total chars.
+Entries carry exact conversation/message identity, native time or explicit null,
+role, original/model/historical-note label, redaction marker and returned range.
+Coverage/freshness, lost anchor and truncation are explicit. No persistent search
+index is introduced. UI/native model acceptance is separate from fixture proof.
