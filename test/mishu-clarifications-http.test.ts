@@ -7,11 +7,11 @@ import {Workspaces} from '../src/host/workspaces.js';
 import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 const roots:string[]=[],hosts:HostServer[]=[];
 afterEach(async()=>{for(const host of hosts.splice(0))await host.close();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
-async function fixture(){
+async function fixture(fixedReply?:string){
  const root=await mkdtemp(join(tmpdir(),'mishu-questions-'));roots.push(root);const workspaces=new Workspaces(join(root,'work'));
  const source=await workspaces.createChatConversation(),a=await workspaces.createChatConversation(),b=await workspaces.createChatConversation();
  let host:HostServer;
- async function start(){const pi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')});host=new HostServer({port:0,token:'fixture',requireUser:true,factory:pi,workspaces,scopeForUser:user=>({factory:pi,workspaces:user==='owner'?workspaces:new Workspaces(join(root,'other'))})});hosts.push(host);await host.start();}
+ async function start(){const pi=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions'),...(fixedReply?{env:{FAKE_PI_FIXED_REPLY:fixedReply}}:{})});host=new HostServer({port:0,token:'fixture',requireUser:true,factory:pi,workspaces,scopeForUser:user=>({factory:pi,workspaces:user==='owner'?workspaces:new Workspaces(join(root,'other'))})});hosts.push(host);await host.start();}
  await start();
  const browser=(body:unknown,user='owner')=>fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify({id:source.id,...body as object})});
  const selected=await browser({action:'select',selected:true});expect(await selected.json()).toMatchObject({selected:true});let env=(await host.mishuRuntime('owner',source.id)).env;
@@ -56,4 +56,44 @@ it('joins each existing task with its own contact, unanswered decisions and orig
  const wrong=await f.runtime({action:'send',targetId:f.b.id,binding:directory.conversations.find((t:any)=>t.id===f.b.id).binding,taskId:a.taskId,messageId:'wrong-related-message',kind:'information-only',text:'只问进度'});expect(wrong.status).toBe(409);
  const contact=await f.runtime({action:'send',targetId:f.b.id,binding:directory.conversations.find((t:any)=>t.id===f.b.id).binding,taskId:b.taskId,messageId:'b-progress',kind:'information-only',text:'只问进度，不修改任何内容'});expect(contact.status).toBe(200);
  const contacted=await (await f.runtime({action:'collaboration',version:1,operation:'get',taskId:b.taskId})).json();expect(contacted).not.toHaveProperty('error');expect(contacted.item).toMatchObject({contacted:true,destination:{sourceId:f.source.id},relatedMessages:[{messageId:'b-progress'}]});
+});
+it('only a direct user can authorize a bounded information followup plan; unchanged facts stay quiet and stop preserves target work',async()=>{
+ const f=await fixture(),directory=await (await f.runtime({action:'directory'})).json(),target=directory.conversations.find((t:any)=>t.id===f.a.id);
+ const r=await f.runtime({action:'tasks',version:1,operation:'register',operationId:'plan-task',targetId:f.a.id,binding:target.binding,purpose:'确认验证结果',scope:'只联系，不执行',summary:'等待回信',nextStep:'核实缺项'});const task=(await r.json()).task;
+ const input={action:'followups',version:1,operation:'create',operationId:'plan-a',taskIds:[task.taskId],text:'请只补充尚未说明的验证结果；无需执行新工作。',maxTotal:2,maxPerTarget:2,trigger:'new-reply',stopCondition:'budget-user-or-access'};
+ expect((await f.runtime(input)).status).toBe(409);
+ const planResponse=await f.browser(input);expect(planResponse.status).toBe(200);const {plan}=await planResponse.json();expect(plan).toMatchObject({state:'active',used:0,maxTotal:2,authorization:{channel:'browser'}});
+ expect((await (await f.browser(input)).json()).plan.planId).toBe(plan.planId);
+ const polls=await Promise.all(Array.from({length:4},()=>f.browser({action:'followups',version:1,operation:'list'})));expect((await polls[0].json()).plans[0].used).toBe(0);
+ expect((await f.runtime({action:'send',taskId:task.taskId,targetId:f.a.id,binding:target.binding,messageId:'initial-progress',kind:'information-only',text:'只回答一次验证状态。'})).status).toBe(200);
+ await expect.poll(async()=>{const list=await (await f.browser({action:'followups',version:1,operation:'list'})).json();return list.plans?.[0]?.used;},{timeout:10000}).toBe(2);
+ const end=await (await f.browser({action:'followups',version:1,operation:'list'})).json();expect(end.plans[0]).toMatchObject({state:'exhausted',used:2});expect(new Set(end.plans[0].attempts.map((a:any)=>a.messageId)).size).toBe(2);
+ await f.restart();expect((await (await f.browser({action:'followups',version:1,operation:'list'})).json()).plans[0].used).toBe(2);
+ const stop=await f.browser({action:'followups',version:1,operation:'stop',operationId:'stop-plan',planId:plan.planId,expectedRevision:end.plans[0].revision});expect(stop.status).toBe(200);expect((await stop.json()).plan.state).toBe('stopped');
+ expect((await (await f.runtime({action:'tasks',version:1,operation:'get',taskId:task.taskId})).json()).task.workState).toBe('recorded');
+});
+it('serializes racing answers and makes a source authorization generation obsolete after deselection',async()=>{
+ const f=await fixture(),created=await (await f.runtime({action:'clarifications',version:1,operation:'create',operationId:'race-question',kind:'ordinary',question:'采用 A 还是 B？'})).json();const q=created.question;
+ const answer=(text:string,operationId:string)=>({action:'clarifications',version:1,operation:'answer',questionId:q.questionId,expectedRevision:q.revision,answer:text,operationId});
+ const results=await Promise.all([f.browser(answer('A','race-a')),f.browser(answer('B','race-b'))]);expect(results.map(r=>r.status).sort()).toEqual([200,409]);
+ const winner=await results.find(r=>r.status===200)!.json();expect((await (await f.browser(answer(winner.question.answer.text,'same-answer-new-request'))).json()).question.answer.eventId).toBe(winner.question.answer.eventId);
+ await f.browser({action:'select',selected:false});expect((await f.runtime({action:'clarifications',version:1,operation:'list'})).status).toBe(401);
+});
+it('does not spend another contact when a new native message contains the same facts',async()=>{
+ const f=await fixture('SYNTHETIC_NO_NEW_FINDINGS'),directory=await (await f.runtime({action:'directory'})).json(),target=directory.conversations.find((t:any)=>t.id===f.a.id);
+ const task=(await (await f.runtime({action:'tasks',version:1,operation:'register',operationId:'same-facts-task',targetId:f.a.id,binding:target.binding,purpose:'核实结果',scope:'仅信息联系',summary:'等待',nextStep:'确认缺项'})).json()).task;
+ expect((await f.browser({action:'followups',version:1,operation:'create',operationId:'same-facts-plan',taskIds:[task.taskId],text:'请仅补充新发现',maxTotal:3,maxPerTarget:3,trigger:'new-reply',stopCondition:'budget-user-or-access'})).status).toBe(200);
+ await f.runtime({action:'send',taskId:task.taskId,targetId:f.a.id,binding:target.binding,messageId:'initial-same',kind:'information-only',text:'查询当前进度'});
+ await expect.poll(async()=>{const messages=(await (await f.runtime({action:'inbox'})).json()).messages;return messages.filter((m:any)=>m.messageId.startsWith('followup-')&&m.state==='settled').length;},{timeout:10000}).toBe(1);
+ const statuses=await Promise.all(Array.from({length:5},()=>f.browser({action:'followups',version:1,operation:'list'})));for(const status of statuses)expect((await status.json()).plans[0]).toMatchObject({state:'active',used:1});
+ await f.restart();expect((await (await f.browser({action:'followups',version:1,operation:'list'})).json()).plans[0].used).toBe(1);
+});
+it('invalidates an explicit followup plan when its authorized task scope changes, without contacting the target',async()=>{
+ const f=await fixture(),directory=await (await f.runtime({action:'directory'})).json(),target=directory.conversations.find((t:any)=>t.id===f.a.id);
+ const task=(await (await f.runtime({action:'tasks',version:1,operation:'register',operationId:'scoped-task',targetId:f.a.id,binding:target.binding,purpose:'询问结果',scope:'只问测试，不改代码',summary:'等待',nextStep:'核实'})).json()).task;
+ const create={action:'followups',version:1,operation:'create',operationId:'scoped-plan',taskIds:[task.taskId],text:'只问新的测试证据',maxTotal:2,maxPerTarget:2,trigger:'new-reply',stopCondition:'budget-user-or-access'};
+ expect((await f.browser(create)).status).toBe(200);
+ expect((await f.runtime({action:'tasks',version:1,operation:'update',operationId:'scope-correction',taskId:task.taskId,expectedRevision:task.revision,scope:'现在改为另一项工作'})).status).toBe(200);
+ await expect.poll(async()=>((await (await f.browser({action:'followups',version:1,operation:'list'})).json()).plans?.[0]?.state)).toBe('invalidated');
+ expect((await (await f.runtime({action:'inbox'})).json()).messages).toHaveLength(0);
 });

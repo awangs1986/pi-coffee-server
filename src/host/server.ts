@@ -274,6 +274,7 @@ export class HostServer {
         else if(input.action==='setup_open')result=await slot.mishu.browserSetup(input.id);
         else if(input.action==='setup_lookup')result=await slot.mishu.browserLookup(input.id,input);
         else if(input.action==='setup_confirm')result=await slot.mishu.browserConfirm(input.id,input);
+        else if(input.action==='followups')result=await slot.mishu.browserFollowups(input.id,input);
         else if(input.action==='collaboration')result=await slot.mishu.browserCollaboration(input.id,input);
         else if(input.action==='clarifications')result=await slot.mishu.browserClarifications(input.id,input);
         else if(input.action==='inspect'&&['status','tasks','disable'].includes(String(input.operation)))result=await slot.mishu.browserInspect(input.id,String(input.operation));
@@ -1298,6 +1299,7 @@ class HostSocket implements SessionSink {
     // first Pi event synchronously.
     setImmediate(() => {
       const setup=frame.text.trim()==='/mishu-setup';
+      if(frame.text.trim()==='/mishu-followups')this.mishu?.beginFollowups(session.id,frame.requestId);
       if(frame.text.trim()==='/mishu-questions')this.mishu?.beginClarifications(session.id,frame.requestId);
 
       if(frame.text.trim()==='/mishu-memory')this.mishu?.beginMemory(session.id,frame.requestId);
@@ -1316,7 +1318,7 @@ class HostSocket implements SessionSink {
           message: error instanceof Error ? error.message : "Prompt failed",
           requestId: frame.requestId,
         });
-      }).finally(()=>{this.mishu?.endMemory(session.id,frame.requestId);this.mishu?.endClarifications(session.id,frame.requestId);this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);this.mishu?.endTodo(session.id,frame.requestId);this.mishu?.endQuick(session.id,frame.requestId);});
+      }).finally(()=>{this.mishu?.endFollowups(session.id,frame.requestId);this.mishu?.endMemory(session.id,frame.requestId);this.mishu?.endClarifications(session.id,frame.requestId);this.mishu?.endHistory(session.id,frame.requestId);this.mishu?.endSetup(session.id,frame.requestId);this.mishu?.endNotifications(session.id,frame.requestId);this.mishu?.endReport(session.id,frame.requestId);this.mishu?.endTodo(session.id,frame.requestId);this.mishu?.endQuick(session.id,frame.requestId);});
     });
   }
 

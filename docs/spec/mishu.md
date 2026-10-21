@@ -1138,3 +1138,32 @@ from rotation. Ordinary bridge messages keep their original idempotency fingerpr
 when taskId is omitted. No private memory/history is automatically included.
 The Browser collaboration tab and `/mishu-collaboration` show readable responsible
 parties, expected results, remaining responsibility, timestamps and reply destination.
+
+## Secretary experience candidate: bounded followups (#12)
+
+`followups` v1 list is model-readable. Create/stop require the direct Browser user
+or the one-shot `/mishu-followups` command window. A plan selects 1–20 existing
+TaskBriefs (one per responsible target), fixed information-only text (1000 chars),
+explicit total cap 1–5 and per-target cap 1–3, `trigger:new-reply` and the supported
+`stopCondition:budget-user-or-access`. Unsupported custom triggers/conditions fail.
+Host persists exact original source/target bindings, authorization generation,
+TaskBrief revision and scope fingerprint, user-event proof and counts.
+
+Only a new complete task-linked reply/fact can reserve a contact. Identical content
+with a new message identity stays quiet; existing evidence becomes the initial
+baseline and does not replay. Reservation and spent counts are durable before
+existing send transport is called. Stable message IDs and uncertain outcomes are
+retained across failures/restarts; unknown delivery is never automatically retried.
+Counts are contact limits, not token or monetary estimates. Target consumption
+remains target usage. The plan adds no model planner or polling timer.
+
+Scope changes, target/source rebind, revocation or stopped tasks invalidate the
+plan. Native delivery checks the same reservation again. Stop only prevents future
+plan contact; it never stops target work. Reaching either relevant budget preserves
+remaining responsibility. The Browser plan form/status/stop controls and native
+command show counts, last contact evidence and limits. Reports continue under the
+existing separate source capability and opt-in queue; a followup plan does not
+automatically enable notifications or unattended secretary model execution.
+
+The integration candidate's scoped public tests use deterministic native fixtures;
+actual source-model/desktop/mobile acceptance and final review remain release gates.

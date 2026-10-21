@@ -1,3 +1,4 @@
+import {followupOperation,followupEvidence,followupScope,type Followups,type FollowupPlan} from './mishu-followups.js';
 import {collaborationItem} from './mishu-collaboration.js';
 import {queryEvidence} from './mishu-evidence.js';
 import type {AgentHistoryRead} from './agent-adapter.js';
@@ -27,8 +28,8 @@ import {templateValue} from './mishu-rules.js';
 import type {ConversationIndex} from './conversation-index.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
-interface Receipt {taskId?:string;messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
-interface Config {clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
+interface Receipt {followupPlanId?:string;followupGeneration?:number;taskId?:string;messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
+interface Config {followups?:Followups;clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
 interface State {version:2;chats:Record<string,Config>}
 /** Authorization and contacts share the same state.json transaction. */
 interface ManagerChat {sourceBinding:string;viewAll:boolean;watchCursor:number}
@@ -58,6 +59,9 @@ export class MishuCoordinator {
  private tokens=new Map<string,string>();
  private active=new Map<string,{source:string;receipt:Receipt}>();
  private registry?:HostSessionRegistry;
+ private followupWindows=new Map<string,string>();
+ beginFollowups(id:string,requestId:string){this.followupWindows.set(id,requestId);}
+ endFollowups(id:string,requestId:string){if(this.followupWindows.get(id)===requestId)this.followupWindows.delete(id);}
  private clarificationWindows=new Map<string,string>();
  beginClarifications(id:string,requestId:string){this.clarificationWindows.set(id,requestId);}
  endClarifications(id:string,requestId:string){if(this.clarificationWindows.get(id)===requestId)this.clarificationWindows.delete(id);}
@@ -154,7 +158,9 @@ export class MishuCoordinator {
  private receipts:ReceiptArchive;
  private quick:QuickConfirmations;
  private quickEpoch=new Map<string,number>();
- private revokeQuick(id:string){if(this.state.chats[id])this.state.chats[id].coordinationGeneration=(this.state.chats[id].coordinationGeneration??0)+1;this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
+ private coordinationEpoch=new Map<string,number>();
+ private coordinationGeneration(id:string){return Math.max(this.state.chats[id]?.coordinationGeneration??0,this.coordinationEpoch.get(id)??0);}
+ private revokeQuick(id:string){const generation=this.coordinationGeneration(id)+1;this.coordinationEpoch.set(id,generation);if(this.state.chats[id])this.state.chats[id].coordinationGeneration=generation;this.quickEpoch.set(id,(this.quickEpoch.get(id)??0)+1);this.quick.revoke('web:'+id);}
  private receiptLimits:typeof RECEIPT_LIMITS;
  private index?:ConversationIndex;
  private watchListeners=new Set<(frame:MishuWatchFrame)=>void>();
@@ -196,7 +202,7 @@ export class MishuCoordinator {
    if(!c.selected||!c.enabled||!c.taskJournal)continue;
    const previous=c.taskJournal,journal=structuredClone(previous);await this.refreshTasks(id,journal);
    c.taskJournal=journal;try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
-  }});void recovery.then(()=>this.scheduleNotifications()).catch(()=>undefined);this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
+  }});void recovery.then(()=>{this.scheduleNotifications();this.scheduleFollowups();}).catch(()=>undefined);this.tail=recovery.catch(()=>{this.observationFailure='Observation persistence/recovery failed; last confirmed facts retained. Open task details to retry a passive audit.';});
  }
  async recoveryReady(){await this.tail;await this.load();}
  private persistedBytes=0;
@@ -209,6 +215,7 @@ export class MishuCoordinator {
   try{const loaded=await readMishuState(this.root);this.persistedBytes=loaded.bytes.length;this.state={version:2,chats:loaded.state.chats as Record<string,Config>};if(loaded.backupName)this.migration={bytes:loaded.bytes,name:loaded.backupName};
    for(const c of Object.values(this.state.chats)){for(const task of c.taskJournal?.tasks??[])for(const r of task.reports??[])if(r.automatic&&r.deliveryAttempted&&['pending','admitted'].includes(r.state)){r.state='uncertain';r.error='Host restarted during notification admission; no automatic replay.';}for(const a of c.assignments??[])if(!['settled','cancelled','uncertain'].includes(a.state)){a.state='uncertain';a.error='Host restarted; no execution replay. Inspect native evidence.';}for(const task of c.taskJournal?.tasks??[]){const a=c.assignments?.find(a=>a.id===task.assignment?.id);if(a)task.assignment={...a};}}
    for(const c of Object.values(this.state.chats))for(const m of c.messages)if(!['settled','cancelled','uncertain'].includes(m.state)){m.state='uncertain';m.error='Host restarted; inspect the target before explicitly sending a new message. No replay was attempted.';}
+   for(const c of Object.values(this.state.chats))for(const p of c.followups?.plans??[])for(const a of p.attempts)if(['reserved','accepted'].includes(a.state)){const receipt=c.messages.find(m=>m.messageId===a.messageId);a.state=receipt&&['settled','cancelled'].includes(receipt.state)?receipt.state as 'settled'|'cancelled':'uncertain';if(a.state==='uncertain')a.error='Host restarted; same request retained, no automatic replay';}
    // Retire formerly configured Codex secretaries without deleting their audit records.
    let retired=false;
    for(const [id,c] of Object.entries(this.state.chats)){
@@ -224,14 +231,14 @@ export class MishuCoordinator {
    }
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
- private async save(revocation=false){await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
+ private async save(revocation=false){for(const [id,c] of Object.entries(this.state.chats)){const epoch=this.coordinationEpoch.get(id);if(epoch!==undefined&&(c.coordinationGeneration??0)<epoch)c.coordinationGeneration=epoch;}await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
   // Queue cancellation is a side effect of committed revocation, never a staged edit.
   for(const [id,queued] of this.notificationQueued){
    const report=this.state.chats[id]?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===queued.reportId);
    if(report?.state==='cancelled')this.cancelNotificationQueue(id);
   }
  }
- private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>this.scheduleNotifications()).catch(()=>undefined);return next;}
+ private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>{this.scheduleNotifications();this.scheduleFollowups();}).catch(()=>undefined);return next;}
  private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user; other Agents may be targets only');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
@@ -329,6 +336,7 @@ export class MishuCoordinator {
   if(input.action==='disable')return this.change(async()=>{const c=this.state.chats[id];this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;if(c){this.cancelObservations(c);c.enabled=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;}return {enabled:false};},true,true);
   if(!status.enabled)throw Error('Run /mishu-setup explicitly in this Chat first');
   if(input.action==='evidence')return this.evidence(id,input);
+  if(input.action==='followups')return this.followups(id,input,this.followupWindows.has(id)?'command':undefined);
   if(input.action==='collaboration')return this.collaboration(id,input);
   if(input.action==='clarifications')return this.clarifications(id,input,this.clarificationWindows.has(id)?'command':undefined);
   if(input.action==='overview')return {version:1,conversations:await this.overview(id)};
@@ -355,6 +363,66 @@ export class MishuCoordinator {
   if((this.quickEpoch.get(id)??0)!==epoch||binding(currentSource)!==sourceBinding||!current?.selected||!current.enabled||current.sourceBinding!==sourceBinding||!currentTarget||!visible(currentTarget)||binding(currentTarget)!==targetBinding||targetId!==id&&!current.targets.some(t=>t.id===targetId&&t.binding===targetBinding))throw Error('Evidence authorization or binding changed during read');
   return queryEvidence(targetId,read,input);
  }
+ async browserFollowups(id:string,input:Record<string,unknown>){const {id:_,...body}=input;return this.followups(id,body,'browser');}
+ private followups(id:string,input:Record<string,unknown>,channel?:'browser'|'command'){
+  return this.change(async()=>{
+   const source=await this.source(id),c=this.state.chats[id],generation=this.coordinationGeneration(id);
+   if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source)||this.registry?.get(id)?.isReportRun)throw Error('Bounded followup authority unavailable');
+   const journal:Followups=structuredClone(c.followups??{version:1,plans:[],operations:[]});
+   if(input.operation==='create')for(const taskId of Array.isArray(input.taskIds)?input.taskIds:[]){const task=c.taskJournal?.tasks.find(t=>t.taskId===taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task)throw Error('Followup task unavailable');await this.authorize(id,task.targetId,task.binding,'information-only',true);}
+   const result=followupOperation(journal,c.sourceBinding,generation,input,c.taskJournal?.tasks??[],c.messages,channel);
+   if(this.coordinationGeneration(id)!==generation||binding(await this.source(id))!==c.sourceBinding||!c.enabled||!c.selected)throw Error('Followup authority changed');
+   if(!c.followups){const bytes=Buffer.from(JSON.stringify(this.state));this.migration??={bytes,name:'state.before-followups.'+createHash('sha256').update(bytes).digest('hex')+'.json'};}
+   c.followups=journal;return result;
+  });
+ }
+ private followupRunning?:Promise<void>;
+ private followupDirty=false;
+ private scheduleFollowups(){
+  if(this.closing)return;if(this.followupRunning){this.followupDirty=true;return;}
+  if(!Object.values(this.state.chats).some(c=>c.followups?.plans.some(p=>p.state==='active')))return;
+  this.followupDirty=false;this.followupRunning=Promise.resolve().then(()=>this.advanceFollowups()).catch(()=>undefined).finally(()=>{this.followupRunning=undefined;if(this.followupDirty)this.scheduleFollowups();});
+ }
+ private assertFollowup(sourceId:string,m:Pick<Receipt,'followupPlanId'|'followupGeneration'|'messageId'|'targetId'|'binding'|'taskId'>){
+  if(!m.followupPlanId)return;
+  const c=this.state.chats[sourceId];
+  const p=c?.followups?.plans.find(p=>p.planId===m.followupPlanId),attempt=p?.attempts.find(a=>a.messageId===m.messageId);
+  if(!p||!attempt||!['active','exhausted'].includes(p.state)||p.generation!==this.coordinationGeneration(sourceId)||m.followupGeneration!==p.generation||p.sourceBinding!==c.sourceBinding||!c.taskJournal?.tasks.some(t=>t.taskId===attempt.taskId&&t.workState!=='stopped'&&p.targets.some(target=>target.taskId===t.taskId&&target.scopeHash===followupScope(t)))||attempt.targetId!==m.targetId||attempt.binding!==m.binding||attempt.taskId!==m.taskId)throw Error('Followup stopped, revoked or binding changed');
+ }
+ private async advanceFollowups(){
+  // No timers, polling, model planning or new executor: consume only new durable reply evidence.
+  for(const sourceId of Object.keys(this.state.chats)){
+   let reservation:{planId:string;generation:number;messageId:string;taskId:string;targetId:string;binding:string;text:string}|undefined;
+   await this.change(async()=>{
+    const c=this.state.chats[sourceId];if(!c?.enabled||!c.selected||!c.followups)return;
+    let source:Conversation;try{source=await this.source(sourceId);}catch{return;}
+    if(c.sourceBinding!==binding(source))return;
+    for(const p of c.followups.plans){
+     for(const a of p.attempts){const receipt=c.messages.find(m=>m.messageId===a.messageId);if(receipt&&['settled','uncertain','cancelled'].includes(receipt.state))a.state=receipt.state as 'settled'|'uncertain'|'cancelled';}
+     if(p.state!=='active')continue;
+     if(p.generation!==this.coordinationGeneration(sourceId)||p.sourceBinding!==c.sourceBinding){p.state='invalidated';p.reason='授权或源绑定改变';p.revision++;continue;}
+     for(const target of p.targets){
+      const task=c.taskJournal?.tasks.find(t=>t.taskId===target.taskId&&t.sourceBinding===c.sourceBinding&&t.targetId===target.targetId&&t.binding===target.binding&&t.workState!=='stopped');
+      if(!task||followupScope(task)!==target.scopeHash){p.state='invalidated';p.reason='事项已停止或绑定改变；目标工作保持';p.revision++;break;}
+      try{await this.authorize(sourceId,target.targetId,target.binding,'information-only',true);}catch{p.state='invalidated';p.reason='目标访问已撤销或绑定改变';p.revision++;break;}
+      if(p.generation!==this.coordinationGeneration(sourceId)||!c.enabled||!c.selected)throw Error('Followup authorization changed during evidence audit');
+      const evidence=followupEvidence(task,c.messages);if(!evidence||evidence.hash===target.lastEvidence||target.used>=p.maxPerTarget||p.used>=p.maxTotal)continue;
+      target.lastEvidence=evidence.hash;target.used++;p.used++;p.revision++;p.updatedAt=new Date().toISOString();
+      const messageId='followup-'+p.planId+'-'+p.used;
+      p.attempts.push({messageId,taskId:task.taskId,targetId:target.targetId,binding:target.binding,evidence:evidence.hash,evidenceRef:evidence.ref,state:'reserved',createdAt:p.updatedAt});
+      if(p.used>=p.maxTotal||p.targets.every(t=>t.used>=p.maxPerTarget)){p.state='exhausted';p.reason='联系次数已到限；剩余责任保留，等待用户下一步决定';}
+      reservation={planId:p.planId,generation:p.generation,messageId,taskId:task.taskId,targetId:target.targetId,binding:target.binding,text:`已获用户明确授权的有限信息联系（只在既有事项内，不授权执行）。事项：${task.purpose}\n用户问题：${p.text}\n请只回复这项问题；没有补充事实时说明没有新增，不执行新任务。`};
+      return;
+     }
+    }
+   },false);
+   const r=reservation;if(!r)continue;
+   try{
+    await this.send(sourceId,{targetId:r.targetId,binding:r.binding,taskId:r.taskId,messageId:r.messageId,kind:'information-only',text:r.text,followupPlanId:r.planId,followupGeneration:r.generation});
+    await this.change(async()=>{const c=this.state.chats[sourceId],attempt=c.followups?.plans.find(p=>p.planId===r.planId)?.attempts.find(a=>a.messageId===r.messageId);if(attempt&&attempt.state==='reserved'){const receipt=c.messages.find(m=>m.messageId===r.messageId);attempt.state=receipt&&['settled','uncertain','cancelled'].includes(receipt.state)?receipt.state as 'settled'|'uncertain'|'cancelled':'accepted';}},false);
+   }catch{await this.change(async()=>{const attempt=this.state.chats[sourceId].followups?.plans.find(p=>p.planId===r.planId)?.attempts.find(a=>a.messageId===r.messageId);if(attempt){attempt.state='uncertain';attempt.error='联系可能未送达；已扣次数和相同消息身份保留，不自动重投';}},false);}
+  }
+ }
  async browserCollaboration(id:string,input:Record<string,unknown>){const {id:_,...body}=input;return this.collaboration(id,body);}
  private collaboration(id:string,input:Record<string,unknown>){
   return this.change(async()=>{
@@ -364,7 +432,7 @@ export class MishuCoordinator {
    const summaries=await this.registry!.list(),items=[];
    for(const task of journal.tasks){if(task.sourceBinding!==c.sourceBinding||input.operation==='get'&&task.taskId!==input.taskId)continue;try{await this.authorize(id,task.targetId,task.binding,'information-only',true);}catch{continue;}
     const target=c.targets.find(t=>t.id===task.targetId&&t.binding===task.binding)!;
-    const questions=c.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===(c.coordinationGeneration??0))??[];
+    const questions=c.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===this.coordinationGeneration(id))??[];
     items.push(collaborationItem(id,task,{id:target.id,title:currentTitle(summaries.find(row=>row.id===target.id),target.title),engine:target.engine},c.messages,questions));
    }
    c.taskJournal=journal;
@@ -383,12 +451,14 @@ export class MishuCoordinator {
    const source=await this.source(id),c=this.state.chats[id];
    if(!c?.selected||!c.enabled||c.sourceBinding!==binding(source)||this.registry?.get(id)?.isReportRun)throw Error('Ordinary clarification authority unavailable');
    if(!c.clarifications){const bytes=Buffer.from(JSON.stringify(this.state));this.migration??={bytes,name:'state.before-coordination.'+createHash('sha256').update(bytes).digest('hex')+'.json'};}
+   const generation=this.coordinationGeneration(id);
    const journal:Clarifications=structuredClone(c.clarifications??{version:1,questions:[],operations:[]});
+   for(const q of journal.questions)if(q.sourceBinding===c.sourceBinding&&q.generation===generation&&q.state==='pending'&&q.taskId&&!c.taskJournal?.tasks.some(t=>t.taskId===q.taskId&&t.workState!=='stopped')){q.state='cancelled';q.revision++;}
    const taskId=input.operation==='create'?input.taskId:journal.questions.find(q=>q.questionId===input.questionId)?.taskId;
    if(taskId!==undefined){const task=c.taskJournal?.tasks.find(t=>t.taskId===taskId&&t.sourceBinding===c.sourceBinding&&t.workState!=='stopped');if(!task)throw Error('Question task unavailable');await this.authorize(id,task.targetId,task.binding,'information-only');}
-   const result=clarificationOperation(journal,c.sourceBinding,c.coordinationGeneration??0,input,channel);
+   const result=clarificationOperation(journal,c.sourceBinding,generation,input,channel);
    // Recheck current source and generation after any asynchronous target audit.
-   if(binding(await this.source(id))!==c.sourceBinding||!c.enabled||!c.selected)throw Error('Question authority changed');
+   if(binding(await this.source(id))!==c.sourceBinding||this.coordinationGeneration(id)!==generation||!c.enabled||!c.selected)throw Error('Question authority changed');
    c.clarifications=journal;return result;
   });
  }
@@ -410,7 +480,7 @@ export class MishuCoordinator {
   const panel=this.watch.panel();
   const result:Record<string,unknown>={version:1,viewAll,quick:{enabled:this.watch.rules.quick.enabled,maxLength:this.watch.rules.quick.maxLength},grant:{active:Boolean(grant),...(grant?{remaining:Math.max(0,3-grant.uses.size)}:{})},legacyAuthorization:legacyAuthorization(),panel:{counts:panel.counts,open:panel.items.length},stats:{...this.watch.stats},...(this.watch.configProblem?{rulesError:this.watch.configProblem}:{})};
   if(digest){
-   const c=this.state.chats[id];result.clarifications=c?.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===(c.coordinationGeneration??0)&&['pending','answered'].includes(q.state)).slice(-20).map(q=>({questionId:q.questionId,taskId:q.taskId,question:q.question,state:q.state,answer:q.answer?.text,notice:'普通事项，不是执行授权；只继续对应事项。'}))??[];
+   const c=this.state.chats[id];result.clarifications=c?.clarifications?.questions.filter(q=>q.sourceBinding===c.sourceBinding&&q.generation===this.coordinationGeneration(id)&&['pending','answered'].includes(q.state)&&!(q.state==='pending'&&q.expiresAt&&Date.parse(q.expiresAt)<=Date.now())).slice(-20).map(q=>({questionId:q.questionId,taskId:q.taskId,question:q.question,state:q.state,answer:q.answer?.text,notice:'普通事项，不是执行授权；只继续对应事项。'}))??[];
    const head=this.watch.journal.head,after=cursor??head;
    const summary=await this.watch.digest(after,undefined,viewAll?undefined:new Set((await this.contactTargets(id)).keys()));
    this.pendingCursor.set(id,summary.head);
@@ -718,7 +788,7 @@ export class MishuCoordinator {
     for(const task of journal.tasks.filter(t=>t.targetId===targetId||id===targetId&&t.reports?.length)){try{await this.auditTask(id,task,undefined,journal);await this.reconcileReports(id,task);}catch{/* Authorization failure is not target execution failure. */}}
     c.taskJournal=journal;try{await this.save();}catch(error){c.taskJournal=previous;throw error;}
    }
-  });this.tail=work.catch(()=>{this.observationFailure='Observation persistence failed; last confirmed facts retained. Open task details to retry a passive audit.';this.watch.taskFact(targetId,'tracking.error',{taskId:'',purpose:'跟进',error:'观察持久化失败，已保留最后确认的事实'});});void work.finally(()=>{this.observationPending.delete(targetId);this.scheduleNotifications();if(this.observationDirty.delete(targetId))this.observeEvent(targetId);}).catch(()=>undefined);
+  });this.tail=work.catch(()=>{this.observationFailure='Observation persistence failed; last confirmed facts retained. Open task details to retry a passive audit.';this.watch.taskFact(targetId,'tracking.error',{taskId:'',purpose:'跟进',error:'观察持久化失败，已保留最后确认的事实'});});void work.finally(()=>{this.observationPending.delete(targetId);this.scheduleNotifications();this.scheduleFollowups();if(this.observationDirty.delete(targetId))this.observeEvent(targetId);}).catch(()=>undefined);
  }
  private notificationWindows=new Map<string,string>();
  private notificationQueued=new Map<string,{row?:string;reportId:string;requestId:string}>();
@@ -871,7 +941,7 @@ export class MishuCoordinator {
   const authorizationRef=kind!=='authorized-execution'?undefined:typeof auth?.quote==='string'?quoteRef(templateValue(auth.quote,200).normalize('NFKC')):clean(String(input.authorizationRef));
   const fingerprint=createHash('sha256').update(JSON.stringify([targetId,expected,kind,text,authorizationRef,...(input.taskId?[input.taskId]:[])])).digest('hex');let created=false;
   const receipt=await this.change(async()=>{
-   await this.authorize(sourceId,targetId,expected,kind);const c=this.state.chats[sourceId];if(input.taskId!==undefined&&!c.taskJournal?.tasks.some(t=>t.taskId===input.taskId&&t.sourceBinding===c.sourceBinding&&t.targetId===targetId&&t.binding===expected&&t.workState!=='stopped'))throw Error('Message must match the exact saved task and target');const prior=c.messages.find(m=>m.messageId===messageId);
+   await this.authorize(sourceId,targetId,expected,kind);const c=this.state.chats[sourceId];if(input.taskId!==undefined&&!c.taskJournal?.tasks.some(t=>t.taskId===input.taskId&&t.sourceBinding===c.sourceBinding&&t.targetId===targetId&&t.binding===expected&&t.workState!=='stopped'))throw Error('Message must match the exact saved task and target');this.assertFollowup(sourceId,{followupPlanId:typeof input.followupPlanId==='string'?input.followupPlanId:undefined,followupGeneration:typeof input.followupGeneration==='number'?input.followupGeneration:undefined,messageId,targetId,binding:expected,taskId:typeof input.taskId==='string'?input.taskId:undefined});const prior=c.messages.find(m=>m.messageId===messageId);
    if(prior){if(prior.fingerprint!==fingerprint)throw Error('messageId already belongs to different content');return prior;}
    const archived=await this.receipts.lookup(sourceId,messageId);
    if(archived){if(archived.fingerprint!==fingerprint)throw Error('messageId already belongs to different content');return {...archived,binding:expected,text:'',archived:true} as Receipt;}
@@ -879,7 +949,7 @@ export class MishuCoordinator {
    if(kind==='authorized-execution')this.useGrant(sourceId,input,'send:'+messageId);
    await this.rotateReceipts(sourceId,c);
    if(c.messages.length>=this.receiptLimits.live)throw Error('MISHU receipt capacity reached; no terminal receipts can be archived yet');
-   const m:Receipt={...(input.taskId?{taskId:String(input.taskId)}:{}),messageId,targetId,binding:expected,kind,text,authorizationRef,requestId:'mishu-'+createHash('sha256').update(sourceId+':'+messageId).digest('hex'),fingerprint,state:'accepted',createdAt:new Date().toISOString()};c.messages.push(m);created=true;return m;
+   const m:Receipt={...(input.followupPlanId?{followupPlanId:String(input.followupPlanId),followupGeneration:Number(input.followupGeneration)}:{}),...(input.taskId?{taskId:String(input.taskId)}:{}),messageId,targetId,binding:expected,kind,text,authorizationRef,requestId:'mishu-'+createHash('sha256').update(sourceId+':'+messageId).digest('hex'),fingerprint,state:'accepted',createdAt:new Date().toISOString()};c.messages.push(m);created=true;return m;
   });
   if(created){const work=this.codexInvocation.exit(()=>this.deliver(sourceId,receipt));this.deliveries.add(work);void work.finally(()=>this.deliveries.delete(work)).catch(()=>undefined);}
   return {messageId:receipt.messageId,targetId:receipt.targetId,state:receipt.state,...((receipt as Receipt&{archived?:boolean}).archived?{archived:true}:{})};
@@ -904,7 +974,7 @@ export class MishuCoordinator {
   if(task){task.assignment={...assignment};if(m.state==='cancelled'&&task.obligation){task.obligation.state='cancelled';task.observation='stopped';task.notification=undefined;}}
  }
  private async deliver(sourceId:string,m:Receipt){let locked=false;try{
-  await this.authorize(sourceId,m.targetId,m.binding,m.kind);
+  this.assertFollowup(sourceId,m);await this.authorize(sourceId,m.targetId,m.binding,m.kind);
   this.locks.add(m.targetId);locked=true;
   const session=await this.registry!.connect(m.targetId);
   await this.authorize(sourceId,m.targetId,m.binding,m.kind,true);
@@ -924,7 +994,7 @@ export class MishuCoordinator {
   for(const [source,c] of Object.entries(this.state.chats)){
    const m=c.messages.find(m=>m.requestId===requestId&&m.targetId===targetId);if(!m)continue;
    if(state==='delivering'){
-    try{await this.authorize(source,targetId,m.binding,m.kind);}catch{m.state='cancelled';m.error='MISHU access or target binding was revoked before delivery';this.syncAssignment(c,m);await this.save();throw Error(m.error);}
+    try{this.assertFollowup(source,m);await this.authorize(source,targetId,m.binding,m.kind);}catch{m.state='cancelled';m.error='MISHU access or target binding was revoked before delivery';this.syncAssignment(c,m);await this.save();throw Error(m.error);}
     const task=c.taskJournal?.tasks.find(t=>t.assignment?.requestId===requestId);
     if(task&&(task.workState==='stopped'||task.obligation?.state==='cancelled')){m.state='cancelled';this.syncAssignment(c,m);await this.save();throw Error('Tracked task was stopped before delivery');}
     this.active.set(targetId,{source,receipt:m});
@@ -955,5 +1025,5 @@ export class MishuCoordinator {
   this.watch.noteTier2Run();
   void this.change(async()=>{const m=this.state.chats[id]?.manager;if(m&&pending>m.watchCursor)m.watchCursor=pending;},false).catch(()=>undefined);
  }
- async close(){this.closing=true;await this.watch.close().catch(()=>undefined);if(this.notificationTimer)clearTimeout(this.notificationTimer);for(const id of this.notificationQueued.keys())this.cancelNotificationQueue(id);this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.tail;await this.receipts.close();this.writer?.close();this.writer=undefined;}
+ async close(){this.closing=true;await this.watch.close().catch(()=>undefined);if(this.notificationTimer)clearTimeout(this.notificationTimer);for(const id of this.notificationQueued.keys())this.cancelNotificationQueue(id);this.tokens.clear();await Promise.allSettled([...this.deliveries]);await this.followupRunning;await this.tail;await this.receipts.close();this.writer?.close();this.writer=undefined;}
 }
