@@ -1054,3 +1054,24 @@ The queue_action protocol gains move (to: front|back); mishu_watch frames are
 ignored by older clients. Source, artifact installation, Browser acceptance and
 production activation remain separate. See [implementation](../development/mishu-manager.md)
 and [repair evidence](../development/mishu-manager-repairs.md).
+
+## Secretary experience candidate: ordinary decisions (#10)
+
+`clarifications` runtime v1 supports list/get/create/cancel. Creation is explicitly
+`kind:ordinary`; it saves a bounded question (2000 chars, 12 options) before the
+model tool returns. It never adapts native approvals or setup questions. The Pi
+plugin is instructed to settle after saving and leave unrelated work available.
+`/mishu-questions` and the Browser coffee-menu collaboration panel let the direct
+user answer or cancel an exact question/revision. Answers have a Host-created
+user event and are available to the next genuine user turn, rather than injecting
+a fabricated tool reply or promising unattended resumption. Answers carry no
+execution authority. Codex secretary entry remains unavailable under #122.
+
+Host persists at most 100 questions and 1000 operation identities. Exact retries
+are idempotent; conflicting answers, expiry, old revisions, source rebinding and
+changed setup generations fail. Unrelated questions remain pending. Current
+answers are included as untrusted facts in the next foreground manager context.
+First journal creation keeps a private state backup; old Hosts reject the new
+optional state fields rather than silently ignoring them. Public HTTP and Browser
+controller tests cover recovery, exact answers, expiry, revocation and stale UI.
+Native capability and real Browser acceptance remain separate final quality gates.
