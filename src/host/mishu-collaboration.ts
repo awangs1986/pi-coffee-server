@@ -1,3 +1,4 @@
+import {collaborationPresentation} from 'pi-coffee-mishu/host-policy';
 import type {TaskBrief} from './mishu-tasks.js';
 import type {Clarification} from './mishu-clarifications.js';
 /** A projection of existing execution ledgers, never a second executor. */
@@ -18,5 +19,6 @@ export function collaborationItem(sourceId:string,task:TaskBrief,target:{id:stri
  else if(assignment?.state==='running'||latest?.state==='running')state='running';
  else if(assignment&&['accepted','queued','delivering'].includes(assignment.state)||latest&&['accepted','queued','delivering'].includes(latest.state))state='queued';
  else if(task.obligation||related.length)state='awaiting-reply';
- return {taskId:task.taskId,purpose:task.purpose,expectedResult:task.scope,nextStep:task.nextStep,target,destination:{sourceId,taskId:task.taskId,label:'原秘书 · '+task.purpose,link:'/conversations/'+encodeURIComponent(sourceId)},state,contacted:Boolean(related.length||assignment),execution,report,read:'unknown',acceptance:task.acceptance,evidenceAt:task.updatedAt,createdAt:task.createdAt,questions:pending.map(q=>({questionId:q.questionId,question:q.question,revision:q.revision})),relatedMessages:related.map(r=>({messageId:r.messageId,state:r.state,createdAt:r.createdAt,...(r.error?{error:r.error}:{})})),reply:task.fact?.latestReply??latest?.result??null,truncated:task.fact?.latestReplyTruncated??latest?.truncated??null,remainingResponsibility:state==='reported'?'等待用户阅读或验收；已汇报不等于验收':state==='stopped'?'已停止记录；目标工作不会因此停止':pending.length?'等待这个事项的明确回答':'等待负责人回信或补充证据'};
+ const presentation=collaborationPresentation({purpose:task.purpose,state,pendingQuestions:pending.length});
+ return {stateLabel:presentation.stateLabel,taskId:task.taskId,purpose:task.purpose,expectedResult:task.scope,nextStep:task.nextStep,target,destination:{sourceId,taskId:task.taskId,label:presentation.destinationLabel,link:'/conversations/'+encodeURIComponent(sourceId)},state,contacted:Boolean(related.length||assignment),execution,report,read:'unknown',acceptance:task.acceptance,evidenceAt:task.updatedAt,createdAt:task.createdAt,questions:pending.map(q=>({questionId:q.questionId,question:q.question,revision:q.revision})),relatedMessages:related.map(r=>({messageId:r.messageId,state:r.state,createdAt:r.createdAt,...(r.error?{error:r.error}:{})})),reply:task.fact?.latestReply??latest?.result??null,truncated:task.fact?.latestReplyTruncated??latest?.truncated??null,remainingResponsibility:presentation.remainingResponsibility};
 }

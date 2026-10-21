@@ -8,7 +8,7 @@ import {clarificationOperation,type Clarifications} from './mishu-clarifications
 import {MishuMemory,type MemorySource} from './mishu-memory.js';
 import {MishuConsolidation,type ConsolidationEvidence} from './mishu-consolidation.js';
 import type {AgentSessionFactory} from './agent-adapter.js';
-import {managerInstructions} from 'pi-coffee-mishu/host-policy';
+import {formatFollowupContact,managerInstructions} from 'pi-coffee-mishu/host-policy';
 import {AsyncLocalStorage} from "node:async_hooks";
 import {secretaryInstructions,type MishuSourceCapabilities} from "./mishu-source.js";
 import {historyOperation,type HistoricalNote} from './mishu-history.js';
@@ -456,7 +456,7 @@ export class MishuCoordinator {
       const messageId='followup-'+p.planId+'-'+p.used;
       p.attempts.push({messageId,taskId:task.taskId,targetId:target.targetId,binding:target.binding,evidence:evidence.hash,evidenceRef:evidence.ref,state:'reserved',createdAt:p.updatedAt});
       if(p.used>=p.maxTotal||p.targets.every(t=>t.used>=p.maxPerTarget)){p.state='exhausted';p.reason='联系次数已到限；剩余责任保留，等待用户下一步决定';}
-      reservation={planId:p.planId,generation:p.generation,messageId,taskId:task.taskId,targetId:target.targetId,binding:target.binding,text:`已获用户明确授权的有限信息联系（只在既有事项内，不授权执行）。事项：${task.purpose}\n用户问题：${p.text}\n请只回复这项问题；没有补充事实时说明没有新增，不执行新任务。`};
+      reservation={planId:p.planId,generation:p.generation,messageId,taskId:task.taskId,targetId:target.targetId,binding:target.binding,text:formatFollowupContact({purpose:task.purpose,text:p.text})};
       return;
      }
     }
