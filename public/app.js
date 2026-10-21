@@ -3204,13 +3204,14 @@ ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abor
 
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
 const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
+mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});
 mishuCollaboration=initMishuCollaboration({button:mishuCollaborationButton,context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,dialogs,toast});
 
 const mishuPanelContext=()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch});
 mishuEvidence=initMishuEvidence({context:mishuPanelContext,request:mishuRequest,toast});
 mishuUsage=initMishuUsage({context:mishuPanelContext,request:mishuRequest,toast});
-for(const [id,label,panel] of [['mishu-evidence','MISHU 原话与证据',mishuEvidence],['mishu-usage','MISHU 分类用量',mishuUsage]]){const button=document.createElement('button');button.type='button';button.className='brand-menu-item';button.id=id;button.textContent=label;button.onclick=()=>{closeBrandMenu();void panel.open();};$('#mishu-toggle')?.after(button);}
-mishuMemory=initMishuMemory({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,button:$('#mishu-memory'),onOpen:closeBrandMenu,toast});
+for(const [id,label,panel] of [['mishu-evidence','MISHU 原话与证据',mishuEvidence],['mishu-usage','MISHU 分类用量',mishuUsage]]){const button=document.createElement('button');button.type='button';button.className='brand-menu-item';button.id=id;button.textContent=label;button.onclick=()=>{closeBrandMenu();closeSidebarOnMobile();void panel.open();};$('#mishu-toggle')?.after(button);}
+mishuMemory=initMishuMemory({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,button:$('#mishu-memory'),onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},toast});
 mishuCommands=initMishuCommands({context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}),request:mishuRequest,dialogs,configureButton:$('#mishu-configure'),onOpen:closeBrandMenu,onChanged:()=>void mishuControls.refresh(),toast});
 mishuControls=initMishuControls({button:$('#mishu-toggle'),configureButton:$('#mishu-configure'),context:()=>{const task=currentTask();return task?{...task,busy:!opened||!historyReady||streaming||compacting||Boolean(pendingDelivery)}:null;},
   request:mishuRequest,
