@@ -178,10 +178,10 @@ export class MishuCoordinator {
   this.memory=new MishuMemory(root);
   this.consolidation=new MishuConsolidation(root,{
    memory:this.memory,
-   authority:async id=>{const source=await this.source(id),status=await this.status(id),live=this.registry?.get(id),models=await live?.getModels().catch(()=>undefined);return {binding:binding(source),generation:this.state.chats[id]?.coordinationGeneration??0,enabled:status.selected&&status.enabled,idle:!live?.isBusy&&!live?.attention,...(models?.current?{model:models.current}:{}),project:source.projectId};},
+   authority:async id=>{const source=await this.source(id),status=await this.status(id),live=this.registry?.get(id),models=await live?.getModels().catch(()=>undefined);return {binding:binding(source),generation:this.state.chats[id]?.coordinationGeneration??0,enabled:status.selected&&status.enabled,idle:!live?.isBusy&&live?.attention!=='waiting',manualCommand:Boolean(this.memoryWindows.get(id)&&this.memoryWindows.get(id)===live?.currentRequestId&&!live?.isReportRun),...(models?.current&&this.memoryExtractor?{model:models.current}:{}),project:source.projectId};},
    evidence:async(id,input)=>await this.evidence(id,input) as unknown as ConsolidationEvidence,
    reserve:(id,op)=>this.reserveAuxiliary(id,op,'memory'),started:(id,op)=>this.markAuxiliaryStarted(id,op),
-   record:async(id,op,result)=>{await this.recordAuxiliaryUsage(id,op,'memory',{model:result.provider+'/'+result.model,at:new Date().toISOString(),...result.usage});},
+   record:async(id,op,result)=>{await this.recordReservedAuxiliaryUsage(id,op,'memory',{model:result.provider+'/'+result.model,at:new Date().toISOString(),...result.usage});},
    extract:(id,input)=>{if(!this.memoryExtractor)throw Error('Native isolated memory extraction unavailable');return this.memoryExtractor(id,input);},
   });
   this.capabilities=typeof capabilitiesOrOptions==='function'?capabilitiesOrOptions:undefined;
@@ -212,7 +212,7 @@ export class MishuCoordinator {
  private watchActive(){return Object.values(this.state.chats).some(c=>c.selected&&c.enabled);}
  private emitWatch(frame:MishuWatchFrame){if(!this.watchActive())return;for(const listener of this.watchListeners){try{listener(frame);}catch{/* Delivery adapter failure. */}}}
  /** Live session decoration changed (queue depth / attention). */
- sessionChanged(id:string,info:{queued:number;running:boolean;attention?:'waiting'|'finished'}){if(!this.closing&&this.watchActive())this.watch.session(id,info);}
+ sessionChanged(id:string,info:{queued:number;running:boolean;attention?:'waiting'|'finished'}){if(this.state.chats[id]?.selected&&this.state.chats[id]?.enabled&&!info.running&&!info.queued)this.consolidation.schedule(id);if(!this.closing&&this.watchActive())this.watch.session(id,info);}
  attach(registry:HostSessionRegistry){
   this.registry=registry;
   const recovery=this.tail.then(async()=>{await this.load();for(const [id,c] of Object.entries(this.state.chats)){
@@ -305,7 +305,7 @@ export class MishuCoordinator {
    evidence={kind:'user-message',at:new Date().toISOString(),requestId,quote:input.quote,start,end:start+input.quote.length};
    if(op==='save'&&typeof input.text==='string'&&!input.quote.includes(input.text))input={...input,candidate:true};
   }
-  if(op==='configure'&&input.enabled===false)this.consolidation.abort(id);
+  if(op==='configure'&&input.enabled===false)await this.consolidation.pause(id);
   return this.memory.operate(id,initial,input,evidence,async()=>{const current=await this.source(id);if(binding(current)!==initial||!(await this.status(id)).selected)throw Error('Memory source binding or selection changed');if(!manual&&evidence&&(this.foreground.get(id)!==evidence.requestId||!(await this.status(id)).enabled||!this.state.chats[id]?.userInstructions?.some(entry=>entry.requestId===evidence.requestId)))throw Error('Memory user turn ended or authorization revoked');});
  }
  async consolidationOperation(id:string,input:Record<string,unknown>,manual=false){
@@ -313,6 +313,7 @@ export class MishuCoordinator {
   if(input.operation==='status'||input.operation==='list')return this.consolidation.status(id);
   if(input.operation==='get')return this.consolidation.get(id,input.jobId);
   if(!manual)throw Error('Only the user can organize or adopt memory candidates');
+  if(input.operation==='configure')return this.consolidation.configure(id,input);
   if(input.operation==='prepare')return this.consolidation.prepare(id,input);
   if(input.operation==='adopt')return this.consolidation.adopt(id,input);
   if(input.operation==='cancel')return this.consolidation.cancel(id,input);
@@ -386,6 +387,9 @@ export class MishuCoordinator {
  async markAuxiliaryStarted(id:string,operationId:string){const source=await this.usageSource(id);const result=await this.usageLedger.transition(id,source.binding,operationId,true);if((await this.usageSource(id)).binding!==source.binding)throw Error('Auxiliary source changed');return result;}
  async releaseAuxiliaryBeforeStart(id:string,operationId:string){const source=await this.usageSource(id);return this.usageLedger.transition(id,source.binding,operationId,false);}
  async recordAuxiliaryUsage(id:string,operationId:string,purpose:Exclude<UsagePurpose,'foreground'>,row:Omit<UsageRecord,'callId'|'purpose'|'source'>){const source=await this.usageSource(id);await this.usageLedger.record(id,source.binding,{...row,callId:'aux:'+operationId,purpose,source:'native-event'});}
+ /** Completion metering cannot regain execution authority. The account ledger
+  * resolves the original accepted binding even after source revoke/reset. */
+ async recordReservedAuxiliaryUsage(id:string,operationId:string,purpose:Exclude<UsagePurpose,'foreground'>,row:Omit<UsageRecord,'callId'|'purpose'|'source'>){await this.usageLedger.recordReserved(id,operationId,purpose,row);}
  private recoverUsage(id:string){
   const existing=this.usageRecoveries.get(id);if(existing)return existing;
   const work=(async()=>{const source=await this.usageSource(id),read=await this.historyReader?.(id);if(!read||read.sourceFreshness!=='current')return;const current=await this.usageSource(id);if(current.binding!==source.binding)throw Error('Usage source changed');if(read.usage?.length)await this.usageLedger.recordMany(id,source.binding,read.usage);})();
