@@ -1,10 +1,13 @@
-import {it,expect} from 'vitest';
-import {mkdtemp,rm,mkdir} from 'node:fs/promises';
+import {it,expect,vi} from 'vitest';
+import {mkdtemp,rm,mkdir,symlink,readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
 import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
+const memoryWriteGate=vi.hoisted(()=>({path:'',fail:false,reached:undefined as undefined|(()=>void),resume:undefined as undefined|Promise<void>}));
+// Pause only the external filesystem write; all product APIs and durable storage remain real.
+vi.mock('node:fs/promises',async original=>{const fs=await original<typeof import('node:fs/promises')>();return {...fs,writeFile:async(...args:Parameters<typeof fs.writeFile>)=>{if(memoryWriteGate.fail&&String(args[0]).startsWith(memoryWriteGate.path)&&String(args[0]).endsWith('.tmp'))throw Error('Synthetic filesystem write failure');const value=await fs.writeFile(...args);if(memoryWriteGate.path&&String(args[0]).startsWith(memoryWriteGate.path)&&String(args[0]).endsWith('.tmp')){memoryWriteGate.reached?.();await memoryWriteGate.resume;}return value;}};});
 it('manages opt-in private memory with optimistic revisions and tombstones across Host restart',async()=>{
  const root=await mkdtemp(join(tmpdir(),'mishu-memory-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),other=await workspaces.createChatConversation();
  const make=()=>new HostServer({port:0,token:'fixture',factory:new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')}),workspaces});let host=make();
@@ -27,13 +30,28 @@ it('isolates actual saved entries across authenticated accounts and reports fail
  const root=await mkdtemp(join(tmpdir(),'mishu-memory-scope-')),workspaces=new Workspaces(join(root,'owner')),other=new Workspaces(join(root,'other')),source=await workspaces.createChatConversation(),factory=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')}),host=new HostServer({port:0,token:'fixture',requireUser:true,factory,workspaces,scopeForUser:user=>({factory,workspaces:user==='alice'?workspaces:other})});
  const call=async(user:string,body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json','x-pi-coffee-user':user},body:JSON.stringify({id:source.id,action:'memory',...body})});return {status:response.status,body:await response.json()};};
  try{await host.start();await call('alice',{action:'select',selected:true});await call('alice',{operation:'configure',operationId:'enable',enabled:true});const saved=await call('alice',{operation:'save',operationId:'save',kind:'preference',text:'private preference'});expect(saved.status).toBe(200);expect((await call('bob',{operation:'get',entryId:saved.body.entry.id})).status).toBe(409);
- await mkdir(join(workspaces.root,'.coffee','mishu','memory.json.tmp'));expect((await call('alice',{operation:'save',operationId:'fails',kind:'preference',text:'uncommitted'})).status).toBe(409);expect((await call('alice',{operation:'list'})).body.entries.map((e:any)=>e.text)).toEqual(['private preference']);
- }finally{await host.close();await rm(root,{recursive:true,force:true});}
+ memoryWriteGate.path=join(workspaces.root,'.coffee','mishu','memory.');memoryWriteGate.fail=true;expect((await call('alice',{operation:'save',operationId:'fails',kind:'preference',text:'uncommitted'})).status).toBe(409);expect((await call('alice',{operation:'list'})).body.entries.map((e:any)=>e.text)).toEqual(['private preference']);
+ }finally{memoryWriteGate.fail=false;memoryWriteGate.path='';await host.close();await rm(root,{recursive:true,force:true});}
 });
 it('does not inherit memory after context replacement and restores only explicitly selected notes',async()=>{
  const root=await mkdtemp(join(tmpdir(),'mishu-memory-reset-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),host=new HostServer({port:0,token:'fixture',factory:new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')}),workspaces});
  const call=async(body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({id:source.id,action:'memory',...body})});return {status:response.status,body:await response.json()};};
  try{await host.start();await call({action:'select',selected:true});await call({operation:'configure',operationId:'enable',enabled:true});const saved=await call({operation:'save',operationId:'save',kind:'preference',text:'restore me'});await workspaces.commitContextReset(source.id,{id:'reset',expectedNativeId:source.id},'replacement');
  const status=await call({operation:'status'});expect(status.body.enabled).toBe(false);expect((await call({operation:'list'})).body.entries).toEqual([]);await call({operation:'configure',operationId:'enable-new',enabled:true});const restored=await call({operation:'restore',operationId:'restore',fromBinding:status.body.oldBindings[0].binding,entryId:saved.body.entry.id});expect(restored.body.noteOnly).toBe(true);expect(restored.body.entry.source.kind).toBe('restored');const authority=await call({action:'status'});expect(authority.body.enabled).toBe(false);expect(authority.body.targets).toEqual([]);
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('rejects a staged memory save when source selection is revoked before durable commit',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-memory-revoke-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),host=new HostServer({port:0,token:'fixture',factory:new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')}),workspaces});let release=()=>{};
+ const call=async(body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({id:source.id,action:'memory',...body})});return {status:response.status,body:await response.json()};};
+ try{await host.start();await call({action:'select',selected:true});await call({operation:'configure',operationId:'enable',enabled:true});const reached=new Promise<void>(r=>memoryWriteGate.reached=r);memoryWriteGate.path=join(workspaces.root,'.coffee','mishu','memory.');memoryWriteGate.resume=new Promise<void>(r=>release=r);
+  const pending=call({operation:'save',operationId:'revoked-write',kind:'preference',text:'must not commit'});await reached;expect((await call({action:'select',selected:false})).status).toBe(200);release();expect((await pending).status).toBe(409);memoryWriteGate.path='';await call({action:'select',selected:true});expect((await call({operation:'list'})).body.entries).toEqual([]);
+ }finally{release();memoryWriteGate.path='';memoryWriteGate.resume=undefined;await host.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('refuses a symlinked memory journal and never truncates predictable attacker-controlled temp/backup links',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mishu-memory-links-')),workspaces=new Workspaces(join(root,'work')),source=await workspaces.createChatConversation(),victim=join(root,'victim.json');let host:HostServer;const make=()=>new HostServer({port:0,token:'fixture',factory:new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:join(root,'sessions')}),workspaces});host=make();
+ const call=async(body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/mishu`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({id:source.id,action:'memory',...body})});return {status:response.status,body:await response.json()};};
+ try{await host.start();await call({action:'select',selected:true});await writeFile(victim,'PRIVATE_VICTIM');const dir=join(workspaces.root,'.coffee','mishu');await symlink(victim,join(dir,'memory.json.tmp'));await symlink(victim,join(dir,'memory.json.backup'));expect((await call({operation:'configure',operationId:'enable',enabled:true})).status).toBe(200);expect(await readFile(victim,'utf8')).toBe('PRIVATE_VICTIM');await host.close();await rm(join(dir,'memory.json'));await symlink(victim,join(dir,'memory.json'));host=make();await host.start();const rejected=await call({operation:'status'});expect(rejected.status).toBe(409);expect(JSON.stringify(rejected.body)).not.toContain('PRIVATE_VICTIM');expect(await readFile(victim,'utf8')).toBe('PRIVATE_VICTIM');
  }finally{await host.close();await rm(root,{recursive:true,force:true});}
 });
