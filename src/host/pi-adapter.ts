@@ -918,7 +918,10 @@ function projectPiUsage(entries:Record<string,any>[]):AgentUsageRecord[]{
   if(entry.type!=='message'||entry.message?.role!=='assistant'||typeof entry.id!=='string'||typeof entry.timestamp!=='string')continue;
   const m=entry.message,u=m.usage;if(!u||typeof m.model!=='string')continue;
   const row:AgentUsageRecord={callId:entry.id,model:[m.provider,m.model].filter(Boolean).join('/'),at:entry.timestamp,purpose,source:'native-log',status:String(m.stopReason??'unknown'),inputIncludesCache:false};
-  for(const field of ['input','output','cacheRead','cacheWrite'] as const)if(Number.isSafeInteger(u[field])&&u[field]>=0)row[field]=u[field];
+  // Pi initializes all counters to zero even when a provider omits usage.
+  // Without nonzero native evidence those defaults cannot establish a free call.
+  const hasUsage=['input','output','cacheRead','cacheWrite'].some(field=>Number.isSafeInteger(u[field])&&u[field]>0);
+  if(hasUsage)for(const field of ['input','output','cacheRead','cacheWrite'] as const)if(Number.isSafeInteger(u[field])&&u[field]>=0)row[field]=u[field];
   rows.push(row);
  }
  return rows;
