@@ -1071,6 +1071,56 @@ role, original/model/historical-note label, redaction marker and returned range.
 Coverage/freshness, lost anchor and truncation are explicit. No persistent search
 index is introduced. UI/native model acceptance is separate from fixture proof.
 
+## Secretary private memory (#7 implementation candidate)
+
+Pi Chat is the only secretary source (Server #122); other engines remain targets.
+The authenticated Browser `/api/mishu` action `memory` and direct native
+`/mishu-memory` operate Host-owned `.coffee/mishu/memory.json` schema 1. Default
+off; selection/setup grants neither memory opt-in nor sharing. All requests derive
+account from the existing scoped slot and secretary from its exact current binding.
+Reads: status/list/get/export/history (old binding notes only). Mutations:
+configure/save/delete/restore require operationId, edits/deletes require revision.
+Conflicting IDs or revisions reject. Deleted entries retain tombstones and cannot
+be edited or restored from the same binding. New bindings start off and empty;
+explicit old-note restoration copies a selected live note to a new ID only.
+
+Capacity is 500 entries including tombstones per binding, 2000 chars/entry,
+20 historical revisions/entry, 2000 retained idempotency receipts/binding, 4 MiB
+whole scoped file, and 50 entries/export page. Capacity fails without committing;
+no receipt is silently evicted. Revision operations serialize and atomically rename
+only after final scope/binding/selection validation. At most 32 mode-0600 content-addressed predecessor snapshots are kept; they are
+immutable and never restored automatically. Reads reject symlinks/nonfiles, use a
+bounded no-follow descriptor, and writes use exclusive random temporary files.
+The authority gate is rechecked after staging and immediately before atomic rename. Schema 1 is initial; unknown versions/corruption remain untouched,
+produce a diagnostic and do not block ordinary Chat. Recovery is offline from a
+private backup with the service safely quiescent; no automatic rollback resurrects
+deleted entries. No claim of erasing copies in native history or backups is made.
+Credentials are rejected from memory text. Sources retain manual origin or exact
+Host-verified user message excerpts, never caller-supplied account identities.
+
+Candidate validation: public HTTP test covers explicit opt-in, source/account
+isolation, revision conflict, tombstone/restart, failed save and old-binding
+note-only restore. Browser controller test covers model-free entry and cancel.
+Production and real desktop/mobile acceptance remain separate integration gates.
+
+## Natural memory candidate (#8)
+
+Pi `mishu` tool action `memory` exposes status/list/get/export/save/delete, with
+memoryKind, stable operationId, entryId/expectedRevision and memoryQuote. Host derives
+requestId and exact quote offsets from the current direct delivered user message;
+caller-supplied source/account fields, report origin, expired turns, forged quotes,
+model opt-in and model old-note restoration are refused. Nonextractive statements
+become separate candidates and cannot replace an existing confirmed fact. A strict
+candidate is excluded from transient context until the user explicitly edits it.
+Every new Pi context request reads the current ledger, excludes deleted/candidate
+entries and unrelated project facts, and clips to 6000 characters. Current user
+corrections prevail; no memory operation changes live execution authorization.
+
+Native Pi public WS + synthetic provider verification exercises tool save,
+correction, fresh transient context, forged-source refusal and deletion. This is
+real native Pi transport/plugin integration with deterministic model output, not
+proof of a real model's language understanding or native compaction behavior.
+
 ## Secretary experience candidate: ordinary decisions (#10)
 
 `clarifications` runtime v1 supports list/get/create/cancel. Creation is explicitly
@@ -1092,35 +1142,51 @@ optional state fields rather than silently ignoring them. Public HTTP and Browse
 controller tests cover recovery, exact answers, expiry, revocation and stale UI.
 Native capability and real Browser acceptance remain separate final quality gates.
 
-## Secretary private memory (#7 implementation candidate)
+## Secretary experience candidate: unified collaboration (#11)
 
-Pi Chat is the only secretary source (Server #122); other engines remain targets.
-The authenticated Browser `/api/mishu` action `memory` and direct native
-`/mishu-memory` operate Host-owned `.coffee/mishu/memory.json` schema 1. Default
-off; selection/setup grants neither memory opt-in nor sharing. All requests derive
-account from the existing scoped slot and secretary from its exact current binding.
-Reads: status/list/get/export/history (old binding notes only). Mutations:
-configure/save/delete/restore require operationId, edits/deletes require revision.
-Conflicting IDs or revisions reject. Deleted entries retain tombstones and cannot
-be edited or restored from the same binding. New bindings start off and empty;
-explicit old-note restoration copies a selected live note to a new ID only.
+`collaboration` v1 list/get is a scoped projection of TaskBrief, its existing
+Assignment, task-linked information receipts and ordinary questions. It adds no
+executor. Every item has one current contact and immutable original secretary/task
+reply destination. Title refresh does not alter binding. State separates recorded,
+queued, running, awaiting-reply, waiting-user, failed, uncertain, reply-available,
+reported and stopped. Execution end, report commit, unknown read receipt and pending
+user acceptance remain distinct. Missing replies never count as success.
 
-Capacity is 500 entries including tombstones per binding, 2000 chars/entry,
-20 historical revisions/entry, 2000 retained idempotency receipts/binding, 4 MiB
-whole scoped file, and 50 entries/export page. Capacity fails without committing;
-no receipt is silently evicted. Revision operations serialize and atomically rename
-only after final scope/binding/selection validation. A mode-0600 previous-save
-backup is kept. Schema 1 is initial; unknown versions/corruption remain untouched,
-produce a diagnostic and do not block ordinary Chat. Recovery is offline from a
-private backup with the service safely quiescent; no automatic rollback resurrects
-deleted entries. No claim of erasing copies in native history or backups is made.
-Credentials are rejected from memory text. Sources retain manual origin or exact
-Host-verified user message excerpts, never caller-supplied account identities.
+An optional `send.taskId` links an information contact to its exact saved task and
+target. Host refuses wrong-target links; linked live task receipts are protected
+from rotation. Ordinary bridge messages keep their original idempotency fingerprints
+when taskId is omitted. No private memory/history is automatically included.
+The Browser collaboration tab and `/mishu-collaboration` show readable responsible
+parties, expected results, remaining responsibility, timestamps and reply destination.
 
-Candidate validation: public HTTP test covers explicit opt-in, source/account
-isolation, revision conflict, tombstone/restart, failed save and old-binding
-note-only restore. Browser controller test covers model-free entry and cancel.
-Production and real desktop/mobile acceptance remain separate integration gates.
+## Secretary experience candidate: bounded followups (#12)
+
+`followups` v1 list is model-readable. Create/stop require the direct Browser user
+or the one-shot `/mishu-followups` command window. A plan selects 1–20 existing
+TaskBriefs (one per responsible target), fixed information-only text (1000 chars),
+explicit total cap 1–5 and per-target cap 1–3, `trigger:new-reply` and the supported
+`stopCondition:budget-user-or-access`. Unsupported custom triggers/conditions fail.
+Host persists exact original source/target bindings, authorization generation,
+TaskBrief revision and scope fingerprint, user-event proof and counts.
+
+Only a new complete task-linked reply/fact can reserve a contact. Identical content
+with a new message identity stays quiet; existing evidence becomes the initial
+baseline and does not replay. Reservation and spent counts are durable before
+existing send transport is called. Stable message IDs and uncertain outcomes are
+retained across failures/restarts; unknown delivery is never automatically retried.
+Counts are contact limits, not token or monetary estimates. Target consumption
+remains target usage. The plan adds no model planner or polling timer.
+
+Scope changes, target/source rebind, revocation or stopped tasks invalidate the
+plan. Native delivery checks the same reservation again. Stop only prevents future
+plan contact; it never stops target work. Reaching either relevant budget preserves
+remaining responsibility. The Browser plan form/status/stop controls and native
+command show counts, last contact evidence and limits. Reports continue under the
+existing separate source capability and opt-in queue; a followup plan does not
+automatically enable notifications or unattended secretary model execution.
+
+The integration candidate's scoped public tests use deterministic native fixtures;
+actual source-model/desktop/mobile acceptance and final review remain release gates.
 
 ### Usage and auxiliary admission resource (MISHU #13)
 

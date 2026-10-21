@@ -218,9 +218,9 @@ for await (const line of input) {
         send({
           type: "message_update",
           usage: {},
-          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `echo: ${command.message}` },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: process.env.FAKE_PI_FIXED_REPLY ?? `echo: ${command.message}` },
         });
-        const assistant = { role: "assistant", content: [{ type: "text", text: `echo: ${command.message}` }] };
+        const assistant = { role: "assistant", content: [{ type: "text", text: process.env.FAKE_PI_FIXED_REPLY ?? `echo: ${command.message}` }] };
         appendEntry(assistant);
         send({ type: "message_end", message: assistant });
         const settle=()=>{streaming=false;send({type:"agent_settled",...(process.env.FAKE_SETTLED_ABORTED==="1"?{aborted:true}:{})});};
