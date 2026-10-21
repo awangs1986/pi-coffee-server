@@ -38,7 +38,11 @@ export interface AgentHistory {
 export interface HistoryDisplayPage extends AgentHistory { olderCursor:string|null; coverage:"recent"; }
 
 /** A read-only native-source audit. Unknown history must never replace a good index. */
+export interface AgentUsageRecord {callId:string;model:string;at:string;purpose:"foreground"|"report"|"memory"|"context";source:"native-log"|"native-event";input?:number;output?:number;cacheRead?:number;cacheWrite?:number;status?:string;inputIncludesCache?:boolean}
+
 export interface AgentHistoryRead {
+  /** Native call/message identities, never projected positional display IDs. */
+  usage?: AgentUsageRecord[];
   history: AgentHistory;
   binding: string;
   sourceGeneration: string;

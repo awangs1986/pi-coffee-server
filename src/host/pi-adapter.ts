@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSourceLines, readStableSource, sourceHash, unknownHistory } from "./native/history-source.js";
 import { nativeHistoryJob, nativeHistoryNeedsWorker } from "./native/history-pool.js";
-import type { AgentHistoryRead } from "./agent-adapter.js";
+import type { AgentHistoryRead,AgentUsageRecord } from "./agent-adapter.js";
 import { RpcClient, SessionManager, parseSkillBlock } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 import type {
@@ -251,7 +251,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
         if (entry.parentId != null && !byId.has(entry.parentId)) return unknownHistory(binding);
         entry = entry.parentId == null ? undefined : byId.get(entry.parentId);
       }
-      return { history: projectHistory(entries, leafId, { preserveToolContent: true }), binding: `${binding}:${source.identity}:${sourceHash(JSON.stringify(branches.reverse()))}`, sourceGeneration: source.generation, sourceFreshness: "current", checkedAt: new Date().toISOString() };
+      return { usage:projectPiUsage(entries),history: projectHistory(entries, leafId, { preserveToolContent: true }), binding: `${binding}:${source.identity}:${sourceHash(JSON.stringify(branches.reverse()))}`, sourceGeneration: source.generation, sourceFreshness: "current", checkedAt: new Date().toISOString() };
     } catch { return unknownHistory(binding); }
   }
 
@@ -908,4 +908,21 @@ function resolvePiCliPath(): string {
   // is installed (npm, pnpm, or a future vendored adapter).
   const packageEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
   return join(dirname(packageEntry), "bundle", "cli.js");
+}
+
+/** Native entry identities merge live recovery and rereads without counting deltas twice. */
+function projectPiUsage(entries:Record<string,any>[]):AgentUsageRecord[]{
+ const rows:AgentUsageRecord[]=[];let purpose:AgentUsageRecord['purpose']='foreground';
+ for(const entry of entries){
+  if(entry.type==='custom'&&entry.customType==='coffee-native-run')purpose=entry.data?.origin==='task-report'?'report':'foreground';
+  if(entry.type!=='message'||entry.message?.role!=='assistant'||typeof entry.id!=='string'||typeof entry.timestamp!=='string')continue;
+  const m=entry.message,u=m.usage;if(!u||typeof m.model!=='string')continue;
+  const row:AgentUsageRecord={callId:entry.id,model:[m.provider,m.model].filter(Boolean).join('/'),at:entry.timestamp,purpose,source:'native-log',status:String(m.stopReason??'unknown'),inputIncludesCache:false};
+  // Pi initializes all counters to zero even when a provider omits usage.
+  // Without nonzero native evidence those defaults cannot establish a free call.
+  const hasUsage=['input','output','cacheRead','cacheWrite'].some(field=>Number.isSafeInteger(u[field])&&u[field]>0);
+  if(hasUsage)for(const field of ['input','output','cacheRead','cacheWrite'] as const)if(Number.isSafeInteger(u[field])&&u[field]>=0)row[field]=u[field];
+  rows.push(row);
+ }
+ return rows;
 }
