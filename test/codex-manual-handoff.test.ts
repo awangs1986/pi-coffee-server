@@ -102,3 +102,19 @@ it('drains manual preparation on Host shutdown without committing or replaying i
  await app.host.close();
  const task=(await app.workspaces.lookup(app.task.id))!;expect(task.takeover?.status).toBe('failed');expect(task.nativeBinding?.id).toBe(app.oldId);
 });
+it('uses the same hidden-seed projection for passive indexed history as live history',async()=>{
+ const app=await setup();app.send({type:'compact',mode:'handoff',acceptDrift:true,requestId:'indexed-handoff'});
+ await expect.poll(()=>app.frames.find(f=>f.requestId==='indexed-handoff'&&['ack','error'].includes(f.type)),{timeout:15000}).toMatchObject({type:'ack'});
+ const task=(await app.workspaces.lookup(app.task.id))!,id=task.nativeBinding!.id!;
+ const store=JSON.parse(await readFile(join(app.root,'codex','fake-threads.json'),'utf8')),native=store[id];
+ const directory=join(app.root,'codex','sessions','2026','10','22');await mkdir(directory,{recursive:true});
+ const rows:unknown[]=[{type:'session_meta',payload:{id,cwd:task.cwd}}];
+ for(const turn of native.turns)for(const item of turn.items)rows.push({type:'event_msg',payload:{type:'item_completed',thread_id:id,turn_id:turn.id,item}});
+ await writeFile(join(directory,`rollout-2026-10-22-${id}.jsonl`),rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+ const indexed=await app.factory.readHistory(app.task.id);
+ expect(indexed.sourceFreshness).toBe('current');
+ expect(indexed.history.entries.some(e=>e.kind==='user'&&e.text==='Keep my pending question unanswered')).toBe(true);
+ expect(indexed.history.entries.some(e=>e.kind==='user'&&e.text.startsWith('[PI Coffee manual Codex handoff'))).toBe(false);
+ expect(indexed.history.entries.some(e=>e.kind==='assistant'&&e.text.includes('[FORK_READY]'))).toBe(false);
+ expect(indexed.history.entries.find(e=>e.kind==='note'&&e.id.endsWith(':switch'))).toMatchObject({text:'Codex 交接压缩 0.1.0：历史保留，继续使用同一对话和目录。'});
+});

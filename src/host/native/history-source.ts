@@ -3,7 +3,7 @@ import { lstat, open } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { join } from "node:path";
 import type { AgentHistory, AgentHistoryRead } from "../agent-adapter.js";
-import type { TakeoverSegment } from "../takeover.js";
+import {contextSegmentNote,visibleContextEntries,type TakeoverSegment} from "../takeover.js";
 import { checkedTaskRoot } from "../task-storage.js";
 
 export const sourceHash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
@@ -61,8 +61,8 @@ export async function readTakeoverHistory(read: AgentHistoryRead, root: string, 
   if (!Array.isArray(history.entries) || history.entries.some(entry => !entry || typeof entry.id !== "string")) throw new Error("Invalid takeover history");
   read.history.entries = [
     ...history.entries.map(entry => ({ ...entry, id: `${segment.id}:${entry.id}` })),
-    { kind: "note", id: `${segment.id}:switch`, at: segment.at, text: `Agent 交接：${segment.from === "pi" ? "Pi" : "Codex"} → ${segment.to === "pi" ? "Pi" : "Codex"}。历史保留；新 Agent 使用独立原生会话。` },
-    ...read.history.entries.filter(entry => !(entry.kind === "user" && entry.text.startsWith("[PI Coffee automatic takeover v1]"))).map(entry => entry.kind === "assistant" ? { ...entry, text: entry.text.replace(/\n?\[TAKEOVER_(READY|BLOCKED)\]\s*$/, "") } : entry),
+    contextSegmentNote(segment),
+    ...visibleContextEntries(read.history.entries),
   ];
   return { ...read, sourceGeneration: sourceHash(`${read.sourceGeneration}:${previous.generation}`) };
 }

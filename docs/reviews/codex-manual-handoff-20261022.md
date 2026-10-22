@@ -54,3 +54,26 @@ Handoff. Publication requires the current source-bound review/final verification
 workflow. Activation requires the exact published commit, fresh-clone verification,
 and explicit maintenance authorization. Original native threads/evidence are
 retained for inspection on both successful and failed operations.
+
+## Pre-publication review follow-up
+
+Reviewed candidate `38b0b55` against baseline `ef76d15`, serially in the current
+conversation under the repository batch policy. No review Agent fan-out was used
+for this pre-publication pass.
+
+Standards: possible duplicated display projection in `takeover.ts` and
+`native/history-source.ts` caused the two native-history readers to diverge.
+Extracted shared projection and segment-note helpers; no remaining blocking
+standard violation was identified.
+
+Spec: the passive audit could reintroduce the hidden Codex seed request and
+`FORK_READY` marker, and label compaction as an Agent switch. A public native
+factory regression reproduced the leaked seed before the fix; live/recent and
+passive reads now use the same projection and versioned compaction note. The
+regression and related native-history suites passed 21 tests after correction.
+
+Security: authenticated socket scope selects the task; native binding and private
+evidence paths are Host-owned, and drift confirmation is validated. Preparation
+retains the existing mechanically disabled tools/MCP policy. No new dependencies,
+public transcript route or arbitrary RPC bridge. No blocking finding identified.
+Real-provider summary quality remains outside synthetic acceptance.

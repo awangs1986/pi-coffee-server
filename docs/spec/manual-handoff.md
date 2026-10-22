@@ -122,7 +122,10 @@ Both active Codex Work and repository-free Codex Chat support this action.
    binding atomically. Conversation ID, working directory, repository, attachments
    and complete visible history remain. A versioned compaction segment records
    the replacement. Hidden seed scaffolding is not displayed as a user message.
-   Existing segmented-history readers preserve original evidence after restart.
+   Live reads, recent pages and passive native audits share one display projection:
+   hide the internal seed request/ready marker and label the versioned Handoff
+   segment consistently. Existing segmented-history readers preserve original
+   evidence after restart.
 
 Browser disconnection does not abandon the Host-owned operation. Reopening shows
 `isCompacting`; Stop cancels preparation rather than the original conversation.

@@ -55,22 +55,29 @@ export async function reconstruct(session:AgentSession,prompt:string,timeoutMs=1
   const background=await session.backgroundState?.();if(!background?.known||background.active)throw new Error('Target background work is active or unknown');
  }finally{clearTimeout(timer);unsubscribe();signal?.removeEventListener('abort',failOnAbort);}
 }
+/** Canonical display projection shared by live adapters and passive native audits. */
+export function visibleContextEntries(entries:HistoryEntry[]):HistoryEntry[]{
+ return entries.filter(entry=>!(entry.kind==='user'&&(entry.text.startsWith(TAKEOVER_PREFIX)||entry.text.startsWith('[PI Coffee manual Codex handoff')))).map(entry=>entry.kind==='assistant'?{...entry,text:entry.text.replace(/\n?\[(?:TAKEOVER_(?:READY|BLOCKED)|FORK_READY)\]\s*$/,'')}:entry);
+}
+export function contextSegmentNote(segment:TakeoverSegment):HistoryEntry{
+ return {kind:'note',id:segment.id+':switch',at:segment.at,text:segment.purpose==='compaction'?`Codex 交接压缩 ${segment.version??''}：历史保留，继续使用同一对话和目录。`:`Agent 交接：${segment.from==='pi'?'Pi':'Codex'} → ${segment.to==='pi'?'Pi':'Codex'}。历史保留；新 Agent 使用独立原生会话。`};
+}
 export async function priorHistory(root:string,segment:TakeoverSegment):Promise<HistoryEntry[]>{
  const dir=join(root,'takeover');await checkedTaskRoot(dir);
  const history:AgentHistory=JSON.parse(await readFile(join(dir,segment.id+'-history.json'),'utf8'));
- return [...history.entries.map(e=>({...e,id:segment.id+':'+e.id})),{kind:'note',id:segment.id+':switch',at:segment.at,text:segment.purpose==='compaction'?`Codex 交接压缩 ${segment.version??''}：历史保留，继续使用同一对话和目录。`:`Agent 交接：${segment.from==='pi'?'Pi':'Codex'} → ${segment.to==='pi'?'Pi':'Codex'}。历史保留；新 Agent 使用独立原生会话。`}];
+ return [...history.entries.map(e=>({...e,id:segment.id+':'+e.id})),contextSegmentNote(segment)];
 }
 export function withPriorHistory(session:AgentSession,previous:HistoryEntry[]|(()=>Promise<HistoryEntry[]>)):AgentSession{
  const prior=()=>typeof previous==='function'?previous():Promise.resolve(previous);
  const hasPrior=typeof previous==='function'||previous.length>0;
- const visible=(entries:HistoryEntry[])=>entries.filter(e=>!(e.kind==='user'&&(e.text.startsWith(TAKEOVER_PREFIX)||e.text.startsWith('[PI Coffee manual Codex handoff')))).map(e=>e.kind==='assistant'?{...e,text:e.text.replace(/\n?\[(?:TAKEOVER_(?:READY|BLOCKED)|FORK_READY)\]\s*$/,'')}:e);
+
  return new Proxy(session,{get(target,key){
-  if(key==='getHistory')return async()=>{const history=await target.getHistory();return {...history,entries:[...await prior(),...visible(history.entries)]};};
+  if(key==='getHistory')return async()=>{const history=await target.getHistory();return {...history,entries:[...await prior(),...visibleContextEntries(history.entries)]};};
   if(key==='getHistoryPage'&&target.getHistoryPage)return async(cursor?:string)=>{
    if(cursor?.startsWith('prefix:')){const entriesBefore=await prior();const end=cursor==='prefix:latest'?entriesBefore.length:Number(cursor.slice(7));if(!Number.isSafeInteger(end)||end<0||end>entriesBefore.length)throw Error('history_page_expired');const entries=entriesBefore.slice(Math.max(0,end-40),end);return {entries,leafId:entries.at(-1)?.id??null,coverage:'recent' as const,olderCursor:end>40?'prefix:'+(end-40):null};}
    if(cursor&&!cursor.startsWith('native:'))throw Error('history_page_expired');
    const page=await target.getHistoryPage!(cursor?decodeURIComponent(cursor.slice(7)):undefined);
-   return {...page,entries:visible(page.entries),olderCursor:page.olderCursor?'native:'+encodeURIComponent(page.olderCursor):hasPrior?'prefix:latest':null};
+   return {...page,entries:visibleContextEntries(page.entries),olderCursor:page.olderCursor?'native:'+encodeURIComponent(page.olderCursor):hasPrior?'prefix:latest':null};
   };
   const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
  }});
