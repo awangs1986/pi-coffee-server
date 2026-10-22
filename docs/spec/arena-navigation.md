@@ -357,14 +357,19 @@ It does not cover the workbench, take focus, or consume Enter. A close control a
 Escape dismiss it; reduced-motion mode avoids animation. The previous oversized
 character artwork is no longer displayed. The workbench layout is unchanged.
 
-A running conversation uses a small light-blue (`#7CBAE8`) pixel cat in the sidebar instead of a
-pulsing blue dot. Conversations whose last observed native run settled show a static
+A running conversation uses the owner's supplied 64×64 black pixel running-cat
+GIF (`public/black-cat-running-64.gif`, 12 frames, 960 ms loop, owner revision
+2026-10-22). Preserve the original animation bytes. The sidebar scales it to 28×28;
+selected synchronization feedback uses 64×64. A `picture` media source selects
+`black-cat-running-still.gif`, extracted losslessly from the first frame, for
+reduced-motion users: CSS animation suppression alone cannot pause a GIF.
+Conversations whose last observed native run settled show a static
 pixel coffee cup until the latest completed reply has been viewed (Server #100).
 Unread completions survive Web reconnection; merely opening a cached preview does
 not acknowledge them. Waiting
 retains its question mark. An idle row
 has no running cat. Reduced-motion mode shows the cat without animation, and the
-dark theme adds a subtle outline to retain contrast.
+dark theme adds a thin pale outline using CSS without recoloring the supplied artwork.
 
 The owner clarified that compact welcome means simplifying the original cat-maid character, not replacing her with a coffee-cup icon. The character asset remains transparent and the greeting stays small and nonblocking.
 

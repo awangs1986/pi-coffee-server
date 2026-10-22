@@ -10,7 +10,9 @@ describe('selected conversation sync cat', () => {
     const host = document.createElement('div'); document.body.append(host);
     const status = createSyncStatus(host);
     status.select('A'); status.update({ conversationId: 'A', state: 'syncing' });
-    expect(host.querySelector('.running-cat')).not.toBeNull();
+    expect(host.querySelector('.running-cat img')?.getAttribute('src')).toBe('/black-cat-running-64.gif');
+    expect(host.querySelector('.running-cat source')?.getAttribute('media')).toBe('(prefers-reduced-motion: reduce)');
+    expect(host.querySelector('.running-cat source')?.getAttribute('srcset')).toBe('/black-cat-running-still.gif');
     expect(host.querySelector('.conversation-sync-status')?.getAttribute('data-running')).toBe('true');
     status.select('B');
     status.update({ conversationId: 'A', state: 'synced' });

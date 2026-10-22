@@ -19,7 +19,7 @@ import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
 import {createDocumentDownloads} from './document-downloads.js';
 import {initForkControls} from "./fork.js";
 import {createSidebarInteraction} from './sidebar-interaction.js';
-import {pixelCat} from './sync-status.js';
+import {runningCat} from './sync-status.js';
 import {renderRuntimeStatus} from './runtime-status.js';
 import {initGitHubAccounts,githubAccountRequest} from "./github-accounts.js";
 import {createDialogManager} from './dialogs.js';
@@ -1129,7 +1129,7 @@ function openGroupMenu(group,anchor){
   menuNode.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-menuNode.offsetWidth-8))+'px';
 }
 
-function smallRunningCat(){const cat=pixelCat(document);cat.classList.add('sidebar-running-cat');return cat;}
+function smallRunningCat(){const cat=runningCat(document);cat.classList.add('sidebar-running-cat');return cat;}
 function smallFinishedCoffee(){
   const label='已完成，待查看';
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');

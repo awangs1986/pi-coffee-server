@@ -416,3 +416,14 @@ describe("Web Server seam", () => {
     }
   });
 });
+
+it('serves the supplied animated cat and its static reduced-motion frame without changing bytes', async () => {
+  web = new WebServer({ host: '127.0.0.1', port: 0, hostUrl: 'ws://127.0.0.1:1/host', publicDir: resolve('public') });
+  await web.start();
+  for (const name of ['black-cat-running-64.gif', 'black-cat-running-still.gif']) {
+    const response = await fetch(`http://127.0.0.1:${web.address().port}/${name}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/gif');
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(readFileSync(resolve('public', name)));
+  }
+});

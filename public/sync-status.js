@@ -8,29 +8,23 @@ const TEXT = {
 };
 const FAILURES = new Set(['error', 'timeout', 'offline']);
 
-export function pixelCat(document) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 28 20');
-  svg.setAttribute('class', 'running-cat');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  svg.setAttribute('shape-rendering', 'crispEdges');
-  // Only fixed, code-owned pixel geometry enters this SVG. No transcript markup.
-  svg.innerHTML = '<g class="cat-body">' +
-    '<path class="cat-tail" d="M2 3h2v5h4v3H4V9H2z"/>' +
-    '<path d="M7 8h10V6h2V2h2v2h3V2h2v9h-3v2H9v-1H7z"/>' +
-    '<path class="cat-eye" d="M23 6h1v1h-1z"/>' +
-    '<g class="cat-legs cat-legs-a"><path d="M8 12h3v3H8v2H5v-2h3zm10 0h3v4h3v2h-5v-3h-1z"/></g>' +
-    '<g class="cat-legs cat-legs-b"><path d="M9 12h3v5H9zm8 0h3v5h-3z"/></g>' +
-    '<g class="cat-legs cat-legs-c"><path d="M8 12h3v2h3v2H9v-2H8zm11 0h3v3h-3v3h-4v-2h3v-2h1z"/></g>' +
-    '<g class="cat-legs cat-legs-d"><path d="M10 12h3v4h-3zm7 0h3v3h-3z"/></g></g>';
-  return svg;
+export function runningCat(document) {
+  const picture = document.createElement('picture');
+  picture.className = 'running-cat'; picture.setAttribute('aria-hidden', 'true');
+  const still = document.createElement('source');
+  still.media = '(prefers-reduced-motion: reduce)';
+  still.srcset = '/black-cat-running-still.gif'; still.type = 'image/gif';
+  const image = document.createElement('img');
+  image.src = '/black-cat-running-64.gif'; image.alt = '';
+  image.width = 64; image.height = 64; image.draggable = false;
+  picture.append(still, image);
+  return picture;
 }
 
 export function createSyncStatus(container, { onRetry = () => {}, timeoutMs = 8000, onTimeout = () => {} } = {}) {
   const document = container.ownerDocument;
   const root = document.createElement('div'); root.className = 'conversation-sync-status'; root.hidden = true;
-  const cat = pixelCat(document);
+  const cat = runningCat(document);
   const text = document.createElement('span'); text.className = 'sync-status-text';
   text.setAttribute('role', 'status'); text.setAttribute('aria-live', 'polite'); text.setAttribute('aria-atomic', 'true');
   const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'sync-retry-button';

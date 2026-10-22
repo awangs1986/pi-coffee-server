@@ -269,3 +269,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - 2026-10-22: [First-message readiness](spec/conversation-workspaces.md#first-message-readiness-2026-10-22): creation acknowledgement opens the Agent independently of auxiliary workspace reads; bounded confirmation restores drafts and retains the retry ID.
 
 - 2026-10-22: [GitHub Actions authorization](spec/github-accounts.md#github-actions-workflow-authorization-2026-10-22) requests approved `workflow` scope; existing accounts require one explicit reconnection, retaining user/task bindings.
+
+- 2026-10-22: [Running indicator](spec/arena-navigation.md) uses the owner-supplied 64×64 black running-cat GIF, scaled to 28×28 in the sidebar, with a single-frame reduced-motion source; completion states are retained.
