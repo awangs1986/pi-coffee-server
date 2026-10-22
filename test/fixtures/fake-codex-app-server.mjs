@@ -108,7 +108,13 @@ async function runTurn(thread, input, options) {
     Object.assign(tool,{status:result.isError?'failed':'completed',result});turn.items.push(tool);notify('item/completed',{item:tool,threadId:thread.id,turnId});
     if(text.startsWith('mishu-hold:'))await waitTrackingGate('allow-mishu-terminal');
   }
-  const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]');
+  const preparing=text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('[PI Coffee Handoff Fork]')||text.startsWith('Prepare a handoff for manual Codex')||text.startsWith('[PI Coffee manual Codex handoff');
+  if(text.startsWith('Prepare a handoff for manual Codex')){
+    if(process.env.FAKE_MANUAL_HANDOFF==='fail'){
+      turn.status='failed';turn.error={message:'fixture handoff generation failed'};active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn});return;
+    }
+    if(process.env.FAKE_MANUAL_HANDOFF==='hold')while(!state.interrupted)await new Promise(resolve=>setTimeout(resolve,20));
+  }
   if(preparing&&process.env.FORK_POLICY_ASSERT){
     const policy=settings.get(thread.id);
     if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
@@ -186,7 +192,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = text==='report planning mode' ? `mode=${options.collaborationMode?.mode??'unset'}` : text.startsWith('Prepare a handoff for a NEW independent fork') ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : text.startsWith('[PI Coffee Handoff Fork]') ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text==='report planning mode' ? `mode=${options.collaborationMode?.mode??'unset'}` : (text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('Prepare a handoff for manual Codex')) ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : (text.startsWith('[PI Coffee Handoff Fork]')||text.startsWith('[PI Coffee manual Codex handoff')) ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: text.startsWith('run delayed final tracking')?'final_answer':null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);

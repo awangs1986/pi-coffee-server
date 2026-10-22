@@ -8,13 +8,13 @@ This decision supersedes older Web manual local-fold and automatic Handoff caden
 
 ## User contract
 
-The Pi Context Usage action is **交接压缩**. Confirm **交接压缩（实验性功能）**:
+The Pi task-details action is **交接压缩**. Confirm **交接压缩（实验性功能）**:
 “交接压缩不保证避免上下文漂移，适合在多次系统自动压缩后重新聚焦当前项目。
 自动压缩仍使用 Pi 原生自动压缩。同一对话、历史和项目文件保留。”
 Cancel changes nothing. Switching tasks while the dialog is open invalidates confirmation.
-Codex/Claude keep their native adapter capabilities and are never labelled Pi Handoff.
+Codex has a separate Host-owned manual Handoff port described below. Claude keeps its native adapter capabilities. The Pi-only plugin is not loaded into Codex.
 
-Manual confirmation runs the independently maintained `context-handoff` plugin,
+For Pi, manual confirmation runs the independently maintained `context-handoff` plugin,
 not legacy local folding. Its existing attributed Task State and original-evidence
 index become a native custom compaction in the **same native session**. The visible
 Conversation, workspace, attachments and original history remain. It does not create
@@ -77,3 +77,71 @@ sessions/background work are idle, remove legacy context/Harness overrides and e
 one copy of each plugin. Keep the previous Server/plugin release and task data for
 rollback. Reverting to Handoff 0.1.0 would restore its old cadence policy; disabling
 Handoff and keeping native Pi is the safer recovery option.
+
+## Codex manual Handoff (accepted 2026-10-22)
+
+The existing lower-right task-details button also reads **交接压缩** for Codex.
+Only an explicit click followed by the experimental drift confirmation selects
+this operation. There is no threshold, idle timer, overflow handler, reconnect,
+model instruction or background watcher that schedules it. Codex native automatic
+compaction remains native. Typed `/compact` and the oversized-context recovery
+button continue to request ordinary native compaction; neither silently selects
+Handoff. Pi behavior remains unchanged.
+
+The Codex protocol is independently identified as **0.1.0** in
+`src/host/codex/handoff.ts`; it is part of the Server/Host adapter, not a Pi package.
+The Web sends validated `compact` with `mode: "handoff"` and `acceptDrift: true`.
+Omitting the mode preserves the existing native adapter operation. Unknown modes
+or an unconfirmed Handoff are rejected. Host chooses the authenticated socket's
+open task and native binding; clients cannot supply native IDs or evidence paths.
+Both active Codex Work and repository-free Codex Chat support this action.
+
+1. Require an idle task, empty instruction queue, no pending question and known
+   idle background state. Host blocks prompt delivery, model/settings changes,
+   Fork, reset, another compaction and retirement throughout the operation.
+2. Persist a private original display-history snapshot, readable records/index,
+   source native binding, operation ID and protocol version inside the task's
+   `takeover/` evidence directory. The original native thread is retained.
+3. Make one native extraction Fork and generate a bounded handoff from its current
+   context. Include accepted requirements/corrections, decisions, unresolved user
+   questions, file/test evidence, source references and the exact stopping point.
+   Credentials must be redacted. The exported original records remain recoverable
+   evidence; the extraction does not claim to re-audit the entire historical task.
+4. Close extraction before creating one fresh native thread. Seed it with the
+   handoff and evidence pointer, require a settled acknowledgement and wait for
+   the user's next message. Both model turns use the existing enforced tool-free
+   preparation policy: executable features/MCP disabled, read-only sandbox,
+   network disabled, and unexpected tools/requests rejected. Each preparation
+   turn has a 180-second deadline and a bounded nonempty result. There is no
+   parallel batch, automatic retry or replay of historical commands.
+5. Reopen the seeded thread with ordinary Codex runtime policy. Preserve model,
+   thinking effort, speed, context preset, Plan mode and title. Native Goal
+   metadata is included as historical task intent; automatic Goal execution is
+   not copied to the new native thread. The confirmation explains this boundary.
+6. Recheck source/background state and original binding, then commit the new
+   binding atomically. Conversation ID, working directory, repository, attachments
+   and complete visible history remain. A versioned compaction segment records
+   the replacement. Hidden seed scaffolding is not displayed as a user message.
+   Existing segmented-history readers preserve original evidence after restart.
+
+Browser disconnection does not abandon the Host-owned operation. Reopening shows
+`isCompacting`; Stop cancels preparation rather than the original conversation.
+A failed generation, missing marker, unexpected work, timeout, Host shutdown or
+stale binding stops preparation and retains the original binding. Interrupted
+preparations are marked failed on Host restart and are never replayed. Retained
+native threads/evidence are not deleted by rollback. Failure after a durable
+binding commit must not pretend the original binding is still active.
+
+Clearing a Chat after Handoff clears its display-prefix metadata too; reopening
+must not restore pre-clear history. Retained native identities and disk evidence
+stay retained under the existing Chat-reset policy. Handoff does not confer Work
+instructions, runner pointers or new system guidance on ordinary Chat.
+
+Evidence: `test/codex-manual-handoff.test.ts` exercises the authenticated Host
+WebSocket, real native adapter with synthetic App Server, native compaction
+separation, confirmation validation, failure preservation, conflict rejection,
+reconnect/Stop, settings/history preservation and reset after Handoff.
+`scripts/probe-codex-commands.mjs` drives the actual Browser button, cancellation,
+selection fencing and native slash-command separation. These checks validate
+orchestration, not real-provider summary quality or freedom from drift.
+Source publication, package version and production activation remain separate.

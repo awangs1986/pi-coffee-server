@@ -262,7 +262,7 @@ export type ClientFrame = (
   | { v: typeof PROTOCOL_VERSION; type: "get_commands" }
   | { v: typeof PROTOCOL_VERSION; type: "get_extensions" }
   | { v: typeof PROTOCOL_VERSION; type: "get_stats" }
-  | { v: typeof PROTOCOL_VERSION; type: "compact"; requestId?: string }
+  | { v: typeof PROTOCOL_VERSION; type: "compact"; mode?:"handoff"; acceptDrift?:true; requestId?: string }
   | ({ v: typeof PROTOCOL_VERSION; type: "ui_response"; requestId?: string } & UiResponse)
   | {
       v: typeof PROTOCOL_VERSION;
@@ -469,7 +469,9 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
     case "get_stats":
       return { v: PROTOCOL_VERSION, type: "get_stats" };
     case "compact":
-      return { v: PROTOCOL_VERSION, type: "compact", ...withRequestId(value) };
+      if(value.mode!==undefined&&value.mode!=="handoff")throw new ProtocolError("invalid_frame","Invalid compaction mode");
+      if(value.mode==="handoff"&&value.acceptDrift!==true)throw new ProtocolError("invalid_frame","Confirm possible handoff drift");
+      return { v: PROTOCOL_VERSION, type: "compact", ...(value.mode==="handoff"?{mode:"handoff" as const,acceptDrift:true as const}:{}), ...withRequestId(value) };
     case "rename_session": {
       const sessionId = optionalString(value.sessionId, "sessionId", 256);
       return {

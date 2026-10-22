@@ -98,6 +98,7 @@ export class HostSession {
   private state: SessionState = { isStreaming: false, messageCount: 0 };
   private activeRequestId?: string;
   private compacting = false;
+  private handoffAbort?:AbortController;
   /** Extension dialogs awaiting an answer, keyed by request id. */
   private readonly pendingUi = new Map<string, ServerFrame>();
   private readonly answeringUi = new Set<string>();
@@ -333,6 +334,7 @@ export class HostSession {
     await this.inputs.change(action);if(command)await this.onCommand?.(this.id,command,"cancelled");
   }
   async abort(expectedRequestId?:string): Promise<void> {
+    if(this.handoffAbort&&expectedRequestId===undefined){this.handoffAbort.abort();return;}
     if(expectedRequestId!==undefined&&this.activeRequestId!==expectedRequestId)throw Error('Target run changed; nothing stopped');
     if(expectedRequestId!==undefined){if(!this.pi||!this.started)throw Error('Session is not ready');await this.pi.abort();return;}
     if (!this.pi || !this.started) throw new Error("Session is not ready");
@@ -450,7 +452,21 @@ export class HostSession {
   getCommands(): Promise<CommandInfo[]> { return this.ready().getCommands(); }
   getExtensions(): Promise<ExtensionInfo[]> { return this.ready().getExtensions(); }
   getStats(): Promise<SessionStats> { return this.ready().getStats(); }
-  async compact(): Promise<void> {
+  async compact(mode?:"handoff"): Promise<void> {
+    if(mode==='handoff'){
+      if(!this.factory.prepareHandoff)throw new Error('Manual Handoff unavailable on this Host');
+      if(this.isBusy||this.pendingUi.size)throw new SessionBusyError();
+      const controller=new AbortController();this.handoffAbort=controller;
+      let success=false,message:string|undefined;
+      try{
+        await this.replaceContext(async original=>{
+          this.compacting=true;this.announce({type:'context_operation',active:true,mode:'handoff'});
+          return this.factory.prepareHandoff!(this.id,original,controller.signal);
+        });success=true;
+      }catch(error){message=error instanceof Error?error.message:'Handoff failed';throw error;}
+      finally{this.compacting=false;this.handoffAbort=undefined;this.announce({type:'context_operation',active:false,mode:'handoff',success,...(message?{message}:{})});this.onLifecycle?.(this);this.scheduleIdleCheck();}
+      return;
+    }
     const pi=this.ready();
     if(this.isBusy)throw new SessionBusyError();
     this.compacting=true;this.clearIdleTimer();

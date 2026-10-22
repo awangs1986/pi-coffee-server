@@ -1,7 +1,7 @@
 /** Web interaction only; the Host owns the operation across reloads/disconnects. */
 export function initTakeoverControls({context,request,refresh,changed,complete,toast}){
  const $=id=>document.getElementById(id),dialog=$('takeover-dialog');let selection=null,submitting=null,timer=null;const seen=new Set(),awaiting=new Map();
- const busy=id=>submitting===id||awaiting.has(id)||context()?.takeover?.status==='preparing'&&context()?.id===id;
+ const busy=id=>submitting===id||awaiting.has(id)||context()?.takeover?.purpose!=='compaction'&&context()?.takeover?.status==='preparing'&&context()?.id===id;
  const close=()=>{selection=null;dialog.close();};
  $('takeover-cancel').onclick=close;dialog.addEventListener('cancel',()=>{selection=null;});
  $('takeover-confirm').onclick=async()=>{

@@ -5,8 +5,8 @@ import {writeTaskJson,checkedTaskRoot} from './task-storage.js';
 import type {AgentHistory,AgentSession} from './agent-adapter.js';
 import type {HistoryEntry} from '../shared/protocol.js';
 
-export interface TakeoverState {title?:string;id:string;from:'pi'|'codex';to:'pi'|'codex';status:'preparing'|'completed'|'failed';at:string;error?:string;nativeId?:string;}
-export interface TakeoverSegment {id:string;from:'pi'|'codex';to:'pi'|'codex';at:string;nativeId?:string;}
+export interface TakeoverState {purpose?:'compaction';version?:string;sourceNativeId?:string;title?:string;id:string;from:'pi'|'codex';to:'pi'|'codex';status:'preparing'|'completed'|'failed';at:string;error?:string;nativeId?:string;}
+export interface TakeoverSegment {purpose?:'compaction';version?:string;id:string;from:'pi'|'codex';to:'pi'|'codex';at:string;nativeId?:string;}
 export const TAKEOVER_PREFIX='[PI Coffee automatic takeover v1]';
 /** Strip protocol scaffolding; historical tool results remain evidence, never executable calls. */
 function readable(entry:HistoryEntry){
@@ -58,12 +58,12 @@ export async function reconstruct(session:AgentSession,prompt:string,timeoutMs=1
 export async function priorHistory(root:string,segment:TakeoverSegment):Promise<HistoryEntry[]>{
  const dir=join(root,'takeover');await checkedTaskRoot(dir);
  const history:AgentHistory=JSON.parse(await readFile(join(dir,segment.id+'-history.json'),'utf8'));
- return [...history.entries.map(e=>({...e,id:segment.id+':'+e.id})),{kind:'note',id:segment.id+':switch',at:segment.at,text:`Agent 交接：${segment.from==='pi'?'Pi':'Codex'} → ${segment.to==='pi'?'Pi':'Codex'}。历史保留；新 Agent 使用独立原生会话。`}];
+ return [...history.entries.map(e=>({...e,id:segment.id+':'+e.id})),{kind:'note',id:segment.id+':switch',at:segment.at,text:segment.purpose==='compaction'?`Codex 交接压缩 ${segment.version??''}：历史保留，继续使用同一对话和目录。`:`Agent 交接：${segment.from==='pi'?'Pi':'Codex'} → ${segment.to==='pi'?'Pi':'Codex'}。历史保留；新 Agent 使用独立原生会话。`}];
 }
 export function withPriorHistory(session:AgentSession,previous:HistoryEntry[]|(()=>Promise<HistoryEntry[]>)):AgentSession{
  const prior=()=>typeof previous==='function'?previous():Promise.resolve(previous);
  const hasPrior=typeof previous==='function'||previous.length>0;
- const visible=(entries:HistoryEntry[])=>entries.filter(e=>!(e.kind==='user'&&e.text.startsWith(TAKEOVER_PREFIX))).map(e=>e.kind==='assistant'?{...e,text:e.text.replace(/\n?\[TAKEOVER_(READY|BLOCKED)\]\s*$/,'')}:e);
+ const visible=(entries:HistoryEntry[])=>entries.filter(e=>!(e.kind==='user'&&(e.text.startsWith(TAKEOVER_PREFIX)||e.text.startsWith('[PI Coffee manual Codex handoff')))).map(e=>e.kind==='assistant'?{...e,text:e.text.replace(/\n?\[(?:TAKEOVER_(?:READY|BLOCKED)|FORK_READY)\]\s*$/,'')}:e);
  return new Proxy(session,{get(target,key){
   if(key==='getHistory')return async()=>{const history=await target.getHistory();return {...history,entries:[...await prior(),...visible(history.entries)]};};
   if(key==='getHistoryPage'&&target.getHistoryPage)return async(cursor?:string)=>{

@@ -588,3 +588,12 @@ Server [#126](https://github.com/awangs1986/pi-coffee-server/issues/126): preser
 ## Codex native command Web adaptation (2026-10-20)
 
 See [the contract and complete inventory](docs/spec/codex-native-commands.md). Web-compatible operations are mapped explicitly; terminal-only, shared-login and fixed-workspace conflicts are surfaced rather than sent as prompts. This is not complete TUI equivalence.
+
+## Codex manual Handoff (2026-10-22)
+
+The owner approved a Codex port through the existing lower-right Handoff button,
+with explicit confirmation only. [Contract](docs/spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22)
+records version 0.1.0, private recovery evidence, sequential tool-free preparation,
+atomic binding replacement and unchanged native automatic compaction. No automatic
+Handoff scheduling is included. Source verification and production activation are
+separate gates; synthetic checks do not establish summary quality or zero drift.

@@ -1,3 +1,4 @@
+import {CODEX_HANDOFF_VERSION,handoffSummaryPrompt,handoffSeedPrompt} from '../codex/handoff.js';
 import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js';
 import {NativeSettingsStore} from './settings.js';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -275,6 +276,50 @@ export class NativeAgentFactory implements AgentSessionFactory {
         await this.options.workspaces.commitTakeover(id,operation,{state:'bound',id:nativeId});committed=true;this.preparations.delete(controller);
         if(temporaryFactory)this.codexFactories.set(id+':'+operation.id,temporaryFactory);
       },rollback};
+    }catch(error){await rollback().catch(()=>undefined);throw error;}
+  }
+  async prepareHandoff(id:string,source:AgentSession,signal:AbortSignal){
+    if(this.closing||signal.aborted)throw new Error('Host is stopping');
+    const task=await this.options.workspaces.lookup(id);
+    if(!task||task.engine!=='codex'||!task.nativeBinding?.id||!this.options.codexSessionFactory)throw new Error('Codex Handoff requires the native App Server adapter');
+    const sourceNativeId=task.nativeBinding.id,controller=new AbortController();
+    const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});
+    const operation:TakeoverState={purpose:'compaction',version:CODEX_HANDOFF_VERSION,sourceNativeId,id:randomUUID(),from:'codex',to:'codex',status:'preparing',at:new Date().toISOString()};
+    let session:AgentSession|undefined,factory:AgentSessionFactory|undefined,nativeId='',committed=false,begun=false;
+    const closeChild=async()=>{this.preparations.delete(controller);const child=session,owner=factory;session=undefined;factory=undefined;try{await child?.stop();}finally{await owner?.close?.();}};
+    const rollback=async()=>{signal.removeEventListener('abort',abort);try{await closeChild();}finally{if(begun&&!committed)await this.options.workspaces.updateTakeover(id,operation.id,{status:'failed',error:'Handoff did not commit; original binding retained. Inspect records before retrying.'});}};
+    const check=()=>{if(this.closing||controller.signal.aborted)throw new Error('Handoff stopped; original conversation retained');};
+    const bind=async(value:string)=>{if(committed){if(value!==nativeId)await this.options.workspaces.rebindCodexThread(id,nativeId,value);}else await this.options.workspaces.updateTakeover(id,operation.id,{nativeId:value});nativeId=value;};
+    const track=(child:AgentSession)=>{session=child;this.preparations.set(controller,child);check();return child;};
+    try{
+      await this.options.workspaces.beginTakeover(id,operation);begun=true;
+      const models=await source.getModels(),plan=await source.runCommand?.('plan','status') as {mode?:string}|undefined;
+      const goal=await source.runCommand?.('goal','');if(JSON.stringify(goal??null).length>16384)throw new Error('Native goal metadata exceeds the handoff bound');
+      const root=await this.options.workspaces.dataRoot(id),paths=await prepareTakeoverRecords(root,operation,await source.getHistory());check();
+      const settings={model:models.current??undefined,thinkingLevel:models.thinkingLevel,contextPreset:models.context?.preset};
+      factory=this.options.codexSessionFactory(id+'-handoff-summary-'+operation.id,task.cwd,bind,()=>this.options.workspaces.runtimeEnvironment(id),true);
+      if(!factory.forkNative)throw new Error('Native Codex Handoff extraction unavailable');
+      track(await factory.forkNative(sourceNativeId,{sessionId:randomUUID(),cwd:task.cwd,sourceCwd:task.cwd}));
+      await applyForkSettings(session!,settings);
+      const summary=await forkTurn(session!,handoffSummaryPrompt(paths.records,goal??null),HANDOFF_END,controller.signal);check();
+      await writeFile(join(paths.dir,operation.id+'-handoff.md'),summary+'\n',{mode:0o600});
+      await closeChild();check();
+      factory=this.options.codexSessionFactory(id+'-handoff-seed-'+operation.id,task.cwd,bind,()=>this.options.workspaces.runtimeEnvironment(id),true);
+      track(await factory.create({sessionId:randomUUID()}));await applyForkSettings(session!,settings);
+      await forkTurn(session!,handoffSeedPrompt(summary,paths.records,task.cwd),FORK_END,controller.signal);check();
+      const seededId=nativeId;await closeChild();check();
+      // Reopen with ordinary native policy only after the tool-free seed settled.
+      factory=this.options.codexSessionFactory(id+'-'+operation.id,task.cwd,bind,()=>this.options.workspaces.runtimeEnvironment(id));
+      track(await factory.create({sessionId:seededId,requireExisting:true}));await applyForkSettings(session!,settings);
+      if(models.speed&&session!.setSpeed)await session!.setSpeed(models.speed.mode);
+      if(plan?.mode==='plan')await session!.runCommand?.('plan','on');
+      const title=(await source.getState()).sessionName;if(title)await session!.rename(title);
+      check();
+      return {session:withPriorHistory(session!,()=>priorHistory(root,operation)),rollback,commit:async()=>{
+        check();await this.options.workspaces.commitTakeover(id,operation,{state:'bound',id:nativeId});committed=true;
+        this.codexFactories.set(id+':'+operation.id,factory!);this.generation.set(id,operation.id);
+        this.preparations.delete(controller);signal.removeEventListener('abort',abort);
+      }};
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async prepareContextReset(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:import('../agent-adapter.js').AgentModels){

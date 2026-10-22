@@ -1119,11 +1119,11 @@ class HostSocket implements SessionSink {
           if (!this.session || !this.opened) throw new NotOpenError();
           const target=this.session;
           // Keep the socket responsive to abort/reconnect while the session owns the operation.
-          void target.compact().then(()=>{
+          this.trackOperation(target.compact(frame.mode).then(()=>{
             if(this.session===target)this.send({v:1,type:"ack",operation:"compact",...rid(frame)});
           },error=>{
             if(this.session===target)this.send({v:1,type:"error",code:error instanceof SessionBusyError ? "busy" : "operation_failed",message:error instanceof Error ? error.message : "Compaction failed",...rid(frame)});
-          });
+          }));
           break;
         }
         case "ui_response": {

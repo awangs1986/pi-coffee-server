@@ -5,7 +5,7 @@ import {join,resolve,extname} from 'node:path';
 import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright';
 import {once} from 'node:events';
-const tasks=['a','b'].map(id=>({id,engine:'codex',workspaceKind:'chat',name:id,cwd:'/fixture/'+id,creationState:'ready',createdAt:new Date().toISOString()})),creates=[],prompts=[],errors=[],evidence=[],commands=[];let delayed;
+const tasks=['a','b'].map(id=>({id,engine:'codex',workspaceKind:'chat',name:id,cwd:'/fixture/'+id,creationState:'ready',createdAt:new Date().toISOString()})),creates=[],prompts=[],errors=[],evidence=[],commands=[],compactions=[];let delayed;
 const models=[{provider:'codex',id:'gpt-6.1-sol'},{provider:'codex',id:'gpt-6-luna'}];
 const reply=(res,value)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));};
 const server=createServer(async(req,res)=>{
@@ -33,10 +33,13 @@ wss.on('connection',socket=>{
   const frame=JSON.parse(String(raw));
   if(frame.type==='list_sessions')send({type:'sessions',sessions:tasks});
   if(frame.type==='get_model_catalog')send({type:'model_catalog',requestId:frame.requestId,engine:'codex',...values()});
-  if(frame.type==='open'){socket.task=frame.sessionId;send({type:'opened',engine:'codex',sessionId:frame.sessionId,state:{},capabilities:{models:true,stats:true,stop:true,followUp:true,rename:true}});send({type:'history',sessionId:frame.sessionId,entries:[]});}
+  if(frame.type==='open'){socket.task=frame.sessionId;send({type:'opened',engine:'codex',sessionId:frame.sessionId,state:{},capabilities:{models:true,stats:true,stop:true,followUp:true,rename:true,compact:true}});send({type:'history',sessionId:frame.sessionId,entries:[]});}
+  if(frame.type==='get_stats')send({type:'stats',requestId:frame.requestId,sessionId:socket.task,stats:{contextUsage:{tokens:1000,contextWindow:272000},tokens:{input:0,output:0,total:0}}});
   if(frame.type==='get_models')send({type:'models',requestId:frame.requestId,sessionId:socket.task,...values()});
   if(frame.type==='set_model'){socket.model=frame.id;send({type:'ack',operation:frame.type,requestId:frame.requestId});}
   if(frame.type==='set_thinking')send({type:'ack',operation:frame.type,requestId:frame.requestId});
+  if(frame.type==='compact'){compactions.push(frame);send({type:'event',sessionId:socket.task,event:{type:'context_operation',active:true,mode:frame.mode}});}
+  if(frame.type==='abort')send({type:'event',sessionId:socket.task,event:{type:'context_operation',active:false,success:false,mode:'handoff',message:'Cancelled'}});
   if(frame.type==='agent_command'){commands.push(frame);const answer=()=>send({type:'agent_command_result',requestId:frame.requestId,sessionId:socket.task,name:frame.name,text:JSON.stringify({goal:frame.args})});if(frame.args==='delayed')delayed=answer;else answer();}
   if(frame.type==='prompt'){prompts.push({model:socket.model,...frame});send({type:'ack',operation:'prompt',requestId:frame.requestId});server.emit('fixture-prompt');}
  });
@@ -58,6 +61,20 @@ try{
  await page.locator('#prompt').fill('/goal delayed');await page.locator('#send').click();await page.waitForFunction(()=>document.querySelector('#prompt').value==='/goal delayed');
  for(let i=0;i<50&&!delayed;i++)await page.waitForTimeout(10);if(!delayed)throw Error('Delayed request absent');
  await page.locator('[data-session-id="b"] .session-main').click();delayed();await page.waitForTimeout(100);if(await page.locator('#native-command-result').count())throw Error('Late native result painted another task');
+ // Only the context-menu button chooses Handoff; cancellation and task switching cannot submit it.
+ await page.locator('#task-details-btn').click();await page.locator('#sp-compact').click();await page.locator('#modal-title').filter({hasText:'交接压缩'}).waitFor();
+ await page.locator('#modal-cancel').click();if(compactions.length)throw Error('Cancelled Handoff submitted');
+ await page.locator('#task-details-btn').click();await page.locator('#sp-compact').click();
+ await page.evaluate(()=>{history.pushState({},'', '/conversations/a');window.dispatchEvent(new PopStateEvent('popstate'));});await page.locator('#modal-ok').click();await page.waitForTimeout(50);
+ if(compactions.length)throw Error('Task-switch confirmation submitted Handoff');
+ await page.locator('#prompt').fill('/compact');await page.locator('#send').click();await page.locator('#modal-title').filter({hasText:'压缩上下文？'}).waitFor();await page.locator('#modal-ok').click();
+ await page.waitForFunction(()=>document.querySelector('#send').disabled);if(compactions.length!==1||compactions[0].mode)throw Error('/compact started custom Handoff');
+ await page.locator('#stop').click();
+ await page.locator('#task-details-btn').click();await page.locator('#sp-compact').click();await page.locator('#modal-ok').click();
+ for(let i=0;i<50&&compactions.length<2;i++)await page.waitForTimeout(10);
+ if(compactions.length!==2||compactions[1].mode!=='handoff'||compactions[1].acceptDrift!==true)throw Error('Context-menu Handoff dispatch missing');
+ await page.locator('#stop').click();
+ evidence.push({manualHandoffConfirmed:true,cancelAndTaskSwitchFenced:true,nativeSlashCompactionPreserved:true});
  evidence.push({goalWithoutPrompt:true,unsupportedDraftRetained:true,exportDownload:true,lateResponseFenced:true,existingDialogPreserved:true});
  if(errors.length)throw Error(JSON.stringify(errors));
  const result={passed:true,evidence,errors};console.log(JSON.stringify(result));

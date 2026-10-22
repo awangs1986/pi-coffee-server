@@ -128,6 +128,7 @@ export interface AgentSessionFactory {
   /** Read durable native history without starting/resuming a runtime or changing native state. */
   readHistory?(sessionId: string): Promise<AgentHistoryRead>;
   prepareTakeover?(id:string, operation:import("./takeover.js").TakeoverState, history:AgentHistory):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
+  prepareHandoff?(id:string,source:AgentSession,signal:AbortSignal):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   /** Begin shutdown by cancelling takeover preparation; source sessions remain recoverable until closed. */
   cancelTakeovers?(): Promise<void>;
   close?(): Promise<void>;

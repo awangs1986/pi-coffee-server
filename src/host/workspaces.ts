@@ -448,8 +448,9 @@ export class Workspaces {
   }
   async beginTakeover(id:string,operation:TakeoverState){return this.mutate(async()=>{
     const c=this.conversation(id);
-    if(c.workspaceKind!=='project'||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only active Work tasks can switch Agent');
-    if((c.engine??'pi')!==operation.from || operation.from===operation.to || c.takeover?.status==='preparing')throw new Error('Agent changed or takeover already in progress');
+    const handoff=operation.purpose==='compaction'&&operation.from==='codex'&&operation.to==='codex';
+    if((!handoff&&c.workspaceKind!=='project')||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Task is unavailable for context replacement');
+    if((c.engine??'pi')!==operation.from || (!handoff&&operation.from===operation.to) || c.takeover?.status==='preparing')throw new Error('Agent changed or takeover already in progress');
     c.takeover=operation;c.retainedNativeIds=[...(c.retainedNativeIds??[]),operation.id];await this.save();
   },()=>this.conversationLock(id));}
   async updateTakeover(id:string,operationId:string,patch:Partial<TakeoverState>){return this.mutate(async()=>{
@@ -459,7 +460,8 @@ export class Workspaces {
   async commitTakeover(id:string,operation:TakeoverState,binding:NativeBinding){return this.mutate(async()=>{
     const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
     const old={...c};
-    c.takeoverSegments=[...(c.takeoverSegments??[]),{id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
+    if(operation.purpose==='compaction'&&(c.archived||c.cleanupStarted||c.workspaceRemoved||c.nativeBinding?.id!==operation.sourceNativeId))throw new Error('Task binding changed during context replacement');
+    c.takeoverSegments=[...(c.takeoverSegments??[]),{...(operation.purpose?{purpose:operation.purpose,version:operation.version}:{}),id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
     c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     try{await this.save();}catch(error){
       // Restore the whole record: assigning old fields leaves newly introduced
@@ -471,11 +473,12 @@ export class Workspaces {
     const c=this.conversation(id);
     if(c.workspaceKind!=='chat'||!CHAT_ENGINES.includes(c.engine??'pi')||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi or Codex Chat can clear context');
     if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
-    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds};
+    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds,takeoverSegments:c.takeoverSegments,takeover:c.takeover,takeoverTitle:c.takeoverTitle};
     delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString(),...(operation.title?{title:operation.title}:{})};
     if(c.engine==='codex')c.nativeContextEmpty=true;
-    c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),operation.expectedNativeId])];
+    c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),operation.expectedNativeId,...(c.takeoverSegments??[]).flatMap(segment=>segment.nativeId?[segment.nativeId]:[])])];
+    delete c.takeoverSegments;delete c.takeover;delete c.takeoverTitle;
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
   async setNativeBinding(id:string,binding:NativeBinding) {return this.mutate(async()=>{

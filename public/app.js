@@ -1363,7 +1363,7 @@ function renderStats() {
   status.classList.toggle('hidden',!status.textContent);
   ui.spBar.setAttribute('aria-valuetext',pct!==null?'已用 '+Math.floor(pct)+'%':'用量暂不可用');
   if(pct!==null)ui.spBar.setAttribute('aria-valuenow',String(Math.min(100,pct)));else ui.spBar.removeAttribute('aria-valuenow');
-  ui.spCompact.textContent=engine==='pi' ? '交接压缩' : '压缩上下文';
+  ui.spCompact.textContent=['pi','codex'].includes(engine) ? '交接压缩' : '压缩上下文';
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   ui.spCompact.classList.toggle('hidden',!supports('compact'));
 }
@@ -1405,16 +1405,16 @@ ui.statsPop.addEventListener('click', event => {
   if(event.clientX<box.left || event.clientX>box.right || event.clientY<box.top || event.clientY>box.bottom)hideStatsPop();
 });
 ui.statsPop.addEventListener('keydown', event => { event.stopPropagation(); });
-async function requestLocalCompaction() {
+async function requestLocalCompaction(nativeOnly=false) {
   if (!opened || compacting) return;
   if (streaming) { toast('请先停止当前任务，再压缩上下文。'); return; }
-  const epoch=taskSelectionEpoch, sessionId=activeId, handoff=engine==='pi';
+  const epoch=taskSelectionEpoch, sessionId=activeId, handoff=engine==='pi'||engine==='codex'&&!nativeOnly;
   hideStatsPop();
   const ok = await askModal(handoff
-    ? {title:'交接压缩（实验性功能）',text:'交接压缩不保证避免上下文漂移，适合在多次系统自动压缩后重新聚焦当前项目。自动压缩仍使用 Pi 原生自动压缩。同一对话、历史和项目文件保留。',okLabel:'交接压缩'}
+    ? {title:'交接压缩（实验性功能）',text:engine==='codex'?'交接压缩可能造成信息漂移。将生成交接摘要并切换至新的 Codex 原生会话；网页对话、历史和项目文件保留。原生目标自动运行不会继承，摘要保留任务意图。此操作会调用模型，自动压缩仍使用 Codex 原生机制。':'交接压缩不保证避免上下文漂移，适合在多次系统自动压缩后重新聚焦当前项目。自动压缩仍使用 Pi 原生自动压缩。同一对话、历史和项目文件保留。',okLabel:'交接压缩'}
     : {title:'压缩上下文？',text:'使用当前 Agent 的原生压缩功能。',okLabel:'压缩'});
   if (!ok || epoch!==taskSelectionEpoch || sessionId!==activeId || !opened || streaming || compacting) return;
-  send({ v: 1, type: 'compact', requestId: requestId('compact') });
+  send({ v: 1, type: 'compact', ...(handoff&&engine==='codex'?{mode:'handoff',acceptDrift:true}:{}), requestId: requestId('compact') });
   toast(handoff ? '正在交接压缩…' : '正在压缩上下文…');
 }
 function offerContextRecovery(message) {
@@ -1423,10 +1423,10 @@ function offerContextRecovery(message) {
   const button = document.createElement('button');
   button.type = 'button'; button.className = 'btn small'; button.textContent = engine==='pi' ? '交接压缩' : '压缩上下文';
   const sessionId = activeId;
-  button.addEventListener('click', () => { if (sessionId === activeId) void requestLocalCompaction(); });
+  button.addEventListener('click', () => { if (sessionId === activeId) void requestLocalCompaction(true); });
   entry.node.append(button);
 }
-ui.spCompact.addEventListener('click', requestLocalCompaction);
+ui.spCompact.addEventListener('click', () => {void requestLocalCompaction();});
 ui.title.addEventListener('click', () => {
   const session = sessions.find((s) => s.id === activeId);
   if (session) renameSession(session);
@@ -1491,7 +1491,7 @@ function refreshComposer() {
   else if(activeId && opened && !models && modelPreview)ui.hint.textContent='模型同步中（可继续输入）';
   if(clearingContextId===activeId&&activeId)ui.hint.textContent='正在清空上下文…';
   else if(takeoverBusy())ui.hint.textContent=(forkControls.busy(activeId)?'正在准备 Fork…':'正在交接 Agent…')+' 当前对话操作已锁定，草稿已保留。';
-  else if(compacting)ui.hint.textContent=engine==='pi' ? '正在交接压缩…' : '正在压缩上下文…';
+  else if(compacting)ui.hint.textContent=['pi','codex'].includes(engine) ? '正在交接压缩…' : '正在压缩上下文…';
   ui.hint.classList.toggle('hidden', !streaming && !compacting && !switching && !(activeId && !historyReady) && !(activeId && opened && !models && modelPreview));
   ui.spCompact.disabled=takeoverBusy()||!opened || streaming || compacting || !supports('compact');
   if (connected) {
@@ -2176,7 +2176,7 @@ function handleEvent(event,{replayed=false}={}) {
     if (retryNote && retryNote.node.isConnected) { retryNote.text = text; retryNote.node.textContent = text; } else retryNote = pushNote(text);
     return;
   }
-  if(type==='context_operation'){compacting=event.active===true;refreshComposer();if(!compacting && event.success===false)pushNote(event.message || '压缩未完成，原对话保留。',true);if(!compacting && event.success===true)pushNote(engine==='pi' ? '交接压缩完成，已保留原对话和历史。' : '上下文压缩完成。');return;}
+  if(type==='context_operation'){compacting=event.active===true;refreshComposer();if(!compacting && event.success===false)pushNote(event.message || '压缩未完成，原对话保留。',true);if(!compacting && event.success===true)pushNote(engine==='pi'||event.mode==='handoff' ? '交接压缩完成，已保留原对话和历史。' : '上下文压缩完成。');return;}
   if (type === 'compaction_end') { if(compacting)return; const notice = compactionNotice(event); pushNote(notice.text, notice.failure); send({ v: 1, type: 'get_stats' }); return; }
 
   if (type === 'agent_settled') {
@@ -2594,7 +2594,7 @@ function handleCodexSlash(text){
  else if(name==='rename'){consume();if(args){const request=requestId('rename');pendingRenames.set(request,{sessionId:id,name:args});send({v:1,type:'rename_session',requestId:request,sessionId:id,name:args});}else void renameSession(task);}
  else if(name==='archive'){consume();void workspaceApi({action:'archive',id}).then(()=>loadWorkspace()).then(()=>{if(activeId===id)newSession(false);}).catch(e=>toast(e.message));}
  else if(name==='fork'){if(streaming||takeoverBusy()){toast('请等待当前任务结束');return true;}consume();forkControls.open(task);}
- else if(name==='compact'){consume();void requestLocalCompaction();}
+ else if(name==='compact'){consume();void requestLocalCompaction(true);}
  else if(name==='status'){consume();showStatsPop();}
  else if(name==='diff'){consume();void showWorkspaceReview('diff');}
  else if(name==='mention'){consume();setWorkspaceOpen(true);renderWorkspaceList();}

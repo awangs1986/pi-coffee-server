@@ -44,7 +44,9 @@ prove real-account acceptance or equal capabilities across engines. See the
 **Agent Adapter**: the Host implementation of the common Agent interface using
 the selected CLI's supported native transport. Pi uses RPC, Codex uses app-server,
 Claude uses stream-json, and Cursor/Grok use ACP over local stdio. Pi Harness,
-LSP and Handoff policy remain Pi-only.
+LSP and the Pi Handoff plugin remain Pi-only. Codex manual Handoff is a separate
+Host adapter protocol; [the manual contract](docs/spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22)
+preserves native automatic compaction and requires explicit button confirmation.
 
 **MISHU Secretary Source**: an explicitly selected, active Pi Chat. Codex and
 other supported engines remain existing targets, subject to account-scoped grants
@@ -57,7 +59,9 @@ and [high-risk batch policy](docs/spec/batch-agent-execution.md).
 **Task / Conversation**: one user-facing unit with one stable Conversation ID
 and one registered local Workspace. Model changes and reconnects preserve that
 identity. [Work takeover](docs/spec/agent-takeover.md) may replace the active native
-binding while retaining prior history segments. A [Fork](docs/spec/conversation-fork.md)
+binding while retaining prior history segments. Explicit Codex manual Handoff
+also replaces the native binding in the same Conversation; its original evidence
+and directory remain. A [Fork](docs/spec/conversation-fork.md)
 creates a different Conversation and independent directory.
 
 **Chat**: the default new Conversation, Pi by default or available Codex, without

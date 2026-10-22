@@ -1,3 +1,4 @@
+- Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
 - MISHU #7–#15 secretary experience candidate: [source and acceptance record](reviews/mishu-experience-candidate.md), [Host contracts](spec/mishu.md), [independent product authority](spec/mishu-secretary-experience.md), [installed-package/native/Browser acceptance](development/mishu-experience.md). Memory scope filters retain complete-binding capacity counts including tombstones. Pi Chat remains the only secretary source; candidate publication and production activation are separate.
