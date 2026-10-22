@@ -597,3 +597,5 @@ records version 0.1.0, private recovery evidence, sequential tool-free preparati
 atomic binding replacement and unchanged native automatic compaction. No automatic
 Handoff scheduling is included. Source verification and production activation are
 separate gates; synthetic checks do not establish summary quality or zero drift.
+
+- 2026-10-22: New-task first-message readiness: remove post-create metadata/file-grant waits from the native-open path, bound creation confirmation, preserve drafts and idempotent retry. Source regressions and Browser probe cover the reproducible stall; original production network cause is unconfirmed. See the conversation-workspaces contract.

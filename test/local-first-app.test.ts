@@ -39,15 +39,15 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { creationGate:null as Promise<void>|null, afterCreateGate:null as Promise<void>|null, creates:[] as any[], release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', lastSourceCheckAt:state.lastSourceCheckAt||'2026-10-03T00:00:00Z', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
-  const transport={holdHandshake:false};
+  const transport={holdHandshake:false,replyPings:false};
   class Socket {
     static CONNECTING = 0; static OPEN = 1; readyState = 0;
     onopen: any; onmessage: any; onclose: any; onerror: any;
     constructor() { sockets.push(this); if(!transport.holdHandshake)queueMicrotask(() => {this.readyState=1;this.onopen?.();}); }
-    send(text: string) { allFrames.push(JSON.parse(text)); }
+    send(text: string) { const frame=JSON.parse(text);allFrames.push(frame);if(frame.type==='ping'&&transport.replyPings)queueMicrotask(()=>this.receive({type:'pong',nonce:frame.nonce})); }
     close() { this.readyState = 3; }
     receive(frame: any) { this.onmessage?.({ data: JSON.stringify(frame) }); }
   }
@@ -58,8 +58,16 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
     if (url === '/auth/me') {await network.authGate;data = { auth: true, user: network.user };}
     else if (url === '/api/me') data = null;
     else if(url==='/api/release')data=network.release;
-    else if (url === '/api/engines') data = { engines: ['pi', 'codex', 'claude', 'cursor', 'grok'].map(id => ({ id, available: true })) };
-    else if (url === '/api/workspace') {await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
+    else if (url === '/api/engines') data = { chatEngines:['pi','codex'], engines: ['pi', 'codex', 'claude', 'cursor', 'grok'].map(id => ({ id, available: true })) };
+    else if (url === '/api/workspace') {
+      if(body.action==='conversation'){
+        network.creates.push(body);
+        if(network.creationGate)await new Promise<void>((resolve,reject)=>{const abort=()=>reject(new DOMException('Aborted','AbortError'));init?.signal?.addEventListener('abort',abort,{once:true});network.creationGate!.then(resolve,reject).finally(()=>init?.signal?.removeEventListener('abort',abort));});
+        const task={...body,creationState:'ready',cwd:'/synthetic/'+body.id,createdAt:new Date().toISOString()};conversations.push(task);
+        return {ok:true,status:200,json:async()=>task};
+      }
+      if(network.creates.length)await network.afterCreateGate;
+      await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
     // Unknown read-only sync is held, never mistaken for a valid empty snapshot.
     else if (String(url).includes('/api/conversations/')) {
       syncReads.push(String(url));
@@ -857,4 +865,37 @@ it('never drops questions or completion merely because their display-mode tag is
  expect(document.querySelector('#ui-modal')?.classList.contains('hidden')).toBe(false);
  socket.receive({type:'event',sessionId:'a',cursor:51,displayMode:'detailed',event:{type:'agent_settled'}});await tick();
  expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(true);
+});
+
+
+it.each(['chat','project'])('opens a newly created Codex %s without waiting for unrelated workspace refresh',async kind=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#new-task')!.click();await tick();
+ const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;engine.value='codex';engine.dispatchEvent(new Event('change'));await tick();
+ if(kind==='project'){const kindSelect=document.querySelector<HTMLSelectElement>('#task-kind')!;kindSelect.value='project';kindSelect.dispatchEvent(new Event('change'));const select=document.querySelector<HTMLSelectElement>('#project-select')!;select.add(new Option('Synthetic repo','project-1'));select.value='project-1';}
+ app.network.afterCreateGate=new Promise(()=>{});
+ draft('Keep this first instruction');document.querySelector<HTMLFormElement>('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
+ expect(app.network.creates).toHaveLength(1);const id=app.network.creates[0].id;
+ expect(allFrames.some(f=>f.type==='open'&&f.sessionId===id)).toBe(true);
+ const socket=app.sockets.at(-1)!;socket.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{...capabilities,models:true}});socket.receive({type:'history',sessionId:id,entries:[]});socket.receive({type:'models',sessionId:id,models:[{provider:'codex',id:'gpt-6.1-sol'}],current:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium',thinkingLevels:['medium'],context:{preset:'272k'}});await tick();
+ expect(allFrames.filter(f=>f.type==='prompt').map(f=>f.text)).toEqual(['Keep this first instruction']);
+});
+
+
+it('returns a timed-out first prompt to the draft and retries the same creation ID',async()=>{
+ const app=await setup();app.transport.replyPings=true;document.querySelector<HTMLButtonElement>('#new-task')!.click();await tick();
+ app.network.creationGate=new Promise(()=>{});app.network.afterCreateGate=new Promise(()=>{});
+ draft('Unsent first instruction');document.querySelector<HTMLFormElement>('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
+ const id=app.network.creates[0].id;
+ await tick(130001);
+ expect(prompt().value).toBe('Unsent first instruction');expect(allFrames.some(f=>f.type==='prompt')).toBe(false);
+ app.network.creationGate=null;document.querySelector<HTMLFormElement>('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
+ expect(app.network.creates.map(c=>c.id)).toEqual([id,id]);expect(allFrames.some(f=>f.type==='open'&&f.sessionId===id)).toBe(true);
+});
+
+it('does not adopt a late creation response after switching to another task',async()=>{
+ const app=await setup();document.querySelector<HTMLButtonElement>('#new-task')!.click();await tick();
+ let release!:()=>void;app.network.creationGate=new Promise(resolve=>{release=resolve;});
+ draft('Draft belongs to new task');document.querySelector<HTMLFormElement>('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
+ const id=app.network.creates[0].id;await app.select('b');release();await tick();
+ expect(location.pathname).toBe('/conversations/b');expect(allFrames.some(f=>f.type==='open'&&f.sessionId===id)).toBe(false);expect(allFrames.some(f=>f.type==='prompt')).toBe(false);
 });

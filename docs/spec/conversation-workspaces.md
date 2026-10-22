@@ -146,3 +146,28 @@ ownership remain unchanged.
 ### Starting-branch picker (2026-10-20)
 
 The new Work draft keeps the starting-branch search input empty and shows the repository default branch as its placeholder. Loading branch suggestions must not prefill the default branch: native datalist filtering would hide other branches. An empty submitted value continues to use the project default; an explicit selection or manually entered branch is preserved. Existing Conversations keep their recorded starting branch and task checkout unchanged.
+
+
+## First-message readiness (2026-10-22)
+
+A successful Conversation-creation response is sufficient to adopt its task ID
+and request the native session immediately. The Browser uses that acknowledged
+metadata locally; sidebar refresh, file-transfer grants and repository status
+refresh in the background. Slow or unavailable auxiliary HTTP reads must not
+leave a ready task labelled as creating or block its first message.
+
+The Browser waits at most 130 seconds for creation confirmation. If confirmation
+is unavailable, restore the first message and attachments to the composer, release
+the creating state, and retain the creation request ID for an explicit retry.
+Timeout does not prove that Host creation failed: retry uses the same ID and the
+existing idempotent creation contract. Never automatically resend a model prompt.
+An obsolete response after account/task selection changes cannot adopt a task or
+send the draft into another conversation. Native history and model/settings
+readiness still precede first-prompt delivery.
+
+Regression evidence: `test/local-first-app.test.ts` exercises Chat/Work creation
+with blocked auxiliary requests, timeout/retry identity and stale-response fencing.
+`scripts/probe-codex-chat.mjs` verifies first-message delivery in Chromium at desktop
+and mobile widths while auxiliary workspace reads are held. These use synthetic
+HTTP/WS; deployment evidence and the reported browser's original network failure
+remain separate from the deterministic reproduction.

@@ -1819,16 +1819,25 @@ async function openSession(id) {
     if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || sshmeDraftId || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
     saveCreation();pendingOpenId='creating';refreshComposer();$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
     try {
-      const c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})});
+      const controller=new AbortController();
+      const deadline=setTimeout(()=>controller.abort(),130000);
+      let c;
+      try{c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})},{signal:controller.signal});}
+      catch(error){if(controller.signal.aborted)throw new Error('创建确认超时；首条消息已保留。重试会沿用同一任务，不会重复创建。');throw error;}
+      finally{clearTimeout(deadline);}
       if(!isCurrent())return;
       textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
-      id=c.id;activeId=id;speedToApply=selectedEngine==='codex'&&draftSpeed==='fast'?draftSpeed:null;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;await loadWorkspace();
+      id=c.id;activeId=id;speedToApply=selectedEngine==='codex'&&draftSpeed==='fast'?draftSpeed:null;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;
+      // Creation acknowledgement is sufficient to open the native session.
+      // Sidebar/file grants are independent and must never own first-message delivery.
+      workspaceState={...workspaceState,conversations:[...(workspaceState?.conversations||[]).filter(task=>task.id!==c.id),c]};
+      renderProjectContext();renderSessionList();void loadWorkspace();
     }catch(e){
       if(!isCurrent())return;
       pendingOpenId=null;toast(e.message);
       // The first message started this creation: give the draft back instead of a stuck "running" state.
       restoreQueuedPrompt();
-      await loadWorkspace();return;
+      void loadWorkspace();return;
     }
     finally{if(isCurrent()){refreshComposer();$('#create-task').disabled=false;$('#create-task').textContent='创建任务 / 重试';}}
   }

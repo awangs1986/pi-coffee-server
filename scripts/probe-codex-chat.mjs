@@ -6,6 +6,7 @@ import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright';
 import {once} from 'node:events';
 const tasks=[],creates=[],prompts=[],errors=[],evidence=[];
+let holdAuxiliary=false;const held=[];
 const models=[{provider:'codex',id:'gpt-6.1-sol'},{provider:'codex',id:'gpt-6-luna'}];
 const reply=(res,value)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));};
 const server=createServer(async(req,res)=>{
@@ -16,6 +17,7 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/workspace'){
   let raw='';for await(const chunk of req)raw+=chunk;const input=raw?JSON.parse(raw):{};
   if(input.action==='conversation'){creates.push(input);const task={...input,cwd:'/synthetic/chats/'+input.id,branch:'',createdAt:new Date().toISOString(),creationState:'ready'};tasks.push(task);return reply(res,task);}
+  if(holdAuxiliary&&(!input.action||input.action==='files')){held.push(()=>reply(res,input.action?{state:'local',files:[]}:{projects:[],conversations:tasks,capabilities:{chatWorkspaces:true}}));return;}
   if(input.action)return reply(res,{state:'local',files:[]});
   return reply(res,{projects:[],conversations:tasks,capabilities:{chatWorkspaces:true},sidebar:{showGroups:false,assignments:{},collapsed:[]}});
  }
@@ -48,12 +50,14 @@ try{
   await page.goto('http://127.0.0.1:'+server.address().port);
   await page.locator('#agent-menu-btn').click();await page.locator('#agent-engine-row').click();await page.locator('#agent-engine-pane button').filter({hasText:'Codex'}).click();
   await page.locator('#agent-menu-btn').click();await page.locator('#agent-model-row').click();await page.locator('#agent-model-pane button').filter({hasText:'gpt-6-luna'}).click();
+  holdAuxiliary=true;
   const before=prompts.length,received=once(server,'fixture-prompt',{signal:AbortSignal.timeout(5000)});await page.locator('#prompt').fill('Synthetic Codex Chat '+width);await page.locator('#send').click();await received;
+  holdAuxiliary=false;for(const release of held.splice(0))release();
   await page.waitForFunction(()=>document.querySelector('#agent-name')?.textContent==='gpt-6-luna');
   const prompt=prompts.at(-1),create=creates.at(-1);
   if(prompts.length!==before+1||prompt?.model!=='gpt-6-luna'||create?.engine!=='codex'||create?.workspaceKind!=='chat'||create?.projectId)throw Error('Repository-free Luna draft was not submitted once: '+JSON.stringify({create,prompt}));
   if(!await page.locator('#sp-chat-actions').isVisible()&&await page.locator('#sp-chat-actions').evaluate(node=>node.classList.contains('hidden')))throw Error('Codex Chat clear action missing');
-  evidence.push({width,engine:create.engine,workspaceKind:create.workspaceKind,model:prompt.model,noProject:true,promptCount:1});await page.close();
+  evidence.push({width,engine:create.engine,workspaceKind:create.workspaceKind,model:prompt.model,noProject:true,promptCount:1,auxiliaryRefreshDidNotBlock:true});await page.close();
  }
  if(errors.length)throw Error(JSON.stringify(errors));
  const result={passed:true,evidence,errors};console.log(JSON.stringify(result));
