@@ -75,9 +75,10 @@ and GitHub's required-check branch protection are operator configuration; a YAML
 file alone does not register a runner or protect main. Check the repository's
 Actions page for an actual successful job before claiming CI activation.
 
-The current Web OAuth scope is `repo read:user`. Editing GitHub workflow files may
-require a separately authorized `workflow` scope for the selected account. This
-change does not expand every Web user's OAuth scope or restore VM-wide gh login.
+New Web OAuth grants request `repo read:user workflow offline_access` after the
+owner's 2026-10-22 approval. Existing grants need explicit reconnection to gain
+`workflow`; token refresh does not expand them. Each grant remains scoped to its
+Gitea owner and selected GitHub identity; VM-wide gh login is not restored.
 
 ## Account-scoped batch publication
 

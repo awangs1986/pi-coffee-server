@@ -267,3 +267,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - MISHU ordinary decisions #10: [answer continuation](spec/mishu.md#secretary-experience-candidate-ordinary-decisions-10) persists a question-bound answer identity and uses the serial native report-only queue; no extra user prompt, new execution grant or native approval reply. Candidate source and Browser acceptance remain separately evidenced.
 
 - 2026-10-22: [First-message readiness](spec/conversation-workspaces.md#first-message-readiness-2026-10-22): creation acknowledgement opens the Agent independently of auxiliary workspace reads; bounded confirmation restores drafts and retains the retry ID.
+
+- 2026-10-22: [GitHub Actions authorization](spec/github-accounts.md#github-actions-workflow-authorization-2026-10-22) requests approved `workflow` scope; existing accounts require one explicit reconnection, retaining user/task bindings.

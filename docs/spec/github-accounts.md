@@ -151,3 +151,26 @@ restart recovery; cross-user rejection; in-flight rebind/delete and rejected-ren
 fencing; wrong-identity rejection; terminal revocation and transient retry bounds;
 unauthenticated, browser, wrong-route and malformed service request rejection.
 Fixture coverage is not a claim that a newly authorized real account has renewed.
+
+
+## GitHub Actions workflow authorization (2026-10-22)
+
+The owner explicitly approved adding `workflow` to new GitHub OAuth requests.
+Web requests exactly `repo read:user workflow offline_access`. The additional
+scope permits committing and pushing changes to GitHub Actions workflow files
+(e.g. `.github/workflows/macos.yml`) that GitHub otherwise rejects even when
+ordinary repository authentication succeeds.
+
+Existing tokens do not gain this scope from a deployment or refresh. The user
+must explicitly reconnect the same GitHub account through the Code hosting
+accounts menu and approve the expanded grant. The numeric GitHub identity and
+task account IDs remain stable; reconnection updates credentials only in the
+currently authenticated Gitea user's store. No other user's token, task binding,
+provider login or operating-system credentials are changed or used as fallback.
+The account menu explains both the workflow permission and the one-time reconnect.
+
+Acceptance: `test/github-oauth.test.ts` asserts the complete outbound scope set
+through authenticated Web HTTP while retaining browser/user-bound state, PKCE,
+one-use callback, cross-user rejection and no credential disclosure checks.
+Real workflow push acceptance remains pending the user's renewed consent; a
+successful identity check alone cannot prove workflow permission.

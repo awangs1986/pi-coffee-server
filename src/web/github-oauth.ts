@@ -25,7 +25,7 @@ export class GitHubOAuth {
     const state=randomBytes(32).toString('base64url'),verifier=randomBytes(32).toString('base64url');
     this.pending.set(state,{user,browser:this.browser(req),verifier,expires:Date.now()+600000});
     const url=new URL('/login/oauth/authorize',this.provider);
-    url.search=new URLSearchParams({client_id:this.options.clientId,redirect_uri:this.origin+'/auth/github/callback',scope:'repo read:user offline_access',state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',prompt:'select_account'}).toString();
+    url.search=new URLSearchParams({client_id:this.options.clientId,redirect_uri:this.origin+'/auth/github/callback',scope:'repo read:user workflow offline_access',state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',prompt:'select_account'}).toString();
     return {authorizeUrl:url.href};
   }
   async callback(req:IncomingMessage,res:ServerResponse,user:string,bind:(credentials:GitHubCredentials)=>Promise<void>){
