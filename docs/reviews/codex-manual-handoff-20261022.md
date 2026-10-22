@@ -77,3 +77,21 @@ evidence paths are Host-owned, and drift confirmation is validated. Preparation
 retains the existing mechanically disabled tools/MCP policy. No new dependencies,
 public transcript route or arbitrary RPC bridge. No blocking finding identified.
 Real-provider summary quality remains outside synthetic acceptance.
+
+## Independent clone gate follow-up — candidate 0.50
+
+The independent clone of published candidate `748e40e` failed one pre-existing
+round-trip Pi/Codex takeover test (1262 passed / 1 failed). Its second HTTP
+mutation raced the first operation's adoption/export tail: `takeover.status`
+records the durable commit before the lifecycle lock is released. A controlled
+export delay reproduced the precise `409 Task lifecycle operation in progress`;
+this is correct rejection, not lost history or an accepted duplicate operation.
+
+The round-trip fixture now observes the public WebSocket `sessions.running`
+boundary before its next mutation, instead of treating commit metadata as idle.
+A deterministic test preserves the early-409 and later-202 contract. The takeover
+and Codex Handoff suites then passed 24 tests. Candidate version advances to 0.50
+because 0.49 was already published; Handoff protocol stays 0.1.0. This follow-up
+changes verification readiness only, with no added model calls or product API.
+Final source-bound verification and independent clone verification must be rerun;
+the failed 0.49 clone is retained as failure evidence, never waived.

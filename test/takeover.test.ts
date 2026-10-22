@@ -37,6 +37,17 @@ async function setup(transfer?:HostServerOptions['transfer']){
  };
  return {root,task,host,request,readTask,calls,workspaces,records,restart,live,factory,setSourceStop:(value:()=>Promise<void>)=>{sourceStop=value;},setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;}};
 }
+// Durable takeover commit precedes Host session adoption/export and lock release.
+// Observe the public running state before asking for another lifecycle mutation.
+async function waitForTakeoverIdle(host:HostServer,id:string){
+ const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer test'}});
+ let sessions:Array<{id:string;running:boolean}>|undefined;
+ socket.on('message',raw=>{const frame=JSON.parse(String(raw));if(frame.type==='sessions')sessions=frame.sessions;});
+ try{
+  await new Promise<void>((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});
+  await expect.poll(()=>{socket.send(JSON.stringify({v:1,type:'list_sessions'}));return sessions?.find(row=>row.id===id)?.running;}).toBe(false);
+ }finally{socket.close();}
+}
 it('takes over the same Work directory and preserves its old history without replaying old prompts',async()=>{
  const app=await setup();await writeFile(join(app.task.cwd,'file.txt'),'uncommitted fix');
  const response=await app.request({action:'takeover',id:app.task.id,engine:'codex',acceptDrift:true,expectedEngine:'pi'});
@@ -93,8 +104,10 @@ it('keeps the original Agent after provider failure and permits an explicit late
 it('switches back into a fresh Pi session and retains both previous segments',async()=>{
  const app=await setup();
  for(const [from,to] of [['pi','codex'],['codex','pi']]){
-  expect((await app.request({action:'takeover',id:app.task.id,engine:to,expectedEngine:from,acceptDrift:true})).status).toBe(202);
+  const response=await app.request({action:'takeover',id:app.task.id,engine:to,expectedEngine:from,acceptDrift:true});
+  expect(response.status,await response.clone().text()).toBe(202);
   await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');
+  await waitForTakeoverIdle(app.host,app.task.id);
  }
  const task=await app.readTask();expect(task.engine).toBe('pi');expect(task.takeoverSegments).toHaveLength(2);
  expect(app.calls).toHaveLength(2);expect(app.calls[1].id).not.toBe(app.task.id);
@@ -137,7 +150,8 @@ it('blocks takeover while a foreground turn and pending follow-up exist',async()
  expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(409);expect(app.calls).toHaveLength(1);
 });
 it('reopens a round-trip task after Host restart with both boundaries and no extra model call',async()=>{
- const app=await setup();for(const [from,to] of [['pi','codex'],['codex','pi']]){expect((await app.request({action:'takeover',id:app.task.id,engine:to,expectedEngine:from,acceptDrift:true})).status).toBe(202);await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');}
+ const app=await setup();for(const [from,to] of [['pi','codex'],['codex','pi']]){const response=await app.request({action:'takeover',id:app.task.id,engine:to,expectedEngine:from,acceptDrift:true});
+  expect(response.status,await response.clone().text()).toBe(202);await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');}
  const host=await app.restart();const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer test'}});cleanup.push(async()=>socket.close());const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await new Promise(r=>socket.once('open',r));socket.send(JSON.stringify({v:1,type:'open',sessionId:app.task.id,nativeProtocol:1}));
  await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);const history=frames.find(f=>f.type==='history').entries;
  expect(frames.find(f=>f.type==='opened').engine).toBe('pi');expect(history.filter((e:any)=>e.kind==='user')).toEqual([expect.objectContaining({text:'Keep the uncommitted fix. Continue testing.'})]);expect(history.filter((e:any)=>e.kind==='note'&&e.text.startsWith('Agent 交接：'))).toHaveLength(2);expect(app.calls).toHaveLength(2);
@@ -192,4 +206,20 @@ it('cancels a pending reconstruction on Host shutdown and reopens the original h
  socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await new Promise(r=>socket.once('open',r));socket.send(JSON.stringify({v:1,type:'open',sessionId:app.task.id,nativeProtocol:1}));
  await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);
  expect(frames.find(f=>f.type==='history').entries).toEqual(app.records.get(app.task.id));expect(app.calls).toHaveLength(1);
+});
+it('keeps lifecycle admission closed after durable commit until adoption has finished',async()=>{
+ const app=await setup();let release!:()=>void,reached!:()=>void;
+ const held=new Promise<void>(resolve=>{release=resolve;}),exporting=new Promise<void>(resolve=>{reached=resolve;});
+ const exportHistory=app.workspaces.exportHistory.bind(app.workspaces);
+ app.workspaces.exportHistory=async(id,history)=>{if((await app.workspaces.lookup(id))?.takeover?.status==='completed'){reached();await held;}return exportHistory(id,history);};
+ try{
+  expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+  await exporting;expect((await app.readTask()).takeover?.status).toBe('completed');
+  const early=await app.request({action:'takeover',id:app.task.id,engine:'pi',expectedEngine:'codex',acceptDrift:true});
+  expect(early.status).toBe(409);expect(await early.text()).toContain('Task lifecycle operation in progress');
+ }finally{release();}
+ await waitForTakeoverIdle(app.host,app.task.id);
+ const next=await app.request({action:'takeover',id:app.task.id,engine:'pi',expectedEngine:'codex',acceptDrift:true});
+ expect(next.status,await next.clone().text()).toBe(202);
+ await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');await waitForTakeoverIdle(app.host,app.task.id);
 });
