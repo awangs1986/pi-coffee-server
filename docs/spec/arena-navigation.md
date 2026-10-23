@@ -594,3 +594,36 @@ preserves existing commands, tools and work-process presentation. Keep the
 context-token capacity control separate. Account-scoped persistence, live mode
 switching and Host-side transport requirements are defined in
 [conversation-first delivery](conversation-delivery.md#user-control-compact-and-detailed).
+
+
+## Confirmed settings and folder hierarchy (2026-10-23)
+
+The grouped sidebar distinguishes group headers with an outlined folder icon,
+bolder names and indented tree lines. Groups containing no visible conversations
+are omitted (including groups whose only conversations are pinned outside the
+group). Their persisted membership and metadata remain intact; the conversation
+move selector still lists empty destinations, and the logo menu’s Manage groups
+entry retains empty-group deletion. Archived/active filtering, pins,
+ordering and unread state are unchanged.
+
+Composer settings are a local draft while the menu is open. Selecting an option
+does not close the menu or persist it. Confirm saves the chosen values; outside
+click, Escape, account change and conversation navigation discard the draft.
+New-task Agent changes may read a model catalog without starting an Agent.
+An existing-task engine change still requires the explicit takeover confirmation;
+its new model is configured after takeover. Cost consent precedes mutation for
+500K and Fast choices. Native changes are serialized with confirmed state checks;
+a timeout/error stops remaining changes and reports that already confirmed values
+may have been saved. This is not an atomic multi-setting Host transaction.
+Display-only changes remain usable during a running task. Existing task identity,
+authorization, provider support and native readiness restrictions remain in force.
+
+The logo menu has one MISHU entry. Its secondary menu contains secretary selection,
+usage, evidence, collaboration/decisions, memory and configuration. Escape/Left
+returns to the parent menu; outside click dismisses both. Secondary navigation does
+not start an Agent or change MISHU permissions. The secondary menu is positioned within viewport bounds, outside the parent
+scroll clipping area, so all actions remain reachable on narrow screens.
+
+Acceptance: controller regressions in `test/local-first-app.test.ts` and
+`test/native-agents.test.ts`, plus desktop/mobile Chromium in
+`scripts/probe-navigation-settings.mjs`. These fixtures do not call model providers.

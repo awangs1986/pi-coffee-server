@@ -33,7 +33,7 @@ try{
    assert.equal(await page.locator('#agent-display-value').textContent(),'精简');
    assert.ok(!JSON.stringify(frames.filter(f=>f.type==='history'||f.type==='event')).includes('INTERNAL_OUTPUT'));
    await page.locator('#prompt').fill('PRESERVE DRAFT');
-   const change=async(label)=>{await page.locator('#agent-menu-btn').click();await page.locator('#agent-display-row').click();if(label==='详细')await page.screenshot({path:join(evidence,`menu-${protocol}.png`)});await page.locator('#agent-display-pane button').filter({hasText:label}).click();};
+   const change=async(label)=>{await page.locator('#agent-menu-btn').click();await page.locator('#agent-display-row').click();if(label==='详细')await page.screenshot({path:join(evidence,`menu-${protocol}.png`)});await page.locator('#agent-display-pane button').filter({hasText:label}).click();await page.locator('#agent-confirm').click();};
    await page.screenshot({path:join(evidence,`compact-${protocol}.png`)});
    await change('详细');await page.locator('#thread .tool').first().waitFor({state:'attached'});
    assert.equal(await page.locator('#prompt').inputValue(),'PRESERVE DRAFT');

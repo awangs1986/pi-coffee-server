@@ -42,7 +42,7 @@ const browser=await chromium.launch({headless:true,executablePath:process.env.PL
 const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];page.on('pageerror',error=>errors.push(error.message));
 try{
  await page.goto(origin);await page.waitForFunction(()=>document.querySelector('#agent-thinking-value').textContent==='med');
- await page.locator('#agent-menu-btn').click();await page.locator('#agent-thinking-row').click();await page.locator('#agent-thinking-pane button').filter({hasText:'high'}).click();
+ await page.locator('#agent-menu-btn').click();await page.locator('#agent-thinking-row').click();await page.locator('#agent-thinking-pane button').filter({hasText:'high'}).click();await page.locator('#agent-confirm').click();
  await page.locator('#prompt').fill('Draft thinking fixture');await page.locator('#send').click();
  await page.waitForFunction(()=>document.querySelector('#prompt').value==='');
  for(let i=0;i<100&&!prompts.length;i++)await new Promise(resolve=>setTimeout(resolve,20));

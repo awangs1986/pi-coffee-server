@@ -152,7 +152,7 @@ it.each(['pi','codex'])('reconciles a %s context change with lost acknowledgemen
  const models={type:'models',sessionId:id,models:[{provider:'fixture',id:'large'}],current:{provider:'fixture',id:'large'},context:{preset:'272k'}};
  ws.receive(opened);ws.receive({type:'history',sessionId:id,entries:[]});ws.receive(models);
  document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
- [...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!.click();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(1);
  expect(app.frames.filter(f=>f.type==='set_context')).toHaveLength(1);
  ws.onclose();await vi.advanceTimersByTimeAsync(1300);const next=app.sockets.at(-1);next.receive(opened);next.receive({type:'history',sessionId:id,entries:[]});next.receive({...models,context:{preset:'maximum'}});
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='continue after reconnect';prompt.dispatchEvent(new Event('input'));
@@ -336,7 +336,7 @@ it.each([{agent:'pi',kind:'chat'},{agent:'codex',kind:'project'},{agent:'codex',
  ws.receive({type:'model_catalog',requestId:query.requestId,engine:agent,models:[{provider:agent,id:'default-model'},{provider:agent,id:chosen}],current:{provider:agent,id:'default-model'},thinkingLevels:[],thinkingLevel:''});
  const button=document.querySelector<HTMLButtonElement>('#agent-menu-btn')!;expect(button.disabled).toBe(false);button.click();
  document.querySelector<HTMLButtonElement>('#agent-model-row')!.click();
- [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes(chosen))!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-model-pane button')].find(b=>b.textContent?.includes(chosen))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  expect(app.frames.some(f=>f.type==='set_model')).toBe(false);
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first message';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
  expect(button.disabled).toBe(true);await vi.advanceTimersByTimeAsync(20);
@@ -372,7 +372,7 @@ it.each(['pi','codex','claude'].flatMap(agent=>['default','high','rejected'].map
  expect(document.querySelector('#agent-thinking-value')!.textContent).toBe('med');
  const level=selection==='default'?'medium':'high';
  if(selection!=='default'){document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();row.click();
- [...document.querySelectorAll<HTMLButtonElement>('#agent-thinking-pane button')].find(b=>b.textContent?.includes('high'))!.click();}
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-thinking-pane button')].find(b=>b.textContent?.includes('high'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();}
  expect(app.frames.some(f=>f.type==='set_thinking')).toBe(false);expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='first at high';document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id;
@@ -469,9 +469,9 @@ it('groups project tasks, folds them, and drags out/in without changing the task
  const drag=(target:Element,type:string)=>{const e=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(e,'dataTransfer',{value:transfer});target.dispatchEvent(e);return e;};
  group().querySelector<HTMLButtonElement>('.project-group-toggle')!.click();await vi.advanceTimersByTimeAsync(20);
  drag(group().querySelector('.session-item')!,'dragstart');expect(drag(document.querySelector('[data-sidebar-ungrouped]')!,'dragenter').defaultPrevented).toBe(true);drag(document.querySelector('[data-sidebar-ungrouped]')!,'drop');await vi.advanceTimersByTimeAsync(20);
- expect(group().querySelectorAll('.session-item')).toHaveLength(0);
+ expect(group()).toBeNull();
  expect(document.querySelector('[data-sidebar-ungrouped] .session-item')).not.toBeNull();
- drag(document.querySelector('[data-sidebar-ungrouped] .session-item')!,'dragstart');drag(group(),'drop');await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLButtonElement>('[data-sidebar-ungrouped] .more')!.click();const move=document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;move.value='p';move.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
  expect(group().querySelectorAll('.session-item')).toHaveLength(1);
  expect(app.conversations[0].projectId).toBe('p');expect(app.frames.filter(f=>f.type==='open')).toHaveLength(opens);
  app.sockets[0].receive({type:'sessions',sessions:[]});expect(group().querySelectorAll('.session-item')).toHaveLength(1);
@@ -697,9 +697,9 @@ it('defaults context to 272k and confirms extra cost before choosing fixed 500K'
  document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-context-row')!.click();
  expect(document.querySelector('#agent-context-pane')!.classList.contains('hidden')).toBe(false);
  const dialog=document.querySelector<HTMLDialogElement>('#modal')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
- const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!;option.click();
+ const option=[...document.querySelectorAll<HTMLButtonElement>('#agent-context-pane button')].find(b=>b.textContent!.includes('500K'))!;option.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  expect(document.querySelector('#modal-text')!.textContent).toContain('过大的上下文会产生额外费用');
- expect(document.querySelector('#agent-context-value')!.textContent).toBe('272k');
+ expect(document.querySelector('#agent-context-value')!.textContent).toBe('500K');
  document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(document.querySelector('#agent-context-value')!.textContent).toBe('500K');expect(app.frames.some(f=>f.type==='set_context'||f.type==='open')).toBe(false);
 });
@@ -721,10 +721,10 @@ it('offers Work takeover in the Agent menu, requires drift consent and keeps the
  document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();
  const row=document.querySelector<HTMLButtonElement>('#agent-engine-row')!;expect(row.disabled).toBe(false);
  const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
- row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  expect(dialog.open).toBe(true);expect(dialog.textContent).toContain('信息漂移');expect(app.requests.some(r=>r.action==='takeover')).toBe(false);
  document.querySelector<HTMLButtonElement>('#takeover-cancel')!.click();expect(dialog.open).toBe(false);expect(prompt.value).toBe('unsent draft');
- row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='takeover')).toMatchObject({id,engine:'codex',expectedEngine:'pi',acceptDrift:true});expect(prompt.value).toBe('unsent draft');
 });
@@ -734,7 +734,7 @@ it.each(['failed','completed'])('locks task actions during takeover and restores
  ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true,compact:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(10);
  const prompt=document.querySelector<HTMLTextAreaElement>('#prompt')!;prompt.value='keep my draft';prompt.dispatchEvent(new Event('input'));
  const dialog=document.querySelector<HTMLDialogElement>('#takeover-dialog')!;dialog.showModal=()=>dialog.setAttribute('open','');dialog.close=()=>dialog.removeAttribute('open');
- document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  task.takeover={id:'switch-1',status:'preparing',from:'pi',to:'codex'};
  document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();
  // A form submission/Enter must be blocked, not only a click on the Send button.
@@ -1306,14 +1306,14 @@ it('creates sidebar groups, blocks occupied deletion and deletes after moving th
  document.querySelector<HTMLButtonElement>('#create-sidebar-group')!.click();await vi.advanceTimersByTimeAsync(20);
  document.querySelector<HTMLInputElement>('#modal-input')!.value='资料';document.querySelector<HTMLButtonElement>('#modal-ok')!.click();await vi.advanceTimersByTimeAsync(20);
  const group=()=>document.querySelector<HTMLElement>('[data-sidebar-project="custom-group"]')!;
- expect(group().textContent).toContain('资料');expect(prompt.value).toBe('Unsent draft');expect(app.requests.some(r=>r.action==='project')).toBe(false);
+ expect(group()).toBeNull();expect(prompt.value).toBe('Unsent draft');expect(app.requests.some(r=>r.action==='project')).toBe(false);
  document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);const task=app.requests.find(r=>r.action==='conversation');
  document.querySelector<HTMLButtonElement>('[data-sidebar-ungrouped] .more')!.click();
  const select=document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;select.value='custom-group';select.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
  group().querySelector<HTMLButtonElement>('.project-group-more')!.click();expect(document.querySelector<HTMLButtonElement>('[data-delete-sidebar-group]')!.disabled).toBe(true);
  document.body.click();group().querySelector<HTMLButtonElement>('.session-item .more')!.click();
  const move=document.querySelector<HTMLSelectElement>('[aria-label="移至侧栏分组"]')!;move.value='';move.dispatchEvent(new Event('change'));await vi.advanceTimersByTimeAsync(20);
- group().querySelector<HTMLButtonElement>('.project-group-more')!.click();document.querySelector<HTMLButtonElement>('[data-delete-sidebar-group]')!.click();await vi.advanceTimersByTimeAsync(20);
+ document.querySelector<HTMLButtonElement>('#manage-sidebar-groups')!.click();document.querySelector<HTMLButtonElement>('[data-manage-group="custom-group"]')!.click();document.querySelector<HTMLButtonElement>('[data-delete-sidebar-group]')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(group()).toBeNull();expect(document.querySelector('[data-sidebar-ungrouped] .session-item')?.getAttribute('data-session-id')).toBe(task.id);
  expect(app.frames.filter(f=>f.type==='abort'||f.type==='prompt')).toEqual([]);
 });
@@ -1459,7 +1459,7 @@ async function speedMenu(){
  ws.receive({type:'opened',sessionId:id,engine:'codex',state:{},capabilities:{models:true,stop:true,steer:true,followUp:true}});ws.receive({type:'history',sessionId:id,entries:[]});
  const models={type:'models',sessionId:id,models:[{provider:'codex',id:'gpt-fake',fastMode:true}],current:{provider:'codex',id:'gpt-fake'},thinkingLevels:[],speed:{mode:'standard',fastAvailable:true},context:{preset:'272k'}};
  ws.receive(models);
- const chooseFast=()=>{document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-speed-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-speed-pane button')].find(b=>b.textContent?.startsWith('1.5x'))!.click();};
+ const chooseFast=()=>{document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-speed-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-speed-pane button')].find(b=>b.textContent?.startsWith('1.5x'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();};
  return {...app,id,ws,models,chooseFast};
 }
 it('confirms Fast pricing before sending and waits for authoritative speed metadata',async()=>{

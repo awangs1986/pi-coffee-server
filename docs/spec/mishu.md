@@ -1269,3 +1269,10 @@ candidate, immutable installed artifact, genuine provider semantics and producti
 activation are separate evidence. Current sources remain Pi Chat only (#122).
 
 记忆界面的容量显示当前秘书绑定下的全部占用条目（含删除墓碑）；筛选结果条数单独显示，不用筛选子集伪装剩余容量。
+
+
+### Logo navigation (2026-10-23)
+
+One MISHU entry opens a secondary menu containing all static and dynamically
+registered MISHU actions. Current-conversation gating and authorization are
+unchanged. See [navigation](arena-navigation.md#confirmed-settings-and-folder-hierarchy-2026-10-23).

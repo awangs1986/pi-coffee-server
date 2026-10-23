@@ -39,7 +39,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
   const conversations = ['a', 'b', 'c'].map(id => ({ id, name: `Conversation ${id}`, engine, workspaceKind: engine === 'pi' ? 'chat' : 'work', createdAt: '2026-10-03T00:00:00Z' }));
   const syncReads: string[] = [];
   const syncStates = new Map<string, any>(conversations.map(c => [c.id, { revision: '1', runState: 'running', entries: [{ kind: 'assistant', id: c.id + '-answer', entityRevision: '1', text: 'SYNC-' + c.id }] }]));
-  const network = { creationGate:null as Promise<void>|null, afterCreateGate:null as Promise<void>|null, creates:[] as any[], release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
+  const network = { projects:[] as any[], sidebar:{} as any, creationGate:null as Promise<void>|null, afterCreateGate:null as Promise<void>|null, creates:[] as any[], release:{webVersion:'0.12',hostVersion:'0.11',frontendVersion:'0.13',webBackendCommit:'a'.repeat(40),hostBackendCommit:'b'.repeat(40),frontendCommit:'c'.repeat(40)} as any,showGroups:true, authGate:null as Promise<void>|null, workspaceGate:null as Promise<void>|null, user: 'synthetic-local-first-user', custom: null as null | ((url: string) => any), hang: false, deferred: new Map<string, (response: Response) => void>() };
   const snapshot = (id: string) => { const state = syncStates.get(id)!; return { syncProtocol: 2, userScope:network.user, conversationId: id, sessionId: id, bindingEpoch: 'epoch-' + id, snapshotId: 'snapshot-' + id + '-' + state.revision, baseRevision: state.revision, headRevision: state.revision, olderCursor: state.olderCursor || null, sourceFreshness: 'current', lastSourceCheckAt:state.lastSourceCheckAt||'2026-10-03T00:00:00Z', runState: state.runState, entries: state.entries }; };
   const sockets: Socket[] = [];
   const transport={holdHandshake:false,replyPings:false};
@@ -67,7 +67,7 @@ async function setup(engine: Engine = 'codex', protocol: 1 | 2 = 1, beforeBoot=(
         return {ok:true,status:200,json:async()=>task};
       }
       if(network.creates.length)await network.afterCreateGate;
-      await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: [], conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [] }, capabilities: { chatWorkspaces: true } };}
+      await network.workspaceGate;data = ['files', 'changes'].includes(body.action) ? { state: 'local', files: [] } : { projects: network.projects, conversations, sidebar: { showGroups:network.showGroups, assignments: {}, collapsed: [], ...network.sidebar }, capabilities: { chatWorkspaces: true } };}
     // Unknown read-only sync is held, never mistaken for a valid empty snapshot.
     else if (String(url).includes('/api/conversations/')) {
       syncReads.push(String(url));
@@ -826,7 +826,7 @@ describe('conversation display menu',()=>{
   expect(row!.previousElementSibling?.id).toBe('agent-speed-row');
   expect(document.querySelector('#agent-display-value')?.textContent).toBe('精简');
   row!.click();await tick();
-  const detail=Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(b=>b.textContent?.includes('详细'));expect(detail).toBeDefined();detail!.click();await tick(200);
+  const detail=Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(b=>b.textContent?.includes('详细'));expect(detail).toBeDefined();detail!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();await tick(200);
   expect(document.querySelector('#agent-display-value')?.textContent).toBe('详细');expect(prompt().value).toBe('KEEP DRAFT');
   expect(allFrames.some(frame=>frame.type==='set_display_mode'&&frame.mode==='detailed')).toBe(true);
   expect(allFrames.some(frame=>frame.type==='abort')).toBe(false);
@@ -837,7 +837,7 @@ describe('conversation display menu',()=>{
 
 it('keeps a question and draft while changing display mode, and rejects late detailed history',async()=>{
  const app=await setup('pi',1),socket=await app.select('a',undefined,true);draft('NOT SENT');
- const change=async(label:string)=>{document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent===label)!.click();await tick();};
+ const change=async(label:string)=>{document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent===label)!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();await tick();};
  app.emit(socket,'a',{type:'extension_ui_request',id:'keep-question',method:'select',title:'KEEP QUESTION',options:['Yes','No']});await tick();
  await change('详细');socket.receive({type:'history',sessionId:'a',displayMode:'detailed',displayRefresh:true,entries:[{id:'a',kind:'assistant',text:'ANSWER'},{id:'t',kind:'tool',name:'bash',result:'TOOL LOG'}]});await tick();
  expect(thread().querySelector('.tool')).not.toBeNull();
@@ -851,7 +851,7 @@ it('keeps a question and draft while changing display mode, and rejects late det
 
 it('does not mark a running task idle when changing display mode fails',async()=>{
  const app=await setup('pi',1),socket=await app.select('a',undefined,true);
- document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent==='详细')!.click();await tick();
+ document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();await tick();Array.from(document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')).find(button=>button.textContent==='详细')!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();await tick();
  const request=allFrames.findLast(frame=>frame.type==='set_display_mode');expect(request).toBeDefined();
  socket.receive({type:'error',requestId:request.requestId,code:'operation_failed',message:'History temporarily unavailable'});await tick();
  expect(document.querySelector('#stop')?.classList.contains('hidden')).toBe(false);
@@ -898,4 +898,61 @@ it('does not adopt a late creation response after switching to another task',asy
  draft('Draft belongs to new task');document.querySelector<HTMLFormElement>('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
  const id=app.network.creates[0].id;await app.select('b');release();await tick();
  expect(location.pathname).toBe('/conversations/b');expect(allFrames.some(f=>f.type==='open'&&f.sessionId===id)).toBe(false);expect(allFrames.some(f=>f.type==='prompt')).toBe(false);
+});
+
+
+describe('confirmed composer settings and nested MISHU navigation',()=>{
+  const click=(selector:string)=>document.querySelector<HTMLButtonElement>(selector)!.click();
+  const option=(pane:string,label:string)=>Array.from(document.querySelectorAll<HTMLButtonElement>(`#agent-${pane}-pane button`)).find(button=>button.querySelector('.agent-option-label')?.textContent===label)!.click();
+  const catalog={type:'models',models:[{provider:'codex',id:'one',thinkingLevels:['low','medium']},{provider:'codex',id:'two',thinkingLevels:['low','medium']}],current:{provider:'codex',id:'one'},thinkingLevels:['low','medium'],thinkingLevel:'medium',context:{preset:'272k'},speed:{mode:'standard',fastAvailable:false}};
+  it('stages repeated changes, cancels outside and on navigation, then saves only on confirmation',async()=>{
+    const app=await setup(),socket=await app.select('a');socket.receive(catalog);await tick();
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');click('#agent-thinking-row');option('thinking','low');
+    expect(document.querySelector('#agent-menu')!.classList.contains('hidden')).toBe(false);
+    expect(document.querySelector('#agent-model-value')!.textContent).toBe('two');
+    expect(allFrames.some(f=>f.type.startsWith('set_'))).toBe(false);
+    document.body.click();click('#agent-menu-btn');expect(document.querySelector('#agent-model-value')!.textContent).toBe('one');
+    click('#agent-thinking-row');option('thinking','low');click('#agent-confirm');await tick();
+    expect(allFrames.filter(f=>f.type==='set_thinking').map(f=>f.level)).toEqual(['low']);
+    const request=allFrames.findLast(f=>f.type==='set_thinking');socket.receive({...catalog,thinkingLevel:'low'});socket.receive({type:'ack',operation:'set_thinking',requestId:request.requestId});await tick(100);
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');await app.select('b');click('#agent-confirm');await tick();
+    expect(allFrames.filter(f=>f.type==='set_model')).toHaveLength(0);
+  });
+  it('waits for model confirmation before applying the staged effort',async()=>{
+    const app=await setup(),socket=await app.select('a');socket.receive(catalog);await tick();
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');click('#agent-thinking-row');option('thinking','low');click('#agent-confirm');await tick();
+    const change=allFrames.findLast(f=>f.type==='set_model');expect(change.id).toBe('two');
+    expect(allFrames.some(f=>f.type==='set_thinking')).toBe(false);
+    socket.receive({type:'ack',operation:'set_model',requestId:change.requestId});await tick();
+    const read=allFrames.findLast(f=>f.type==='get_models');socket.receive({...catalog,requestId:read.requestId,current:{provider:'codex',id:'two'}});await tick(100);
+    expect(allFrames.filter(f=>f.type==='set_thinking').map(f=>f.level)).toEqual(['low']);
+    const effort=allFrames.findLast(f=>f.type==='set_thinking');socket.receive({...catalog,current:{provider:'codex',id:'two'},thinkingLevel:'low'});socket.receive({type:'ack',operation:'set_thinking',requestId:effort.requestId});await tick(100);
+    expect(document.querySelector('#agent-model-value')!.textContent).toBe('two');
+  });
+  it('stops the staged sequence when the model is rejected',async()=>{
+    const app=await setup(),socket=await app.select('a');socket.receive(catalog);await tick();
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');click('#agent-thinking-row');option('thinking','low');click('#agent-confirm');await tick();
+    const change=allFrames.findLast(f=>f.type==='set_model');socket.receive({type:'error',requestId:change.requestId,code:'operation_failed',message:'Synthetic rejection'});await tick(16100);
+    expect(allFrames.some(f=>f.type==='set_thinking')).toBe(false);
+    expect(document.querySelector('#agent-model-value')!.textContent).toBe('one');
+  });
+  it('keeps all MISHU actions under one secondary entry and supports keyboard dismissal',async()=>{
+    await setup();document.querySelector<HTMLButtonElement>('.login-coffee-skip')?.click();click('#brand-menu-btn');
+    expect(document.querySelector('#mishu-submenu')!.classList.contains('hidden')).toBe(true);
+    for(const id of ['toggle','memory','configure','usage','evidence','collaboration'])expect(document.querySelector(`#mishu-${id}`)!.closest('#mishu-submenu')).not.toBeNull();
+    click('#mishu-menu-btn');expect(document.querySelector('#mishu-submenu')!.classList.contains('hidden')).toBe(false);
+    document.querySelector('#mishu-submenu')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    expect(document.querySelector('#mishu-submenu')!.classList.contains('hidden')).toBe(true);
+    expect(document.querySelector('#brand-menu')!.classList.contains('hidden')).toBe(false);
+  });
+});
+
+it('hides empty sidebar folders without removing them from move destinations',async()=>{
+ const app=await setup('codex',1,network=>{Object.assign(network,{projects:[{id:'full',name:'Folder One'},{id:'empty',name:'Empty Folder'}],sidebar:{assignments:{a:'full'}}});});
+ expect(document.querySelector('[data-sidebar-project="full"] .project-folder')).not.toBeNull();
+ expect(document.querySelector('[data-sidebar-project="full"] [data-session-id="a"]')).not.toBeNull();
+ expect(document.querySelector('[data-sidebar-project="empty"]')).toBeNull();
+ document.querySelector<HTMLButtonElement>('[data-session-id="a"] .more')!.click();
+ expect(document.querySelector('.sidebar-move-select')?.textContent).toContain('Empty Folder');
+ expect(app.conversations).toHaveLength(3);
 });

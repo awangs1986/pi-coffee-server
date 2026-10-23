@@ -9,7 +9,7 @@ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_EXECU
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 page.setDefaultTimeout(30_000);
 const errors=[];page.on('pageerror',error=>errors.push(error.message));
-async function chooseKind(label){await page.locator('#agent-menu-btn').click();await page.locator('#agent-kind-row').click();await page.locator('#agent-kind-pane').getByRole('menuitemradio',{name:new RegExp('^'+label)}).click();}
+async function chooseKind(label){await page.locator('#agent-menu-btn').click();await page.locator('#agent-kind-row').click();await page.locator('#agent-kind-pane').getByRole('menuitemradio',{name:new RegExp('^'+label)}).click();await page.locator('#agent-confirm').click();}
 try{
  await page.goto(base+'/auth/login');
  if(new URL(page.url()).origin!==new URL(base).origin){

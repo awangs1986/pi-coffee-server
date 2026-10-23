@@ -48,8 +48,8 @@ try{
  for(const width of [1280,390]){
   const page=await browser.newPage({viewport:{width,height:800}});page.on('pageerror',error=>errors.push(error.message));
   await page.goto('http://127.0.0.1:'+server.address().port);
-  await page.locator('#agent-menu-btn').click();await page.locator('#agent-engine-row').click();await page.locator('#agent-engine-pane button').filter({hasText:'Codex'}).click();
-  await page.locator('#agent-menu-btn').click();await page.locator('#agent-model-row').click();await page.locator('#agent-model-pane button').filter({hasText:'gpt-6-luna'}).click();
+  await page.locator('#agent-menu-btn').click();await page.locator('#agent-engine-row').click();await page.locator('#agent-engine-pane button').filter({hasText:'Codex'}).click();await page.locator('#agent-confirm').click();
+  await page.locator('#agent-menu-btn').click();await page.locator('#agent-model-row').click();await page.locator('#agent-model-pane button').filter({hasText:'gpt-6-luna'}).click();await page.locator('#agent-confirm').click();
   holdAuxiliary=true;
   const before=prompts.length,received=once(server,'fixture-prompt',{signal:AbortSignal.timeout(5000)});await page.locator('#prompt').fill('Synthetic Codex Chat '+width);await page.locator('#send').click();await received;
   holdAuxiliary=false;for(const release of held.splice(0))release();

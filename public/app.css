@@ -831,7 +831,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
   .composer .hint { display: none; }
   .composer-left { flex: 1; }
   .agent-menu { width: min(264px, calc(100vw - 52px)); }
-  .agent-pane { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); width: calc(100vw - 52px); }
+  .agent-pane { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); width: 100%; max-height:max(100px,calc(100dvh - 500px)); }
   .context-field input { width: 92px; }
   .project-context { padding-left: 10px; gap: 6px; }
   .strip-btn { padding-inline: 8px; }
@@ -1194,3 +1194,15 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .mishu-setup-footer { display:flex; flex-shrink:0; justify-content:flex-end; gap:12px; padding-top:16px; }
 .mishu-contact { display:flex; align-items:flex-start; gap:10px; padding:10px 0; }
 .mishu-contact input { flex-shrink:0; width:auto; }
+
+/* Distinguish repository folders from the conversations inside them. */
+.project-folder { width:17px; height:17px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linejoin:round; }
+.project-group-name { font-weight:650; }
+.project-group > .project-group-list { margin-left:18px; border-left:1px solid var(--border); padding-left:4px; }
+.project-group .session-item { margin-left:0; }
+.agent-confirm { margin:5px; align-self:flex-end; }
+.mishu-menu-wrap { position:relative; }
+#mishu-menu-btn { display:flex; justify-content:space-between; width:100%; }
+.mishu-submenu { position:fixed; z-index:100; width:min(240px,calc(100vw - 16px)); max-height:min(420px,70vh); overflow:auto; padding:5px; background:var(--bg); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-soft); }
+.mishu-submenu > button { width:100%; }
+.group-manager { max-height:calc(100dvh - 24px); max-width:calc(100vw - 16px); overflow:auto; }

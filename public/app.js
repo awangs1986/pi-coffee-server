@@ -388,6 +388,8 @@ function applyTheme(theme) {
   if (ui.themeLabel) ui.themeLabel.textContent = next === 'dark' ? '浅色模式' : '深色模式';
 }
 function closeBrandMenu() {
+  $('#mishu-submenu')?.classList.add('hidden');
+  $('#mishu-menu-btn')?.setAttribute('aria-expanded','false');
   ui.brandMenu?.classList.add('hidden');
   ui.brandBtn?.setAttribute('aria-expanded', 'false');
 }
@@ -446,22 +448,25 @@ function closeAgentPanes() {
   for (const row of Object.values(ui.agentRows)) row.setAttribute('aria-expanded', 'false');
 }
 function closeAgentMenu() {
+  agentDraft=null;
   ui.agentMenu?.classList.add('hidden');
   ui.agentBtn?.setAttribute('aria-expanded', 'false');
   closeAgentPanes();
 }
 function toggleAgentMenu() {
-  if (!ui.agentMenu || ui.agentBtn.disabled) return;
+  if (!ui.agentMenu || ui.agentBtn.disabled || agentSaveBusy) return;
   const open = ui.agentMenu.classList.contains('hidden');
   closeBrandMenu();
   closeTaskDetails();
   if (!open) { closeAgentMenu(); return; }
+  beginAgentDraft();
   renderAgentSettings();
   ui.agentMenu.classList.remove('hidden');
   ui.agentBtn.setAttribute('aria-expanded', 'true');
   setTimeout(() => Object.values(ui.agentRows).find((row) => !row.disabled && !row.classList.contains('hidden'))?.focus(), 0);
 }
 function openAgentPane(kind) {
+  if(!agentDraft)beginAgentDraft();
   closeAgentPanes();
   const pane = ui.agentPanes[kind];
   if (!pane || ui.agentRows[kind]?.disabled) return;
@@ -478,112 +483,129 @@ function agentOption({ label, meta = '', selected = false, disabled = false, pla
   button.append(el('span', 'agent-option-label', label));
   if (meta) button.append(el('span', 'agent-option-meta', meta));
   if (selected) button.append(el('span', 'agent-option-check', '✓'));
-  button.addEventListener('click', onClick);
+  button.addEventListener('click',event=>{event.stopPropagation();onClick();});
   return button;
 }
 // Agent and Chat/Work are chosen here for a new task; the hidden selects stay the source of truth.
 function renderChoicePane(pane, select, describe) {
-  for (const option of select.options) {
-    const { label, meta } = describe(option);
-    pane.append(agentOption({
-      label, meta, plain: true, selected: select.value === option.value, disabled: option.disabled,
-      onClick: () => {
-        closeAgentMenu();
-        if (select.value !== option.value) { select.value = option.value; select.dispatchEvent(new Event('change')); }
-        ui.agentBtn.focus();
-      },
-    }));
-  }
+  for(const option of select.options){const {label,meta}=describe(option);pane.append(agentOption({label,meta,plain:true,selected:agentDraft?.engine===option.value,disabled:agentDraft?.kind==='chat'?option.disabled:!engineAvailability.find(e=>e.id===option.value)?.available,onClick:()=>stageAgentSetting('engine',option.value)}));}
 }
 function renderAgentPane(kind) {
-  const pane = ui.agentPanes[kind];
-  pane.replaceChildren();
-  if (kind === 'engine' && activeId) {
-    const task=currentTask();
-    for(const target of ['pi','codex']){const ready=engineAvailability.find(e=>e.id===target);pane.append(agentOption({label:engineName(target),meta:target===task?.engine?'当前 Agent':'自动交接',selected:target===task?.engine,disabled:!canTakeover()||!ready?.available||target===task?.engine,onClick:()=>{closeAgentMenu();takeoverControls.open(target);}}));}
-    return;
+  const pane=ui.agentPanes[kind];pane.replaceChildren();
+  const draft=agentDraft, catalog=draft?.catalog||models;
+  if(kind==='engine'&&activeId){
+    for(const target of ['pi','codex'])pane.append(agentOption({label:engineName(target),meta:target===currentTask()?.engine?'当前 Agent':'自动交接',selected:(draft?.engine||currentTask()?.engine)===target,disabled:!canTakeover()||!engineAvailability.find(e=>e.id===target)?.available,onClick:()=>stageAgentSetting('engine',target)}));return;
   }
-  if (kind === 'engine') { renderChoicePane(pane, $('#task-engine'), (option) => ({ label: engineName(option.value), meta: option.textContent.split(' · ').slice(1).join(' · ') })); return; }
-  if (kind === 'kind') {
-    for(const source of ['chat','gitea','github']) {
-      const available=source==='chat' || forgeCapabilities()[source];
-      pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],meta:source==='chat'?'无仓库聊天':available?'Work 项目':'当前账号的仓库授权尚未配置',selected:taskSource()===source,disabled:!available,onClick:()=>chooseTaskSource(source)}));
-    }
-    return;
+  if(kind==='engine'){renderChoicePane(pane,$('#task-engine'),option=>({label:engineName(option.value),meta:option.textContent.split(' · ').slice(1).join(' · ')}));return;}
+  if(kind==='kind'){
+    for(const source of ['chat','gitea','github'])pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],selected:(draft?.kind||taskSource())===source,meta:source!=='chat'&&!forgeCapabilities()[source]?'当前账号的仓库授权尚未配置':'',disabled:source!=='chat'&&!forgeCapabilities()[source],onClick:()=>stageAgentSetting('kind',source)}));return;
   }
   if(kind==='display'){
-    for(const [mode,label] of [['compact','精简'],['detailed','详细']])pane.append(agentOption({label,selected:displayMode===mode,disabled:displaySaving,onClick:()=>void chooseDisplayMode(mode)}));
-    return;
-  }
-  if(kind==='speed'){
-    const current=activeId?models?.speed?.mode:draftSpeed;
-    const fastAvailable=activeId?models?.speed?.fastAvailable:selectedModelInfo()?.fastMode===true;
-    for(const [mode,label] of [['standard','1x'],['fast','1.5x']])pane.append(agentOption({label,meta:mode==='fast'?(fastAvailable?'高速模式 · 额外费用':'当前模型未提供高速模式'):'普通模式',selected:current===mode,disabled:mode==='fast'&&!fastAvailable,onClick:()=>void chooseSpeed(mode)}));
-    return;
+    for(const [value,label] of [['compact','精简'],['detailed','详细']])pane.append(agentOption({label,selected:(draft?.display||displayMode)===value,onClick:()=>stageAgentSetting('display',value)}));return;
   }
   if(kind==='context'){
-    for(const preset of ['272k','maximum'])pane.append(agentOption({label:preset==='272k'?'272k（默认）':'500K',selected:(opened?models?.context?.preset:draftContextPreset)===preset,onClick:async()=>{
-      const epoch=taskSelectionEpoch,id=activeId;
-      closeAgentMenu();
-      if(preset==='maximum'&&!await askModal({title:'使用 500K 上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
-      if(epoch!==taskSelectionEpoch||id!==activeId)return;
-      if(opened){if(streaming||compacting||!models?.context)return;contextPending=requestId('context');send({v:1,type:'set_context',requestId:contextPending,preset});}
-      else draftContextPreset=preset;
-      renderAgentSettings();refreshComposer();
-    }}));return;
+    for(const value of ['272k','maximum'])pane.append(agentOption({label:value==='272k'?'272k（默认）':'500K',selected:(draft?.context||(activeId?models?.context?.preset:draftContextPreset))===value,onClick:()=>stageAgentSetting('context',value)}));return;
   }
-  if (!models) return;
-  const current = selectedModelInfo();
-  if (kind === 'source') {
-    const sources = [...new Set(models.models.map((m) => m.source || 'native'))];
-    for (const source of sources) {
-      const available = models.models.filter((m) => (m.source || 'native') === source).length;
-      pane.append(agentOption({
-        label: sourceLabel(source),
-        meta: `${available} 个模型`,
-        selected: (models.current?.source || current?.source || 'native') === source,
-        onClick: () => {
-          closeAgentMenu();
-          const next = models.models.find((m) => (m.source || 'native') === source);
-          if (next && (models.current?.source || current?.source || 'native') !== source) chooseModel(next.provider, next.id);
-        },
-      }));
-    }
-    return;
+  const current=draft?.model||catalog?.current;
+  const info=catalog?.models.find(m=>m.provider===current?.provider&&m.id===current?.id);
+  if(kind==='speed'){
+    const available=info?.fastMode??catalog?.speed?.fastAvailable;
+    for(const [value,label] of [['standard','1x'],['fast','1.5x']])pane.append(agentOption({label,meta:value==='fast'?'高速模式 · 额外费用':'普通模式',selected:(draft?.speed||(activeId?models?.speed?.mode:draftSpeed))===value,disabled:value==='fast'&&!available,onClick:()=>stageAgentSetting('speed',value)}));return;
   }
-  if (kind === 'model') {
-    const bySource = new Map();
-    for (const model of models.models) {
-      const source = model.source || 'native';
-      if (!bySource.has(source)) bySource.set(source, []);
-      bySource.get(source).push(model);
+  if(!catalog)return;
+  if(kind==='source'){
+    for(const source of new Set(catalog.models.map(m=>m.source||'native')))pane.append(agentOption({label:sourceLabel(source),selected:(info?.source||'native')===source,onClick:()=>stageAgentSetting('model',catalog.models.find(m=>(m.source||'native')===source))}));return;
+  }
+  if(kind==='model'){
+    for(const model of catalog.models)pane.append(agentOption({label:model.id,meta:model.provider,selected:current?.provider===model.provider&&current?.id===model.id,onClick:()=>stageAgentSetting('model',model)}));return;
+  }
+  for(const level of info?.thinkingLevels||catalog.thinkingLevels||[])pane.append(agentOption({label:thinkingLabel(level),selected:(draft?.thinking||catalog.thinkingLevel)===level,onClick:()=>stageAgentSetting('thinking',level)}));
+}
+let agentDraft=null,agentSaveBusy=false;
+function beginAgentDraft(){
+  agentDraft={id:activeId,user:currentUser,epoch:taskSelectionEpoch,connection:connectionEpoch,engine:agentMenuState().agent,kind:taskSource(),catalog:models,model:models?.current,thinking:models?.thinkingLevel,context:activeId?models?.context?.preset:draftContextPreset,speed:activeId?models?.speed?.mode:draftSpeed,display:displayMode};
+}
+function stageAgentSetting(key,value){
+  if(!agentDraft||agentSaveBusy)return;
+  if(key==='engine'&&agentDraft.engine===value)return;
+  agentDraft[key]=value;
+  if(key==='kind'&&value==='chat'&&!['pi','codex'].includes(agentDraft.engine))stageAgentSetting('engine','pi');
+  if(key==='engine'){
+    agentDraft.catalog=null;agentDraft.model=null;agentDraft.thinking=null;agentDraft.speed='standard';
+    if(activeId&&value===currentTask()?.engine){agentDraft.catalog=models;agentDraft.model=models?.current;agentDraft.thinking=models?.thinkingLevel;agentDraft.speed=models?.speed?.mode;}
+    if(!activeId&&engineAvailability.find(e=>e.id===value)?.modelCatalog){
+      const draft=agentDraft,request=requestId('menu-catalog');draft.catalogRequest=request;
+      send({v:1,type:'get_model_catalog',engine:value,requestId:request});
+      setTimeout(()=>{if(agentDraft===draft&&draft.catalogRequest===request){draft.catalogRequest=null;toast('模型列表暂不可用，可确认 Agent 后重新加载');renderAgentSettings();}},10000);
     }
-    for (const [source, sourceModels] of bySource) {
-      pane.append(el('div', 'agent-pane-label', sourceLabel(source)));
-      for (const model of sourceModels) {
-        const selected = current?.provider === model.provider && current?.id === model.id;
-        pane.append(agentOption({
-          label: model.id,
-          meta: model.provider,
-          selected,
-          onClick: () => { closeAgentMenu(); if (!selected) chooseModel(model.provider, model.id); },
-        }));
+  }
+  if(key==='model'&&value){
+    const levels=value.thinkingLevels||agentDraft.catalog?.thinkingLevels||[];
+    if(!levels.includes(agentDraft.thinking))agentDraft.thinking=levels.includes('medium')?'medium':levels[0];
+    if(value.fastMode!==true)agentDraft.speed='standard';
+  }
+  renderAgentSettings();renderAgentPane(key);
+}
+function renderAgentDraft(){
+  const d=agentDraft;if(!d)return;
+  const info=d.catalog?.models.find(m=>m.provider===d.model?.provider&&m.id===d.model?.id);
+  const values={engine:engineName(d.engine),kind:d.kind==='chat'?'Chat':FORGE_NAMES[d.kind],model:d.model?.id||(d.catalogRequest?'加载中…':'—'),source:sourceLabel(info?.source),thinking:thinkingLabel(d.thinking||'—'),context:d.context==='maximum'?'500K':'272k',speed:d.speed==='fast'?'1.5x':'1x',display:d.display==='detailed'?'详细':'精简'};
+  for(const [key,value] of Object.entries(values))ui.agentValues[key].textContent=value;
+  const changingEngine=activeId&&d.engine!==(currentTask()?.engine||engine);
+  for(const key of ['source','model','thinking'])ui.agentRows[key].disabled=agentSaveBusy||changingEngine||!d.catalog||(!activeId?false:modelControlsLocked());
+  ui.agentRows.thinking.classList.toggle('hidden',!(info?.thinkingLevels||d.catalog?.thinkingLevels||[]).length);
+  ui.agentRows.source.classList.toggle('hidden',d.engine!=='pi');
+  ui.agentRows.speed.classList.toggle('hidden',d.engine!=='codex');
+  ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(d.engine));
+  if(!activeId){ui.agentRows.context.disabled=agentSaveBusy||!d.catalog?.context;ui.agentRows.speed.disabled=agentSaveBusy||!d.catalog;}
+  if(!activeId&&d.catalog){ui.agentNote.classList.add('hidden');}
+  if(changingEngine){ui.agentRows.speed.disabled=true;ui.agentRows.context.disabled=true;ui.agentNote.textContent='确认后进行 Agent 交接，完成后可调整新 Agent 的模型。';ui.agentNote.classList.remove('hidden');}
+  $('#agent-confirm').disabled=agentSaveBusy||Boolean(d.catalogRequest);
+}
+async function confirmAgentSettings(){
+  const d=agentDraft;if(!d||agentSaveBusy)return;
+  const valid=()=>d.id===activeId&&d.user===currentUser&&d.epoch===taskSelectionEpoch&&d.connection===connectionEpoch;
+  if(!valid()){closeAgentMenu();return;}
+  // Billing consent precedes every mutation. Closing these dialogs never commits a partial draft.
+  agentSaveBusy=true;renderAgentDraft();refreshComposer();
+  const oldContext=activeId?models?.context?.preset:draftContextPreset,oldSpeed=activeId?models?.speed?.mode:draftSpeed;
+  try{
+    if(d.context==='maximum'&&oldContext!=='maximum'&&!await askModal({title:'使用 500K 上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
+    if(d.speed==='fast'&&oldSpeed!=='fast'&&!await askModal({title:'启用 1.5x 高速模式',text:'高速模式收费为普通模式的 2 倍（付费额度）；订阅内含额度按 2.5 倍消耗。实际速度取决于服务可用性。',okLabel:'确认启用'}))return;
+    if(!valid())return;
+    closeAgentMenu();renderAgentSettings();
+    if(activeId&&d.engine!==(currentTask()?.engine||engine)){if(!canTakeover())throw Error('当前任务无法进行 Agent 交接');takeoverControls.open(d.engine);return;}
+    if(!activeId){
+      if(d.kind!==taskSource())chooseTaskSource(d.kind);
+      if(d.engine!==$('#task-engine').value){$('#task-engine').value=d.engine;$('#task-engine').dispatchEvent(new Event('change'));}
+      if(d.catalog){catalogRequest=null;models=d.catalog;if(d.model)chooseModel(d.model.provider,d.model.id);if(d.thinking)chooseThinking(d.thinking);}
+      draftContextPreset=d.context||'272k';draftSpeed=d.speed||'standard';
+    }else{
+      const waitFor=async(pending,confirmed)=>{
+        const deadline=Date.now()+16000;
+        while(valid()&&(pending()||!confirmed())&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+        if(!valid())throw Error('对话或连接已变更，未继续保存');
+        if(pending()||!confirmed())throw Error('部分设置尚未确认，请重新打开菜单核对');
+      };
+      const nativeChanged=(d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id))||(d.thinking&&d.thinking!==models?.thinkingLevel)||(d.context&&d.context!==models?.context?.preset)||(d.speed&&d.speed!==models?.speed?.mode);
+      if(nativeChanged&&(modelControlsLocked()||streaming||contextPending))throw Error('当前任务正在处理操作，请稍后重试');
+      if(d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id)){
+        chooseModel(d.model.provider,d.model.id);
+        await waitFor(()=>modelPending,()=>models?.current?.provider===d.model.provider&&models?.current?.id===d.model.id);
       }
+      if(d.thinking&&d.thinking!==models?.thinkingLevel){
+        if(!models?.thinkingLevels?.includes(d.thinking))throw Error('当前模型不支持所选思考强度');
+        chooseThinking(d.thinking);await waitFor(()=>thinkingPending,()=>models?.thinkingLevel===d.thinking);
+      }
+      if(d.context&&d.context!==models?.context?.preset){
+        contextPending=requestId('context');if(!send({v:1,type:'set_context',requestId:contextPending,preset:d.context})){contextPending=null;throw Error('上下文设置未发送');}
+        await waitFor(()=>contextPending,()=>models?.context?.preset===d.context);
+      }
+      if(d.speed&&d.speed!==models?.speed?.mode){if(!applySpeed(d.speed))throw Error('速度设置未发送');await waitFor(()=>speedPending,()=>models?.speed?.mode===d.speed);}
     }
-    return;
-  }
-  const levels = models.thinkingLevels || [];
-  for (const level of levels) {
-    pane.append(agentOption({
-      label: thinkingLabel(level),
-      selected: models.thinkingLevel === level,
-      onClick: () => {
-        closeAgentMenu();
-        ui.thinking.value = level;
-        chooseThinking(level);
-      },
-    }));
-  }
+    if(d.user===currentUser&&d.id===activeId&&d.display!==displayMode)await chooseDisplayMode(d.display);
+  }catch(error){toast(error.message);}
+  finally{agentSaveBusy=false;closeAgentMenu();renderAgentSettings();refreshComposer();}
 }
 function restoreDisplayAnchor(){if(displayAnchor?.id===activeId){syncedView.anchor.restore(displayAnchor.anchor);displayAnchor=null;}}
 function requestDisplaySync(){
@@ -621,16 +643,6 @@ function applySpeed(mode){
     send({v:1,type:'get_models'});renderAgentSettings();refreshComposer();
   },15000);
   refreshComposer();return true;
-}
-async function chooseSpeed(mode){
-  const epoch=taskSelectionEpoch,id=activeId,connection=connectionEpoch;
-  closeAgentMenu();
-  const current=activeId?models?.speed?.mode:draftSpeed;
-  if(current===mode)return;
-  if(mode==='fast'&&!await askModal({title:'启用 1.5x 高速模式',text:'高速模式收费为普通模式的 2 倍（付费额度）；订阅内含额度按 2.5 倍消耗。1.5x 为模式名称，实际加速幅度取决于模型与服务可用性，不保证固定倍速。是否启用？',okLabel:'确认启用'}))return;
-  if(epoch!==taskSelectionEpoch||id!==activeId||connection!==connectionEpoch||modelControlsLocked()||streaming||compacting||contextPending)return;
-  if(activeId){if(!opened||!models?.speed)return;applySpeed(mode);}
-  else{draftSpeed=mode;renderAgentSettings();refreshComposer();}
 }
 function agentMenuState() {
   const task = currentTask();
@@ -690,6 +702,7 @@ function renderAgentSettings() {
   renderAgentTrigger();
   ui.agentValues.display.textContent=displayMode==='detailed'?'详细':'精简';
   ui.agentRows.display.disabled=displaySaving||!currentUser;
+  renderAgentDraft();
   for (const pane of ['source', 'model', 'thinking', 'context', 'speed', 'display']) renderAgentPane(pane);
 }
 // 任务详情 (scroll button): VM, path, copy path and local compaction.
@@ -1057,11 +1070,13 @@ function renderSessionListContent() {
   }
   for(const project of groups){
     const items=assigned.get(project.id);
+    if(!items.length)continue;
     const group=el('li','project-group');group.dataset.sidebarProject=project.id;
     const folded=workspaceState.sidebar?.collapsed?.includes(project.id) || false;
     const button=el('button','project-group-toggle');button.type='button';
     button.setAttribute('aria-expanded',String(!folded));button.title=project.repoUrl || project.name;
-    button.append(el('span','project-chevron',folded?'▸':'▾'),el('span','project-group-name',project.name),el('span','project-group-count',String(items.length)));
+    const folder=document.createElementNS('http://www.w3.org/2000/svg','svg');folder.setAttribute('viewBox','0 0 24 24');folder.setAttribute('class','project-folder');folder.setAttribute('aria-hidden','true');folder.innerHTML='<path d="M3 7V4h6l3 3h9v13H3Z"/><path d="M3 10h18"/>';
+    button.append(el('span','project-chevron',folded?'▸':'▾'),folder,el('span','project-group-name',project.name),el('span','project-group-count',String(items.length)));
     const attention=items.filter(s=>attentionOf(s)==='waiting'||attentionOf(s)==='finished').length;
     const running=items.filter(s=>attentionOf(s)==='running').length;
     if(attention)button.append(el('span','project-group-status',attention+' 待查看'));
@@ -1115,7 +1130,7 @@ async function createSidebarGroup(){
   const user=currentUser;closeBrandMenu();closeMenu();
   const name=await askModal({title:'新建分组',text:'输入分组名称（最多 64 个字符）。分组仅用于整理对话，不会创建仓库。',input:'',okLabel:'创建'});
   if(name===null||user!==currentUser)return;
-  if(await saveSidebar({action:'sidebar_group_create',name}))toast('分组已创建，可拖入对话');
+  if(await saveSidebar({action:'sidebar_group_create',name}))toast('分组已创建，可从对话菜单移入对话');
 }
 function openGroupMenu(group,anchor){
   closeMenu();sidebarInteraction.menu(true);
@@ -1240,6 +1255,28 @@ function openSessionMenu(session, anchor) {
   menuNode.style.left = Math.max(8,Math.min(rect.left,window.innerWidth-menuNode.offsetWidth-8))+'px';
 }
 ui.brandBtn?.addEventListener('click', toggleBrandMenu);
+$('#mishu-menu-btn').addEventListener('click',()=>{
+  const menu=$('#mishu-submenu'),button=$('#mishu-menu-btn'),open=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden',!open);button.setAttribute('aria-expanded',String(open));
+  if(open){
+    const rect=button.getBoundingClientRect();
+    menu.style.left=Math.max(8,Math.min(rect.right+6,window.innerWidth-menu.offsetWidth-8))+'px';
+    menu.style.top=Math.max(8,Math.min(rect.top,window.innerHeight-menu.offsetHeight-8))+'px';
+    menu.querySelector('button:not(:disabled):not([hidden])')?.focus();
+  }
+});
+$('#mishu-submenu').addEventListener('keydown',event=>{if(event.key==='Escape'||event.key==='ArrowLeft'){event.stopPropagation();$('#mishu-submenu').classList.add('hidden');$('#mishu-menu-btn').setAttribute('aria-expanded','false');$('#mishu-menu-btn').focus();}});
+$('#agent-confirm').addEventListener('click',()=>void confirmAgentSettings());
+$('#manage-sidebar-groups').addEventListener('click',event=>{
+  event.stopPropagation();closeMenu();
+  menuNode=el('div','popmenu group-manager');menuNode.setAttribute('role','menu');
+  for(const group of sidebarGroups(workspaceState?.projects,workspaceState?.sidebar)){
+    const button=el('button','popitem',group.name);button.type='button';button.dataset.manageGroup=group.id;
+    button.addEventListener('click',e=>{e.stopPropagation();closeBrandMenu();openGroupMenu(group,$('#brand-menu-btn'));});menuNode.append(button);
+  }
+  if(!menuNode.childElementCount)menuNode.append(el('span','','暂无分组'));
+  document.body.append(menuNode);const rect=event.currentTarget.getBoundingClientRect();menuNode.style.left=rect.left+'px';menuNode.style.top=Math.max(8,Math.min(rect.bottom,window.innerHeight-menuNode.offsetHeight-8))+'px';
+});
 $('#create-sidebar-group').addEventListener('click',()=>void createSidebarGroup());
 $('#show-groups').addEventListener('click',()=>saveSidebar({action:'sidebar_display',showGroups:workspaceState?.sidebar?.showGroups===false}));
 ui.themeToggle?.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
@@ -1480,7 +1517,7 @@ function refreshComposer() {
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   const activeUploadsBusy = uploads.some((u) => u.state === 'uploading' || u.state === 'finishing') || (opened && filesAwaitingTransfer.length > 0);
   const hasText = ui.prompt.value.trim().length > 0 || draftFiles.length>0 || attachments.length > 0 || completedUploads().length > 0 || pendingNewTaskFiles;
-  ui.send.disabled = !isRestart(ui.prompt.value) && (Boolean(mishuChangingId&&mishuChangingId===activeId) || Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || !!speedPending || !!speedToApply || (streaming && !supports("followUp")));
+  ui.send.disabled = !isRestart(ui.prompt.value) && (agentSaveBusy || Boolean(mishuChangingId&&mishuChangingId===activeId) || Boolean(activeId && !historyReady) || takeoverBusy() || compacting || !connected || !hasText || imagesDecoding() || activeUploadsBusy || !!modelPending || !!thinkingPending || !!thinkingToApply || !!contextPending || !!speedPending || !!speedToApply || (streaming && !supports("followUp")));
   ui.model.disabled = ui.modelSource.disabled = ui.thinking.disabled = compacting || modelControlsLocked();
   renderProjectContext();
   renderAgentTrigger();
@@ -1933,6 +1970,7 @@ function handleFrame(frame, ws) {
       return;
     }
     case 'model_catalog':
+      if(agentDraft?.catalogRequest===frame.requestId&&agentDraft.engine===frame.engine){agentDraft.catalogRequest=null;agentDraft.catalog=frame;stageAgentSetting('model',frame.models.find(m=>m.id===frame.current?.id&&m.provider===frame.current?.provider)||frame.models[0]);return;}
       void loadRuntimeStatus();
       if(!draftModelEngine() || frame.requestId!==catalogRequest || frame.engine!==draftModelEngine())return;
       catalogRequest=null;models={...frame,models:frame.models.map(model=>({
@@ -3125,7 +3163,7 @@ $('#composer').addEventListener('submit', (event) => {
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
-  if(modelPending||thinkingPending||thinkingToApply||contextPending||speedPending||speedToApply){toast('等待模型、上下文或速度设置确认');return;}
+  if(agentSaveBusy||modelPending||thinkingPending||thinkingToApply||contextPending||speedPending||speedToApply){toast('等待模型、上下文或速度设置确认');return;}
   const sshmeRequest=parseSshme(text);
   if(sshmeRequest!==null){
     if(!sshmeRequest){toast('请在 /sshme 后输入需要协助的内容');return;}
@@ -3212,7 +3250,7 @@ function submitPrompt(text, images) {
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
-const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
+const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.className='brand-menu-item';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
 mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});
 mishuCollaboration=initMishuCollaboration({button:mishuCollaborationButton,context:()=>({...currentTask(),user:currentUser,epoch:taskSelectionEpoch}),request:mishuRequest,dialogs,toast});
 

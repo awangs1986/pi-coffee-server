@@ -24,11 +24,18 @@ try{
  assert((await button.getAttribute('title')).includes('meta/muse-spark-1.3-contributor'),'Missing complete tooltip');
  assert(await button.locator('svg:visible').count()===0,'Icons visible');
  await page.screenshot({path:join(evidence,'long-model.png')});
- await button.click();await page.locator('#agent-model-row').click();await page.locator('#agent-model-pane button').filter({hasText:'fake-large'}).click();
+ await button.click();await page.locator('#agent-model-row').click();await page.locator('#agent-model-pane button').filter({hasText:'fake-large'}).click();assert(await page.locator('#agent-menu').isVisible(),'Option selection closed the settings menu');
+ assert(await page.locator('#agent-name').textContent()==='meta/muse-sp','Unconfirmed model changed the trigger');
+ await page.screenshot({path:join(evidence,'settings-draft.png')});await page.locator('#agent-confirm').click();
  await page.waitForFunction(()=>document.querySelector('#agent-name')?.textContent==='fake-large');
  await page.screenshot({path:join(evidence,'short-model.png')});
  await page.locator('#new-task').click();await page.waitForFunction(()=>document.querySelector('#agent-name')?.textContent==='Pi');
  assert(await button.locator('svg:visible').count()===2,'Draft icons not restored');
+ await page.locator('#brand-menu-btn').click();await page.locator('#mishu-menu-btn').click();
+ assert(await page.locator('#mishu-submenu').isVisible(),'MISHU secondary menu unavailable');
+ await page.screenshot({path:join(evidence,'mishu-submenu.png')});await page.keyboard.press('Escape');
+ assert(!await page.locator('#mishu-submenu').isVisible(),'Escape failed to close secondary menu');
+ assert(await page.locator('#brand-menu').isVisible(),'Escape closed parent menu too');
  assert(errors.length===0,JSON.stringify(errors));
  await writeFile(join(evidence,'result.json'),JSON.stringify({pass:true,longModel:true,shortModel:true,noIcons:true,modelChange:true,draftRestored:true,errors},null,2));console.log(JSON.stringify({pass:true,evidence}));
 }catch(error){console.error(error);if(browser)await browser.contexts()[0]?.pages()[0]?.screenshot({path:join(evidence,'failure.png')});process.exitCode=1;}

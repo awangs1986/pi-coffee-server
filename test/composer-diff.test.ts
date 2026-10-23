@@ -141,11 +141,11 @@ it('chooses Agent and Chat/Work in the Agent menu for a new task, and locks them
   const codexInChat=[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent!.includes('Codex'))!;
   expect(codexInChat.disabled).toBe(true);expect(codexInChat.textContent).toContain('仅 Work');
   q<HTMLButtonElement>('#agent-kind-row').click();
-  [...document.querySelectorAll<HTMLButtonElement>('#agent-kind-pane button')].find(b=>b.textContent!.includes('Gitea'))!.click();q<HTMLButtonElement>('#github-close').click();
+  [...document.querySelectorAll<HTMLButtonElement>('#agent-kind-pane button')].find(b=>b.textContent!.includes('Gitea'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();q<HTMLButtonElement>('#github-close').click();
   expect(q<HTMLSelectElement>('#task-kind').value).toBe('project');expect(q('#project-select').closest('label')!.classList.contains('hidden')).toBe(false);
   expect(hidden('#strip-kind')).toBe(true);
   trigger.click();q<HTMLButtonElement>('#agent-engine-row').click();
-  [...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent!.includes('Codex'))!.click();
+  [...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent!.includes('Codex'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
   expect(q<HTMLSelectElement>('#task-engine').value).toBe('codex');expect(q('#agent-name').textContent).toBe('Codex');
   expect(hidden('#create-task')).toBe(true);
 });

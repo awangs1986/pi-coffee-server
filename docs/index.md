@@ -271,3 +271,6 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - 2026-10-22: [GitHub Actions authorization](spec/github-accounts.md#github-actions-workflow-authorization-2026-10-22) requests approved `workflow` scope; existing accounts require one explicit reconnection, retaining user/task bindings.
 
 - 2026-10-22: [Running indicator](spec/arena-navigation.md) uses the owner-supplied 64×64 black running-cat GIF, scaled to 28×28 in the sidebar, with a single-frame reduced-motion source; completion states are retained.
+
+- 2026-10-23 UI candidate: [folder hierarchy, hidden empty groups, confirmed settings and MISHU secondary navigation](spec/arena-navigation.md#confirmed-settings-and-folder-hierarchy-2026-10-23). Source changes are separate from deployment.
+- UI candidate acceptance: [2026-10-23 navigation/settings evidence](development/navigation-settings-20261023.md); source verification is not deployment.
