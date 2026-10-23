@@ -627,3 +627,27 @@ scroll clipping area, so all actions remain reachable on narrow screens.
 Acceptance: controller regressions in `test/local-first-app.test.ts` and
 `test/native-agents.test.ts`, plus desktop/mobile Chromium in
 `scripts/probe-navigation-settings.mjs`. These fixtures do not call model providers.
+
+
+### Review corrections (2026-10-23)
+
+Confirm applies only fields edited in this menu (including a model change's
+necessary supported-effort/Fast-mode normalization). Untouched native fields
+follow refreshed authoritative metadata and are never restored from the menu's
+opening snapshot. Only Codex may receive a speed mutation; choosing a Pi model
+does not synthesize a speed command.
+
+A rejected operation stops the save sequence immediately. A bounded confirmation
+timeout clears the abandoned local pending state, preserves the unsent message,
+and requests authoritative model/settings metadata without retrying any mutation.
+Account, conversation and connection fences still prevent continuation into a
+new selection. Already confirmed changes are not described as rolled back.
+
+Existing-task Agent takeover is a separate confirmation. If another field has
+been edited, choosing another Agent asks the user to save/cancel that draft first
+and leaves it intact. Once an Agent takeover is selected, other settings remain
+disabled until it is cancelled or completed, avoiding silently dropped edits.
+
+An open new-task settings menu accepts its initial catalog response and unlocks
+model controls without requiring a close/reopen. Untouched draft fields refresh;
+explicit user choices and a pending different-engine catalog remain protected.

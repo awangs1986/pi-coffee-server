@@ -689,6 +689,16 @@ it('shows Codex native current context usage without inventing category counts',
 });
 
 
+it('unlocks the open new-task settings menu when its initial model catalog arrives',async()=>{
+ const app=await setup(false,false,true,true);
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();
+ expect(document.querySelector<HTMLButtonElement>('#agent-model-row')!.disabled).toBe(true);
+ const query=app.frames.find(f=>f.type==='get_model_catalog');app.sockets.at(-1).receive({type:'model_catalog',engine:'pi',requestId:query.requestId,models:[{provider:'pi',id:'arrived-model',thinkingLevels:['medium']}],current:{provider:'pi',id:'arrived-model'},thinkingLevels:['medium'],thinkingLevel:'medium',context:{preset:'272k'}});
+ expect(document.querySelector<HTMLButtonElement>('#agent-model-row')!.disabled).toBe(false);
+ expect(document.querySelector('#agent-model-value')!.textContent).toBe('arrived-model');
+ expect(document.querySelector('#agent-menu')!.classList.contains('hidden')).toBe(false);
+ expect(app.frames.some(f=>f.type==='open'||f.type==='prompt')).toBe(false);
+});
 it('defaults context to 272k and confirms extra cost before choosing fixed 500K',async()=>{
  const app=await setup(false,false,true,true);
  const catalog=app.frames.find(f=>f.type==='get_model_catalog');
@@ -727,6 +737,18 @@ it('offers Work takeover in the Agent menu, requires drift consent and keeps the
  row.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();document.querySelector<HTMLButtonElement>('#agent-confirm')!.click();
  document.querySelector<HTMLButtonElement>('#takeover-confirm')!.click();await vi.advanceTimersByTimeAsync(20);
  expect(app.requests.find(r=>r.action==='takeover')).toMatchObject({id,engine:'codex',expectedEngine:'pi',acceptDrift:true});expect(prompt.value).toBe('unsent draft');
+});
+it('keeps staged settings instead of silently dropping them into an Agent takeover',async()=>{
+ const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.conversations[0].id,ws=app.sockets[0];ws.receive({type:'opened',sessionId:id,engine:'pi',state:{isStreaming:false},capabilities:{models:true}});ws.receive({type:'history',sessionId:id,entries:[]});
+ document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-display-row')!.click();
+ [...document.querySelectorAll<HTMLButtonElement>('#agent-display-pane button')].find(b=>b.textContent==='详细')!.click();
+ document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ expect(document.querySelector('#agent-engine-value')!.textContent).toBe('Pi');
+ expect(document.querySelector('#agent-display-value')!.textContent).toBe('详细');
+ document.body.click();document.querySelector<HTMLButtonElement>('#agent-menu-btn')!.click();document.querySelector<HTMLButtonElement>('#agent-engine-row')!.click();[...document.querySelectorAll<HTMLButtonElement>('#agent-engine-pane button')].find(b=>b.textContent?.includes('Codex'))!.click();
+ expect(document.querySelector<HTMLButtonElement>('#agent-display-row')!.disabled).toBe(true);
+ expect(app.requests.some(r=>r.action==='takeover')).toBe(false);
 });
 it.each(['failed','completed'])('locks task actions during takeover and restores drafts after %s',async(status)=>{
  const app=await setup();chooseWork();document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);

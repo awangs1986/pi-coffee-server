@@ -521,13 +521,15 @@ function renderAgentPane(kind) {
   }
   for(const level of info?.thinkingLevels||catalog.thinkingLevels||[])pane.append(agentOption({label:thinkingLabel(level),selected:(draft?.thinking||catalog.thinkingLevel)===level,onClick:()=>stageAgentSetting('thinking',level)}));
 }
-let agentDraft=null,agentSaveBusy=false;
+let agentDraft=null,agentSaveBusy=false,agentSaveFailure=null;
 function beginAgentDraft(){
-  agentDraft={id:activeId,user:currentUser,epoch:taskSelectionEpoch,connection:connectionEpoch,engine:agentMenuState().agent,kind:taskSource(),catalog:models,model:models?.current,thinking:models?.thinkingLevel,context:activeId?models?.context?.preset:draftContextPreset,speed:activeId?models?.speed?.mode:draftSpeed,display:displayMode};
+  agentDraft={changes:new Set(),id:activeId,user:currentUser,epoch:taskSelectionEpoch,connection:connectionEpoch,engine:agentMenuState().agent,kind:taskSource(),catalog:models,model:models?.current,thinking:models?.thinkingLevel,context:activeId?models?.context?.preset:draftContextPreset,speed:activeId?models?.speed?.mode:draftSpeed,display:displayMode};
 }
 function stageAgentSetting(key,value){
   if(!agentDraft||agentSaveBusy)return;
   if(key==='engine'&&agentDraft.engine===value)return;
+  if(activeId&&key==='engine'&&value!==(currentTask()?.engine||engine)&&[...agentDraft.changes].some(field=>field!=='engine')){toast('Agent 交接需单独确认，请先保存或取消其他设置');return;}
+  agentDraft.changes.add(key);
   agentDraft[key]=value;
   if(key==='kind'&&value==='chat'&&!['pi','codex'].includes(agentDraft.engine))stageAgentSetting('engine','pi');
   if(key==='engine'){
@@ -541,13 +543,17 @@ function stageAgentSetting(key,value){
   }
   if(key==='model'&&value){
     const levels=value.thinkingLevels||agentDraft.catalog?.thinkingLevels||[];
-    if(!levels.includes(agentDraft.thinking))agentDraft.thinking=levels.includes('medium')?'medium':levels[0];
-    if(value.fastMode!==true)agentDraft.speed='standard';
+    if(!levels.includes(agentDraft.thinking)){agentDraft.thinking=levels.includes('medium')?'medium':levels[0];agentDraft.changes.add('thinking');}
+    if(agentDraft.engine==='codex'&&agentDraft.speed==='fast'&&value.fastMode!==true){agentDraft.speed='standard';agentDraft.changes.add('speed');}
   }
   renderAgentSettings();renderAgentPane(key);
 }
 function renderAgentDraft(){
   const d=agentDraft;if(!d)return;
+  if(!d.changes.has('engine')){
+    d.catalog=models;
+    for(const [key,value] of Object.entries({model:models?.current,thinking:models?.thinkingLevel,context:activeId?models?.context?.preset:draftContextPreset,speed:activeId?models?.speed?.mode:draftSpeed}))if(!d.changes.has(key))d[key]=value;
+  }
   const info=d.catalog?.models.find(m=>m.provider===d.model?.provider&&m.id===d.model?.id);
   const values={engine:engineName(d.engine),kind:d.kind==='chat'?'Chat':FORGE_NAMES[d.kind],model:d.model?.id||(d.catalogRequest?'加载中…':'—'),source:sourceLabel(info?.source),thinking:thinkingLabel(d.thinking||'—'),context:d.context==='maximum'?'500K':'272k',speed:d.speed==='fast'?'1.5x':'1x',display:d.display==='detailed'?'详细':'精简'};
   for(const [key,value] of Object.entries(values))ui.agentValues[key].textContent=value;
@@ -559,19 +565,21 @@ function renderAgentDraft(){
   ui.agentRows.context.classList.toggle('hidden',!['pi','codex'].includes(d.engine));
   if(!activeId){ui.agentRows.context.disabled=agentSaveBusy||!d.catalog?.context;ui.agentRows.speed.disabled=agentSaveBusy||!d.catalog;}
   if(!activeId&&d.catalog){ui.agentNote.classList.add('hidden');}
-  if(changingEngine){ui.agentRows.speed.disabled=true;ui.agentRows.context.disabled=true;ui.agentNote.textContent='确认后进行 Agent 交接，完成后可调整新 Agent 的模型。';ui.agentNote.classList.remove('hidden');}
+  if(changingEngine){ui.agentRows.display.disabled=true;ui.agentRows.speed.disabled=true;ui.agentRows.context.disabled=true;ui.agentNote.textContent='确认后进行 Agent 交接，完成后可调整新 Agent 的模型。';ui.agentNote.classList.remove('hidden');}
   $('#agent-confirm').disabled=agentSaveBusy||Boolean(d.catalogRequest);
 }
 async function confirmAgentSettings(){
   const d=agentDraft;if(!d||agentSaveBusy)return;
+  let reconcile=false;
+  const edited=key=>d.changes.has(key);
   const valid=()=>d.id===activeId&&d.user===currentUser&&d.epoch===taskSelectionEpoch&&d.connection===connectionEpoch;
   if(!valid()){closeAgentMenu();return;}
   // Billing consent precedes every mutation. Closing these dialogs never commits a partial draft.
-  agentSaveBusy=true;renderAgentDraft();refreshComposer();
+  agentSaveBusy=true;agentSaveFailure=null;renderAgentDraft();refreshComposer();
   const oldContext=activeId?models?.context?.preset:draftContextPreset,oldSpeed=activeId?models?.speed?.mode:draftSpeed;
   try{
-    if(d.context==='maximum'&&oldContext!=='maximum'&&!await askModal({title:'使用 500K 上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
-    if(d.speed==='fast'&&oldSpeed!=='fast'&&!await askModal({title:'启用 1.5x 高速模式',text:'高速模式收费为普通模式的 2 倍（付费额度）；订阅内含额度按 2.5 倍消耗。实际速度取决于服务可用性。',okLabel:'确认启用'}))return;
+    if(edited('context')&&d.context==='maximum'&&oldContext!=='maximum'&&!await askModal({title:'使用 500K 上下文',text:'过大的上下文会产生额外费用。具体计费以所用模型和服务商为准。',okLabel:'确认使用'}))return;
+    if(edited('speed')&&d.speed==='fast'&&oldSpeed!=='fast'&&!await askModal({title:'启用 1.5x 高速模式',text:'高速模式收费为普通模式的 2 倍（付费额度）；订阅内含额度按 2.5 倍消耗。实际速度取决于服务可用性。',okLabel:'确认启用'}))return;
     if(!valid())return;
     closeAgentMenu();renderAgentSettings();
     if(activeId&&d.engine!==(currentTask()?.engine||engine)){if(!canTakeover())throw Error('当前任务无法进行 Agent 交接');takeoverControls.open(d.engine);return;}
@@ -583,28 +591,35 @@ async function confirmAgentSettings(){
     }else{
       const waitFor=async(pending,confirmed)=>{
         const deadline=Date.now()+16000;
-        while(valid()&&(pending()||!confirmed())&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+        while(valid()&&!agentSaveFailure&&(pending()||!confirmed())&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
         if(!valid())throw Error('对话或连接已变更，未继续保存');
-        if(pending()||!confirmed())throw Error('部分设置尚未确认，请重新打开菜单核对');
+        if(agentSaveFailure)throw Error('设置保存失败：'+agentSaveFailure);
+        if(pending()||!confirmed()){reconcile=true;throw Error('部分设置尚未确认，正在重新读取实际设置；不会自动重试修改');}
       };
-      const nativeChanged=(d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id))||(d.thinking&&d.thinking!==models?.thinkingLevel)||(d.context&&d.context!==models?.context?.preset)||(d.speed&&d.speed!==models?.speed?.mode);
+      const nativeChanged=(edited('model')&&d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id))||(edited('thinking')&&d.thinking&&d.thinking!==models?.thinkingLevel)||(edited('context')&&d.context&&d.context!==models?.context?.preset)||(edited('speed')&&d.speed&&d.speed!==models?.speed?.mode);
       if(nativeChanged&&(modelControlsLocked()||streaming||contextPending))throw Error('当前任务正在处理操作，请稍后重试');
-      if(d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id)){
+      if(edited('model')&&d.model&&(d.model.provider!==models?.current?.provider||d.model.id!==models?.current?.id)){
         chooseModel(d.model.provider,d.model.id);
         await waitFor(()=>modelPending,()=>models?.current?.provider===d.model.provider&&models?.current?.id===d.model.id);
       }
-      if(d.thinking&&d.thinking!==models?.thinkingLevel){
+      if(edited('thinking')&&d.thinking&&d.thinking!==models?.thinkingLevel){
         if(!models?.thinkingLevels?.includes(d.thinking))throw Error('当前模型不支持所选思考强度');
         chooseThinking(d.thinking);await waitFor(()=>thinkingPending,()=>models?.thinkingLevel===d.thinking);
       }
-      if(d.context&&d.context!==models?.context?.preset){
+      if(edited('context')&&d.context&&d.context!==models?.context?.preset){
         contextPending=requestId('context');if(!send({v:1,type:'set_context',requestId:contextPending,preset:d.context})){contextPending=null;throw Error('上下文设置未发送');}
         await waitFor(()=>contextPending,()=>models?.context?.preset===d.context);
       }
-      if(d.speed&&d.speed!==models?.speed?.mode){if(!applySpeed(d.speed))throw Error('速度设置未发送');await waitFor(()=>speedPending,()=>models?.speed?.mode===d.speed);}
+      if(edited('speed')&&d.engine==='codex'&&d.speed&&d.speed!==models?.speed?.mode){if(!applySpeed(d.speed))throw Error('速度设置未发送');await waitFor(()=>speedPending,()=>models?.speed?.mode===d.speed);}
     }
-    if(d.user===currentUser&&d.id===activeId&&d.display!==displayMode)await chooseDisplayMode(d.display);
-  }catch(error){toast(error.message);}
+    if(edited('display')&&d.user===currentUser&&d.id===activeId&&d.display!==displayMode)await chooseDisplayMode(d.display);
+  }catch(error){
+    if(reconcile&&valid()){
+      restoreQueuedPrompt();abandonPendingSettings();contextPending=null;contextToApply=null;models=null;modelPreview=null;
+      send({v:1,type:'get_models'});
+    }
+    toast(error.message);
+  }
   finally{agentSaveBusy=false;closeAgentMenu();renderAgentSettings();refreshComposer();}
 }
 function restoreDisplayAnchor(){if(displayAnchor?.id===activeId){syncedView.anchor.restore(displayAnchor.anchor);displayAnchor=null;}}
@@ -701,7 +716,7 @@ function renderAgentSettings() {
   else delete ui.agentBtn.dataset.state;
   renderAgentTrigger();
   ui.agentValues.display.textContent=displayMode==='detailed'?'详细':'精简';
-  ui.agentRows.display.disabled=displaySaving||!currentUser;
+  ui.agentRows.display.disabled=displaySaving||!currentUser||Boolean(agentDraft&&activeId&&agentDraft.engine!==(currentTask()?.engine||engine));
   renderAgentDraft();
   for (const pane of ['source', 'model', 'thinking', 'context', 'speed', 'display']) renderAgentPane(pane);
 }
@@ -2088,6 +2103,7 @@ function handleFrame(frame, ws) {
       maybeReadCompletion();scheduleRecentThread();
       return;
     case 'error':
+      if(agentSaveBusy&&frame.requestId&&[modelPending,thinkingPending,contextPending,speedPending?.id].includes(frame.requestId))agentSaveFailure=frame.message;
       if(nativeCommandRequests.has(frame.requestId)){const pending=nativeCommandRequests.get(frame.requestId);nativeCommandRequests.delete(frame.requestId);clearTimeout(pending.timer);if(pending.id===activeId&&pending.user===currentUser&&pending.epoch===taskSelectionEpoch)toast(frame.message);return;}
 
       if(frame.requestId?.startsWith('display-')){if(frame.requestId===displayRequest){clearTimeout(displayTimer);displayRequest=null;toast('上下文显示读取失败，可重新选择当前模式重试：'+frame.message);}return;}

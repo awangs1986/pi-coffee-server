@@ -936,6 +936,32 @@ describe('confirmed composer settings and nested MISHU navigation',()=>{
     expect(allFrames.some(f=>f.type==='set_thinking')).toBe(false);
     expect(document.querySelector('#agent-model-value')!.textContent).toBe('one');
   });
+  it('does not overwrite refreshed native settings when only display was edited',async()=>{
+    const app=await setup(),socket=await app.select('a');socket.receive(catalog);await tick();
+    click('#agent-menu-btn');click('#agent-display-row');option('display','详细');
+    socket.receive({...catalog,current:{provider:'codex',id:'two'},thinkingLevel:'low',context:{preset:'maximum'},speed:{mode:'fast',fastAvailable:true}});await tick();
+    click('#agent-confirm');await tick(100);
+    expect(allFrames.filter(f=>['set_model','set_thinking','set_context','set_speed'].includes(f.type))).toHaveLength(0);
+    expect(allFrames.some(f=>f.type==='set_display_mode'&&f.mode==='detailed')).toBe(true);
+  });
+  it('does not send a Codex speed command after changing a Pi model',async()=>{
+    const app=await setup('pi'),socket=await app.select('a');
+    const piCatalog={...catalog,models:catalog.models.map(m=>({...m,provider:'pi'})),current:{provider:'pi',id:'one'},speed:undefined};socket.receive(piCatalog);await tick();
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');click('#agent-confirm');await tick();
+    const change=allFrames.findLast(f=>f.type==='set_model');socket.receive({type:'ack',operation:'set_model',requestId:change.requestId});await tick();
+    const read=allFrames.findLast(f=>f.type==='get_models');socket.receive({...piCatalog,current:{provider:'pi',id:'two'},requestId:read.requestId});await tick(100);
+    expect(allFrames.some(f=>f.type==='set_speed')).toBe(false);
+  });
+  it('reconciles a timed-out model save without replaying mutations or stranding the composer',async()=>{
+    const app=await setup(),socket=await app.select('a');socket.receive(catalog);await tick();draft('Keep this unsent message');
+    click('#agent-menu-btn');click('#agent-model-row');option('model','two');click('#agent-confirm');await tick(16200);
+    socket.receive({...catalog,current:{provider:'codex',id:'two'}});await tick();
+    expect(document.querySelector<HTMLButtonElement>('#send')!.disabled).toBe(false);
+    expect(document.querySelector('#agent-model-value')!.textContent).toBe('two');
+    expect(prompt().value).toBe('Keep this unsent message');
+    expect(allFrames.filter(f=>f.type==='set_model')).toHaveLength(1);
+    expect(allFrames.some(f=>f.type==='prompt')).toBe(false);
+  });
   it('keeps all MISHU actions under one secondary entry and supports keyboard dismissal',async()=>{
     await setup();document.querySelector<HTMLButtonElement>('.login-coffee-skip')?.click();click('#brand-menu-btn');
     expect(document.querySelector('#mishu-submenu')!.classList.contains('hidden')).toBe(true);

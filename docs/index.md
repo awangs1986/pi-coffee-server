@@ -274,3 +274,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 
 - 2026-10-23 UI candidate: [folder hierarchy, hidden empty groups, confirmed settings and MISHU secondary navigation](spec/arena-navigation.md#confirmed-settings-and-folder-hierarchy-2026-10-23). Source changes are separate from deployment.
 - UI candidate acceptance: [2026-10-23 navigation/settings evidence](development/navigation-settings-20261023.md); source verification is not deployment.
+
+- [2026-10-23 UI review and five regression fixes](reviews/ui-settings-20261023.md): edited-field saves, Pi speed isolation, bounded save recovery, takeover draft preservation and late initial catalogs.
