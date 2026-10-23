@@ -7,7 +7,7 @@ Owner decision, 2026-10-05: fork `awangs/MISHU` into the independently maintaine
 exception to the Pi plugin monorepo source rule. The owner selected coordination
 of **existing conversations**, with independent settings for **the current Pi Chat**.
 
-## Current source status (2026-10-13)
+## Historical source status (2026-10-13)
 
 At published Server main `789a0d1`, the consumed package is
 `pi-coffee-mishu@0.3.0-manager.5`. Host source includes task briefs, exact-binding
@@ -1273,6 +1273,24 @@ activation are separate evidence. Current sources remain Pi Chat only (#122).
 
 ### Logo navigation (2026-10-23)
 
+Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
+`feat/user-running-cat`, candidate v0.53; clean before this documentation refresh.
+This is local source, not a deployed-version claim. Scope, source pointers,
+executed evidence and unresolved gaps are recorded in the
+[2026-10-23 freshness audit](../reviews/spec-freshness-20261023-ui.md).
+
 One MISHU entry opens a secondary menu containing all static and dynamically
-registered MISHU actions. Current-conversation gating and authorization are
+registered MISHU actions: current secretary selection, categorized usage, original
+evidence, collaboration/decisions, private memory and settings. Actions retain
+their existing disabled/hidden conditions. Escape/Left returns focus to the
+parent; clicking outside closes both levels. The fixed-position secondary menu
+is clamped to the viewport and scrolls internally. Opening it does not enable
+coordination or start an Agent.
+
+Source: `public/index.html` (`mishu-submenu`), the menu handlers and MISHU
+initializers in `public/app.js`, and `public/app.css`. Controller and desktop/mobile
+coverage: `test/local-first-app.test.ts`, `scripts/probe-navigation-settings.mjs`.
+The baseline manifest pins `pi-coffee-mishu@0.4.0-experience.1`; this UI refresh
+does not upgrade that package or certify its entire product backlog. Current-
+conversation gating, Pi-only secretary admission and target authorization remain
 unchanged. See [navigation](arena-navigation.md#confirmed-settings-and-folder-hierarchy-2026-10-23).

@@ -9,12 +9,20 @@ for source versus recorded deployment.
 
 ## Speed
 
+Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
+`feat/user-running-cat`, candidate v0.53; clean before this documentation refresh.
+This is local source, not a deployed-version claim. Scope, source pointers,
+executed evidence and unresolved gaps are recorded in the
+[2026-10-23 freshness audit](../reviews/spec-freshness-20261023-ui.md).
+
 Append a Codex-only Speed row below Context in the existing Agent menu. Offer
 `1x` (Standard, default) and `1.5x` (Fast). Pi and other engines do not show this
 row. Existing tasks display their last confirmed per-conversation choice while
 metadata synchronizes; cached display values never configure the native runtime.
 
-Before enabling Fast, show an explicit confirm/cancel dialog. Purchased credits
+Selecting a speed edits the open menu draft. Only the menu's Confirm action
+starts saving; outside click/Escape/navigation discards that draft. Before enabling
+Fast, Confirm must show the existing explicit cost confirm/cancel dialog. Purchased credits
 and pay-as-you-go usage cost 2x Standard; included subscription limits are consumed
 at 2.5x Standard. `1.5x` is the requested product label, not a guarantee that all
 models run at exactly that speed. The dialog states this distinction. Cancelling
@@ -95,3 +103,21 @@ was retained outside production account workspaces, and its processes were close
 The test's initial unpublished-thread UI attachment failures and recovery are
 retained in private evidence and the Issue. Canonical verification, publication,
 fresh-clone verification and production activation remain separately recorded gates.
+
+
+## Confirmed-menu limitation (2026-10-23, source inspection)
+
+Only Codex receives `set_speed`; selecting a Pi model must not synthesize a speed
+write. This is covered by the v0.53 review regression in
+`test/local-first-app.test.ts`.
+
+The existing **select and save Standard first** requirement remains binding when
+leaving a Fast-enabled model for one without Fast support. The candidate menu
+locally normalizes the staged speed to Standard, but `confirmAgentSettings` writes
+model before speed. `CodexSession.updatePreferences` in
+`src/host/codex-adapter.ts` rejects the new unsupported model while the stored tier
+is still Fast. One Confirm cannot currently perform that compound transition;
+the user must first save 1x, then reopen and change model. The displayed draft
+normalization must not be described as successful automatic native downgrade.
+This integration/UX gap was identified by source tracing, not a new model call or
+runtime reproduction. No implementation or acceptance criterion changes here.

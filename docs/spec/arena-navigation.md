@@ -2,14 +2,24 @@
 
 Owner correction, 2026-09-23. Server #4 and Agent #60.
 
+Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
+`feat/user-running-cat`, candidate v0.53; clean before this documentation refresh.
+This is local source, not a deployed-version claim. Scope, source pointers,
+executed evidence and unresolved gaps are recorded in the
+[2026-10-23 freshness audit](../reviews/spec-freshness-20261023-ui.md).
+
 ## Task creation
 
-New conversation defaults to Pi Chat, retaining its own VM directory. Chat only
-allows Pi. Work allows Pi, Codex and Claude Code, with existing readiness gating,
-a Gitea Project and starting branch. Returning the new-task selector to Chat
-resets Agent to Pi. A created task retains its Agent; no context conversion or
-implicit engine switching. Existing native local tasks created before this rule
-remain accessible with their original files/history.
+New conversation defaults to Pi Chat, retaining its own VM directory. The accepted
+[repository-free Codex Chat](native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98)
+decision supersedes the original Pi-only Chat rule: Chat offers Pi and Host-advertised
+Codex. Work offers ready Pi, Codex, Claude Code, Cursor and Grok engines with a
+registered Gitea/GitHub Project and starting branch. Selecting Chat keeps an
+allowed Chat engine and resets a Work-only engine to Pi. Existing tasks retain
+their engine except explicit [Pi/Codex Work takeover](agent-takeover.md); Chat
+cannot upgrade or switch engine. Legacy tasks retain their files/history.
+Evidence: `loadEngines`, `renderProjectContext` and `canTakeover` in `public/app.js`,
+plus `test/native-agents.test.ts` and `scripts/probe-codex-chat.mjs`.
 Since 2026-09-28 the Agent and Chat/Work selectors live in the composer's Agent menu,
 and the first message or attachment creates the task (see Composer).
 
@@ -23,15 +33,21 @@ while a request is pending. Do not retarget a task or replace a project selectio
 the user changed while the request was in flight. Hide this shortcut for Chat
 and already-bound tasks.
 
-GitHub (2026-09-29, [ADR-0022](../adr/0022-github-work-projects.md)): when the Host has
-`PI_COFFEE_GITHUB_TOKEN`, the repository select groups Projects under Gitea and GitHub and ends
-the GitHub group with 「＋ 添加 GitHub 仓库…」; 「＋ 新建项目」 becomes a two-item menu (新建 Gitea
-项目 / 添加 GitHub 仓库). The picker lists repositories the Host token can reach, filters as
-you type, accepts a pasted `owner/repo` or URL, marks 已添加 / 私有 and disables repositories
-without push access or archived ones. Adding one registers it through the Host, closes the
-picker and selects it with its default branch; failures keep the picker open with the Host's
-reason. The strip's repository icon follows the selected Project's forge, and the PR texts
-name that forge. Without the token nothing changes.
+The GitHub picker introduced by [ADR-0022](../adr/0022-github-work-projects.md)
+now follows the accepted [user-scoped GitHub account contract](github-accounts.md),
+which supersedes its shared Host-token/VM Git credential policy. The authenticated
+Gitea user selects one of their connected GitHub accounts before listing/registering
+repositories. Work registration retains the Project/account binding; readiness and
+errors come from the scoped Host API. The selected Project determines the forge,
+repository icon and PR destination. This is not access through a shared VM-wide
+GitHub login. See `public/github-accounts.js`, the GitHub picker in `public/app.js`
+and the authoritative account contract for authentication and binding details.
+Retain the picker requirements from the original design: list only repositories
+reachable through the selected account, filter as the user types, accept an
+`owner/repo` or URL, show added/private status, and reject archived or non-pushable
+repositories. Successful registration selects the Project/default branch; failure
+keeps the picker open with a reason. The new-project menu still distinguishes
+creating a Gitea project from adding a GitHub repository.
 
 Pi credential import into Web Server is future consideration only. This change
 does not implement it or move credentials, runtime, histories or file ownership.
@@ -80,19 +96,27 @@ New conversation exits search. Search closes the review card and Diff panel.
 ## Composer
 
 One rounded card, following the Arena reference: the prompt (placeholder 「想让 PI Coffee
-做什么？」), a toolbar, a divider and the task strip. Wording is Chinese-first; Diff, Branch,
-Unified and Split stay in English.
+做什么？」), a toolbar, a divider and the task strip. Wording is Chinese-first;
+current Diff layout controls are 「合并视图」 and 「并排视图」 (`public/index.html`).
+English Diff/Branch/Unified/Split below denote concepts in the original design,
+not requirements to retain English user-facing labels.
 
 - Toolbar left: ⊞+ uploads attachments. Before creation, the Agent trigger shows the Agent
-  icon and name (Pi / Codex / Claude Code). Existing conversations show only the current
+  icon and name for the selected supported engine. Existing conversations show only the current
   model ID, limited to its first 12 Unicode characters, without icons or an added ellipsis.
   The complete model remains in the tooltip and accessible label. While metadata loads, show
-  「模型加载中」 rather than the previous conversation’s model. The trigger still opens
-  one menu with Agent, 类型 (Chat/Work), 来源, 模型 and
-  思考深度. For a new task, Agent and 类型 are chosen there (the hidden `#task-engine` and
-  `#task-kind` selects stay the source of truth, so Codex/Claude remain Work-only). They lock
-  once the task exists; model rows follow the model catalog and are disabled without one.
-- Toolbar right: the running-mode select and Stop while a turn runs; the scroll icon opens
+  this conversation's cached model/effort while fresh metadata loads, or 「模型加载中」
+  when no valid preview exists; never borrow another conversation's model. The menu
+  starts with 来源 (Chat/Gitea/GitHub), then Agent 类型, Pi's 模型来源, 模型,
+  思考深度, supported 上下文/速度 rows, and 上下文显示. New-task choices remain
+  local until Confirm; the hidden selects represent confirmed creation choices.
+  Existing-task Source is fixed; Agent is changeable only through eligible Work
+  takeover. Model rows follow the catalog, including a catalog arriving while the
+  menu remains open. See the confirmed-settings contract below and
+  `renderAgentTrigger`/`renderAgentSettings`/`renderAgentDraft` in `public/app.js`.
+- Toolbar right: Stop while a turn runs; there is no pre-send steering/queue selector.
+  Busy input is queued first, with Immediate Insert on the accepted queue entry
+  ([current queue contract](codex-speed-and-queued-input.md)). The scroll icon opens
   任务详情 (VM, branch, readiness, Details, complete path, Copy path, 交接压缩); the send
   button is a bordered rounded square with →, grey while disabled. The key hint appears only
   while a turn runs.
@@ -186,18 +210,25 @@ The @pierre/diffs body (lazy mounting and per-file loading, in-place layout/them
 expansion, comments → composer, fallback) is covered by `test/diff-view.test.ts`; `change_file`
 by `test/diff-file-http.test.ts`; the vendor route's caching and gzip by `test/web-server.test.ts`.
 Host tests cover the turn snapshot (`test/turn-changes.test.ts`) and the HTTP/WS seam: an
-Agent edit made during the turn is the only file reported for `scope:'turn'`. Host HTTP tests reject new native Chat without
-persisting a task; native lifecycle regressions use independent project clones.
+Agent edit made during the turn is the only file reported for `scope:'turn'`.
+Engine/Chat admission follows the Host-advertised capabilities: Codex Chat is now
+supported; unsupported combinations still fail without persisting a task.
+Native Work lifecycle regressions use independent project clones.
 Run npm run check from fresh clones. Browser visual acceptance uses synthetic
 content on desktop, narrow and short viewports; live acceptance is read-only.
 
 ## Repository groups in the sidebar
 
 [Server #24](http://gitea:3000/awangs/pi-coffee-server/issues/24): conversations
-are automatically grouped by their registered Gitea project, across branches and
-native engines. Project headings show counts, pending/running indicators and an
-accessible expand/collapse button. Empty project groups remain available as drop
-targets. Active and archived views stay separate; choosing a project for a new
+are automatically grouped by their registered Project (Gitea or GitHub), across
+branches and native engines. Project headings show counts, pending/running indicators and an
+accessible expand/collapse button, a folder icon and indented tree lines. The
+owner's 2026-10-23 decision supersedes always-visible empty drop targets: hide
+project/custom groups with no conversations in the current view after removing
+pins. Empty destinations remain in the conversation move selector and Manage
+groups menu. The special Ungrouped drop container remains available even when
+empty; it is not a stored group. Active and archived views stay separate;
+choosing a project for a new
 task does not hide other sidebar conversations.
 
 Drag a conversation into a project group, or into **Ungrouped** to remove it from
@@ -211,8 +242,10 @@ show an error. No optimistic success, cross-user moves or external drag payloads
 These are navigation groups only. A move must never change the actual project,
 repository, branch, VM directory, engine, transcript or running turn. Chat and
 terminal conversations can be organized without becoming Git-backed Work tasks.
-Within projects, preserve attention-first ordering and conversation indicators;
-ungrouped conversations retain the existing attention/time/terminal sections.
+Within projects and Ungrouped, follow the accepted recent-conversation ordering
+below; status changes do not promote rows. Pins retain their independent section
+and manual order. Evidence: `renderSessionListContent` in `public/app.js` and
+`orderRecentSessions`/`sessionGroups` in `public/sidebar.js`.
 The existing compact sidebar and its browser-height scrolling remain unchanged.
 
 The authenticated workspace endpoint accepts `sidebar_move` with a known owned
@@ -229,7 +262,7 @@ inline crisp-edged SVG. Preserve the existing brand menu and compact layout.
 
 The PI Coffee menu contains a **Show groups** (`显示分组`) checkbox, checked by
 default when no preference exists. Unchecking restores the original
-attention/time/terminal list, with no project or Ungrouped headings. Rechecking
+recent-activity/date-bucket list, with no project or Ungrouped headings. Rechecking
 restores project groups, existing manual placements and collapsed states.
 Switching never opens a conversation, changes its execution identity, clears
 placement data or interrupts a turn. Active/archived filtering still applies.
@@ -261,10 +294,12 @@ visible but disabled with an explanation when Host has no GitHub configuration,
 rather than disappearing. Registered-project selection still reflects the
 selected repository's forge; delayed requests cannot replace a changed draft.
 
-GitHub functionality from ADR-0022 remains authoritative. Host's configured
-GitHub token lists repositories; the VM owner's native Git credentials perform
-Git operations. Web never receives the token. Deployment must validate both
-capability configuration and actual repository selection, not just source code.
+The [user-scoped GitHub account decision](github-accounts.md) supersedes
+ADR-0022's credential ownership. Web owns OAuth transactions; Host stores and
+selects private account credentials for the authenticated user's bound task.
+Browser metadata never contains tokens. Repository selection and actual scoped
+Git operations require their own acceptance; a UI capability flag is not proof
+of working authorization.
 
 ## Compact transcript file summaries (2026-09-30)
 
@@ -391,15 +426,17 @@ It resets on identity changes and is pruned when tasks leave the displayed list.
 
 ### Sidebar group lifecycle (2026-10-04, Server #50)
 
-The logo menu offers New group. A custom group has an independent opaque ID and
+The logo menu offers New group and Manage groups. Manage groups retains access
+to empty groups that are intentionally hidden from the sidebar. A custom group has an independent opaque ID and
 trimmed NFC name (1–64 characters, no control characters). Names must be unique
 among visible groups, ignoring case. Creating a group enables grouped display
 without creating a Project, cloning a repository or changing the selected task.
 At most 100 custom groups are retained per authenticated workspace.
 
 Existing project groups and custom groups share collapse, drag/drop and the
-conversation move selector. Each group has an actions button offering Delete
-group. Only an empty group can be removed; archived conversations and retained
+conversation move selector. Each visible group has an actions button offering
+Delete group; Manage groups provides the same empty-only deletion for hidden
+empty projections. Only an empty group can be removed; archived conversations and retained
 explicit legacy assignments count as members even when absent from the current
 view. Unregistered external deletion is not assumed to prove a reference absent.
 Known permanently deleted IDs no longer block group removal.
@@ -587,7 +624,9 @@ compatible clients. Serial verification is authorized; activation remains a sepa
 
 ## Conversation display mode (2026-10-13, source candidate)
 
-Source candidate v0.24, not deployed: add “上下文显示” immediately below “速度” in
+The original v0.24 candidate was subsequently recorded as deployed with v0.27
+in [the delivery contract](conversation-delivery.md). Its control remains
+“上下文显示” immediately below “速度” in
 the composer settings menu, offering “精简” (default) and “详细”. Compact shows
 user/assistant dialogue and output results without tool/process cards; Detailed
 preserves existing commands, tools and work-process presentation. Keep the
@@ -597,6 +636,10 @@ switching and Host-side transport requirements are defined in
 
 
 ## Confirmed settings and folder hierarchy (2026-10-23)
+
+Accepted owner request: four UI changes, followed by the source review fixes
+in `1bc2b27`. See the baseline at the top and the evidence table in the linked
+freshness audit; this section does not claim production activation.
 
 The grouped sidebar distinguishes group headers with an outlined folder icon,
 bolder names and indented tree lines. Groups containing no visible conversations
@@ -640,8 +683,10 @@ does not synthesize a speed command.
 A rejected operation stops the save sequence immediately. A bounded confirmation
 timeout clears the abandoned local pending state, preserves the unsent message,
 and requests authoritative model/settings metadata without retrying any mutation.
-Account, conversation and connection fences still prevent continuation into a
-new selection. Already confirmed changes are not described as rolled back.
+The current controller uses a 16-second per-step confirmation deadline; the
+existing speed request has its own 15-second deadline and draft engine catalog
+reads have a 10-second UI deadline. A read is not a write retry. Account,
+conversation and connection fences still prevent continuation into a new selection. Already confirmed changes are not described as rolled back.
 
 Existing-task Agent takeover is a separate confirmation. If another field has
 been edited, choosing another Agent asks the user to save/cancel that draft first
@@ -651,3 +696,11 @@ disabled until it is cancelled or completed, avoiding silently dropped edits.
 An open new-task settings menu accepts its initial catalog response and unlocks
 model controls without requiring a close/reopen. Untouched draft fields refresh;
 explicit user choices and a pending different-engine catalog remain protected.
+
+### Unresolved integration paths
+
+The confirmed-menu source still has two documented gaps: retrying the already
+selected display mode after a failed read, and automatically saving Standard
+before changing from Fast to an unsupported model. Preserve those requirements;
+see [G1/G2 and their source evidence](../reviews/spec-freshness-20261023-ui.md#unresolved-gaps--requirements-retained).
+This spec refresh does not implement either repair.

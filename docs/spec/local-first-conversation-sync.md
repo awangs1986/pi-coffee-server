@@ -1,6 +1,6 @@
 # Local-first conversation display and durable synchronization
 
-> Deployed with Server v0.27 (original source candidate v0.24): [conversation-first delivery](conversation-delivery.md). Its versioned compact projection must preserve this document's revision, authorization and freshness guarantees; current v2 alone does not imply reduced tool-payload transmission.
+> Historical recorded deployment: Server v0.27 (original source candidate v0.24): [conversation-first delivery](conversation-delivery.md). Its versioned compact projection must preserve this document's revision, authorization and freshness guarantees; current v2 alone does not imply reduced tool-payload transmission.
 
 
 Implementation started from GitHub main `6cb1d3244fdf6305d2b798f48082c5d27e03a831`
@@ -114,9 +114,20 @@ scroll-to-bottom; a new-message control returns to the latest page.
 
 ## Synchronization and login animations
 
+Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
+`feat/user-running-cat`, candidate v0.53; clean before this documentation refresh.
+This is local source, not a deployed-version claim. Scope, source pointers,
+executed evidence and unresolved gaps are recorded in the
+[2026-10-23 freshness audit](../reviews/spec-freshness-20261023-ui.md).
+
 The selected conversation shows the shared owner-supplied 64×64 black running-cat GIF only
-while synchronization is in progress. Error, offline and timeout states stop it
-and expose retry. Other conversations' synchronization cannot animate the current
+while synchronization is in progress. Error, offline and timeout states hide it
+and expose retry. `public/sync-status.js` chooses the single-frame first-frame GIF
+for reduced-motion users; the public static resolver serves both GIFs as
+`image/gif`. Sidebar running rows reuse this asset at 28×28; synchronization uses
+64×64. Neither a sync icon nor an animation implies a native task state change.
+Evidence: `test/sync-status.test.ts`, `test/web-server.test.ts` and the prior
+owner-artwork acceptance record. Other conversations' synchronization cannot animate the current
 view. Reduced-motion preference removes motion, and status text remains available
 to assistive technology. The indicator never disables the composer or blocks the
 transcript.

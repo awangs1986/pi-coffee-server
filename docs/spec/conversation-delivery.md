@@ -1,16 +1,22 @@
 # Conversation-first browser delivery
 
-Status: deployed with Server v0.27 / d835f00; the v0.24 source acceptance below is historical.
+Historical deployment record: Server v0.27 / d835f00; the v0.24 source acceptance below is historical. No live deployment was inspected in this refresh.
 Owner decision: default synchronization carries the conversation and necessary
 controls in the default Compact mode. Compact shows only user messages, assistant
 replies and output results, without work-process groups, tool cards or command
 logs. Detailed mode retains the existing process presentation. This is a
 transport and display change, not native context compression or history deletion.
 
-Implementation baseline: GitHub/Gitea main
+Original delivery implementation baseline: GitHub/Gitea main
 `789a0d19555ad4adf639488e1b98a3d928046058`. Source validation is recorded in [the acceptance report](../reviews/conversation-display-20261013.md). Production activation and measured real-user speed improvement remain separate.
 
 ## User control: Compact and Detailed
+
+Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
+`feat/user-running-cat`, candidate v0.53; clean before this documentation refresh.
+This is local source, not a deployed-version claim. Scope, source pointers,
+executed evidence and unresolved gaps are recorded in the
+[2026-10-23 freshness audit](../reviews/spec-freshness-20261023-ui.md).
 
 Add a row labelled “上下文显示” immediately below “速度” in the composer settings
 menu, with exactly two choices: “精简” (Compact) and “详细” (Detailed). The existing
@@ -24,6 +30,12 @@ that account's conversations and restored after reload/login. Do not inherit
 another account's preference. It applies to Chat and Work and all supported engines;
 engines without speed selection still show this row in the corresponding settings
 area. A display-mode change is allowed while a task runs and never restarts it.
+In the v0.53 candidate, selection edits a menu-local draft; Confirm persists it
+through the existing account-scoped API and changes the current subscription.
+Outside click/Escape/navigation cancels the draft. Unedited native settings must
+not be overwritten by the display save. Source: `stageAgentSetting`,
+`confirmAgentSettings`, `chooseDisplayMode` in `public/app.js`; regression:
+“does not overwrite refreshed native settings when only display was edited”.
 
 - Compact: dialogue and output results only, with essential status and interactive
   controls preserved. No inline tool, command-output or process cards.
@@ -219,7 +231,8 @@ failure while busy. `scripts/probe-conversation-display.mjs` runs real Chromium,
 Web and Host against synthetic adapters for both history protocols, with no model
 turn. Its fixture shows reduced page bytes, not a production latency claim.
 
-The existing navigation work is tracked in
+Historical v0.24 publication note (not the present source or deployment status):
+the existing navigation work was tracked in
 [Server #47](https://github.com/awangs1986/pi-coffee-server/issues/47).
 Creating the follow-up Issue and publishing this candidate require available
 account-scoped GitHub credentials; the configured broker returned “GitHub credential
@@ -246,3 +259,15 @@ Web HTTP and Web/Host Upgrade boundaries reject malformed request targets with
 400 and contain handler failures so an unauthenticated malformed URL cannot
 terminate the service. Isolated child-process regression tests also verify that
 health and authentication enforcement still work after rejection.
+
+
+### Unresolved confirmed-menu retry gap (2026-10-23, source inspection)
+
+Keep the requirement above that the current mode can be retried after a failed
+or stale display read. At `1bc2b27`, `chooseDisplayMode` still has a same-mode
+retry branch, but `confirmAgentSettings` calls it only when the selected mode
+**differs** from `displayMode`. Reselecting the current mode and confirming therefore
+does not reach `requestDisplaySync`. The helper's existence is not UI acceptance.
+This was found by tracing the reachable caller during the spec refresh, not by a
+new runtime test. It remains a code gap; this documentation change does not repair
+it, waive the requirement, or assert that another reconnect path always repairs it.
