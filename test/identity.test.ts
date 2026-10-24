@@ -21,6 +21,24 @@ describe('Gitea identity and fixed VM routing',()=> {
    }
   }finally{await web.close();}
  });
+ it('offers a safe login recovery screen when Gitea returns an unconfigured account',async()=> {
+  const web=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity:{giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'fixture',publicUrl:'http://coffee.test',routes:()=>({}),fetch:(async(url)=>new Response(JSON.stringify(String(url).includes('access_token')?{access_token:'private-token'}:{id:4,login:'<script>bad</script>',active:true}))) as typeof fetch}});
+  await web.start();const base=`http://127.0.0.1:${web.address().port}`;
+  try {
+   const login=await fetch(base+'/auth/login',{redirect:'manual'});
+   const state=new URL(login.headers.get('location')!).searchParams.get('state');
+   const callback=await fetch(base+`/auth/callback?state=${state}&code=private-code`,{redirect:'manual',headers:{cookie:login.headers.get('set-cookie')!.split(';')[0]}});
+   expect(callback.status).toBe(401);
+   expect(callback.headers.get('content-type')).toContain('text/html');
+   const body=await callback.text();
+   expect(body).toContain('重新登录');expect(body).toContain('href="/auth/login"');
+   expect(body).toContain('http://gitea.test/user/login');
+   expect(body).not.toContain('<script>bad');
+   expect(body).not.toContain('private-token');expect(body).not.toContain('private-code');
+   expect(callback.headers.get('location')).toBeNull();
+   expect((await fetch(base+'/api/me')).status).toBe(401);
+  }finally{await web.close();}
+ });
  it('accepts the UTF-8 BOM emitted by Windows PowerShell route files',()=> {
   expect(parseUserRoutes('\uFEFF{"4":{"hostUrl":"ws://127.0.0.1:8788/host","hostToken":"token"}}')).toEqual({
    '4':{hostUrl:'ws://127.0.0.1:8788/host',hostToken:'token'},

@@ -92,3 +92,13 @@ The public built-Host workflow is tested in `test/shared-gitea-onboarding.test.t
 native Git in `test/gitea-native-credentials.test.ts`; installed Pi/Host/Web provider
 guidance in `test/pi-package-integration.test.ts`. Production evidence belongs to
 #125. Verification is serial and does not authorize bulk Agent creation.
+
+## Failed-login recovery (2026-10-24)
+
+Browser OAuth failures must render an actionable recovery page with a Retry login
+button and a separate Gitea account-switch link. Do not automatically redirect a
+valid but unconfigured identity into the same OAuth loop. Coffee cannot clear
+Gitea's session cookie: explain that switching accounts requires signing out in
+Gitea, then returning to retry. Never render codes, tokens or provider error text.
+API authorization failures retain their machine-readable response contracts;
+recovery does not admit new accounts or alias their data to an existing user.

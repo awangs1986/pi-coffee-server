@@ -130,7 +130,17 @@ export class Identity {
         res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:session.id,login:session.login}));return true;
       }
       res.writeHead(405);res.end();
-    } catch { res.writeHead(401,{'content-type':'text/plain; charset=utf-8'});res.end('登录或 VM 授权无效。请重新登录，或联系管理员检查固定 VM 路由。'); }
+    } catch {
+      if (req.method === 'GET' && url.pathname !== '/api/me') {
+        // OAuth provider cookies belong to Gitea: a local retry cannot sign out
+        // that account. Offer both actions without redirecting into a loop.
+        const giteaLogin = new URL('/user/login', this.options.giteaUrl).href.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+        res.writeHead(401,{'content-type':'text/html; charset=utf-8','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"});
+        res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>重新登录 · PI Coffee</title><style>body{margin:0;background:#f7f7f7;color:#222;font:16px/1.6 system-ui,sans-serif;min-height:100dvh;display:grid;place-items:center}main{max-width:440px;margin:24px;padding:28px;border:1px solid #ddd;border-radius:16px;background:white}h1{font-size:22px;margin:0 0 12px}p{color:#555}nav{display:flex;gap:12px;flex-wrap:wrap}a{display:inline-block;padding:10px 16px;border:1px solid #ccc;border-radius:8px;color:#222;text-decoration:none}a.primary{background:#222;color:white;border-color:#222}a:focus-visible{outline:3px solid #7c9cc3;outline-offset:3px}</style></head><body><main><h1>请重新登录</h1><p>本次登录未能完成，或当前 Gitea 账号尚未配置工作区。</p><nav><a class="primary" href="/auth/login">重新登录</a><a href="${giteaLogin}" target="_blank" rel="noopener noreferrer">切换 Gitea 账号</a></nav><p>需要换账号？先打开 Gitea，从右上角账号菜单退出并登录其他账号，再回到这里点击“重新登录”。仅重试会继续使用 Gitea 当前登录的账号。</p></main></body></html>`);
+      } else {
+        res.writeHead(401,{'content-type':'text/plain; charset=utf-8'});res.end('登录或 VM 授权无效。请重新登录，或联系管理员检查固定 VM 路由。');
+      }
+    }
     return true;
   }
 }
