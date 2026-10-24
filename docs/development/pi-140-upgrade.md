@@ -40,9 +40,9 @@ checks Host health after restart. Activation failures restore the previous
 configuration/release; no native input is replayed. Installation, source publication,
 validation and activation receipts are separate.
 
-Initial full checks retained failure evidence: stale fixture versions/package counts,
+Initial complete checks retained failure evidence: stale fixture versions/package counts,
 old subagent entry assumptions, local test timeouts under parallel load, and a
-transient MISHU observation snapshot race. Relevant repaired cases are rerun with
+transient MISHU observation snapshot race. A single 20 ms retry of an unknown native run read avoids transient append windows without accepting stale evidence; persistent failure remains uncertain. Relevant repaired cases are rerun with
 bounded concurrency. Native live probes reached eidolon but returned HTTP 503
 twice; online model success is not claimed. Private logs and generated runtime
 receipts remain outside the repository.
