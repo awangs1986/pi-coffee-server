@@ -26,6 +26,33 @@ describe('Gitea identity and fixed VM routing',()=> {
    '4':{hostUrl:'ws://127.0.0.1:8788/host',hostToken:'token'},
   });
  });
+ it('returns a Gitea login target when a pre-restart session cookie is no longer known',async()=> {
+  const identity={giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'test-only',publicUrl:'http://coffee.test',routes:()=>({'7':{hostUrl:'ws://127.0.0.1:1/host',hostToken:'test-only'}}),fetch:(async(url)=>new Response(JSON.stringify(String(url).includes('access_token')?{access_token:'test-only'}:{id:7,login:'owner',active:true}))) as typeof fetch};
+  const beforeRestart=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity});
+  await beforeRestart.start();const firstBase=`http://127.0.0.1:${beforeRestart.address().port}`;
+  let cookie='',oauthCookie='',state='';
+  try {
+   const login=await fetch(firstBase+'/auth/login',{redirect:'manual'});
+   state=new URL(login.headers.get('location')!).searchParams.get('state')!;
+   oauthCookie=login.headers.get('set-cookie')!.split(';')[0];
+   const callback=await fetch(firstBase+`/auth/callback?state=${state}&code=x`,{redirect:'manual',headers:{cookie:login.headers.get('set-cookie')!.split(';')[0]}});
+   cookie=callback.headers.get('set-cookie')!.split(';')[0];
+  }finally{await beforeRestart.close();}
+
+  // A new Web process has an empty in-memory session map while the browser
+  // continues sending the old cookie.
+  const afterRestart=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity});
+  await afterRestart.start();const secondBase=`http://127.0.0.1:${afterRestart.address().port}`;
+  try {
+   const stale=await fetch(secondBase+'/api/me',{headers:{cookie}});
+   expect(stale.status).toBe(401);
+   expect(stale.headers.get('content-type')).toContain('application/json');
+   expect(await stale.json()).toEqual({error:'Login required',loginUrl:'/auth/login'});
+   const interruptedLogin=await fetch(secondBase+`/auth/callback?state=${state}&code=x`,{headers:{cookie:oauthCookie},redirect:'manual'});
+   expect(interruptedLogin.status).toBe(303);
+   expect(interruptedLogin.headers.get('location')).toBe('/auth/login');
+  }finally{await afterRestart.close();}
+ });
  it('invalidates login immediately even when the VM file-revocation endpoint is stalled',async()=> {
   let release!:()=>void;
   let requested!:()=>void;
@@ -64,9 +91,9 @@ describe('Gitea identity and fixed VM routing',()=> {
   const web=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity:{giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'server-only',publicUrl:'http://coffee.test',routes:()=>routes,fetch:fakeFetch as typeof fetch}});
   await web.start();const base=`http://127.0.0.1:${web.address().port}`;
   try {
-   expect((await fetch(base+'/api/me')).status).toBe(401);
+   const unauthApiMe=await fetch(base+'/api/me');expect(unauthApiMe.status).toBe(401);expect(await unauthApiMe.json()).toEqual({error:'Login required',loginUrl:'/auth/login'});
    const unauthMe=await fetch(base+'/auth/me');expect(unauthMe.status).toBe(401);expect(await unauthMe.json()).toEqual({error:'Login required',loginUrl:'/auth/login'});
-   expect((await fetch(base+'/auth/callback?state=invalid&code=x',{redirect:'manual'})).status).toBe(401);
+   const staleCallback=await fetch(base+'/auth/callback?state=invalid&code=x',{redirect:'manual'});expect(staleCallback.status).toBe(303);expect(staleCallback.headers.get('location')).toBe('/auth/login');
    const deep=await fetch(base+'/conversations/task',{redirect:'manual'});expect(deep.headers.get('location')).toBe('/auth/login?returnTo=%2Fconversations%2Ftask');
    const login=await fetch(base+deep.headers.get('location'),{redirect:'manual'});const target=new URL(login.headers.get('location')!);
    expect(target.searchParams.get('code_challenge_method')).toBe('S256');challenge=target.searchParams.get('state')!;
@@ -78,7 +105,7 @@ describe('Gitea identity and fixed VM routing',()=> {
    const forbidden=new WebSocket(base.replace('http:','ws:')+'/ws',{headers:{cookie,origin:'http://evil.test'}});
    const status=await new Promise<number>((resolve,reject)=>{forbidden.on('unexpected-response',(_,res)=>{res.resume();forbidden.terminate();resolve(res.statusCode!);});forbidden.on('error',()=>{});});expect(status).toBe(403);
    routes={};expect((await fetch(base+'/api/me',{headers:{cookie}})).status).toBe(401);
-   const replay=await fetch(base+`/auth/callback?state=${challenge}&code=x`,{headers:{cookie:'coffee_oauth='+challenge},redirect:'manual'});expect(replay.status).toBe(401);
+   const replay=await fetch(base+`/auth/callback?state=${challenge}&code=x`,{headers:{cookie:'coffee_oauth='+challenge},redirect:'manual'});expect(replay.status).toBe(303);expect(replay.headers.get('location')).toBe('/auth/login');
   }finally{await web.close();}
  });
 });

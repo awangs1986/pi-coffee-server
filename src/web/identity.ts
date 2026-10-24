@@ -97,7 +97,9 @@ export class Identity {
       }
       if (url.pathname === '/auth/callback' && req.method === 'GET') {
         const state = url.searchParams.get('state') ?? ''; const pending = this.states.get(state);
-        if (!pending || cookie(req,'coffee_oauth') !== state || pending.expires < Date.now()) throw new Error('Invalid login state');
+        if (!pending || cookie(req,'coffee_oauth') !== state || pending.expires < Date.now()) {
+          res.writeHead(303,{'location':'/auth/login','cache-control':'no-store'});res.end();return true;
+        }
         this.states.delete(state);
         const code = url.searchParams.get('code'); if (!code) throw new Error('Missing login code');
         const response = await this.request(new URL('/login/oauth/access_token',this.options.giteaUrl), {method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',client_id:this.options.clientId,client_secret:this.options.clientSecret,code,redirect_uri:this.origin+'/auth/callback',code_verifier:pending.verifier}),signal:AbortSignal.timeout(8000),redirect:'error'});
@@ -119,7 +121,12 @@ export class Identity {
         this.setCookie(res,COOKIE,'',0);res.writeHead(204);res.end();return true;
       }
       if(url.pathname === '/api/me' && req.method === 'GET') {
-        const session=await this.authorize(req); if(!session) throw new Error('Login required');
+        const session=await this.authorize(req);
+        if(!session) {
+          res.writeHead(401,{'content-type':'application/json; charset=utf-8'});
+          res.end(JSON.stringify({error:'Login required',loginUrl:'/auth/login'}));
+          return true;
+        }
         res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:session.id,login:session.login}));return true;
       }
       res.writeHead(405);res.end();

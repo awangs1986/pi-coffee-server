@@ -4125,7 +4125,10 @@ $('#view-all-changes').addEventListener('click',()=>{showWorkspaceReview('diff')
 $('#wt-download').addEventListener('click',()=>{void downloadWorkspacePatch().catch(e=>toast(e.message));});
 void loadWorkspace();
 setInterval(()=>{if(!document.hidden || uploadsBusy())void loadWorkspace();},5000);
-fetch('/api/me').then(r=>r.ok?r.json():null).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
+fetch('/api/me',{cache:'no-store'}).then(async r=>{
+  if(r.status===401){const body=await r.json().catch(()=>({}));location.href=body?.loginUrl||'/auth/login';return null;}
+  return r.ok?r.json():null;
+}).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
 function bindWorkspaceArtifacts() {
  bindWorkspaceArtifactLinks(document,(action,path)=>workspaceState&&transfer?fileEndpoint(action,path):null);
