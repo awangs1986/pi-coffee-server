@@ -14,7 +14,7 @@ it('registers native packages idempotently while preserving private settings and
  try{
   await writeFile(join(agent,'settings.json'),JSON.stringify(before));await writeFile(join(agent,'web-search.json'),JSON.stringify(secret));
   for(let n=0;n<2;n++)await promisify(execFile)(process.execPath,[resolve('scripts/configure-native-pi.mjs'),agent],{timeout:20000});
-  const after=JSON.parse(await readFile(join(agent,'settings.json'),'utf8'));expect(after.defaultProvider).toBe('fixture');expect(after.extensions).toEqual(['./personal.js']);expect(after.packages).toHaveLength(5);
+  const after=JSON.parse(await readFile(join(agent,'settings.json'),'utf8'));expect(after.defaultProvider).toBe('fixture');expect(after.extensions).toEqual(['./personal.js']);expect(after.packages).toHaveLength(6);
   expect(after.packages.find((p:any)=>typeof p==='object' && resolve(agent,p.source)===harness).extensions).toEqual([]);
   expect(JSON.parse(await readFile(join(agent,'settings.json.before-pi104'),'utf8'))).toEqual(before);
   expect(JSON.parse(await readFile(join(agent,'web-search.json'),'utf8'))).toMatchObject({...secret,toolActivation:'dynamic',maxInlineContentChars:6000,workflow:'none'});

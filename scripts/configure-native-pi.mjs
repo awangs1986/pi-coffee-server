@@ -1,6 +1,6 @@
 import {execFileSync} from 'node:child_process';
 import {mkdir,readFile,writeFile,stat} from 'node:fs/promises';
-import {createRequire} from 'node:module';
+import {createRequire,findPackageJSON} from 'node:module';
 import {dirname,resolve,join,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
@@ -9,7 +9,7 @@ const agentDir=process.argv[2];
 if(!agentDir || !isAbsolute(agentDir))throw Error('Usage: node scripts/configure-native-pi.mjs /absolute/agent-directory');
 await mkdir(agentDir,{recursive:true,mode:0o700});
 const cli=fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent')).replace(/index\.js$/,'cli.js');
-const roots=['pi-subagents','pi-web-access','pi-coffee-harness','pi-coffee-lsp','context-handoff'].map(name=>name==='pi-subagents'?dirname(require.resolve(name)):dirname(require.resolve(name+'/package.json')));
+const roots=['pi-subagents','pi-web-access','pi-coffee-harness','pi-coffee-lsp','context-handoff','pi-xai-oauth'].map(name=>name==='pi-subagents'?dirname(findPackageJSON(name,import.meta.url)):dirname(require.resolve(name+'/package.json')));
 const env={...process.env,PI_CODING_AGENT_DIR:agentDir,PI_OFFLINE:'1'};
 const configured=async file=>{try{return JSON.parse(await readFile(join(agentDir,file),'utf8'));}catch(e){if(e.code==='ENOENT')return {};throw e;}};
 const settings=await configured('settings.json'),auth=await configured('auth.json'),models=await configured('models.json');
@@ -38,7 +38,7 @@ if(authChanged)await writeFile(join(agentDir,'auth.json'),JSON.stringify(auth,nu
 if(modelsChanged)await writeFile(join(agentDir,'models.json'),JSON.stringify(models,null,2)+'\n',{mode:0o600});
 await writeFile(join(agentDir,'settings.json'),JSON.stringify(settings,null,2)+'\n',{mode:0o600});
 const filters=new Map();
-const owned=new Set(['pi-coffee','pi-coffee-harness','pi-coffee-lsp','context-handoff','pi-subagents','pi-web-access']);
+const owned=new Set(['pi-coffee','pi-coffee-harness','pi-coffee-lsp','context-handoff','pi-subagents','pi-web-access','pi-xai-oauth']);
 // Retire only explicit extension files owned by replaced Coffee/upstream packages.
 // Other user extensions remain configured; Host executes only its explicit roots.
 const retained=[];

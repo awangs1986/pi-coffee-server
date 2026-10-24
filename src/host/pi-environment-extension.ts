@@ -104,7 +104,9 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
     }catch{reportOnly=false;runId=undefined;ctx.ui.notify('回答已保存，续行未能核实；未自动重放。','error');}
   }});
   pi.on("before_agent_start",(event,ctx)=>{
-    // Custom reports bypass this hook; real user turns restore ordinary tools.
+    // Pi >=1.2 also invokes this hook for custom-message runs. Preserve their
+    // report-only guard and dispatch identity; only real user turns reset them.
+    if(event.messageType === "custom")return;
     reportOnly=false;
     runId=nextDispatch?.hash===createHash('sha256').update(event.prompt).digest('hex')?nextDispatch.id:randomUUID();nextDispatch=undefined;
     try{pi.appendEntry('coffee-native-run',{version:1,runId,baselineId:ctx.sessionManager.getLeafId()});}catch{runId=undefined;}
