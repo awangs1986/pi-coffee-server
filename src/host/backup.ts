@@ -17,12 +17,13 @@ const digest=(bytes:Uint8Array|string)=>createHash('sha256').update(bytes).diges
 export class BackupError extends Error {constructor(readonly code:string,message:string){super(message);}}
 export interface WriterProof {known:boolean;active?:boolean;reason?:string;}
 export interface CaptureLease {/** Trusted importer only: inherit through an explicit child stdio slot, never a native/model environment. */ readonly publicationFd?:number;readonly epoch:number;readonly signal:AbortSignal;assertValid():void;release():void;}
+export interface RecoveryPublication {operationId:string;digest:string;lease:CaptureLease;}
 
 /** The admission point must surround the *whole* writer lifetime, including descendants.
  * A proof callback audits custody outside this process. No proof means unknown,
  * never an inference from an idle Agent or unchanged file hashes. */
 export class WriterAdmissionFence {
- private epoch=0;private active=0;private readonly leases=new Set<AbortController>();
+ private epoch=0;private active=0;private readonly leases=new Set<AbortController>();private readonly publicationLeases=new WeakSet<CaptureLease>();
  private readonly classes:Set<string>;
  constructor(private options:{writerClasses:string[];uncoveredWriters?:string[];probe?:()=>Promise<WriterProof>}){this.classes=new Set(options.writerClasses);}
  invalidate(reason='New writer admitted'):void{this.epoch++;for(const lease of this.leases)lease.abort(new BackupError('capture_revoked',reason));this.leases.clear();}
@@ -36,7 +37,8 @@ export class WriterAdmissionFence {
  }
  /** Publication owns an irreversible multi-file step; enforced implementations
   * may block new admissions until its physical work settles. */
- async publicationLease():Promise<CaptureLease>{return this.lease();}
+ async publicationLease():Promise<CaptureLease>{const lease=await this.lease();this.publicationLeases.add(lease);return lease;}
+ async runRecoveryPublication<T>(authority:RecoveryPublication,run:()=>Promise<T>):Promise<T>{if(!this.publicationLeases.has(authority.lease))throw new BackupError('recovery_publication_required','Recovery requires the held publication lease');authority.lease.assertValid();const result=await run();authority.lease.assertValid();return result;}
  async lease():Promise<CaptureLease>{
   const epoch=this.epoch;
   if(this.active)throw new BackupError('writers_active','Consistency group has active writers');

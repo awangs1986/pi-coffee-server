@@ -33,6 +33,8 @@ export class ManagedPublicationGate {
  }
  /** All platform writes and native start/read/resume adoption use this gate. */
  assertAdmission(){if(this.record().pending.length)throw refused();}
+ hasPending(){return this.record().pending.length>0;}
+ assertApprovedOperation(operationId:string,digest:string){const context=this.context.getStore();if(!context?.active||context.intent.operationId!==operationId||context.intent.digest!==digest)throw refused();this.assertPublication();}
  assertPublication(){const record=this.record();if(!record.pending.length)return;const context=this.context.getStore();if(!context?.active||record.pending.length!==1||!same(record.pending[0],context.intent))throw refused();}
  async withApprovedPublication<T>(operationId:string,run:()=>Promise<T>):Promise<T>{if(this.busy)throw refused();this.busy=true;try{const record=this.reconcile(),plan=this.readPlan(operationId),intent=approved(plan);if(!['approved','publishing','failed','completed','completed-after-cancel'].includes(plan.state)||record.pending.some(item=>!same(item,intent)))throw refused();if(!record.pending.length){record.pending=[intent];this.save(record);}const context={intent,active:true};try{return await this.context.run(context,run);}finally{context.active=false;this.reconcile();}}finally{this.busy=false;}}
 }
