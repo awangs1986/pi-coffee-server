@@ -37,6 +37,10 @@ export interface RestoreCoordinatorOptions {root:string;safetyCheckpoint?:(conte
  * including a crash after publication but before its journal update. */
 export class RestoreCoordinator {
  readonly root:string;constructor(private options:RestoreCoordinatorOptions){this.root=resolve(options.root);}
+ /** Trusted source-authority seam, never an HTTP reader projection. A durable
+  * publication intent precedes every mutation and remains pending after worker
+  * loss until the approved job has rolled forward to its complete receipt. */
+ async pendingPublications(){await privateDir(this.root,true);const result:{operationId:string;scope:string;taskId:string;revision:number;groupId?:string;state:RestorePlan['state'];phase:RestorePlan['phase']}[]=[];const names=await readdir(this.root);if(names.length>20000)throw restoreFail('restore_journal_capacity');for(const name of names){if(!/^[0-9a-f-]{36}\.json$/.test(name))continue;const p=await this.read(name.slice(0,-5));if(p.schemaVersion!==1||p.id!==name.slice(0,-5)||!p.scope||!p.taskId||!Number.isSafeInteger(p.revision))throw restoreFail('restore_journal_invalid');if(p.phase!=='complete'&&(p.publicationAttempted||p.state==='publishing'||p.state==='failed'&&p.approvedBy||['task','native','registry'].includes(p.phase)))result.push({operationId:p.id,scope:p.scope,taskId:p.taskId,revision:p.revision,groupId:p.checkpointGroup?.id,state:p.state,phase:p.phase});}return result;}
  private async allowed(actor:string,scope:string,manage:boolean){if(!await this.options.authorize(actor,scope,manage))throw restoreFail('forbidden');}
  private date(){return new Date((this.options.now??Date.now)()).toISOString();}
  private path(id:string){if(!/^[0-9a-f-]{36}$/.test(id))throw restoreFail('invalid_operation');return join(this.root,id+'.json');}
