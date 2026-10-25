@@ -134,9 +134,9 @@ async function run(selectedRole: Role): Promise<void> {
   const restoreScopes=new Map<string,Workspaces>();
   const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);}}}):undefined;
   const backupRepository=backupRoot&&backupCoordinator?new BackupRepository({root:join(backupRoot,'repository-runtime'),coordinator:backupCoordinator}):undefined;
-  const restoreCoordinator=backupRoot?new RestoreCoordinator({root:join(backupRoot,'restore-runtime'),repository:backupRepository,
+  const restoreCoordinator=backupRoot?new RestoreCoordinator({root:join(backupRoot,'restore-runtime'),materialSource:async()=>{throw new BackupError('restore_material_broker_unavailable','An authorized scoped material broker is required; Host does not read repository keys');},
     authorize:async(actor,scope,manage)=>{const managed=scope===LEGACY_BACKUP_SCOPE||envList('PI_COFFEE_BACKUP_USERS').includes(scope)||scope===actor;return managed&&(manage?actor==='awangs':actor===scope);},
-    scope:async scope=>{if(!restoreScopes.has(scope)){await host?.prepareRestoreScope(scope===LEGACY_BACKUP_SCOPE?undefined:scope);}const workspaces=restoreScopes.get(scope);if(!workspaces)throw new BackupError('unknown_scope','Restore scope unavailable');return {workspaces,adapter:recoveryAdapters.get(scope),withPublication:(id,run)=>host!.withRestorePublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,id,run)};}
+    scope:async scope=>{if(!restoreScopes.has(scope)){await host?.prepareRestoreScope(scope===LEGACY_BACKUP_SCOPE?undefined:scope);}const workspaces=restoreScopes.get(scope);if(!workspaces)throw new BackupError('unknown_scope','Restore scope unavailable');return {workspaces,adapter:recoveryAdapters.get(scope),withPublication:(id,run,operationId)=>host!.withRestorePublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,id,run,operationId)};}
   }):undefined;
   const sourceCustody=backupRoot?new BackupSourceCustody(join(backupRoot,'source-ownership')):undefined;
   const custody=backupRoot?new NativeWriterCustody(join(backupRoot,'native-custody','shared-native-group')):undefined;

@@ -142,7 +142,6 @@ export class Workspaces {
   private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
   private async saveState() {
     const next=this.saveTail.then(async()=>{
-      const temp=join(this.root,'.coffee',randomUUID()+'.tmp');
       await durableJson(join(this.root,'.coffee','state.json'),this.state);
       for(const c of this.state.conversations)if(c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
     });this.saveTail=next.catch(()=>undefined);return next;
@@ -172,9 +171,16 @@ export class Workspaces {
     if(task.cwd!==workspace||(task.taskRoot!==undefined&&task.taskRoot!==taskData)||Boolean(task.taskRoot)!==Boolean(this.taskRoot))throw restoreFail('original_path_not_owned');
     return {workspace,taskData};
   }
+  async recoveryOwnsNativeCwd(cwd:string):Promise<boolean>{
+    await this.load();if(typeof cwd!=='string'||resolve(cwd)!==cwd)return false;
+    const roots=this.taskRoot?[this.taskRoot]:[this.chatRoot,join(this.root,'checkouts')];
+    for(const root of roots){const rel=relative(root,cwd),parts=rel.split('/');if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(parts[0])||parts.length!==(this.taskRoot?2:1)||(this.taskRoot&&parts[1]!=='workspace'))continue;await privateDir(root);const info=await lstat(cwd).catch((e:NodeJS.ErrnoException)=>{if(e.code==='ENOENT')return undefined;throw e;});if(info&&(info.isSymbolicLink()||!info.isDirectory()||await realpath(cwd)!==cwd))return false;return true;}
+    return false;
+  }
+  async recoveryRegistryIdentity(){await this.load();return privateDir(join(this.root,'.coffee'));}
   async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null}):Promise<void>{
-    await this.load();const current=this.state.conversations.find(c=>c.id===input.conversation.id);
-    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest)return;
+    await this.load();await privateDir(join(this.root,'.coffee'));const current=this.state.conversations.find(c=>c.id===input.conversation.id);
+    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest){await this.save();return;}
     if((current?sha(JSON.stringify(current)):null)!==input.expectedRegistry)throw restoreFail('registry_changed');
     await this.recoveryPaths(input.conversation);await this.checkDirectory(input.conversation);
     if(input.project){const existing=this.state.projects.find(p=>p.id===input.project!.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(input.project))throw restoreFail('project_changed');}

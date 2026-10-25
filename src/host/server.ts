@@ -279,7 +279,7 @@ export class HostServer {
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
       const administrator=this.options.backup?.administrator??'awangs',dataScope=slot.user??LEGACY_BACKUP_SCOPE;
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),restores:this.options.backup?.restore?await this.options.backup.restore.status(actor??'',target.user??LEGACY_BACKUP_SCOPE):[],excludedEngines:['claude','cursor','grok']});
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor??'',target.user??LEGACY_BACKUP_SCOPE):[],excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
@@ -304,8 +304,8 @@ export class HostServer {
           if(!['plan','revise','approve','publish','cancel'].includes(action)||typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an operation and current revision'});return;}
           // Preparation reads the encrypted key and uses the same production boundary gate.
           if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
-          json(res,200,await restore.operate(actor??'',input.id,{action:action as 'plan'|'revise'|'approve'|'publish'|'cancel',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})}));
-          if(action==='publish')this.broadcastSessions(await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:typeof input.scope==='string'?input.scope:user));
+          const result=await restore.operate(actor??'',input.id,{action:action as 'plan'|'revise'|'approve'|'publish'|'cancel',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})});json(res,200,result);
+          if(action==='publish')this.broadcastSessions(await this.slotFor(result.scope===LEGACY_BACKUP_SCOPE?undefined:result.scope));
         }catch(error){const code=error instanceof BackupError?error.code:'';json(res,code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Restore operation failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('repository-')){
@@ -402,7 +402,8 @@ export class HostServer {
       if((!slot.index||!this.syncV2Enabled)&&!syncRoute[2].startsWith('recent-')){json(res,503,{error:'sync_unavailable'});return;}
       try {
         const id=decodeURIComponent(syncRoute[1]);if(!id||id.length>256||/[\/\\\x00]/.test(id)){json(res,400,{error:'invalid_conversation'});return;}
-        if(slot.workspaces && ((!await slot.workspaces.lookup(id)&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
+        const recovered=await slot.workspaces?.lookup(id);if(recovered?.recoveryReceipt)await slot.index?.recover(id,recovered.recoveryReceipt.operationId);
+        if(slot.workspaces && ((!recovered&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
         const args=Object.fromEntries(readUrl.searchParams);if(args.displayMode!==undefined&&!['compact','detailed'].includes(args.displayMode)){json(res,400,{error:'invalid_display_mode'});return;}if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
         let value:unknown;
         if(syncRoute[2].startsWith('recent-')){
@@ -712,7 +713,7 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence,async id=>(await scope.workspaces!.lookup(id))?.recoveryReceipt?.operationId):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
@@ -815,9 +816,9 @@ export class HostServer {
 
   /** Controlled live-owner seam for independent restoration jobs. */
   async prepareRestoreScope(user:string|undefined){await this.slotFor(user);}
-  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>):Promise<T>{
+  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>,operationId?:string):Promise<T>{
     const slot=await this.slotFor(user);if(slot.lifecycleLocks.has(taskId)||slot.registry.get(taskId)?.isBusy)throw new BackupError('target_busy','Task has live execution or lifecycle work');
-    slot.lifecycleLocks.add(taskId);try{const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+    slot.lifecycleLocks.add(taskId);try{await slot.registry.stopIdle(taskId);await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
   }
   address(): HostAddress {
     const address = this.http.address();
@@ -933,6 +934,7 @@ class HostSocket implements SessionSink {
   private recentHistory=false;
   private displayMode:"compact"|"detailed"="detailed";
   private bindingEpoch?:string;
+  private recoveryGeneration?:string;
   private index?:ConversationIndex;
   private messageQueue: Promise<void>;
   private urgentControls=0;
@@ -1100,7 +1102,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(this.user??'',this.user??LEGACY_BACKUP_SCOPE)))}:{}),tasks:await backupStatuses(slot),...(slot.repository?{repository:JSON.parse(JSON.stringify({...await slot.repository.status(this.user??LEGACY_BACKUP_SCOPE),...(slot.repositoryActivationUnavailable?{activationUnavailable:slot.repositoryActivationUnavailable}:{})}))}:{})});break;
+          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(this.user&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(this.user??'',this.user??LEGACY_BACKUP_SCOPE)))}:{}),tasks:await backupStatuses(slot),...(slot.repository?{repository:JSON.parse(JSON.stringify({...await slot.repository.status(this.user??LEGACY_BACKUP_SCOPE),...(slot.repositoryActivationUnavailable?{activationUnavailable:slot.repositoryActivationUnavailable}:{})}))}:{})});break;
         }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
@@ -1137,6 +1139,7 @@ class HostSocket implements SessionSink {
           if(!this.session||!this.opened)throw new NotOpenError();
           this.send(this.session.queueFrame);break;
         case "queue_action": {
+          await this.assertRecoveryInput(frame);
           if(!this.session||!this.opened)throw new NotOpenError();
           if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
           try {await this.session.changeQueue(frame);this.send({v:1,type:'ack',operation:'queue_action',requestId:frame.requestId});}
@@ -1257,7 +1260,7 @@ class HostSocket implements SessionSink {
       this.send({
         v: 1,
         type: "error",
-        code: error instanceof ConversationIndexError ? error.code : error instanceof SessionBusyError
+        code: error instanceof BackupError ? error.code : error instanceof ConversationIndexError ? error.code : error instanceof SessionBusyError
           ? "busy"
           : error instanceof NotOpenError
             ? "not_open"
@@ -1279,6 +1282,7 @@ class HostSocket implements SessionSink {
     if(task?.engine && task.engine!=="pi" && frame.nativeProtocol!==1)throw new Error("This Task requires a native-Agent capable client");
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
     if(frame.sessionId && this.workspaces && !task && !listed)throw new Error("Unknown Task: conversation unavailable");
+    if(task?.recoveryReceipt)await this.index?.recover(task.id,task.recoveryReceipt.operationId);
     const engine=task?.engine ?? listed?.engine ?? "pi";
     // Resolve asynchronous metadata before taking the history/replay snapshot.
     // Nothing may yield between that snapshot, attaching and sending its replay.
@@ -1311,7 +1315,7 @@ class HostSocket implements SessionSink {
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
     this.metadataEpoch++;
-    this.session = result.session;this.bindingEpoch=syncPage?.bindingEpoch;
+    this.session = result.session;this.bindingEpoch=syncPage?.bindingEpoch;this.recoveryGeneration=task?.recoveryReceipt?.operationId;
     this.opened = true;
     const state = result.session.currentState;
     // Attach before replaying. No await occurs between these operations, so a
@@ -1320,6 +1324,7 @@ class HostSocket implements SessionSink {
     this.send({
       v: 1,
       type: "opened",
+      ...(this.recoveryGeneration?{recoveryGeneration:this.recoveryGeneration}:{}),
       ...(syncPage?{syncProtocol:2 as const,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision}:{}),
       engine,
       capabilities,
@@ -1373,8 +1378,13 @@ class HostSocket implements SessionSink {
     }
   }
 
+  private async assertRecoveryInput(frame:ClientFrame){
+    if(!this.session)return;const generation=(await this.workspaces?.lookup(this.session.id))?.recoveryReceipt?.operationId;
+    if(generation&&(this.recoveryGeneration!==generation||frame.recoveryGeneration!==generation))throw new BackupError('recovery_generation_required','This task was restored. Review its current history and explicitly submit a new input; old pending messages remain drafts.');
+  }
   private async prompt(frame: Extract<ClientFrame, { type: "prompt" }>): Promise<void> {
     const originSession=this.session,originGeneration=originSession?.commandGeneration;
+    await this.assertRecoveryInput(frame);
     if(this.workspaces && this.session && await this.workspaces.isArchived(this.session.id)) throw new Error("Restore the archived conversation first");
     if(this.session && this.lifecycleLocks.has(this.session.id))throw new Error("Conversation lifecycle operation in progress");
     if (!this.session || !this.opened) throw new NotOpenError();
