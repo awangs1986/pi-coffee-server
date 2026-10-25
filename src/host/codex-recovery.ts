@@ -1,6 +1,6 @@
-import {prepareCodexRestore,publishCodexMerge,preflightCodexMerge,validateCodexReplacementSafety} from './codex-restore.js';
+import {prepareCodexRestore,publishCodexMerge,verifyCodexActionContinuation,preflightCodexMerge,validateCodexReplacementSafety} from './codex-restore.js';
 import type {CheckpointManifest} from './backup.js';
-import type {NativeRestoreOptions,NativeMergeContext} from './restore.js';
+import type {NativeRestoreOptions,NativeMergeContext,RestoreAction} from './restore.js';
 import {spawn} from 'node:child_process';
 import {readFile,readdir,lstat,realpath} from 'node:fs/promises';
 import {join,resolve,relative,isAbsolute} from 'node:path';
@@ -12,8 +12,8 @@ import {sha,treeDigest} from './restore-files.js';
 export type CodexRow=Record<string,unknown>;
 export interface CodexStoreSnapshot {schemaVersion:1;cliVersion:'0.159.1';nativeHome:string;sqliteHome:string;databases:Record<string,{schema:Record<string,string>;migrations:unknown[];tables:Record<string,CodexRow[]>}>;}
 export interface CodexRecoveryOptions {scope:string;workspaces:Workspaces;codexHome:string;sqliteHome?:string;environmentSqliteHome?:string;cliVersion:string;nativeArgs?:readonly string[];fence:WriterAdmissionFence;sourceCustody:()=>Promise<{known:boolean;reason?:string}>;onDatabaseCommit?:(name:string)=>Promise<void>;}
-export function codexStore(request:unknown,transport?:{publicationFd?:number;onDatabaseCommit?:(name:string)=>Promise<void>}):Promise<CodexStoreSnapshot>{return new Promise((ok,fail)=>{
- const child=spawn('/usr/bin/python3',[fileURLToPath(new URL('./codex-store.py',import.meta.url)),String(process.pid)],{stdio:['pipe','pipe','pipe',transport?.publicationFd??'ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',PYTHONNOUSERSITE:'1'}});let pending='',error='',bytes=0,result:CodexStoreSnapshot|undefined,refused=false;
+export function codexStore<T=CodexStoreSnapshot>(request:unknown,transport?:{publicationFd?:number;onDatabaseCommit?:(name:string)=>Promise<void>}):Promise<T>{return new Promise((ok,fail)=>{
+ const child=spawn('/usr/bin/python3',[fileURLToPath(new URL('./codex-store.py',import.meta.url)),String(process.pid)],{stdio:['pipe','pipe','pipe',transport?.publicationFd??'ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',PYTHONNOUSERSITE:'1'}});let pending='',error='',bytes=0,result:T|undefined,refused=false;
  const timer=setTimeout(()=>{refused=true;child.kill('SIGKILL');},20000);child.stderr!.on('data',chunk=>{if(error.length<4096)error+=String(chunk);});
  child.stdout!.on('data',chunk=>{bytes+=chunk.length;if(bytes>65*1024*1024){refused=true;child.kill('SIGKILL');return;}pending+=String(chunk);let newline;while((newline=pending.indexOf('\n'))>=0){const line=pending.slice(0,newline);pending=pending.slice(newline+1);try{const value=JSON.parse(line);if(value.event==='committed'){void Promise.resolve(transport?.onDatabaseCommit?.(String(value.database))).then(()=>child.stdin!.write('continue\n'),()=>{refused=true;child.kill('SIGKILL');});}else result=value;}catch{refused=true;child.kill('SIGKILL');}}});
  child.once('error',()=>{clearTimeout(timer);fail(new BackupError('native_store_refused','Native Codex store refused'));});child.once('close',code=>{clearTimeout(timer);if(code===0&&!refused&&result)ok(result);else{const value=error.trim();fail(new BackupError(/^[a-z_]{1,64}$/.test(value)?value:'native_store_refused','Native Codex store refused'));}});child.stdin!.on('error',()=>undefined);child.stdin!.write(JSON.stringify(request)+'\n');
@@ -23,6 +23,7 @@ export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
  constructor(readonly options:CodexRecoveryOptions){}
  async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,options?:NativeRestoreOptions){await this.custody();const lease=await this.options.fence.lease();try{const result=await prepareCodexRestore(this.options,point,scope,taskId,stage,options);lease.assertValid();return result;}finally{lease.release();}}
  async validateReplacementSafety(plan:Record<string,unknown>,context:{directory:string;manifest:CheckpointManifest;currentRegistry:Conversation|undefined;scope:string;taskId:string}){return validateCodexReplacementSafety(plan,context);}
+ async verifyNativeActionContinuation(plan:Record<string,unknown>,action:RestoreAction,context:NativeMergeContext){await this.custody();return verifyCodexActionContinuation(plan,action,context);}
  async preflightNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext&{sourceOverrides:Record<string,string>}){await this.custody();return preflightCodexMerge(plan,context);}
  async publishNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext){await this.custody();return publishCodexMerge(plan,context,this.options.onDatabaseCommit);}
  async restoreLease(){await this.custody();return this.options.fence.publicationLease();}
