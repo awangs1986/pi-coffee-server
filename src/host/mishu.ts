@@ -1,3 +1,4 @@
+import {BackupError,type RecoveryPublication} from './backup.js';
 import {syncDir} from './restore-files.js';
 import {followupOperation,followupEvidence,followupScope,type Followups,type FollowupPlan} from './mishu-followups.js';
 import {collaborationItem} from './mishu-collaboration.js';
@@ -226,7 +227,7 @@ export class MishuCoordinator {
  private persistedBytes=0;
  private transactionCheckpoint?:State;
  private migration?:{bytes:Buffer;name:string};
- private async load(){await (this.loaded??= (async()=>{
+ private async load(admitted=false){await (this.loaded??= (async()=>{
   await mkdir(this.root,{recursive:true,mode:0o700});
   const writer=new DatabaseSync(join(this.root,'writer.sqlite'));
   try{writer.exec('BEGIN EXCLUSIVE');this.writer=writer;}catch{writer.close();throw Error('Another Host owns MISHU coordination; no state was read or changed');}
@@ -246,7 +247,12 @@ export class MishuCoordinator {
    }
    if(retired){
     this.migration??={bytes:loaded.bytes,name:'state.before-pi-only.'+createHash('sha256').update(loaded.bytes).digest('hex')+'.json'};
-    await this.save(true);
+    try{await this.save(true,admitted);}catch(error){
+     // A pending restore may boot before its exact publication capability exists.
+     // Authority is already retired in memory; the approved job persists it under
+     // its cut. Ordinary mutations remain fenced and cannot reactivate it.
+     if(!(this.workspaces.backupWriterFence&&error instanceof BackupError&&error.code==='writers_active'))throw error;
+    }
    }
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
@@ -257,7 +263,7 @@ export class MishuCoordinator {
    if(report?.state==='cancelled')this.cancelNotificationQueue(id);
   }
  }
- private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false,admitted=false):Promise<T>{if(this.workspaces.backupWriterFence&&!admitted)return this.workspaces.backupWriterFence.runWriter('platform',()=>this.change(fn,schedule,revocation,true));const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>{this.scheduleNotifications();this.scheduleFollowups();this.scheduleClarifications();}).catch(()=>undefined);return next;}
+ private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false,admitted=false):Promise<T>{if(this.workspaces.backupWriterFence&&!admitted)return this.workspaces.backupWriterFence.runWriter('platform',()=>this.change(fn,schedule,revocation,true));const next=this.tail.then(async()=>{await this.load(admitted);this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation,admitted);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>{this.scheduleNotifications();this.scheduleFollowups();this.scheduleClarifications();}).catch(()=>undefined);return next;}
  private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user; other Agents may be targets only');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
@@ -793,9 +799,14 @@ export class MishuCoordinator {
  }
  /** Restore must retire surviving authority even when the task record is missing.
   * This operation does not stop or replay any neighboring native run. */
- async retireRecoveryAuthority(id:string){
-  this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);this.revokeCodexTokens(id);this.foreground.delete(id);for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
-  return this.change(async()=>{const c=this.state.chats[id];if(c){this.cancelObservations(c);c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.targets=[];c.userInstructions=[];if(c.manager)c.manager.viewAll=false;c.notificationGeneration=(c.notificationGeneration??0)+1;delete c.recoveryOperationId;}},false,true);
+ async retireRecoveryAuthority(id:string,publication?:RecoveryPublication){
+  const retire=()=>this.change(async()=>{
+   this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);this.revokeCodexTokens(id);this.foreground.delete(id);for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
+   const c=this.state.chats[id];if(c&&(!publication||c.recoveryOperationId!==publication.operationId)){this.cancelObservations(c);c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.targets=[];c.userInstructions=[];if(c.manager)c.manager.viewAll=false;c.notificationGeneration=(c.notificationGeneration??0)+1;if(publication)c.recoveryOperationId=publication.operationId;else delete c.recoveryOperationId;}
+  },false,true,Boolean(publication));
+  if(!publication)return retire();
+  const fence=this.workspaces.backupWriterFence;if(!fence)throw new BackupError('recovery_publication_required','Recovery authority retirement requires a verified publication lease');
+  return fence.runRecoveryPublication(publication,retire);
  }
  async revokeConversation(id:string){
   for(const [source,c] of Object.entries(this.state.chats))if(source===id||c.targets.some(t=>t.id===id))this.revokeQuick(source);

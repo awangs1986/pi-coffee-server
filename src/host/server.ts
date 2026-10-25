@@ -1,4 +1,4 @@
-import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE,type RecoveryPublication} from './backup.js';
 import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
@@ -306,7 +306,9 @@ export class HostServer {
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
-    if(req.method==='POST'&&req.url!=='/api/backup'&&slot.workspaces?.backupWriterFence&&!admitted)return slot.workspaces.backupWriterFence.runWriter('platform',()=>this.handleApi(req,res,true));
+    if(req.method==='POST'&&req.url!=='/api/backup'&&slot.workspaces?.backupWriterFence&&!admitted){
+      try{return await slot.workspaces.backupWriterFence.runWriter('platform',()=>this.handleApi(req,res,true));}catch(error){if(error instanceof BackupError&&['writers_active','writers_unknown','capture_revoked'].includes(error.code)){json(res,409,{error:'Task storage is fenced by an unfinished recovery or source operation'});return;}throw error;}
+    }
     if(req.url==='/api/backup'){
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
@@ -905,9 +907,16 @@ export class HostServer {
 
   /** Controlled live-owner seam for independent restoration jobs. */
   async prepareRestoreScope(user:string|undefined){await this.slotFor(user);}
-  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>,operationId?:string):Promise<T>{
+  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>,operationId?:string,options:{deferMetadata?:boolean}={}):Promise<T>{
     const slot=await this.slotFor(user);if(slot.lifecycleLocks.has(taskId)||slot.registry.get(taskId)?.isBusy)throw new BackupError('target_busy','Task has live execution or lifecycle work');
-    slot.lifecycleLocks.add(taskId);try{await slot.registry.stopIdle(taskId);await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+    slot.lifecycleLocks.add(taskId);try{await slot.registry.stopIdle(taskId);if(!options.deferMetadata){await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);}const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+  }
+  /** Only the coordinator holding this task's lifecycle lane and the exact
+   * physical publication capability may retire live authority/display epochs. */
+  async prepareRecoveryPublication(user:string|undefined,context:RecoveryPublication&{taskId:string}):Promise<void>{
+    const slot=await this.slotFor(user),fence=slot.workspaces?.backupWriterFence;
+    if(!slot.lifecycleLocks.has(context.taskId)||slot.registry.get(context.taskId)?.isBusy||!fence)throw new BackupError('recovery_publication_required','Recovery metadata requires the held task lifecycle and publication lease');
+    await fence.runRecoveryPublication(context,async()=>{await slot.mishu?.retireRecoveryAuthority(context.taskId,context);await slot.index?.recover(context.taskId,context.operationId);});
   }
   address(): HostAddress {
     const address = this.http.address();
