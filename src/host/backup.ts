@@ -49,10 +49,12 @@ export class WriterAdmissionFence {
   return {epoch,signal:controller.signal,assertValid:()=>{if(released||controller.signal.aborted||epoch!==this.epoch||this.active)throw new BackupError('capture_revoked','Capture revoked by a writer');},release:()=>{released=true;this.leases.delete(controller);}};
  }
 }
-export interface RecoveryMember {scope:string;taskId:string;engine:AgentEngine;nativeBindings:string[];}
-export type RecoverySource = {id:string;recoveryKey:string;role:'registry'|'workspace'|'task-data'|'native'} & ({path:string;data?:never}|{data:Uint8Array;path?:never});
+export interface RecoveryMember {scope:string;taskId:string;engine:AgentEngine;nativeBindings:string[];adapterVersion?:string;}
+export type RecoverySource = {id:string;recoveryKey:string;owner?:{scope:string;taskId:string};role:'registry'|'workspace'|'task-data'|'native'} & ({path:string;data?:never}|{data:Uint8Array;path?:never});
 export interface NativeRecoveryGroup {
  groupId:string;adapterVersion?:string;fence:WriterAdmissionFence;members:RecoveryMember[];sources:RecoverySource[];
+ /** Header resolution may defer registry buffers/native logical snapshots until this actual cut. */
+ materialize?(lease:CaptureLease):Promise<NativeRecoveryGroup>;
  /** Re-read native IDs, source closure and lifecycle against the original binding cut. */
  validate():Promise<void>;
 }
@@ -61,7 +63,7 @@ export interface NativeRecoveryAdapter {readonly version:string;resolve(scope:st
 export interface CheckpointObject {path:string;kind:'file'|'directory'|'symlink';size:number;mode?:number;linkTarget?:string;sha256?:string;role:RecoverySource['role'];}
 export interface CheckpointManifest {
  schemaVersion:1;checkpointId:string;captureAt:string;adapterVersion:string;groupId:string;epoch:number;
- members:RecoveryMember[];runtime:{serverVersion:string|null;commit:string|null};sources:{id:string;recoveryKey:string;role:RecoverySource['role'];originalPath?:string}[];coverage:'complete';objects:CheckpointObject[];totalBytes:number;
+ members:RecoveryMember[];runtime:{serverVersion:string|null;commit:string|null};sources:{id:string;recoveryKey:string;role:RecoverySource['role'];originalPath?:string;owner?:{scope:string;taskId:string}}[];coverage:'complete';objects:CheckpointObject[];totalBytes:number;
 }
 export interface BackupTaskStatus {
  taskId:string;engine:AgentEngine;state:'unprotected'|'protected'|'waiting'|'unavailable'|'capturing'|'failed';
@@ -108,12 +110,13 @@ export class BackupCoordinator {
   let lease:CaptureLease|undefined,staging:string|undefined;
   try{
    await this.initialize();this.tasks.set(key,{state:'capturing'});
-   const group=await abortable(this.options.adapter.resolve(scope,taskId),controller.signal);
-   validateGroup(group,scope,taskId);
-   if(group.sources.some(s=>s.path!==undefined&&(resolve(s.path)===this.root||this.root.startsWith(resolve(s.path)+'/')||resolve(s.path).startsWith(this.root+'/'))))throw new BackupError('unsafe_source','Checkpoint store overlaps a live source');
+   let group=await abortable(this.options.adapter.resolve(scope,taskId),controller.signal);
    const acquiredLease=await abortable(group.fence.lease().then(value=>{if(controller.signal.aborted){value.release();controller.signal.throwIfAborted();}return value;}),controller.signal);lease=acquiredLease;
    const captureSignal=AbortSignal.any([controller.signal,acquiredLease.signal]);
    const assert=()=>{controller.signal.throwIfAborted();acquiredLease.assertValid();};assert();
+   if(group.materialize){const header=group;group=await abortable(header.materialize!(acquiredLease),captureSignal);assert();if(group.materialize||group.fence!==header.fence||group.groupId!==header.groupId)throw new BackupError('closure_incomplete','Deferred native group changed its authority');}
+   validateNativeRecoveryGroup(group,scope,taskId);
+   if(group.sources.some(s=>s.path!==undefined&&(resolve(s.path)===this.root||this.root.startsWith(resolve(s.path)+'/')||resolve(s.path).startsWith(this.root+'/'))))throw new BackupError('unsafe_source','Checkpoint store overlaps a live source');
    await abortable(group.validate(),captureSignal);assert();
    const checkpointId=randomUUID(),captureAt=new Date(this.now()).toISOString();
    staging=join(this.root,'staging',checkpointId);await mkdir(staging,{mode:0o700});
@@ -122,7 +125,7 @@ export class BackupCoordinator {
    for(const source of group.sources){assert();if(source.path!==undefined)await copySource(source.path,join(staging,'objects',source.id),'objects/'+source.id,source.role,objects,budget,{maxBytes:this.options.maxBytes??1024*1024*1024,maxFiles:this.options.maxFiles??100000},assert);else {budget.bytes+=source.data.byteLength;budget.files++;if(budget.bytes>(this.options.maxBytes??1024*1024*1024)||budget.files>(this.options.maxFiles??100000))throw new BackupError('resource_limit','Capture resource limit exceeded');await durableBytes(join(staging,'objects',source.id),source.data);objects.push({path:'objects/'+source.id,kind:'file',mode:0o600,size:source.data.byteLength,sha256:digest(source.data),role:source.role});}}
    await abortable(group.validate(),captureSignal);assert();
    const runtime=await readReleaseIdentity(process.cwd());assert();
-   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:acquiredLease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role,path})=>({id,recoveryKey,role,...(path?{originalPath:resolve(path)}:{})})),coverage:'complete',objects,totalBytes:budget.bytes};
+   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:acquiredLease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role,path,owner})=>({id,recoveryKey,role,...(owner?{owner}:{}),...(path?{originalPath:resolve(path)}:{})})),coverage:'complete',objects,totalBytes:budget.bytes};
    if(Buffer.byteLength(JSON.stringify(manifest))>32*1024*1024)throw new BackupError('resource_limit','Manifest resource limit exceeded');
    await durableWrite(join(staging,'manifest.json'),JSON.stringify(manifest));
    await durableWrite(join(staging,'seal'),digest(JSON.stringify(manifest))+'\n');
@@ -167,7 +170,7 @@ export class BackupCoordinator {
  }
 
 }
-function validateGroup(group:NativeRecoveryGroup,scope:string,taskId:string){
+export function validateNativeRecoveryGroup(group:NativeRecoveryGroup,scope:string,taskId:string){
  if(!safeId(group.groupId)||!group.members.length||!group.members.some(m=>m.scope===scope&&m.taskId===taskId)||group.members.some(m=>!validScope(m.scope)||!safeId(m.taskId)||!BACKUP_ENGINES.includes(m.engine as typeof BACKUP_ENGINES[number])||!m.nativeBindings.length))throw new BackupError('closure_incomplete','Native source closure is incomplete');
  if(!group.sources.length||new Set(group.sources.map(s=>s.id)).size!==group.sources.length||group.sources.some(s=>!safeId(s.id)||typeof s.recoveryKey!=='string'||!s.recoveryKey||s.recoveryKey.length>256||s.recoveryKey.startsWith('/')||s.recoveryKey.split('/').includes('..')||(s.path!==undefined&&!isAbsolute(s.path)))||!group.sources.some(s=>s.role==='native')||!group.sources.some(s=>s.role==='workspace')||!group.sources.some(s=>s.role==='registry')||!group.sources.some(s=>s.role==='task-data'))throw new BackupError('closure_incomplete','Native source closure is incomplete');
 }
