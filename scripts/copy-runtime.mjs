@@ -20,3 +20,5 @@ await cp(resolve(root, 'src/shared/release-version.mjs'), resolve(root, 'dist/sr
 await mkdir(resolve(root,'dist/maintenance'),{recursive:true});
 await cp(resolve(root,'scripts/restart-worker.py'),resolve(root,'dist/maintenance/restart-worker.py'));
 await cp(resolve(root,'deploy/restart'),resolve(root,'dist/maintenance/restart'),{recursive:true});
+
+await cp(resolve(root, 'src/host/backup-unix-peer.py'), resolve(root, 'dist/src/host/backup-unix-peer.py'));

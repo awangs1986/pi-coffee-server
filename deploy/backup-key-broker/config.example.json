@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "socket": "/run/pi-coffee-backup/control.sock",
+  "serviceUid": 2002,
+  "hostUid": 2001,
+  "sourceUid": 2001,
+  "privateRoot": "/var/lib/pi-coffee-backup",
+  "authorityFile": "/var/lib/pi-coffee-backup/authority.json",
+  "sourceSocket": "/run/pi-coffee-managed/source.sock",
+  "binary": "/opt/pi-coffee/restic-0.19.1",
+  "destination": "/mnt/pi-coffee-backup/private-repository",
+  "node": "/opt/pi-coffee/node/bin/node",
+  "handler": "/opt/pi-coffee/server/dist/src/backup-key-worker.js"
+}
