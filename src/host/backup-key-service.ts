@@ -1,6 +1,7 @@
+import {BackupExtractionStore} from './backup-extraction-store.js';
 import {emitSealedCheckpoint} from './backup-checkpoint-stream.js';
-import {hardenCurrentProcess,processProtection,acquireFileLease} from './linux-file-lease.js';
-import {constants} from 'node:fs';import {open,lstat,realpath,readFile,rm,mkdir,readdir} from 'node:fs/promises';import {isAbsolute,resolve,join} from 'node:path';import {randomUUID} from 'node:crypto';
+import {hardenCurrentProcess,processProtection} from './linux-file-lease.js';
+import {constants} from 'node:fs';import {open,lstat,realpath,readFile,rm,mkdir} from 'node:fs/promises';import {isAbsolute,resolve,join} from 'node:path';import {randomUUID} from 'node:crypto';
 import {BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';import {BackupRepository} from './backup-repository.js';
 import {BackupBrokerError,type BackupBrokerPolicy,type BackupBrokerRequest,type BackupKeyServiceConfig,type BackupBrokerQualification,type BackupExtractionDescriptor} from './backup-key-protocol.js';import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';
 import {requestUnixPeer} from './backup-repository-client.js';
@@ -76,22 +77,21 @@ export class BackupKeyService {
     if(typeof request.jobId!=='string'||!uuid.test(request.jobId)||request.recoveryPackage!==undefined&&(typeof request.recoveryPackage!=='string'||request.recoveryPackage.length>8192))throw new BackupBrokerError('invalid_restore_request');
     const policy=(await this.authorize(request)).policy,job=(await this.repository.jobs()).find(job=>job.id===request.jobId&&job.state==='succeeded');if(!job)throw new BackupBrokerError('unknown_snapshot');
     const grants=policy.actors[request.context.actor].scopes;if(job.points.some(point=>!grants.includes(point.scope)||!policy.scopes.includes(point.scope)))throw new BackupBrokerError('scope_denied');
-    const parent=join(this.config.privateRoot,'restore-exports');await mkdir(parent,{recursive:true,mode:0o700});await this.cleanupExtractions(parent);if((await readdir(parent)).length>=8)throw new BackupBrokerError('extraction_capacity');
-    const root=join(parent,request.id);await mkdir(root,{mode:0o700});
+    const handle=await new BackupExtractionStore(this.config.privateRoot).create(request.id),root=handle.root;
     try{
      await this.repository.extract(request.jobId,join(root,'material'),request.recoveryPackage);await this.authorize(request);
      const checkpoints=new Map<string,BackupExtractionDescriptor['checkpoints'][number]>();for(const point of job.points)checkpoints.set(point.checkpointId,{checkpointId:point.checkpointId,manifestSha256:point.manifestSha256,scope:point.scope,taskId:point.taskId});
      const descriptor:BackupExtractionDescriptor={extractionId:request.id,jobId:request.jobId,expiresAt:new Date(Date.now()+5*60*1000).toISOString(),scopes:[...new Set(job.points.map(point=>point.scope))],checkpoints:[...checkpoints.values()]};
      if(descriptor.checkpoints.length>1000)throw new BackupBrokerError('extraction_capacity');
-     await writeReceipt(join(root,'receipt.json'),{...descriptor,actor:request.context.actor,dataScope:request.context.dataScope,authorityRevision:request.context.authorityRevision});return descriptor;
-    }catch(error){await rm(root,{recursive:true,force:true});throw error;}
+     await writeReceipt(join(root,'receipt.json'),{...descriptor,actor:request.context.actor,dataScope:request.context.dataScope,authorityRevision:request.context.authorityRevision});await handle.assertHeld();return descriptor;
+    }catch(error){await handle.remove();throw error;}finally{handle.lease.release();}
    }
    case 'restore-checkpoint':{
-    const {root,receipt}=await this.extraction(request);if(typeof request.checkpointId!=='string'||!uuid.test(request.checkpointId)||!emit)throw new BackupBrokerError('invalid_restore_request');const point=receipt.checkpoints.find(point=>point.checkpointId===request.checkpointId);if(!point)throw new BackupBrokerError('unknown_checkpoint');
-    const lease=acquireFileLease(join(root,'export-lock'),'shared');if(!lease)throw new BackupBrokerError('extraction_busy');try{await emitSealedCheckpoint(join(root,'material',point.checkpointId),emit,point.manifestSha256);lease.assertHeld();return new BackupKeyStreamComplete();}finally{lease.release();}
+    const handle=await this.extraction(request,'shared'),{root,receipt}=handle;try{if(typeof request.checkpointId!=='string'||!uuid.test(request.checkpointId)||!emit)throw new BackupBrokerError('invalid_restore_request');const point=receipt.checkpoints.find(point=>point.checkpointId===request.checkpointId);if(!point)throw new BackupBrokerError('unknown_checkpoint');
+    await emitSealedCheckpoint(join(root,'material',point.checkpointId),emit,point.manifestSha256);await handle.assertHeld();return new BackupKeyStreamComplete();}finally{handle.lease.release();}
    }
    case 'close-extraction':{
-    const {root}=await this.extraction(request),lease=acquireFileLease(join(root,'export-lock'),'exclusive');if(!lease)throw new BackupBrokerError('extraction_busy');try{lease.assertHeld();await rm(root,{recursive:true});return {closed:true};}finally{lease.release();}
+    const handle=await this.extraction(request,'exclusive');try{await handle.remove();return {closed:true};}finally{handle.lease.release();}
    }
    case 'backup':{
     if(!Array.isArray(request.selection)||request.selection.length<1||request.selection.length>1000||request.selection.some(item=>!item||Object.keys(item).some(key=>!['scope','taskId','expectedCheckpointId'].includes(key))||!scopeValid(item.scope)||!['string'].includes(typeof item.taskId)||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.taskId)||item.expectedCheckpointId!==undefined&&!uuid.test(item.expectedCheckpointId)))throw new BackupBrokerError('invalid_selection');
@@ -108,14 +108,12 @@ export class BackupKeyService {
    default:throw new BackupBrokerError('invalid_operation');
   }
  }
- private async extraction(request:PeerRequest){
+ private async extraction(request:PeerRequest,mode:'shared'|'exclusive'){
   if(typeof request.extractionId!=='string'||!uuid.test(request.extractionId))throw new BackupBrokerError('invalid_restore_request');
-  const root=join(this.config.privateRoot,'restore-exports',request.extractionId),receipt=await ownedJson(join(root,'receipt.json'),1024*1024) as BackupExtractionDescriptor&{actor:string;dataScope:string;authorityRevision:number};
-  if(receipt.extractionId!==request.extractionId||receipt.actor!==request.context.actor||receipt.dataScope!==request.context.dataScope||receipt.authorityRevision!==request.context.authorityRevision||!Number.isFinite(Date.parse(receipt.expiresAt))||Date.parse(receipt.expiresAt)<Date.now()||!Array.isArray(receipt.checkpoints)||!Array.isArray(receipt.scopes))throw new BackupBrokerError('extraction_expired');
-  const policy=(await this.authorize(request)).policy;if(receipt.scopes.some(scope=>!policy.scopes.includes(scope)||!policy.actors[request.context.actor].scopes.includes(scope)))throw new BackupBrokerError('scope_denied');return {root,receipt};
- }
- private async cleanupExtractions(parent:string){
-  for(const name of await readdir(parent)){if(!uuid.test(name))continue;const root=join(parent,name);try{const receipt=await ownedJson(join(root,'receipt.json'),1024*1024);if(!Number.isFinite(Date.parse(receipt.expiresAt))||Date.parse(receipt.expiresAt)>=Date.now())continue;const lease=acquireFileLease(join(root,'export-lock'),'exclusive');if(!lease)continue;try{lease.assertHeld();await rm(root,{recursive:true});}finally{lease.release();}}catch{/* Unknown/incomplete material is never removed as if a completed lease expired. */}}
+  const handle=await new BackupExtractionStore(this.config.privateRoot).open(request.extractionId,mode);try{const receipt=await handle.receipt() as BackupExtractionDescriptor&{actor:string;dataScope:string;authorityRevision:number};
+   if(receipt.extractionId!==request.extractionId||receipt.actor!==request.context.actor||receipt.dataScope!==request.context.dataScope||receipt.authorityRevision!==request.context.authorityRevision||!Number.isFinite(Date.parse(receipt.expiresAt))||Date.parse(receipt.expiresAt)<Date.now()||!Array.isArray(receipt.checkpoints)||!Array.isArray(receipt.scopes))throw new BackupBrokerError('extraction_expired');
+   const policy=(await this.authorize(request)).policy;if(receipt.scopes.some(scope=>!policy.scopes.includes(scope)||!policy.actors[request.context.actor].scopes.includes(scope)))throw new BackupBrokerError('scope_denied');return {...handle,receipt};
+  }catch(error){handle.lease.release();throw error;}
  }
 
 }

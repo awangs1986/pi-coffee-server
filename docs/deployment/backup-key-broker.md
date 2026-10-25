@@ -78,7 +78,9 @@ checkpoints over the authenticated endpoint. The Host supplies a new private loc
 staging directory to its client; that path never enters IPC. Each received manifest
 and object is verified before publication. Closing the lease removes service
 material under an exclusive kernel lock; expired completed leases can be collected
-without racing active streams. Incomplete crash remnants remain private and count
+without racing active streams. Lock authority lives in the separate private
+`restore-export-locks` directory and is never unlinked when material is removed.
+Incomplete crash remnants remain private and count
 against the eight-export capacity until an operator reconciles them.
 
 ## Installation templates and operator entry
