@@ -126,6 +126,63 @@ def inspection_copy(path):
         temporary.cleanup()
         raise
 
+def table_image(c, name):
+    return {table: [{key: encode(value) for key, value in zip([v[0] for v in cursor.description], row)} for row in cursor]
+            for table, sql in SCHEMAS[name]['schema'].items() if sql.startswith('CREATE TABLE')
+            for cursor in [c.execute('SELECT * FROM "'+table+'"')]}
+
+def same_image(left, right):
+    canonical = lambda image: {table: sorted(json.dumps(row, sort_keys=True, separators=(',', ':')) for row in rows) for table, rows in image.items()}
+    return canonical(left) == canonical(right)
+
+def created_postimage(request):
+    plan, name = request['plan'], request['name']
+    if name not in SCHEMAS: raise ValueError('unsupported_native_schema')
+    path = safe(request['path'])
+    if [path.stat().st_dev, path.stat().st_ino] != plan['databaseIdentities'][name]: raise ValueError('native_store_changed')
+    c, temporary = inspection_copy(path)
+    try:
+        qualified(c, name)
+        before = table_image(c, name)
+        # This authority is exclusive to fresh empty stores, never an existing
+        # database or a selected-row replacement of somebody else's data.
+        if any(rows for table, rows in before.items() if table != '_sqlx_migrations'): raise ValueError('native_store_changed')
+        for table, changes in plan['databases'].get(name, {}).items():
+            for change in changes:
+                if change['disposition'] != 'insert': raise ValueError('native_store_changed')
+                row = change['row']; columns = list(row)
+                c.execute('INSERT INTO "'+table+'" ('+','.join('"'+key+'"' for key in columns)+') VALUES ('+','.join('?' for _ in columns)+')', [decode(row[key]) for key in columns])
+        for group in plan.get('replacements', {}).get(name, []):
+            if group['before']: raise ValueError('native_store_changed')
+            for row in group['after']:
+                columns = list(row)
+                c.execute('INSERT INTO "'+group['table']+'" ('+','.join('"'+key+'"' for key in columns)+') VALUES ('+','.join('?' for _ in columns)+')', [decode(row[key]) for key in columns])
+        return {'before': before, 'after': table_image(c, name)}
+    finally:
+        c.close(); temporary.cleanup()
+
+def continuation_journal(request, name):
+    path = safe(request['plan']['journal'])
+    journal = json.loads(path.read_text())
+    if journal.get('operationId') != request['operationId'] or journal.get('digest') != request['digest'] or journal.get('databases', {}).get(name) not in ('started', 'done'):
+        raise ValueError('native_receipt_changed')
+    return journal
+
+def verify_created(request):
+    plan, name = request['plan'], request['name']
+    if name not in SCHEMAS or name not in plan.get('createdDatabases', {}): raise ValueError('native_store_changed')
+    root = safe(plan['sqliteHome'], True); path = safe(root / name)
+    identity = plan['databaseIdentities'][name]; info = path.stat()
+    if [info.st_dev, info.st_ino] != identity: raise ValueError('native_store_changed')
+    continuation_journal(request, name)
+    c, temporary = inspection_copy(path)
+    try:
+        qualified(c, name)
+        if not same_image(table_image(c, name), plan['createdDatabases'][name]['after']): raise ValueError('native_store_changed')
+        return {'verified': True}
+    finally:
+        c.close(); temporary.cleanup()
+
 def merge(request):
     plan = request['plan']; root = safe(plan['sqliteHome'], True); dry = request['operation'] == 'preflight'
     journal_path = pathlib.Path(plan['journal']); safe(journal_path.parent, True)
@@ -148,6 +205,12 @@ def merge(request):
         else: c = sqlite3.connect(path, timeout=0)
         try:
             qualified(c, name); c.row_factory = sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('BEGIN IMMEDIATE')
+            created = plan.get('createdDatabases', {}).get(name)
+            if created:
+                observed = table_image(c, name)
+                if not same_image(observed, created['before']):
+                    continuation_journal(request, name)
+                    if not same_image(observed, created['after']): raise ValueError('native_store_changed')
             pending = []
             replacements = []
             for group in plan.get('replacements', {}).get(name, []):
@@ -210,6 +273,8 @@ try:
     if request['operation'] == 'snapshot': result = snapshot(request)
     elif request['operation'] == 'roots': result = roots(request)
     elif request['operation'] == 'initialize': result = initialize(request['path'], request['name'])
+    elif request['operation'] == 'created-postimage': result = created_postimage(request)
+    elif request['operation'] == 'verify-created': result = verify_created(request)
     elif request['operation'] in ('merge', 'preflight'): result = merge(request)
     else: raise ValueError('unsupported_operation')
     output = json.dumps(result, separators=(',', ':'))
