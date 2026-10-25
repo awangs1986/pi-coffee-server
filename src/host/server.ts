@@ -310,7 +310,7 @@ export class HostServer {
             const requestedScope=input.scope??dataScope;
             if(typeof requestedScope!=='string'||requestedScope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(requestedScope))){json(res,403,{error:'Recovery request scope denied'});return;}
             if(typeof input.taskId!=='string'||typeof input.jobId!=='string'){json(res,400,{error:'Choose a task and repository job'});return;}
-            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId}));return;
+            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId,...(input.mode!==undefined?{mode:input.mode as 'missing-only'|'replace'}:{})}));return;
           }
           const action=input.action.slice('restore-'.length);
           if(!['plan','revise','approve','publish','cancel'].includes(action)||typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an operation and current revision'});return;}
