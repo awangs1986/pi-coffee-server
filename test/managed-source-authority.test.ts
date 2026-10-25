@@ -29,7 +29,7 @@ it('managed source qualification rejects same-UID keys and an uninstalled dedica
 it('listing unconfigured deferred engines does not enter a native execution admission or poison enrollment',async()=>{
  const root=await mkdtemp(join(tmpdir(),'managed-engine-discovery-')),workspaces=new Workspaces(join(root,'projects')),calls:string[]=[];
  const pi={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No model execution');}},factory=new NativeAgentFactory({pi,workspaces,beforeNativeExecution:async engine=>{calls.push(engine);throw Error('Native launch must not happen');}});
- try{await factory.engines();expect(calls).toEqual([]);}finally{await rm(root,{recursive:true,force:true});}
+ try{await factory.engines();expect(calls).toEqual(['pi']);}finally{await rm(root,{recursive:true,force:true});}
 });
 
 it('retirement waits for already admitted platform writes and denies new ones without cancelling existing work',()=>{

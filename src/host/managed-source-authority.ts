@@ -7,13 +7,13 @@ import {once} from 'node:events';
 import {spawn} from 'node:child_process';
 import {hardenCurrentProcess,processProtection,kernelPeerCredentials} from './linux-file-lease.js';
 import {ManagedLaunchPolicy} from './managed-launch-policy.js';
-import type {ManagedNativeCustody} from './managed-native.js';
+import type {ManagedProviderTransports,ManagedNativeCustody} from './managed-native.js';
 import type {NativeWriterCustody} from './native-custody.js';
 import {BackupError,type BackupCoordinator} from './backup.js';
 
 interface ProcessIdentity {pid:number;uid:number;boot:string;birth:string;}
 interface Handoff extends ProcessIdentity {revision:number;}
-export interface ManagedSourceConfig {schema:1;executorUid:number;legacyHostUid:number;keyUid:number;sourceParent:string;sourceSocket:string;legacyAdmissionSocket:string;runtimeRoots:string[];}
+export interface ManagedSourceConfig {schema:1;executorUid:number;legacyHostUid:number;keyUid:number;sourceParent:string;sourceSocket:string;legacyAdmissionSocket:string;runtimeRoots:string[];providerTransports?:ManagedProviderTransports;scopeProviderTransports?:Record<string,ManagedProviderTransports>;}
 const safe=()=>new BackupError('writers_unknown','Managed source authority is not qualified');
 function fd(socket:Socket){const descriptor=(socket as unknown as {_handle?:{fd?:number}})._handle?.fd;if(typeof descriptor!=='number'||!Number.isInteger(descriptor)||descriptor<0)throw safe();return descriptor!;}
 async function identity(pid=process.pid):Promise<ProcessIdentity>{const stat=await readFile('/proc/'+pid+'/stat','utf8'),status=await readFile('/proc/'+pid+'/status','utf8'),uids=status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);if(!uids||new Set(uids.slice(1)).size!==1)throw safe();return {pid,uid:Number(uids[1]),boot:(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth:stat.slice(stat.lastIndexOf(')')+2).split(' ')[19]};}
@@ -71,5 +71,7 @@ export class ManagedSourceAuthority {
 
 export async function loadManagedSourceConfig(path:string):Promise<ManagedSourceConfig>{
  const stat=await lstat(path);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||(stat.uid!==0&&stat.uid!==process.getuid?.())||(stat.mode&0o022)!==0||stat.size>65536||await realpath(path)!==resolve(path))throw safe();const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);let value:unknown;try{value=JSON.parse(await file.readFile('utf8'));}finally{await file.close();}
- if(!value||typeof value!=='object'||Array.isArray(value))throw safe();const config=value as ManagedSourceConfig;if(Object.keys(config).some(k=>!['schema','executorUid','legacyHostUid','keyUid','sourceParent','sourceSocket','legacyAdmissionSocket','runtimeRoots'].includes(k))||!Array.isArray(config.runtimeRoots)||[config.sourceParent,config.sourceSocket,config.legacyAdmissionSocket,...config.runtimeRoots].some(path=>typeof path!=='string'||resolve(path)!==path))throw safe();return config;
+ if(!value||typeof value!=='object'||Array.isArray(value))throw safe();const config=value as ManagedSourceConfig;if(Object.keys(config).some(k=>!['schema','executorUid','legacyHostUid','keyUid','sourceParent','sourceSocket','legacyAdmissionSocket','runtimeRoots','providerTransports','scopeProviderTransports'].includes(k))||!Array.isArray(config.runtimeRoots)||[config.sourceParent,config.sourceSocket,config.legacyAdmissionSocket,...config.runtimeRoots].some(path=>typeof path!=='string'||resolve(path)!==path))throw safe();if(config.scopeProviderTransports!==undefined&&(!config.scopeProviderTransports||typeof config.scopeProviderTransports!=='object'||Array.isArray(config.scopeProviderTransports)||Object.keys(config.scopeProviderTransports).some(scope=>!/^([a-z0-9][a-z0-9_-]{0,63}|__legacy_default__)$/.test(scope))))throw safe();
+ for(const transports of [config.providerTransports,...Object.values(config.scopeProviderTransports??{})]){if(transports===undefined)continue;if(!transports||typeof transports!=='object'||Array.isArray(transports)||Object.keys(transports).some(engine=>!['pi','codex'].includes(engine)))throw safe();for(const grant of Object.values(transports)){if(!grant||typeof grant!=='object'||Object.keys(grant).some(key=>!['provider','socket','serviceUid','port','models'].includes(key))||typeof grant.provider!=='string'||!/^[A-Za-z0-9_-]{1,80}$/.test(grant.provider)||typeof grant.socket!=='string'||resolve(grant.socket)!==grant.socket||!Number.isSafeInteger(grant.serviceUid)||grant.serviceUid<1||[config.executorUid,config.keyUid].includes(grant.serviceUid)||!Number.isSafeInteger(grant.port)||grant.port<1024||grant.port>65535||!Array.isArray(grant.models)||!grant.models.length||grant.models.length>256||grant.models.some(model=>typeof model!=='string'||!model||model.length>200))throw safe();}}
+ return config;
 }

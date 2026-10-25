@@ -33,9 +33,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
-  private async command(config:NativeCommand,args:string[],cwd?:string){
+  private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine){
     if(!this.options.commandCustody)return {command:config.command,args:[...(config.args??[]),...args],env:nativeEnvironment(config.env)};
-    const launch=await this.options.commandCustody.prepare({executable:config.command,args:[...(config.args??[]),...args],cwd:cwd??this.options.managedCustody?.profile.cwd??this.options.workspaces.root,env:config.env});
+    const launch=await this.options.commandCustody.prepare({...(engine==='pi'||engine==='codex'?{engine}:{}),executable:config.command,args:[...(config.args??[]),...args],cwd:cwd??this.options.managedCustody?.profile.cwd??this.options.workspaces.root,env:config.env});
     return {command:process.execPath,args:[launch.cliPath],env:nativeEnvironment({...config.env,...launch.env})};
   }
   private managed(engine:AgentEngine){return Boolean(this.options.managedCustody&&(engine==='pi'||engine==='codex'));}
@@ -219,11 +219,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async engines():Promise<EngineAvailability[]> {
     return Promise.all(PI_ONLY_ENGINES.map(async original=>{
       const config=original.id==="pi"?undefined:this.options[original.id];
-      if(!config)return {...original,...(original.id==="pi"?{modelCatalog:Boolean(this.options.pi.modelCatalog)}:{})};
+      if(!config&&original.id!=="pi")return {...original};
       try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,reason:error instanceof Error?error.message:'Native launch denied'};}
+      if(!config)return {...original,modelCatalog:Boolean(this.options.pi.modelCatalog)};
       let version:string;
       try {
-        const prepared=await this.command(config,["--version"]),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
+        const prepared=await this.command(config,["--version"],undefined,original.id),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,reason:"Native executable unavailable"};}
       const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1|163\.0)\b/.test(version) : /\b2\.1\.280\b/.test(version);
@@ -247,11 +248,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==="codex") {
       // Readiness is local credential configuration, not remote account hydration.
       // account/read can time out while this login and model/list remain usable.
-      const prepared=await this.command(config,['login','status']);const loggedIn=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192})
+      const prepared=await this.command(config,['login','status'],undefined,'codex');const loggedIn=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192})
         .then(()=>true,error=>{if(error.code===1)return false;throw error;});
       if(loggedIn)return true;
       // A custom provider can intentionally require no OpenAI credentials.
-      const command=await this.command(config,["app-server"]),probe=new NativeProcess({command:command.command,env:Object.fromEntries(Object.entries(command.env).filter((entry):entry is [string,string]=>entry[1]!==undefined))},command.args,this.options.managedCustody?.profile.cwd??process.cwd());
+      const command=await this.command(config,["app-server"],undefined,'codex'),probe=new NativeProcess({command:command.command,env:Object.fromEntries(Object.entries(command.env).filter((entry):entry is [string,string]=>entry[1]!==undefined))},command.args,this.options.managedCustody?.profile.cwd??process.cwd());
       try {
         await probe.call("initialize",{clientInfo:{name:"pi_coffee_readiness",version:"0.1.0"}},5000);
         probe.send({method:"initialized"});

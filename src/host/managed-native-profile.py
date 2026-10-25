@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import socket
+import struct
 
 
 def prepare(profile_path, custody_root, executable, arguments):
@@ -47,6 +49,40 @@ def prepare(profile_path, custody_root, executable, arguments):
             raise ValueError('Source grant identity changed')
         descriptors.append(descriptor)
         command += ['--bind-fd', str(descriptor), grant['destination']]
+    provider = value.get('provider')
+    if provider:
+        endpoint = Path(provider['socket'])
+        before = endpoint.lstat()
+        directory = endpoint.parent.lstat()
+        if endpoint.resolve() != endpoint or not stat.S_ISSOCK(before.st_mode) or before.st_uid != provider['serviceUid'] or not stat.S_ISDIR(directory.st_mode) or directory.st_uid not in (0, provider['serviceUid']) or directory.st_mode & 0o022:
+            raise ValueError('Untrusted provider endpoint')
+        endpoint_fd = os.open(endpoint, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+        pinned = os.fstat(endpoint_fd)
+        with socket.socket(socket.AF_UNIX) as probe:
+            probe.settimeout(5)
+            probe.connect(str(endpoint))
+            _, uid, _ = struct.unpack('3i', probe.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+            after = endpoint.lstat()
+            if uid != provider['serviceUid'] or (before.st_dev, before.st_ino) != (pinned.st_dev, pinned.st_ino) or (after.st_dev, after.st_ino) != (pinned.st_dev, pinned.st_ino):
+                raise ValueError('Provider identity changed')
+        descriptors.append(endpoint_fd)
+        command += ['--dir', '/run/pi-coffee', '--ro-bind-fd', str(endpoint_fd), '/run/pi-coffee/provider.sock']
+        runtime = Path(provider['runtime'])
+        if runtime.resolve() != runtime or not runtime.is_dir() or parent == runtime or parent in runtime.parents or runtime in parent.parents:
+            raise ValueError('Invalid provider runtime')
+        command += ['--ro-bind', str(runtime), str(runtime)]
+        overlay = list(arguments)
+        if provider['engine'] == 'pi':
+            overlay += ['--extension', str(runtime / 'managed-pi-provider.mjs')]
+            command += ['--setenv', 'PI_COFFEE_PROVIDER_ID', provider['provider'], '--setenv', 'PI_COFFEE_PROVIDER_PORT', str(provider['port'])]
+        elif provider['engine'] == 'codex':
+            prefix = 'model_providers.' + provider['provider'] + '.'
+            overrides = {'base_url': 'http://127.0.0.1:' + str(provider['port']) + '/v1', 'env_key': 'PI_COFFEE_PROVIDER_PLACEHOLDER', 'requires_openai_auth': False, 'supports_websockets': False}
+            for name, content in overrides.items():
+                overlay += ['-c', prefix + name + '=' + json.dumps(content)]
+        else:
+            raise ValueError('Unknown provider engine')
+        executable, arguments = provider['node'], [str(runtime / 'provider-loopback.mjs'), '--socket', '/run/pi-coffee/provider.sock', '--port', str(provider['port']), '--', executable, *overlay]
     for name, content in value['environment'].items():
         command += ['--setenv', name, content]
     command += ['--chdir', value['cwd'], '--', '/usr/bin/python3', str(Path(__file__).with_name('managed-runtime-init.py')), executable, *arguments]
