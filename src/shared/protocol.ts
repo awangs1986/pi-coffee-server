@@ -278,10 +278,10 @@ export type ClientFrame = (
   | {
       v: typeof PROTOCOL_VERSION;
       type: "close";
-    }) & {conversationId?:string;bindingEpoch?:string};
+    }) & {conversationId?:string;bindingEpoch?:string;recoveryGeneration?:string};
 
 export type ServerFrame = (
-  | {v:typeof PROTOCOL_VERSION;type:"backup_status";scope:string;repository?:JsonValue;tasks:{taskId:string;engine:AgentEngine;state:string;coverage:string;checkpointId:string|null;captureAt:string|null;ageMs:number|null;stale:boolean;reason?:string}[]}
+  | {v:typeof PROTOCOL_VERSION;type:"backup_status";scope:string;restores?:JsonValue;repository?:JsonValue;tasks:{taskId:string;engine:AgentEngine;state:string;coverage:string;checkpointId:string|null;captureAt:string|null;ageMs:number|null;stale:boolean;reason?:string}[]}
   | {v:typeof PROTOCOL_VERSION;type:"agent_command_result";sessionId:string;requestId?:string;name:string;text:string}
   | {v:typeof PROTOCOL_VERSION;type:"mishu_watch";panel?:{counts:Record<string,number>;items:{key:string;kind:string;conv?:string;text:string;link?:string;priority:number}[]};notice?:{text:string;link?:string;conv?:string;kind:string}}
   | {v:typeof PROTOCOL_VERSION;type:"sync_changed";sessionId:string;conversationId:string;bindingEpoch:string;headRevision:string;sourceFreshness:"unknown"|"reconciling"|"current"}
@@ -289,6 +289,7 @@ export type ServerFrame = (
   | {
       v: typeof PROTOCOL_VERSION;
       type: "opened";
+      recoveryGeneration?:string;
       syncProtocol?: 2;
       displayMode?: "compact" | "detailed";
       bindingEpoch?: string;
@@ -435,8 +436,8 @@ export function decodeClientFrame(input: string | Uint8Array): ClientFrame {
   }
 
   const frame=parseClientFrame(value);
-  const conversationId=optionalString(value.conversationId,'conversationId',256),bindingEpoch=optionalString(value.bindingEpoch,'bindingEpoch',128);
-  return {...frame,...(conversationId?{conversationId}:{}),...(bindingEpoch?{bindingEpoch}:{})};
+  const conversationId=optionalString(value.conversationId,'conversationId',256),bindingEpoch=optionalString(value.bindingEpoch,'bindingEpoch',128),recoveryGeneration=optionalString(value.recoveryGeneration,'recoveryGeneration',128);
+  return {...frame,...(conversationId?{conversationId}:{}),...(bindingEpoch?{bindingEpoch}:{}),...(recoveryGeneration?{recoveryGeneration}:{})};
 }
 function parseClientFrame(value:Record<string,unknown>):ClientFrame {
   switch (value.type) {
