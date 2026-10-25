@@ -25,7 +25,7 @@ it('starts the actual loopback runner and preserves native stdout while exposing
  }finally{await broker.close();upstream.closeAllConnections();await new Promise<void>(ok=>upstream.close(()=>ok()));await rm(root,{recursive:true,force:true});}
 });
 it('overrides transport only and preserves provider/model identities without exposing original credentials',()=>{
- expect(codexProviderTransportArgs('same-provider',32191)).toEqual(['-c','model_providers.same-provider.base_url="http://127.0.0.1:32191/v1"','-c','model_providers.same-provider.env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c','model_providers.same-provider.requires_openai_auth=false','-c','model_providers.same-provider.supports_websockets=false']);
+ expect(codexProviderTransportArgs('same-provider',32191)).toEqual(['-c','model_provider=\"same-provider\"','-c','model_providers.same-provider.name=\"same-provider\"','-c','model_providers.same-provider.base_url="http://127.0.0.1:32191/v1"','-c','model_providers.same-provider.env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c','model_providers.same-provider.requires_openai_auth=false','-c','model_providers.same-provider.supports_websockets=false']);
  expect(piProviderTransportOverrides(['same-provider'],32191)).toEqual({'same-provider':{baseUrl:'http://127.0.0.1:32191/v1',apiKey:'managed-provider-placeholder'}});
  expect(()=>codexProviderTransportArgs('x.url=bad',32191)).toThrow();
 });

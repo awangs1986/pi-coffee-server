@@ -76,8 +76,9 @@ def prepare(profile_path, custody_root, executable, arguments):
             overlay += ['--extension', str(runtime / 'managed-pi-provider.mjs')]
             command += ['--setenv', 'PI_COFFEE_PROVIDER_ID', provider['provider'], '--setenv', 'PI_COFFEE_PROVIDER_PORT', str(provider['port'])]
         elif provider['engine'] == 'codex':
+            overlay += ['-c', 'model_provider=' + json.dumps(provider['provider'])]
             prefix = 'model_providers.' + provider['provider'] + '.'
-            overrides = {'base_url': 'http://127.0.0.1:' + str(provider['port']) + '/v1', 'env_key': 'PI_COFFEE_PROVIDER_PLACEHOLDER', 'requires_openai_auth': False, 'supports_websockets': False}
+            overrides = {'name': provider['provider'], 'base_url': 'http://127.0.0.1:' + str(provider['port']) + '/v1', 'env_key': 'PI_COFFEE_PROVIDER_PLACEHOLDER', 'requires_openai_auth': False, 'supports_websockets': False}
             for name, content in overrides.items():
                 overlay += ['-c', prefix + name + '=' + json.dumps(content)]
         else:

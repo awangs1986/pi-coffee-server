@@ -1,3 +1,4 @@
+import {managedScopeLayout} from './host/managed-source-layout.js';
 import {ManagedCheckpointRefresh} from './host/managed-checkpoint-refresh.js';
 import {ManagedNativeCustody} from './host/managed-native.js';
 import {ManagedWriterFence} from './host/managed-writer-fence.js';
@@ -100,7 +101,7 @@ async function run(selectedRole: Role): Promise<void> {
   // interface so browsers move files without touching the Web Server.
   let host: HostServer | undefined;
   const transferBind = envString("PI_COFFEE_TRANSFER_BIND", "0.0.0.0");
-  const transfer = !wantHost || transferBind === "off" ? undefined : new TransferServer({
+  const transfer = !wantHost || managedConfig || transferBind === "off" ? undefined : new TransferServer({
     host: transferBind,
     port: envNumber("PI_COFFEE_TRANSFER_PORT", 53317),
     workdir,
@@ -156,43 +157,44 @@ async function run(selectedRole: Role): Promise<void> {
   const writerFence=backupRoot?new LegacyAdmissionFence(legacyPolicy,{writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
   const allocateNew=async(path:string)=>{if(sourceCustody&&!await lstat(path).then(()=>true,()=>false)){await mkdir(dirname(path),{recursive:true,mode:0o700});await sourceCustody.allocate(path);}};
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
-    const scopeId=user??LEGACY_BACKUP_SCOPE,scopeTransports=managedConfig?.scopeProviderTransports?.[user??LEGACY_BACKUP_SCOPE]??managedConfig?.providerTransports,scopeRoot=managedConfig?join(managedConfig.sourceParent,'scopes',scopeId):undefined;
+    const scopeId=user??LEGACY_BACKUP_SCOPE,scopeTransports=managedConfig?.scopeProviderTransports?.[user??LEGACY_BACKUP_SCOPE]??managedConfig?.providerTransports,managedLayout=managedConfig?managedScopeLayout(managedConfig.sourceParent,scopeId):undefined,scopeRoot=managedLayout?.scopeRoot;
     if(scopeRoot){cwd=join(scopeRoot,'work');sessionDir=join(scopeRoot,'native');await mkdir(scopeRoot,{recursive:true,mode:0o700});}
+    const scopeAgentDir=managedLayout?.agentDir??piOptions.agentDir,controlRoot=managedLayout?.controlRoot;if(controlRoot)await mkdir(controlRoot,{recursive:true,mode:0o700});
     await allocateNew(cwd);
     const nativeSessionDir=sessionDir??join(cwd,'.pi-coffee','sessions');
     await allocateNew(nativeSessionDir);
-    if(piOptions.agentDir)await allocateNew(piOptions.agentDir);
+    if(scopeAgentDir)await allocateNew(scopeAgentDir);
     await mkdir(cwd,{recursive:true});
     const workRoot=managedConfig||user ? cwd : process.env.PI_COFFEE_WORK_ROOT ?? cwd;
     const giteaAccount=await giteaAccountForScope(process.env.PI_COFFEE_GITEA_ACCOUNTS_FILE,user,process.env.PI_COFFEE_GITEA_TOKEN&&process.env.PI_COFFEE_GITEA_OWNER?{login:process.env.PI_COFFEE_GITEA_OWNER,token:process.env.PI_COFFEE_GITEA_TOKEN}:undefined);
     const gitea=process.env.PI_COFFEE_GITEA_URL&&giteaAccount?{url:process.env.PI_COFFEE_GITEA_URL,token:giteaAccount.token,owner:giteaAccount.login,userId:giteaAccount.userId}:undefined;
     const forge=gitea?new GiteaClient({baseUrl:gitea.url,...gitea}):undefined;
-    const githubAccounts=new GitHubAccounts(join(sessionDir??join(cwd,'.pi-coffee'),'github-accounts'),{...(process.env.PI_COFFEE_GITHUB_REFRESH_URL?{renew:githubRenewalClient(process.env.PI_COFFEE_GITHUB_REFRESH_URL,process.env.PI_COFFEE_HOST_TOKEN??'',user)}:{}),...(gitea?{gitea}:{}),...(giteaAccount?.gitEmail?{gitIdentity:{name:giteaAccount.gitName??giteaAccount.login,email:giteaAccount.gitEmail}}:{})});
+    const githubAccounts=new GitHubAccounts(join(controlRoot??sessionDir??join(cwd,'.pi-coffee'),'github-accounts'),{...(process.env.PI_COFFEE_GITHUB_REFRESH_URL?{renew:githubRenewalClient(process.env.PI_COFFEE_GITHUB_REFRESH_URL,process.env.PI_COFFEE_HOST_TOKEN??'',user)}:{}),...(gitea?{gitea}:{}),...(giteaAccount?.gitEmail?{gitIdentity:{name:giteaAccount.gitName??giteaAccount.login,email:giteaAccount.gitEmail}}:{})});
     const deniedGitHub=await githubAccounts.environment(undefined);
     const accountProjects=scopeRoot?join(scopeRoot,'tasks'):taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts);
     const accountGuidance=accountScopeInstruction(giteaAccount?.login??user??'VM owner',accountProjects?dirname(accountProjects):cwd);
     const projectSource=managedConfig||user?join(workRoot,'projects'):process.env.PI_COFFEE_PROJECT_ROOT??join(workRoot,'projects');
     const chatSource=managedConfig||user?join(workRoot,'chats'):process.env.PI_COFFEE_CHAT_ROOT??join(workRoot,'chats');
     for(const path of [projectSource,chatSource,...(accountProjects?[accountProjects]:[])])await allocateNew(path);
-    const scopeCustody=managedConfig&&scopeRoot?new ManagedNativeCustody(join(managedConfig.sourceParent,'authority','custody'),{sourceParent:managedConfig.sourceParent,lock:join(managedConfig.sourceParent,'authority','group.lock'),sources:[{path:scopeRoot,destination:scopeRoot},{path:piOptions.agentDir!,destination:piOptions.agentDir!}],runtimeRoots:managedConfig.runtimeRoots,providerTransports:scopeTransports,requireProviderTransport:true,environment:{HOME:join(scopeRoot,'home'),PATH:dirname(process.execPath)+':/usr/bin:/bin',LANG:'C.UTF-8',PI_CODING_AGENT_DIR:piOptions.agentDir!,CODEX_HOME:join(scopeRoot,'codex'),CODEX_SQLITE_HOME:join(scopeRoot,'codex')},cwd}):undefined;
+    const scopeCustody=managedConfig&&scopeRoot?new ManagedNativeCustody(join(managedConfig.sourceParent,'authority','custody'),{sourceParent:managedConfig.sourceParent,lock:join(managedConfig.sourceParent,'authority','group.lock'),sources:[{path:scopeRoot,destination:scopeRoot}],runtimeRoots:managedConfig.runtimeRoots,providerTransports:scopeTransports,requireProviderTransport:true,environment:{HOME:join(scopeRoot,'home'),PATH:dirname(process.execPath)+':/usr/bin:/bin',LANG:'C.UTF-8',PI_CODING_AGENT_DIR:scopeAgentDir!,CODEX_HOME:join(scopeRoot,'codex'),CODEX_SQLITE_HOME:join(scopeRoot,'codex')},cwd}):undefined;
     if(scopeCustody){await mkdir(join(scopeRoot!,'home'),{mode:0o700,recursive:true});await mkdir(join(scopeRoot!,'codex'),{mode:0o700,recursive:true});managedAuthority!.register(scopeId,scopeCustody);managedFence??=new ManagedWriterFence({lock:scopeCustody.profile.lock,custody:scopeCustody});}
     const scopeFence=managedFence??writerFence,nativeCustody=scopeCustody??custody;
     // Provenance and descendant custody do not fence writers launched through existing
     // daemons or unrestricted same-UID tools. No production enforcement provider is qualified.
-    const sourceProof=async()=>{if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!piOptions.agentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,piOptions.agentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
+    const sourceProof=async()=>{if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!scopeAgentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,scopeAgentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
     const workspaces=new Workspaces(projectSource,{taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(scopeFence)workspaces.setBackupWriterFence(scopeFence);
     await workspaces.list();restoreScopes.set(scopeId,workspaces);if(managedConfig)managedStores.set(scopeId,workspaces);
-    if(scopeFence)recoveryAdapters.set(user??LEGACY_BACKUP_SCOPE,new PiNativeRecoveryAdapter({scope:user??LEGACY_BACKUP_SCOPE,workspaces,sessionDir:nativeSessionDir,agentDir:piOptions.agentDir,fence:scopeFence,sourceCustody:sourceProof}));
+    if(scopeFence)recoveryAdapters.set(user??LEGACY_BACKUP_SCOPE,new PiNativeRecoveryAdapter({scope:user??LEGACY_BACKUP_SCOPE,workspaces,sessionDir:nativeSessionDir,agentDir:scopeAgentDir,fence:scopeFence,sourceCustody:sourceProof}));
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
-    const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
-    const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
+    const bookkeeping=controlRoot??sessionDir ?? join(cwd,".pi-coffee");
+    const runners=new RunnerManager(controlRoot?join(controlRoot,"runners"):sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));
     const sshme=new RunnerManager(join(runners.root,'sshme'),'sshme');
     const instructions=async(id?:string)=>{const task=id?await workspaces.lookup(id):undefined;if(task?.workspaceKind==='chat')return undefined;return [hostSessionInstructions(accountGuidance),task?await workspaces.forkInstructionForCwd(task.cwd):undefined].filter(Boolean).join('\n');};
     const codexOptions={nativeCustody,protectedProvider:scopeTransports?.codex?.provider,allowedModels:scopeTransports?.codex?.models,env:{...deniedGitHub,...(scopeRoot?{CODEX_SQLITE_HOME:join(scopeRoot,'codex')}:{})},instructions,cliPath:codexCommand,codexHome:scopeRoot?join(scopeRoot,'codex'):process.env.PI_COFFEE_CODEX_HOME,model:process.env.PI_COFFEE_CODEX_MODEL ?? (agent==="codex" ? process.env.PI_COFFEE_MODEL : undefined),reasoningEffort:process.env.PI_COFFEE_CODEX_EFFORT,sandbox:codexSandbox as "read-only"|"workspace-write"|"danger-full-access",approvalPolicy:codexApproval as "never"|"on-request"|"untrusted",idleTimeoutMs,args:envList("PI_COFFEE_CODEX_ARGS",":")};
     const legacyCodex=codexCommand ? new CodexSessionFactory({...codexOptions,cwd,mappingFile:join(bookkeeping,"codex-threads.json")}) : undefined;
     const factory=new NativeAgentFactory({workspaces,instructions,writerFence:scopeFence,commandCustody:nativeCustody,managedCustody:scopeCustody,beforeNativeExecution:async engine=>{if(managedAuthority){if(engine!=='pi'&&engine!=='codex')throw new Error('This engine is unavailable in the protected execution profile');if(!scopeTransports?.[engine])throw new Error('This engine has no protected provider transport');if(!(await managedAuthority.sourceProof(scopeId)).known)throw new Error('Managed source enrollment is not qualified');}else{legacyPolicy.assertLegacyAllowed();if(engine!=='pi'&&engine!=='codex')legacyPolicy.markUnknown();}},beforeUnmanagedNative:backupRoot?async()=>{legacyPolicy.assertLegacyAllowed();legacyPolicy.markUnknown();await mkdir(backupRoot,{recursive:true,mode:0o700});try{await writeFile(join(backupRoot,'unmanaged-writer-seen'),'unmanaged-native-v1\n',{flag:'wx',mode:0o600,flush:true});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}}:undefined,
-      pi:new RpcPiSessionFactory({...piOptions,...(managedConfig?{provider:scopeTransports?.pi?.provider,providerOnly:scopeTransports?.pi?.provider,allowedModels:scopeTransports?.pi?.models.map(model=>scopeTransports.pi!.provider+'/'+model)}:{}),instructions,cwd,writerFence:scopeFence,nativeCustody,sessionDir:nativeSessionDir,runtimeIdForSession:id=>taskNamespace(user,id),env:{...deniedGitHub,PATH:deniedGitHub.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:deniedGitHub.PATH+':'+piRuntime!.path()},
+      pi:new RpcPiSessionFactory({...piOptions,agentDir:scopeAgentDir,...(managedConfig?{provider:scopeTransports?.pi?.provider,providerOnly:scopeTransports?.pi?.provider,allowedModels:scopeTransports?.pi?.models.map(model=>scopeTransports.pi!.provider+'/'+model)}:{}),instructions,cwd,writerFence:scopeFence,nativeCustody,sessionDir:nativeSessionDir,runtimeIdForSession:id=>taskNamespace(user,id),env:{...deniedGitHub,PATH:deniedGitHub.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:deniedGitHub.PATH+':'+piRuntime!.path()},
         cwdForSession:async(id,existing)=>{if(await workspaces.lookup(id))return workspaces.file(id,"");if(existing)return cwd;throw new Error("Create a Chat or Work task first");},
         extensionsForSession:async id=>(await host?.mishuRuntime(user,id))?.extensions??[],
         envForSession:async id=>{const task=await workspaces.lookup(id),env=task?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,...(task?.workspaceKind==='project'?{PI_COFFEE_ACCOUNT_GUIDANCE:accountGuidance}:{}),...(await host?.mishuRuntime(user,id))?.env,PATH:env.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:env.PATH+':'+piRuntime!.path()};},
@@ -207,7 +209,7 @@ async function run(selectedRole: Role): Promise<void> {
       ...(process.env.PI_COFFEE_GROK_COMMAND ? {grok:{command:process.env.PI_COFFEE_GROK_COMMAND,env:deniedGitHub}} : {}),
       ...(process.env.PI_COFFEE_CURSOR_COMMAND ? {cursor:{command:process.env.PI_COFFEE_CURSOR_COMMAND,env:deniedGitHub}} : {}),
     });
-    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(gitea?{gitea}:{})}};
+    return {workdir:cwd,workspaces,factory,runners,sshme,githubAccounts,skills:{root:process.env.PI_COFFEE_SKILL_ROOT,piAgentDir:managedConfig?scopeAgentDir:process.env.PI_COFFEE_AGENT_DIR ?? process.env.PI_CODING_AGENT_DIR,claudeDir:process.env.CLAUDE_CONFIG_DIR,bundledPiSkills:piRuntime!.skills(),...(gitea?{gitea}:{})}};
   };
   const defaultScope=wantHost ? await createScope(workdir,sessionRoot) : undefined;
   const scopeForUser = (user:string):Promise<UserScope> => createScope(resolve(workdir,user),sessionRoot ? join(sessionRoot,user) : undefined,user);
