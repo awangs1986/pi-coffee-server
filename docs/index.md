@@ -3,7 +3,7 @@
 
 - Backup retention candidate: [administrator preview, pins and crash reconciliation](deployment/backup-retention.md), Server #139. Source tests do not activate production cleanup.
 
-- Pi/Codex backup candidate: [checkpoint/source-custody contract and remaining gates](spec/task-backup.md), [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130). [Encrypted repository / offline recovery copy candidate](deployment/task-backup-repository.md); production qualification, daily scheduling and restore publication remain pending.
+- Pi/Codex backup candidate: [checkpoint/source-custody contract and remaining gates](spec/task-backup.md), [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130). [Encrypted repository / offline recovery copy candidate](deployment/task-backup-repository.md); [Managed source authority and independent model authentication](deployment/managed-source-authority.md). Production qualification and integrated scheduling/restore acceptance remain pending.
 
 - Latest scoped spec refresh (2026-10-23): [UI source baseline, evidence and unresolved gaps](reviews/spec-freshness-20261023-ui.md). Candidate v0.53 at `1bc2b27`; documentation-only refresh, not a deployment claim.
 

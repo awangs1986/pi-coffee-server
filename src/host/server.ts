@@ -2,7 +2,6 @@ import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>;
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -67,6 +66,7 @@ export interface UserScope {
   sshme?: RunnerManager;
 }
 
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};

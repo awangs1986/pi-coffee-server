@@ -14,7 +14,7 @@ export class NativeWriterCustody {
   readonly root: string;
   constructor(root: string) { this.root = resolve(root); }
 
-  async prepare(command: { executable: string; args?: string[] }): Promise<{ cliPath: string; env: Record<string,string> }> {
+  async prepare(command: { executable: string; args?: string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex' }): Promise<{ cliPath: string; env: Record<string,string> }> {
     if (process.platform !== 'linux') throw Error('Native writer custody requires Linux');
     if (!command.executable || !Array.isArray(command.args ?? [])) throw Error('Invalid native command');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
@@ -72,4 +72,10 @@ export class NativeWriterCustody {
     const parent = await open(dir, 'r');
     try { await parent.sync(); } finally { await parent.close(); }
   }
+}
+
+/** Live admission policy wrapper used by an old Host during natural handoff. */
+export class AdmissionNativeCustody extends NativeWriterCustody {
+ constructor(root:string,private policy:import('./managed-launch-policy.js').ManagedLaunchPolicy){super(root);}
+ override async prepare(command:Parameters<NativeWriterCustody['prepare']>[0]){this.policy.assertLegacyAllowed();return super.prepare(command);}
 }

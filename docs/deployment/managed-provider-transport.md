@@ -7,9 +7,9 @@ service, provider, credential, task or model is activated by adding these module
 
 `ProviderHttpBroker` accepts an expected kernel peer UID, a fixed Unix endpoint,
 exact method/path → upstream URL operations and a current-credentials callback.
-That callback belongs to the trusted source/provider authority and must bind the
-enrolled actor, provider and current policy, refresh native credentials privately,
-and refuse revocation. Neither the HTTP request nor the model chooses an account,
+The independent provider worker supplies that callback and binds the
+enrolled account, provider and private auth roots, refreshes native credentials privately,
+and refuses revoked/missing credentials. Neither the HTTP request nor the model chooses an account,
 upstream URL, host path or credential file. Operator-owned upstream configuration
 can target the existing provider relay without granting its other routes.
 
@@ -45,18 +45,18 @@ writer census of surviving real tool descendants.
 
 For Pi1.1.0, append `managed-pi-provider.mjs` as an extension and provide the public
 `PI_COFFEE_PROVIDER_ID` and `PI_COFFEE_PROVIDER_PORT`. The documented
-`registerProvider(provider,{baseUrl,apiKey})` override retains the existing model
-catalog and IDs. Host prompt/model admission must refuse unmapped providers; Pi
-catches extension hook exceptions, so an extension hook cannot enforce that gate.
-Real auth
-files, ambient provider credentials and secret-bearing original configuration
-must stay outside the model namespace; a dummy key only makes the mapped native
-provider available. `piProviderTransportOverrides` exposes the same mapping.
+`registerProvider` receives a safe authenticated model-catalog projection, the
+same original provider/model IDs, loopback base URL and a nonsecret placeholder
+JWT. No private `models.json`, headers or auth file enters native execution. Host
+provider/model admission and the broker's exact model allowlist enforce the gate;
+Pi catches extension hook exceptions. `piProviderTransportOverrides` remains a
+base-URL helper; production startup uses the reviewed catalog projection.
 
 `codexProviderTransportArgs(provider, port)` overlays only that existing provider's
-base URL and a public placeholder environment key, disables native OpenAI auth
+base URL and a public placeholder environment key, explicitly seeds that approved
+provider ID/name in a fresh source home, disables native OpenAI auth
 inside the namespace, and selects HTTP streaming instead of WebSockets. It does
-not set model, reasoning, tier, context or a new provider ID. The runner supplies
+not set model, reasoning, tier, context or substitute a different provider ID. The runner supplies
 `PI_COFFEE_PROVIDER_PLACEHOLDER`. This uses the official
 [Codex provider configuration reference](https://developers.openai.com/codex/config-reference/).
 A source adapter must reject unsupported auth transports, secret-bearing inline
@@ -64,11 +64,11 @@ headers or unsupported native versions until their sanitization and refresh path
 are qualified; copying an original credential directory into the sandbox would
 break this boundary.
 
-Current evidence uses a synthetic HTTP/SSE upstream, real Unix peer credentials,
-current-credential callback changes/revocation, exact-route denial, redirect and
-request-bound refusal, and the actual loopback runner preserving native stdout.
-The first SSE frame must arrive before the synthetic upstream may finish. This is
-not a real provider turn, a real credential-refresh acceptance result, a separate
-service-UID installation or Pi/Codex provider compatibility qualification. Native
-adapter/profile startup and each enrolled provider's auth/refresh path require
-integration evidence before the application reports normal provider capability.
+The standalone `provider-broker-worker` now composes pinned Pi ModelRuntime and
+Codex0.159.1 native auth RPC. See [source/auth configuration](managed-source-authority.md)
+for supported mappings, example configuration, credential reload and refresh rules.
+Synthetic evidence includes real Unix peer credentials, exact socket-FD pinning,
+actual Pi/Codex SDK traffic to local synthetic error endpoints, API-key/custom-env
+rotation, native OAuth refresh/persisted rotation, expired/failed-refresh refusal,
+SSE first-frame streaming and route/redirect/bound denial. No production provider
+message, real service-UID installation or legacy migration is claimed.

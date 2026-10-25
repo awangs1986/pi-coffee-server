@@ -44,6 +44,8 @@ export interface RpcPiSessionFactoryOptions {
   model?: string;
   /** Exact provider/model IDs selectable through this Host; absent means unrestricted. */
   allowedModels?: string[];
+  /** Protected transport supports exactly this enrolled native provider. */
+  providerOnly?:string;
   args?: string[];
   /** Additional native Pi extensions loaded for every Host session. */
   extensions?: string[];
@@ -105,7 +107,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   private async managedClient(options:ConstructorParameters<typeof RpcClient>[0]):Promise<RpcClient>{
     const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');
     try{
-      const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()]}):undefined;
+      const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({engine:'pi',executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()],cwd:options?.cwd,env:options?.env}):undefined;
       const client=new RpcClient({...options,...(launch?{cliPath:launch.cliPath,env:{...options?.env,...launch.env}}:{})});
       const stop=client.stop.bind(client);client.stop=async()=>{try{await stop();}finally{release?.();}};
       return client;
@@ -116,12 +118,12 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');try{return await this.extractMemoryAdmitted(_id,input);}finally{release?.();}
   }
   private async extractMemoryAdmitted(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
-    if(this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
+    if(this.options.providerOnly&&input.provider!==this.options.providerOnly||this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
     // An explicit provider registration is the sole optional extension. The normal
     // Harness, MISHU, MCP, project resources and subagents are never loaded here.
     const providerExtension=input.provider==='antigravity'?this.extensions().find(path=>path.endsWith('/pi-antigravity')):undefined;
     if(input.provider==='antigravity'&&!providerExtension)throw Error('Selected native provider unavailable for isolated memory extraction');
-    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()]}):undefined;
+    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({engine:'pi',executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()],cwd:dirname(input.sessionFile),env:this.options.env}):undefined;
     return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:launch?.cliPath??this.options.cliPath,agentDir:this.options.agentDir,env:{...buildHostChildEnv(this.options.env),...launch?.env},providerExtension});
   }
 
@@ -148,7 +150,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const client=await this.managedClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
       env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
-    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
+    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels,undefined,this.options.providerOnly);
     try{await session.start();return await session.getCommands();}finally{await session.stop();}
   }
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
@@ -162,7 +164,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const client=await this.managedClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
       env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
-    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
+    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels,undefined,this.options.providerOnly);
     try{await session.start();return await session.getModels();}finally{await session.stop();}
   }
 
@@ -208,7 +210,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       },
       args,
     });
-    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken);
+    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken,this.options.providerOnly);
     try{
       await session.start();
       // Pi applies defaults when resuming a branch with no messages. Restore the
@@ -411,7 +413,7 @@ class RpcPiSession implements PiSession {
   private running = false;
   private handoffActive = false;
 
-  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[], private readonly dispatchToken?:string) {
+  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[], private readonly dispatchToken?:string,private readonly providerOnly?:string) {
     this.client = client;
     this.configuredExtensions = configuredExtensions;
     this.unsubscribe = client.onEvent((event) => {
@@ -467,7 +469,7 @@ class RpcPiSession implements PiSession {
   }
 
   private modelAllowed(provider:unknown,id:unknown):boolean {
-    return !this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`));
+    return (!this.providerOnly||provider===this.providerOnly)&&(!this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`)));
   }
 
   async prompt(text: string, images?: ImageInput[],correlation?:{runId:string}): Promise<void> {
@@ -477,9 +479,9 @@ class RpcPiSession implements PiSession {
       const disposition=await this.client.prompt(`/coffee-dispatch-control ${this.dispatchToken} ${correlation.runId} ${sourceHash(text)}`);
       if(disposition!=="handled")throw Error("Native dispatch correlation was not admitted");
     }
-    if(this.allowedModels && /^\/model(?:\s|$)/.test(text.trim())){
+    if((this.allowedModels||this.providerOnly) && /^\/model(?:\s|$)/.test(text.trim())){
       const match=/^\/model\s+([^\s/]+)\/(\S+)\s*$/.exec(text.trim());
-      if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+this.allowedModels.join(', '));
+      if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+(this.allowedModels?.join(', ')??this.providerOnly));
       if(images?.length)throw new Error('Send attachments separately from a model selection command');
       await this.setModel(match[1],match[2]);
       for(const listener of this.listeners)listener({type:'agent_settled'});
@@ -511,7 +513,7 @@ class RpcPiSession implements PiSession {
     if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
     const command=/^\/(\S+)/.exec(text)?.[1];
     if(command&&(await this.getCommands()).some(c=>c.name===command&&c.source==='extension'))throw new Error('Extension commands cannot be queued.');
-    if(this.allowedModels){
+    if(this.allowedModels||this.providerOnly){
       if(/^\/model(?:\s|$)/.test(text.trim()))throw new Error('Change models when the current turn has finished');
       const state=await this.client.getState();
       if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');
@@ -524,7 +526,7 @@ class RpcPiSession implements PiSession {
 
   /** Consume public RPC disposition; failed responses reject in Pi itself. */
   private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<"started" | "queued" | "handled"> {
-    if(this.allowedModels){
+    if(this.allowedModels||this.providerOnly){
       if(/^\/model(?:\s|$)/.test(command.message.trim()))throw new Error('Change models when the current turn has finished');
       const state=await this.client.getState();
       if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');

@@ -1,3 +1,5 @@
+import type {NativeWriterCustody} from '../native-custody.js';
+import type {ManagedNativeCustody} from '../managed-native.js';
 import type {WriterAdmissionFence} from '../backup.js';
 import {CODEX_HANDOFF_VERSION,handoffSummaryPrompt,handoffSeedPrompt} from '../codex/handoff.js';
 import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js';
@@ -23,7 +25,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions {commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -31,6 +33,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){}
+  private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine){
+    if(!this.options.commandCustody)return {command:config.command,args:[...(config.args??[]),...args],env:nativeEnvironment(config.env)};
+    const launch=await this.options.commandCustody.prepare({...(engine==='pi'||engine==='codex'?{engine}:{}),executable:config.command,args:[...(config.args??[]),...args],cwd:cwd??this.options.managedCustody?.profile.cwd??this.options.workspaces.root,env:config.env});
+    return {command:process.execPath,args:[launch.cliPath],env:nativeEnvironment({...config.env,...launch.env})};
+  }
+  private managed(engine:AgentEngine){return Boolean(this.options.managedCustody&&(engine==='pi'||engine==='codex'));}
   async extractMemory(id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
     const source=await this.options.workspaces.lookup(id);
     if(!source||source.workspaceKind!=='chat'||(source.engine??'pi')!=='pi'||!this.options.pi.extractMemory)throw Error('Isolated native memory extraction unavailable for this source');
@@ -51,8 +59,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
     return this.options.claude?['handoff']:[];
   }
   async forkConversation(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory){
-    const task=await this.options.workspaces.lookup(sourceId),release=this.options.writerFence?.beginWriter((task?.engine??'pi')==='pi'?'platform':'unmanaged-native');
-    try{if((task?.engine??'pi')!=='pi')await this.options.beforeUnmanagedNative?.();return await this.forkConversationAdmitted(sourceId,targetId,mode,_history);}finally{release?.();}
+    await this.options.beforeNativeExecution?.((await this.options.workspaces.lookup(sourceId))?.engine??'pi');
+    const task=await this.options.workspaces.lookup(sourceId),release=this.options.writerFence?.beginWriter((task?.engine??'pi')==='pi'||this.managed(task?.engine??'pi')?'platform':'unmanaged-native');
+    try{if((task?.engine??'pi')!=='pi'&&!this.managed(task?.engine??'pi'))await this.options.beforeUnmanagedNative?.();return await this.forkConversationAdmitted(sourceId,targetId,mode,_history);}finally{release?.();}
   }
   private async forkConversationAdmitted(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory){
     if(this.closing)throw new Error('Host is stopping');
@@ -187,6 +196,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     finally{await session.stop();await rm(cwd,{recursive:true,force:true});}
   }
   async commandCatalog(engine:import('../../shared/protocol.js').AgentEngine) {
+    await this.options.beforeNativeExecution?.(engine);
     if(engine==='claude')return (await this.claudeCatalog()).commands;
     if(engine==="codex"){
       if(!this.options.codex || !this.options.legacyCodex?.commandCatalog)throw new Error("Codex Skill discovery unavailable");
@@ -196,6 +206,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     return this.options.pi.commandCatalog(engine);
   }
   async modelCatalog(engine:import('../../shared/protocol.js').AgentEngine) {
+    await this.options.beforeNativeExecution?.(engine);
     if(engine==='claude')return (await this.claudeCatalog()).models;
     if(engine==="pi"){
       if(!this.options.pi.modelCatalog)throw new Error("Pi model discovery unavailable");
@@ -208,10 +219,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async engines():Promise<EngineAvailability[]> {
     return Promise.all(PI_ONLY_ENGINES.map(async original=>{
       const config=original.id==="pi"?undefined:this.options[original.id];
-      if(!config)return {...original,...(original.id==="pi"?{modelCatalog:Boolean(this.options.pi.modelCatalog)}:{})};
+      if(!config&&original.id!=="pi")return {...original};
+      try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,reason:error instanceof Error?error.message:'Native launch denied'};}
+      if(!config)return {...original,modelCatalog:Boolean(this.options.pi.modelCatalog)};
       let version:string;
       try {
-        const result=await exec(config.command,[...(config.args??[]),"--version"],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192});
+        const prepared=await this.command(config,["--version"],undefined,original.id),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,reason:"Native executable unavailable"};}
       const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1|163\.0)\b/.test(version) : /\b2\.1\.280\b/.test(version);
@@ -235,11 +248,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==="codex") {
       // Readiness is local credential configuration, not remote account hydration.
       // account/read can time out while this login and model/list remain usable.
-      const loggedIn=await exec(config.command,[...(config.args??[]),'login','status'],{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192})
+      const prepared=await this.command(config,['login','status'],undefined,'codex');const loggedIn=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192})
         .then(()=>true,error=>{if(error.code===1)return false;throw error;});
       if(loggedIn)return true;
       // A custom provider can intentionally require no OpenAI credentials.
-      const probe=new NativeProcess(config,["app-server"],process.cwd());
+      const command=await this.command(config,["app-server"],undefined,'codex'),probe=new NativeProcess({command:command.command,env:Object.fromEntries(Object.entries(command.env).filter((entry):entry is [string,string]=>entry[1]!==undefined))},command.args,this.options.managedCustody?.profile.cwd??process.cwd());
       try {
         await probe.call("initialize",{clientInfo:{name:"pi_coffee_readiness",version:"0.1.0"}},5000);
         probe.send({method:"initialized"});
@@ -254,7 +267,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     const status=JSON.parse(result.stdout);return engine==="cursor"?status.isAuthenticated===true:status.loggedIn===true;
   }
   async prepareTakeover(id:string,operation:TakeoverState,history:AgentHistory){
-    const release=this.options.writerFence?.beginWriter(operation.to==='pi'?'platform':'unmanaged-native');try{if(operation.to!=='pi')await this.options.beforeUnmanagedNative?.();return await this.prepareTakeoverAdmitted(id,operation,history);}finally{release?.();}
+    await this.options.beforeNativeExecution?.(operation.to);
+    const release=this.options.writerFence?.beginWriter(operation.to==='pi'||this.managed(operation.to)?'platform':'unmanaged-native');try{if(operation.to!=='pi'&&!this.managed(operation.to))await this.options.beforeUnmanagedNative?.();return await this.prepareTakeoverAdmitted(id,operation,history);}finally{release?.();}
   }
   private async prepareTakeoverAdmitted(id:string,operation:TakeoverState,history:AgentHistory){
     if(this.closing)throw new Error('Host is stopping');
@@ -287,7 +301,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async prepareHandoff(id:string,source:AgentSession,signal:AbortSignal){
-    const release=this.options.writerFence?.beginWriter('unmanaged-native');try{await this.options.beforeUnmanagedNative?.();return await this.prepareHandoffAdmitted(id,source,signal);}finally{release?.();}
+    const engine=(await this.options.workspaces.lookup(id))?.engine??'pi';await this.options.beforeNativeExecution?.(engine);
+    const release=this.options.writerFence?.beginWriter(this.managed(engine)?'platform':'unmanaged-native');try{if(!this.managed(engine))await this.options.beforeUnmanagedNative?.();return await this.prepareHandoffAdmitted(id,source,signal);}finally{release?.();}
   }
   private async prepareHandoffAdmitted(id:string,source:AgentSession,signal:AbortSignal){
     if(this.closing||signal.aborted)throw new Error('Host is stopping');
@@ -334,7 +349,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async prepareContextReset(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:import('../agent-adapter.js').AgentModels){
-    const task=await this.options.workspaces.lookup(id),release=this.options.writerFence?.beginWriter((task?.engine??'pi')==='pi'?'platform':'unmanaged-native');try{if((task?.engine??'pi')!=='pi')await this.options.beforeUnmanagedNative?.();return await this.prepareContextResetAdmitted(id,operation,settings);}finally{release?.();}
+    await this.options.beforeNativeExecution?.((await this.options.workspaces.lookup(id))?.engine??'pi');
+    const task=await this.options.workspaces.lookup(id),release=this.options.writerFence?.beginWriter((task?.engine??'pi')==='pi'||this.managed(task?.engine??'pi')?'platform':'unmanaged-native');try{if((task?.engine??'pi')!=='pi'&&!this.managed(task?.engine??'pi'))await this.options.beforeUnmanagedNative?.();return await this.prepareContextResetAdmitted(id,operation,settings);}finally{release?.();}
   }
   private async prepareContextResetAdmitted(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:import('../agent-adapter.js').AgentModels){
     const task=await this.options.workspaces.lookup(id);
@@ -356,6 +372,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async create({sessionId}:{sessionId:string}):Promise<AgentSession> {
+    await this.options.beforeNativeExecution?.((await this.options.workspaces.lookup(sessionId))?.engine??'pi');
     const task=await this.options.workspaces.lookup(sessionId);
     const segment=task?.takeoverSegments?.at(-1);
     const session=await this.createNative(sessionId);
@@ -377,8 +394,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private async createNative(sessionId:string):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
     if(!this.options.writerFence||(task?.engine??'pi')==='pi')return this.createNativeAdmitted(sessionId);
-    const release=this.options.writerFence.beginWriter('unmanaged-native');
-    try{await this.options.beforeUnmanagedNative?.();const session=await this.createNativeAdmitted(sessionId),stop=session.stop.bind(session);session.stop=async()=>{try{await stop();}finally{release();}};return session;}catch(error){release();throw error;}
+    const release=this.options.writerFence.beginWriter(this.managed(task?.engine??'pi')?'native':'unmanaged-native');
+    try{if(!this.managed(task?.engine??'pi'))await this.options.beforeUnmanagedNative?.();const session=await this.createNativeAdmitted(sessionId),stop=session.stop.bind(session);session.stop=async()=>{try{await stop();}finally{release();}};return session;}catch(error){release();throw error;}
   }
   private async createNativeAdmitted(sessionId:string):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
