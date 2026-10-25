@@ -1,3 +1,4 @@
+import {RestoreCoordinator,type NativeRestoreAdapter} from './host/restore.js';
 import {BackupRepository} from './host/backup-repository.js';
 import {BackupCoordinator,BackupError,WriterAdmissionFence,LEGACY_BACKUP_SCOPE,type NativeRecoveryAdapter} from './host/backup.js';
 import {PiNativeRecoveryAdapter} from './host/pi-recovery.js';
@@ -129,9 +130,14 @@ async function run(selectedRole: Role): Promise<void> {
   const taskAccounts=JSON.parse(process.env.PI_COFFEE_TASK_USER_MAP ?? '{}');
   if(!taskAccounts || typeof taskAccounts!=='object' || Array.isArray(taskAccounts))throw new Error('Invalid task storage user map');
   const backupRoot=wantHost?process.env.PI_COFFEE_BACKUP_ROOT?.trim():undefined;
-  const recoveryAdapters=new Map<string,NativeRecoveryAdapter>();
+  const recoveryAdapters=new Map<string,NativeRecoveryAdapter&NativeRestoreAdapter>();
+  const restoreScopes=new Map<string,Workspaces>();
   const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);}}}):undefined;
   const backupRepository=backupRoot&&backupCoordinator?new BackupRepository({root:join(backupRoot,'repository-runtime'),coordinator:backupCoordinator}):undefined;
+  const restoreCoordinator=backupRoot?new RestoreCoordinator({root:join(backupRoot,'restore-runtime'),materialSource:async()=>{throw new BackupError('restore_material_broker_unavailable','An authorized scoped material broker is required; Host does not read repository keys');},
+    authorize:async(actor,scope,manage)=>{const managed=scope===LEGACY_BACKUP_SCOPE||envList('PI_COFFEE_BACKUP_USERS').includes(scope)||scope===actor;return managed&&(manage?actor==='awangs':actor===scope);},
+    scope:async scope=>{if(!restoreScopes.has(scope)){await host?.prepareRestoreScope(scope===LEGACY_BACKUP_SCOPE?undefined:scope);}const workspaces=restoreScopes.get(scope);if(!workspaces)throw new BackupError('unknown_scope','Restore scope unavailable');return {workspaces,adapter:recoveryAdapters.get(scope),withPublication:(id,run,operationId)=>host!.withRestorePublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,id,run,operationId)};}
+  }):undefined;
   const sourceCustody=backupRoot?new BackupSourceCustody(join(backupRoot,'source-ownership')):undefined;
   const custody=backupRoot?new NativeWriterCustody(join(backupRoot,'native-custody','shared-native-group')):undefined;
   const writerFence=backupRoot?new WriterAdmissionFence({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
@@ -158,7 +164,7 @@ async function run(selectedRole: Role): Promise<void> {
     const sourceProof=async()=>{if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!piOptions.agentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,piOptions.agentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(writerFence)workspaces.setBackupWriterFence(writerFence);
-    await workspaces.list();
+    await workspaces.list();restoreScopes.set(user??LEGACY_BACKUP_SCOPE,workspaces);
     if(writerFence)recoveryAdapters.set(user??LEGACY_BACKUP_SCOPE,new PiNativeRecoveryAdapter({scope:user??LEGACY_BACKUP_SCOPE,workspaces,sessionDir:nativeSessionDir,agentDir:piOptions.agentDir,fence:writerFence,sourceCustody:sourceProof}));
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
@@ -192,7 +198,7 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
-    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,repository:backupRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes',administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
+    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,repository:backupRepository,restore:restoreCoordinator,binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes',administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,

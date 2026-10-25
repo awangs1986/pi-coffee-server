@@ -1,3 +1,4 @@
+import {renderRestoreControls} from './restore.js';
 /** Scoped protection status. Checkpoints and repository backups are distinct. */
 export function initBackupControls({context,onOpen=()=>{},request=async(body,signal)=>{
  const response=await fetch('/api/backup',{method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal});
@@ -46,6 +47,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      }
      output.append(section);
     }
+    renderRestoreControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     const excluded=document.createElement('p');excluded.textContent='本期保护 Pi / Codex；Claude / Cursor / Grok 延期，不计入已保护范围。';output.append(excluded);
     if(!data.tasks?.length){const empty=document.createElement('p');empty.textContent='当前账号没有任务。';output.append(empty);}
     for(const task of data.tasks||[]){
