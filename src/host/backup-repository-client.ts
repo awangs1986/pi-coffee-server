@@ -1,3 +1,5 @@
+import {once} from 'node:events';
+import type {RecoveryPin,RecoveryPinLease,RepositoryRetentionPlan} from './backup-retention.js';
 import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';import {verifySealedCheckpoint} from './backup.js';
 import {spawn} from 'node:child_process';import {open,realpath,mkdir,lstat,readdir,rename,rm} from 'node:fs/promises';import {constants} from 'node:fs';import {isAbsolute,resolve,dirname,join} from 'node:path';import {randomUUID} from 'node:crypto';
 import {BackupBrokerError,type BackupBrokerRequest,type BackupBrokerContext,type BackupBrokerOperation,type BackupBrokerQualification,type BackupExtractionDescriptor} from './backup-key-protocol.js';
@@ -25,6 +27,26 @@ export class BackupRepositoryClient {
  verifyRecoveryPackage(recoveryPackage:string):Promise<void>{return this.call('verify-recovery',{recoveryPackage});}
  rotateRecoveryKey():Promise<void>{return this.call('rotate');}
  recoverInterruptedOperation():Promise<void>{return this.call('recover');}
+ pinRecoveryJob(jobId:string,input:{operationId:string;revision:number;ttlMs?:number}):Promise<RecoveryPin>{return this.call('pin-recovery-job',{jobId,...input});}
+ releaseRecoveryPin(pinId:string,operationId:string,revision:number):Promise<void>{return this.call('release-recovery-pin',{pinId,operationId,revision});}
+ recoveryPins(scope=this.options.dataScope):Promise<RecoveryPin[]>{return this.call('recovery-pins',{scope});}
+ previewRetention(input:{scopes:string[];timeZone?:string}):Promise<RepositoryRetentionPlan>{return this.call('retention-preview',input);}
+ retentionPlans(scope=this.options.dataScope):Promise<RepositoryRetentionPlan[]>{return this.call('retention-plans',{scope});}
+ executeRetention(retentionId:string,revision:number,digest:string):Promise<RepositoryRetentionPlan>{return this.call('retention-execute',{retentionId,revision,digest});}
+ async withRecoveryPins<T>(pinIds:string[],run:(lease:RecoveryPinLease)=>Promise<T>):Promise<T>{
+  if(!Array.isArray(pinIds)||!pinIds.length||pinIds.length>1000||new Set(pinIds).size!==pinIds.length||pinIds.some(id=>typeof id!=='string'||!/^[0-9a-f-]{36}$/.test(id)))throw new BackupBrokerError('invalid_recovery_pin');
+  const request:BackupBrokerRequest={schema:1,id:randomUUID(),operation:'hold-recovery-pins',pinIds,context:{actor:this.options.actor,dataScope:this.options.dataScope,authorityRevision:this.options.authorityRevision}};
+  const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname,child=spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.serviceUid),String(1024*1024)],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});
+  let failure:BackupBrokerError|undefined,lastHeartbeat=0,buffer='',bytes=0,granted=false;
+  let acknowledge!:(value:void)=>void,deny!:(error:Error)=>void;const ready=new Promise<void>((resolve,reject)=>{acknowledge=resolve;deny=reject;});
+  const fail=(code:string)=>{failure??=new BackupBrokerError(code);deny(failure);if(child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');};
+  const deadline=Date.now()+Math.min(this.options.timeoutMs??30*60000,30*60000),grantTimer=setTimeout(()=>fail('broker_timeout'),Math.min(this.options.timeoutMs??5000,5000)),leaseTimer=setTimeout(()=>fail('recovery_pin_lease_expired'),Math.max(1,deadline-Date.now()));
+  child.stdin.on('error',()=>{});child.on('error',()=>fail('transport_unavailable'));child.on('close',()=>{failure??=new BackupBrokerError('recovery_pin_lease_lost');deny(failure);});
+  child.stdout.on('data',chunk=>{bytes+=chunk.length;buffer+=chunk.toString('utf8');if(bytes>1024*1024||buffer.length>65536)return fail('response_limit');for(;;){const end=buffer.indexOf('\n');if(end<0)break;const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{const frame=JSON.parse(line);if(frame.schema!==1||frame.id!==request.id)return fail('invalid_response');if(frame.ok===false)return fail(typeof frame.error?.code==='string'&&/^[a-z_]{1,64}$/.test(frame.error.code)?frame.error.code:'broker_failed');if(!granted){if(frame.ok!==true||frame.result?.lease!==true||JSON.stringify(frame.result.pinIds)!==JSON.stringify(pinIds))return fail('invalid_response');granted=true;lastHeartbeat=Date.now();clearTimeout(grantTimer);acknowledge();}else if(frame.kind==='pin-heartbeat')lastHeartbeat=Date.now();else return fail('invalid_response');}catch{return fail('invalid_response');}}});
+  child.stdin.end(JSON.stringify(request)+'\n');
+  const lease:RecoveryPinLease={assertHeld:()=>{if(failure)throw failure;if(!granted||Date.now()>=deadline||Date.now()-lastHeartbeat>5000||child.exitCode!==null||child.signalCode!==null)throw new BackupBrokerError('recovery_pin_lease_lost');}};
+  try{await ready;lease.assertHeld();const result=await run(lease);lease.assertHeld();return result;}finally{clearTimeout(grantTimer);clearTimeout(leaseTimer);if(child.exitCode===null&&child.signalCode===null){const closed=once(child,'close');child.kill('SIGTERM');await closed;}}
+ }
  /** Restore material arrives only through authenticated named streams. The local
   * destination is never included in an IPC message or exposed to the key owner. */
  async extract(jobId:string,destination:string,recoveryPackage?:string,signal?:AbortSignal):Promise<void>{
