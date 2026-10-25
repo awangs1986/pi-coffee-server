@@ -105,7 +105,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   private async managedClient(options:ConstructorParameters<typeof RpcClient>[0]):Promise<RpcClient>{
     const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');
     try{
-      const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()]}):undefined;
+      const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()],cwd:options?.cwd,env:options?.env}):undefined;
       const client=new RpcClient({...options,...(launch?{cliPath:launch.cliPath,env:{...options?.env,...launch.env}}:{})});
       const stop=client.stop.bind(client);client.stop=async()=>{try{await stop();}finally{release?.();}};
       return client;
@@ -121,7 +121,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     // Harness, MISHU, MCP, project resources and subagents are never loaded here.
     const providerExtension=input.provider==='antigravity'?this.extensions().find(path=>path.endsWith('/pi-antigravity')):undefined;
     if(input.provider==='antigravity'&&!providerExtension)throw Error('Selected native provider unavailable for isolated memory extraction');
-    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()]}):undefined;
+    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()],cwd:dirname(input.sessionFile),env:this.options.env}):undefined;
     return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:launch?.cliPath??this.options.cliPath,agentDir:this.options.agentDir,env:{...buildHostChildEnv(this.options.env),...launch?.env},providerExtension});
   }
 

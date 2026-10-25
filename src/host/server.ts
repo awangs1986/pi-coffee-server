@@ -64,9 +64,10 @@ export interface UserScope {
   sshme?: RunnerManager;
 }
 
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; repository?:BackupRepository; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; repository?:BackupRepositoryAccess;repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -113,7 +114,7 @@ export interface HostServerOptions {
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
   backup?:BackupCoordinator;
-  repository?:BackupRepository;
+  repository?:BackupRepositoryAccess;
   repositoryActivationUnavailable?:string;
   mishu?:MishuCoordinator;
   user: string | undefined;

@@ -1,3 +1,4 @@
+import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
@@ -54,6 +55,7 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
  * Login is Codex's own (`codex login` once in the VM, credentials in
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
+  nativeCustody?:NativeWriterCustody;
   instructions?:()=>Promise<string|undefined>;
   /** Host-proven empty Chat only; revoked durably before any prompt admission. */
   allowEmptyRecovery?:()=>Promise<boolean>;
@@ -146,13 +148,19 @@ export class CodexSessionFactory implements PiSessionFactory {
     finally { this.connecting = undefined; }
   }
 
+  private async nativeServer(options:ConstructorParameters<typeof CodexAppServer>[0]):Promise<CodexAppServer>{
+    if(!this.options.nativeCustody)return new CodexAppServer(options);
+    const launch=await this.options.nativeCustody.prepare({executable:options.cliPath,args:options.args,cwd:options.cwd,env:options.env});
+    return new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
+  }
+
   private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? []),...(this.options.preparation?Object.entries(forkPreparationConfig()).flatMap(([key,value])=>['-c',key+'='+JSON.stringify(value)]):[])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment({...this.options.env,...await this.options.envForSession?.()}),
       ...(this.options.codexHome === undefined ? {} : { CODEX_HOME: this.options.codexHome }),
     };
-    const server = new CodexAppServer({
+    const server = await this.nativeServer({
       cliPath: this.options.cliPath ?? "codex",
       args,
       cwd: this.options.cwd,
@@ -183,7 +191,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
     if(engine!=="codex")throw new Error("This adapter only discovers Codex models");
     // A short-lived native connection lists models only: no thread/start or turn/start.
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
@@ -203,7 +211,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     return this.commandDiscovery;
   }
   private async discoverCommands():Promise<CommandInfo[]> {
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_skills","0.1.0");
