@@ -297,7 +297,7 @@ export class HostServer {
       const slots=await Promise.all([...this.slots.values()]);
       const slot=slots.find(s=>s.mishu?.accepts(token));
       if(!slot?.mishu){json(res,401,{error:'Invalid MISHU capability'});return;}
-      const release=slot.workspaces?.backupWriterFence?.beginWriter('platform');try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}finally{release?.();}return;
+      let release:(()=>void)|undefined;try{release=slot.workspaces?.backupWriterFence?.beginWriter('platform');json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}finally{release?.();}return;
     }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
