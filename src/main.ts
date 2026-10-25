@@ -1,3 +1,4 @@
+import {ManagedCheckpointRefresh} from './host/managed-checkpoint-refresh.js';
 import {ManagedNativeCustody} from './host/managed-native.js';
 import {ManagedWriterFence} from './host/managed-writer-fence.js';
 import {ManagedLaunchPolicy} from './host/managed-launch-policy.js';
@@ -144,7 +145,7 @@ async function run(selectedRole: Role): Promise<void> {
   const backupRepository=!brokerConfig&&backupRoot&&backupCoordinator?new BackupRepository({root:join(backupRoot,'repository-runtime'),coordinator:backupCoordinator}):undefined;
   const sourceCustody=backupRoot?new BackupSourceCustody(join(backupRoot,'source-ownership')):undefined;
   const custody=backupRoot?new AdmissionNativeCustody(join(backupRoot,'native-custody','shared-native-group'),legacyPolicy):undefined;
-  let managedFence:ManagedWriterFence|undefined;
+  let managedFence:ManagedWriterFence|undefined;const managedStores=new Map<string,Workspaces>();
   const writerFence=backupRoot?new WriterAdmissionFence({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
   const allocateNew=async(path:string)=>{if(sourceCustody&&!await lstat(path).then(()=>true,()=>false)){await mkdir(dirname(path),{recursive:true,mode:0o700});await sourceCustody.allocate(path);}};
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
@@ -174,7 +175,7 @@ async function run(selectedRole: Role): Promise<void> {
     const sourceProof=async()=>{if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!piOptions.agentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,piOptions.agentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
     const workspaces=new Workspaces(projectSource,{taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(scopeFence)workspaces.setBackupWriterFence(scopeFence);
-    await workspaces.list();
+    await workspaces.list();if(managedConfig)managedStores.set(scopeId,workspaces);
     if(scopeFence)recoveryAdapters.set(user??LEGACY_BACKUP_SCOPE,new PiNativeRecoveryAdapter({scope:user??LEGACY_BACKUP_SCOPE,workspaces,sessionDir:nativeSessionDir,agentDir:piOptions.agentDir,fence:scopeFence,sourceCustody:sourceProof}));
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
@@ -221,8 +222,10 @@ async function run(selectedRole: Role): Promise<void> {
     savedMishuScopes:()=>savedMishuScopes(workdir,defaultScope!.workspaces!.root),
   });
   if(managedAuthority){await managedAuthority.activate();await managedAuthority.startServer(backupCoordinator!);}
+  const automaticCheckpoints=managedAuthority&&managedFence&&backupCoordinator?new ManagedCheckpointRefresh({coordinator:backupCoordinator,revision:()=>managedFence!.changeRevision,qualified:async()=>[...managedStores.keys()].length>0&&(await managedAuthority.sourceProof([...managedStores.keys()][0])).known,tasks:async()=>{const tasks=[];for(const [scope,store]of managedStores){for(const task of (await store.list()).conversations){if(!task.workspaceRemoved&&!task.cleanupStarted)tasks.push({scope,taskId:task.id,engine:task.engine??'pi' as const});}}return tasks;}}):undefined;
   const admissionServer=wantHost&&!managedAuthority&&process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET&&custody?await startManagedAdmissionControl({socket:process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET,allowedUid:envNumber('PI_COFFEE_NATIVE_ADMISSION_UID',-1),policy:legacyPolicy,custody}):undefined;
   if (host) await host.start();
+  automaticCheckpoints?.start();
 
   // Gitea OAuth is on as soon as the app credentials are configured. Without
   // them the shell is open (local smoke); PI_COFFEE_DEFAULT_USER can still
@@ -296,7 +299,7 @@ async function run(selectedRole: Role): Promise<void> {
   const shutdown = async () => {
     await web?.close();
     await host?.close();
-    await managedAuthority?.close();
+    await automaticCheckpoints?.close();await managedAuthority?.close();
     if(admissionServer)await new Promise<void>(done=>admissionServer.close(()=>done()));
     await transfer?.close();
     await relay?.close();
