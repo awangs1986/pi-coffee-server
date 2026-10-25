@@ -1,4 +1,5 @@
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
@@ -66,7 +67,7 @@ export interface UserScope {
 
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; repository?:BackupRepository; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepository; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -113,6 +114,7 @@ export interface HostServerOptions {
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
   backup?:BackupCoordinator;
+  restore?:RestoreCoordinator;
   repository?:BackupRepository;
   repositoryActivationUnavailable?:string;
   mishu?:MishuCoordinator;
@@ -277,7 +279,7 @@ export class HostServer {
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
       const administrator=this.options.backup?.administrator??'awangs',dataScope=slot.user??LEGACY_BACKUP_SCOPE;
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),excludedEngines:['claude','cursor','grok']});
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),restores:this.options.backup?.restore?await this.options.backup.restore.status(actor??'',target.user??LEGACY_BACKUP_SCOPE):[],excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
@@ -285,6 +287,26 @@ export class HostServer {
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
         if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||(input.scope!==dataScope&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
         const target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
+      }
+      if(typeof input.action==='string'&&input.action.startsWith('restore-')){
+        res.setHeader('cache-control','no-store');const restore=this.options.backup?.restore;
+        const manage=!['restore-request','restore-cancel'].includes(input.action);
+        if(manage&&actor!==administrator){json(res,403,{error:'Recovery approval and publication require '+administrator});return;}
+        if(!restore){json(res,409,{error:'Restore service unavailable'});return;}
+        try{
+          if(input.action==='restore-request'){
+            const requestedScope=input.scope??dataScope;
+            if(typeof requestedScope!=='string'||requestedScope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(requestedScope))){json(res,403,{error:'Recovery request scope denied'});return;}
+            if(typeof input.taskId!=='string'||typeof input.jobId!=='string'){json(res,400,{error:'Choose a task and repository job'});return;}
+            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId}));return;
+          }
+          const action=input.action.slice('restore-'.length);
+          if(!['plan','revise','approve','publish','cancel'].includes(action)||typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an operation and current revision'});return;}
+          // Preparation reads the encrypted key and uses the same production boundary gate.
+          if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
+          json(res,200,await restore.operate(actor??'',input.id,{action:action as 'plan'|'revise'|'approve'|'publish'|'cancel',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})}));
+          if(action==='publish')this.broadcastSessions(await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:typeof input.scope==='string'?input.scope:user));
+        }catch(error){const code=error instanceof BackupError?error.code:'';json(res,code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Restore operation failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('repository-')){
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
@@ -697,7 +719,7 @@ export class HostServer {
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, backup:this.options.backup?.coordinator,restore:this.options.backup?.restore,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -791,6 +813,12 @@ export class HostServer {
     }catch{console.warn('[pi-coffee] MISHU saved-scope discovery unavailable; stored state retained.');}
   }
 
+  /** Controlled live-owner seam for independent restoration jobs. */
+  async prepareRestoreScope(user:string|undefined){await this.slotFor(user);}
+  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>):Promise<T>{
+    const slot=await this.slotFor(user);if(slot.lifecycleLocks.has(taskId)||slot.registry.get(taskId)?.isBusy)throw new BackupError('target_busy','Task has live execution or lifecycle work');
+    slot.lifecycleLocks.add(taskId);try{const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+  }
   address(): HostAddress {
     const address = this.http.address();
     if (address === null || typeof address === "string") {
@@ -1072,7 +1100,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,tasks:await backupStatuses(slot),...(slot.repository?{repository:JSON.parse(JSON.stringify({...await slot.repository.status(this.user??LEGACY_BACKUP_SCOPE),...(slot.repositoryActivationUnavailable?{activationUnavailable:slot.repositoryActivationUnavailable}:{})}))}:{})});break;
+          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(this.user??'',this.user??LEGACY_BACKUP_SCOPE)))}:{}),tasks:await backupStatuses(slot),...(slot.repository?{repository:JSON.parse(JSON.stringify({...await slot.repository.status(this.user??LEGACY_BACKUP_SCOPE),...(slot.repositoryActivationUnavailable?{activationUnavailable:slot.repositoryActivationUnavailable}:{})}))}:{})});break;
         }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.

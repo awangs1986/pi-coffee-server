@@ -1,0 +1,62 @@
+import {cp,mkdir,readFile,lstat,readdir,chmod,open} from 'node:fs/promises';
+import {join,resolve,dirname,isAbsolute,relative} from 'node:path';
+import {SessionManager} from '@earendil-works/pi-coding-agent';
+import {type CheckpointManifest} from './backup.js';
+import type {Workspaces,Conversation,Project} from './workspaces.js';
+import type {NativeRestorePreparation,RestoreAction} from './restore.js';
+import {durableFile,durableJson,exists,privateDir,restoreFail,sha,syncDir,treeDigest} from './restore-files.js';
+
+/** Pi's restore graph is interpreted here, behind the NativeRecovery boundary.
+ * Native JSONL is preserved byte-for-byte at its original owned path. Settings,
+ * secrets and execution authority are never installed as live configuration. */
+export async function preparePiRestore(options:{scope:string;workspaces:Workspaces;sessionDir:string},point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string):Promise<NativeRestorePreparation>{
+ if(scope!==options.scope||point.manifest.adapterVersion!=='pi-1.1.0-jsonl-v3/coffee-checkpoint-v1')throw restoreFail('adapter_version_changed');
+ const member=point.manifest.members.find(m=>m.scope===scope&&m.taskId===taskId&&m.engine==='pi');if(!member)throw restoreFail('native_binding_missing');
+ if(point.manifest.members.some(m=>m.scope!==scope))throw restoreFail('shared_scope_requires_group_restore');
+ const sources=point.manifest.sources;if(new Set(sources.map(s=>s.recoveryKey)).size!==sources.length)throw restoreFail('duplicate_recovery_source');
+ const source=(key:string)=>{const item=sources.find(s=>s.recoveryKey===key);if(!item||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.id))throw restoreFail('source_missing');return {item,path:join(point.directory,'objects',item.id)};};
+ const registry=JSON.parse(await readFile(source('registry').path,'utf8'));if(registry.schemaVersion!==1||registry.scope!==scope||registry.conversation?.id!==taskId)throw restoreFail('registry_scope_mismatch');
+ const original:Conversation=registry.conversation;if((original.engine??'pi')!=='pi'||original.takeoverSegments?.some(s=>s.from!=='pi'||s.to!=='pi'))throw restoreFail('unsupported_native_graph');
+ const paths=await options.workspaces.recoveryPaths(original),taskTarget=original.taskRoot??paths.workspace;
+ if(await exists(taskTarget))throw restoreFail('target_exists_missing_only');
+ const parent=await privateDir(dirname(taskTarget));const nativeRoot=resolve(options.sessionDir);await privateDir(nativeRoot);
+ const nativeBinding=original.nativeBinding?.id??taskId,required=new Set([nativeBinding,...original.retainedNativeIds??[],...original.takeoverSegments?.flatMap(s=>s.nativeId?[s.nativeId]:[])??[]]);
+ if([...required].some(id=>!member.nativeBindings.includes(id)))throw restoreFail('native_binding_missing');
+ const nativeSources=sources.filter(s=>s.recoveryKey.startsWith('native-session/'));if(nativeSources.length!==member.nativeBindings.length)throw restoreFail('native_graph_incomplete');
+ const graph=new Map<string,{source:string;target:string;parent?:string}>();
+ for(const item of nativeSources){const id=item.recoveryKey.slice('native-session/'.length);if(!member.nativeBindings.includes(id)||!item.originalPath||dirname(item.originalPath)!==nativeRoot||!item.originalPath.endsWith('.jsonl')||await exists(item.originalPath))throw restoreFail('native_target_conflict');const path=join(point.directory,'objects',item.id),raw=await readFile(path,'utf8');
+  const lines=raw.trimEnd().split('\n');if(!lines.length||lines.some(line=>{try{const entry=JSON.parse(line);return !entry||typeof entry!=='object'||typeof entry.type!=='string';}catch{return true;}}))throw restoreFail('unsupported_native_schema');
+  const header=JSON.parse(lines[0]);if(header.type!=='session'||header.version!==3||header.id!==id||header.cwd!==paths.workspace||header.parentSession!==undefined&&(typeof header.parentSession!=='string'||dirname(resolve(header.parentSession))!==nativeRoot))throw restoreFail('unsupported_native_schema');
+  const native=SessionManager.open(path);if(native.getSessionId()!==id)throw restoreFail('native_binding_missing');
+  graph.set(id,{source:path,target:item.originalPath,...(header.parentSession?{parent:resolve(header.parentSession)}:{})});
+ }
+ const visiting=new Set<string>(),visited=new Set<string>();
+ const visit=(id:string)=>{if(visiting.has(id))throw restoreFail('native_parent_cycle');if(visited.has(id))return;const item=graph.get(id);if(!item)throw restoreFail('native_graph_incomplete');visiting.add(id);if(item.parent){const parent=[...graph].find(([,v])=>v.target===item.parent);if(!parent)throw restoreFail('native_graph_incomplete');visit(parent[0]);}visiting.delete(id);visited.add(id);};for(const id of required)visit(id);
+ if(visited.size!==graph.size)throw restoreFail('unexpected_native_identity');
+ const output=join(stage,'publish');await mkdir(output,{mode:0o700});
+ const stagedTask=join(output,'task');
+ if(original.taskRoot){await cp(source('task-data').path,stagedTask,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});await chmod(stagedTask,0o700);const workspace=join(stagedTask,'workspace');if(await exists(workspace)){if(await treeDigest(workspace)!==await treeDigest(source('workspace').path))throw restoreFail('workspace_material_mismatch');}else await cp(source('workspace').path,workspace,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});}
+ else await cp(source('workspace').path,stagedTask,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});
+ await writableTree(stagedTask);
+ const archive=join(stagedTask,original.taskRoot?'history':'.recovery-history',point.manifest.checkpointId);await mkdir(archive,{recursive:true,mode:0o700});
+ const configuration=sources.filter(s=>s.recoveryKey.startsWith('native-config/'));
+ // Credentials may appear under arbitrary user-defined names in models/web-search.
+ // Save only a content fingerprint inventory, never copy arbitrary config text.
+ await durableJson(join(archive,'configuration-reconfigure.json'),{schemaVersion:1,authenticationRestored:false,reauthenticationRequired:true,reconfigurationRequired:true,resources:configuration.map(s=>({name:s.recoveryKey,digest:point.manifest.objects.find(o=>o.path==='objects/'+s.id)?.sha256??null})),reason:'Reconfigure current providers and reviewed resources; historical configuration is not live authority'});
+ const mishu=sources.find(s=>s.recoveryKey==='platform/mishu/notes-only-v1');if(mishu){const raw=await readFile(join(point.directory,'objects',mishu.id),'utf8'),value=JSON.parse(raw);if(value.schemaVersion!==1||value.kind!=='mishu-notes-only'||value.taskId!==taskId||value.restorePolicy?.operationalAuthority!==false||value.restorePolicy?.automaticContext!==false||value.restorePolicy?.requireExplicitNoteAdoption!==true)throw restoreFail('mishu_archive_policy_invalid');await durableFile(join(archive,'mishu-notes-only.json'),raw);}
+ const pending=sources.find(s=>s.recoveryKey==='pending-inputs/notes-only');if(pending)await durableJson(join(archive,'pending-inputs-not-restored.json'),{schemaVersion:1,automaticReplay:false,originalDigest:point.manifest.objects.find(o=>o.path==='objects/'+pending.id)?.sha256??null,reason:'Queued inputs require a new explicit user command'});
+ const allowed=(key:string)=>['registry','workspace','task-data','native-config/restore-policy-v1','platform/mishu/notes-only-v1','pending-inputs/notes-only'].includes(key)||key.startsWith('native-session/')||key.startsWith('native-artifacts/')||key.startsWith('native-config/file/');
+ if(sources.some(s=>!allowed(s.recoveryKey)))throw restoreFail('unknown_recovery_source');
+ const actions:RestoreAction[]=[];
+ const add=async(source:string,target:string,phase:'task'|'native',parentOverride?:{dev:number;ino:number;uid:number})=>{await syncTree(source);const info=await lstat(source);actions.push({source,target,phase,digest:await treeDigest(source),dev:info.dev,ino:info.ino,parent:parentOverride??await privateDir(dirname(target))});};
+ await add(stagedTask,taskTarget,'task',parent);
+ for(const id of visited){const file=graph.get(id)!,native=join(output,'native-'+id);await durableFile(native,await readFile(file.source));await add(native,file.target,'native');}
+ for(const item of sources.filter(s=>s.recoveryKey.startsWith('native-artifacts/'))){const id=item.recoveryKey.slice('native-artifacts/'.length);if(!graph.has(id)||item.originalPath!==join(nativeRoot,'artifacts',id)||await exists(item.originalPath))throw restoreFail('native_artifact_conflict');await privateDir(join(nativeRoot,'artifacts'));const copy=join(output,'artifacts-'+id);await cp(join(point.directory,'objects',item.id),copy,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});await writableTree(copy);await add(copy,item.originalPath,'native');}
+ // Explicit record projection: do not import historical run/lifecycle/idempotency
+ // state or provider/forge account bindings as current execution authorization.
+ const conversation:Conversation={id:taskId,engine:'pi',cwd:paths.workspace,...(original.taskRoot?{taskRoot:original.taskRoot}:{}),workspaceKind:original.workspaceKind??'project',branch:original.branch,archived:original.archived,createdAt:original.createdAt,nativeBinding:{state:'bound',id:nativeBinding,writers:'idle'},retainedNativeIds:original.retainedNativeIds,takeoverSegments:original.takeoverSegments,...(original.projectId?{projectId:original.projectId}:{}),runState:'interrupted',lastRunStatus:'interrupted',creationState:'ready',...(original.startSha?{startSha:original.startSha}:{}),...(original.fork?.status==='completed'?{fork:original.fork}:{})};
+ let project:Project|undefined;if(original.projectId){const current=(await options.workspaces.list()).projects.find(p=>p.id===original.projectId);if(current)project=current;else if(registry.project?.id===original.projectId){const old:Project=registry.project;project={id:old.id,name:old.name,path:'',branch:old.branch,...(old.forge?{forge:old.forge}:{})};}else throw restoreFail('project_missing');}
+ return {conversation,project,actions,nativeBindings:[...visited].sort(),warnings:['Missing original paths only; existing targets are never replaced','Reconfigure and authenticate providers before an explicit new prompt','Historical MISHU notes are inert; roles, execution grants, cookies and queued inputs are not restored','Pi JSONL history/read verified separately from provider continuation; no automatic replay']};
+}
+async function writableTree(path:string):Promise<void>{const info=await lstat(path);if(info.isSymbolicLink())return;await chmod(path,info.isDirectory()?0o700:(info.mode&0o111)?0o700:0o600);if(info.isDirectory())for(const name of await readdir(path))await writableTree(join(path,name));}
+async function syncTree(path:string):Promise<void>{const info=await lstat(path);if(info.isSymbolicLink())return;if(info.isDirectory()){for(const name of await readdir(path))await syncTree(join(path,name));await syncDir(path);}else {const h=await open(path,'r');try{await h.sync();}finally{await h.close();}}}

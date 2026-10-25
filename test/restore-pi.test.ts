@@ -1,0 +1,45 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,mkdir,writeFile,readFile,rm,readdir} from 'node:fs/promises';
+import {tmpdir} from 'node:os';import {join} from 'node:path';import {once} from 'node:events';import {WebSocket} from 'ws';
+import {SessionManager} from '@earendil-works/pi-coding-agent';
+import {BackupCoordinator,WriterAdmissionFence} from '../src/host/backup.js';import {BackupRepository} from '../src/host/backup-repository.js';
+import {PiNativeRecoveryAdapter} from '../src/host/pi-recovery.js';import {RestoreCoordinator} from '../src/host/restore.js';
+import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';import {HostServer} from '../src/host/server.js';import {Workspaces} from '../src/host/workspaces.js';
+const binary=process.env.PI_COFFEE_TEST_RESTIC;
+it.skipIf(!binary)('restores an approved Pi task from real encrypted storage through live Host HTTP/WS and native RPC without replaying input',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-pi-restore-'));let host:HostServer|undefined,socket:WebSocket|undefined;
+ try{
+  const nativeDir=join(root,'native'),agentDir=join(root,'agent'),disk=join(root,'disk');for(const path of [nativeDir,agentDir,disk])await mkdir(path,{mode:0o700});
+  await writeFile(join(agentDir,'models.json'),JSON.stringify({providers:{fixture:{apiKey:'SYNTHETIC-DO-NOT-RESTORE',headers:{Authorization:'SYNTHETIC-HEADER'}}}}));
+  const alice=new Workspaces(join(root,'alice','projects')),bob=new Workspaces(join(root,'bob','projects'));await alice.createChatConversation('lost-task');await alice.createChatConversation('neighbor');await bob.createChatConversation('other-account');
+  const task=(await alice.lookup('lost-task'))!;await writeFile(join(task.cwd,'draft.md'),'keep uncommitted draft');
+  const native=SessionManager.create(task.cwd,nativeDir,{id:task.id});native.appendMessage({role:'user',content:'historic user turn',timestamp:1000});
+  const fence=new WriterAdmissionFence({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>({known:true})});
+  const adapter=new PiNativeRecoveryAdapter({scope:'alice',workspaces:alice,sessionDir:nativeDir,agentDir,fence,sourceCustody:async()=>({known:true})});
+  const coordinator=new BackupCoordinator({root:join(root,'checkpoints'),adapter});expect(await coordinator.capture('alice',task.id,'pi')).toMatchObject({state:'protected'});
+  const repository=new BackupRepository({root:join(root,'repository-runtime'),coordinator});await repository.configure({destination:disk,binary:binary!});const recovery=await repository.exportRecoveryPackage();await repository.verifyRecoveryPackage(recovery);const job=await repository.backup([{scope:'alice',taskId:task.id}]);
+  await alice.archive(task.id,true);await alice.deleteWorkspace(task.id,task.id,async()=>{await rm(native.getSessionFile()!);},true);
+  let authorized=true;const restore=new RestoreCoordinator({root:join(root,'restore-runtime'),repository,authorize:async(actor,scope,manage)=>manage?authorized&&actor==='awangs'&&scope==='alice':actor===scope,scope:async scope=>({workspaces:scope==='alice'?alice:bob,adapter:scope==='alice'?adapter:undefined,withPublication:(id,run)=>host!.withRestorePublication(scope,id,run)})});
+  const nativeFactory=new RpcPiSessionFactory({cwd:root,sessionDir:nativeDir,agentDir:join(root,'runtime-agent'),env:{PI_OFFLINE:'1'},args:['--no-extensions','--no-skills','--no-prompt-templates','--no-themes'],cwdForSession:async id=>(await alice.lookup(id))!.cwd});
+  host=new HostServer({port:0,token:'restore-native',requireUser:true,factory:nativeFactory,backup:{coordinator,repository,restore,scopes:['alice','bob']},scopeForUser:user=>({factory:nativeFactory,workspaces:user==='alice'?alice:bob})});await host.start();
+  const call=async(user:string,body?:unknown)=>{const r=await fetch(`http://127.0.0.1:${host!.address().port}/api/backup`,{method:body?'POST':'GET',headers:{authorization:'Bearer restore-native','x-pi-coffee-user':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
+  const request=(await call('alice',{action:'restore-request',taskId:task.id,jobId:job.id})).data;expect(request.state).toBe('requested');
+  let plan=(await call('awangs',{action:'restore-plan',id:request.id,revision:1}));expect(plan.status).toBe(200);expect(plan.data.state).toBe('staged');
+  expect((await alice.list()).conversations.map(t=>t.id)).toEqual(['neighbor']);expect(await readdir(nativeDir)).toEqual([]);
+  expect((await call('awangs',{action:'restore-approve',id:request.id,revision:0,digest:plan.data.digest})).status).toBe(409);
+  expect((await call('awangs',{action:'restore-publish',id:request.id,revision:1,digest:plan.data.digest})).status).toBe(409);
+  await call('awangs',{action:'restore-revise',id:request.id,revision:1});expect((await call('awangs',{action:'restore-approve',id:request.id,revision:1,digest:plan.data.digest})).status).toBe(409);
+  plan=await call('awangs',{action:'restore-plan',id:request.id,revision:2});expect(plan.status).toBe(200);
+  expect((await call('awangs',{action:'restore-approve',id:request.id,revision:2,digest:plan.data.digest})).data.state).toBe('approved');
+  authorized=false;expect((await call('awangs',{action:'restore-publish',id:request.id,revision:2,digest:plan.data.digest})).status).toBe(403);authorized=true;
+  const completed=await call('awangs',{action:'restore-publish',id:request.id,revision:2,digest:plan.data.digest});expect(completed.status).toBe(200);expect(completed.data.state).toBe('completed');expect((await call('awangs',{action:'restore-publish',id:request.id,revision:2,digest:plan.data.digest})).data.state).toBe('completed');
+  expect((await alice.list()).conversations.map(t=>t.id).sort()).toEqual(['lost-task','neighbor']);expect((await bob.list()).conversations.map(t=>t.id)).toEqual(['other-account']);expect(await readFile(join(task.cwd,'draft.md'),'utf8')).toBe('keep uncommitted draft');
+  const archive=join(task.cwd,'.recovery-history'),checkpoint=(await readdir(archive))[0];expect(await readFile(join(archive,checkpoint,'configuration-reconfigure.json'),'utf8')).not.toContain('SYNTHETIC-DO-NOT-RESTORE');
+  socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer restore-native','x-pi-coffee-user':'alice'}});await once(socket,'open');
+  const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(raw.toString())));socket.send(JSON.stringify({v:1,type:'open',sessionId:task.id,requireExisting:true}));
+  const deadline=Date.now()+15000;while(Date.now()<deadline&&!frames.some(f=>f.type==='history'))await new Promise(r=>setTimeout(r,20));
+  const history=frames.find(f=>f.type==='history');expect(history,JSON.stringify(frames)).toBeDefined();expect(JSON.stringify(history)).toContain('historic user turn');expect(JSON.stringify(history)).not.toContain('SYNTHETIC');
+  socket.send(JSON.stringify({v:1,type:'get_queue'}));await new Promise(r=>setTimeout(r,100));expect(frames.filter(f=>f.type==='queue').flatMap(f=>f.items??[])).toEqual([]);
+  const persisted=SessionManager.open(native.getSessionFile()!);expect(persisted.getSessionId()).toBe(task.id);expect(persisted.buildSessionContext().messages).toHaveLength(1);
+ }finally{socket?.terminate();await host?.close();await rm(root,{recursive:true,force:true});}
+},90000);
