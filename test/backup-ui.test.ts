@@ -16,3 +16,8 @@ it('shows encrypted repository coverage and honest failed jobs without exposing 
  expect(document.body.textContent).toContain('Restic 0.19.1');expect(document.body.textContent).toContain('failed-job');expect(document.body.textContent).toContain('destination_unavailable');expect(document.body.textContent).toContain('26 小时');
  expect([...document.querySelectorAll('button')].some(b=>b.textContent?.includes('导出离线'))).toBe(false);
 });
+it('shows independent daily schedule, persistent alerts and separate checkpoint/job times to its reader',async()=>{
+ const panel=initBackupControls({context:()=>({user:'bob'}),request:async()=>({scope:'bob',canManage:false,tasks:[],schedule:{configured:true,schedule:{revision:'v1',timeZone:'America/Toronto',hour:4,minute:0},workerState:'overdue',lastCheckedAt:'2026-10-23T04:00:00Z',coverage:{state:'stale',unprotected:[],stale:['task'],points:[{taskId:'task',captureAt:'2026-10-22T04:00:00Z'}]},alerts:[{kind:'point-stale',message:'Checkpoint is older than 24 hours',openedAt:'2026-10-23T04:00:00Z'}],runs:[{date:'2026-10-23',state:'partial',finishedAt:'2026-10-23T04:10:00Z'}]}})});await panel.open();
+ expect(document.body.textContent).toContain('04:00');expect(document.body.textContent).toContain('America/Toronto');expect(document.body.textContent).toContain('2026-10-22T04:00:00Z');expect(document.body.textContent).toContain('2026-10-23T04:10:00Z');expect(document.body.textContent).toContain('point-stale');expect(document.body.textContent).toContain('超过 2 分钟');
+ expect([...document.querySelectorAll('button')].some(b=>b.textContent==='保存每日计划')).toBe(false);
+});
