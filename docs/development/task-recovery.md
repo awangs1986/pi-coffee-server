@@ -39,7 +39,7 @@ node dist/src/restore-cli.js publish --profile /private/host-recovery.json --id 
 `status`, `cancel`, and `revise` use the same authenticated endpoint and current revision. Cross-account selection requires the configured administrator and managed-scope allowlist. Request/cancel metadata alone never grants approval, native execution, restored provider authentication or automatic input replay.
 
 Shared native files are coordinated before account approval. Children from the
-same verified full checkpoint cut may bind an identical native target to one
+same verified complete checkpoint cut may bind an identical native target to one
 validated staged inode and exact replacement preimage. Their approval digests
 and the account vector are then recalculated. Later children require the
 publisher's matching completed registry receipt; byte equality alone never
