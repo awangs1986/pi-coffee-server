@@ -21,7 +21,7 @@ const fail=(code:string)=>new BackupError(code,({offline_copy_required:'Export a
  * no live source paths, repository passwords or native stores enter browser status. */
 export class BackupRepository {
  readonly root:string;private now:()=>number;private lockNonce?:string;
- constructor(private options:{root:string;coordinator:BackupCoordinator;now?:()=>number;timeoutMs?:number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
+ constructor(private options:{root:string;coordinator:Pick<BackupCoordinator,'sealedCheckpoint'>;now?:()=>number;timeoutMs?:number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
  private async initialize(){await mkdir(this.root,{recursive:true,mode:0o700});await privateDirectory(this.root);await mkdir(join(this.root,'jobs'),{recursive:true,mode:0o700});await privateDirectory(join(this.root,'jobs'));}
  private async config():Promise<RepositoryConfig>{await this.initialize();return JSON.parse(await privateText(join(this.root,'config.json'),32768));}
  private async saveConfig(config:RepositoryConfig){await atomicJson(this.root,'config.json',config);}
@@ -81,10 +81,12 @@ export class BackupRepository {
   }
   config.retiredKeys=[];
  }
- async backup(selection:BackupSelection[],signal?:AbortSignal):Promise<RepositoryJob>{
+ async backup(selection:BackupSelection[],signal?:AbortSignal,requestId?:string):Promise<RepositoryJob>{
   await this.initialize();return this.exclusive(async()=>{
    const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');
-   const job:RepositoryJob={schema:1,id:randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId})=>({scope,taskId})),points:[],verification:'none'};
+   if(requestId&&!idPattern.test(requestId))throw fail('invalid_operation');
+   if(requestId){const existing=(await this.jobs()).find(job=>job.id===requestId);if(existing){if(JSON.stringify(existing.selection)!==JSON.stringify(selection))throw fail('operation_conflict');if(existing.state==='succeeded')return existing;throw fail(existing.state==='running'?'operation_uncertain':existing.errorCode??'repository_failed');}}
+   const job:RepositoryJob={schema:1,id:requestId??randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId})=>({scope,taskId})),points:[],verification:'none'};
    await this.saveJob(job);
    try{
     await this.destination(config);if(!selection.length||selection.length>100000)throw fail('invalid_selection');

@@ -1,0 +1,37 @@
+# Candidate template only. Installation/UID/group creation requires owner activation.
+[Unit]
+Description=PI Coffee independent backup key broker
+After=local-fs.target
+
+[Service]
+Type=simple
+User=pi-coffee-backup
+Group=pi-coffee-backup-control
+UMask=0077
+RuntimeDirectory=pi-coffee-backup
+RuntimeDirectoryMode=0750
+StateDirectory=pi-coffee-backup
+StateDirectoryMode=0700
+ExecStart=/opt/pi-coffee/node/bin/node /opt/pi-coffee/server/dist/src/backup-key-broker-cli.js serve --config /etc/pi-coffee/backup-key-broker.json
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/pi-coffee-backup /run/pi-coffee-backup /mnt/pi-coffee-backup
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitCORE=0
+MemoryMax=1G
+MemorySwapMax=0
+CPUQuota=200%
+TasksMax=128
+Nice=15
+IOSchedulingClass=idle
+# Per-Restic engine scope verifies its own independent limits before execution.
+# The dedicated service account's user manager must be provisioned by the owner.
+
+[Install]
+WantedBy=multi-user.target
