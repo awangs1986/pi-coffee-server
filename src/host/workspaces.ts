@@ -1,3 +1,4 @@
+import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
 import type {WriterAdmissionFence} from './backup.js';
 import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
 import {copyForkTree} from './fork-files.js';
@@ -18,7 +19,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -141,8 +142,7 @@ export class Workspaces {
   private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
   private async saveState() {
     const next=this.saveTail.then(async()=>{
-      const temp=join(this.root,'.coffee',randomUUID()+'.tmp');
-      await writeFile(temp,JSON.stringify(this.state,null,2),{mode:0o600});await rename(temp,join(this.root,'.coffee','state.json'));
+      await durableJson(join(this.root,'.coffee','state.json'),this.state);
       for(const c of this.state.conversations)if(c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
     });this.saveTail=next.catch(()=>undefined);return next;
   }
@@ -158,6 +158,39 @@ export class Workspaces {
     });
     this.tails.set(name,next);
     try {return await next;} finally {if(this.tails.get(name)===next)this.tails.delete(name);}
+  }
+  /** Trusted restore boundary. Missing-original-path imports only; the current
+   * in-memory registry is merged and durably committed, never replaced from disk. */
+  async recoveryPaths(task:Conversation):Promise<{workspace:string;taskData:string}>{
+    await this.load();
+    if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(task.id))throw restoreFail('invalid_identity');
+    const base=this.taskRoot??(task.workspaceKind==='chat'?this.chatRoot:join(this.root,'checkouts'));
+    await privateDir(base);
+    const taskData=this.taskRoot?join(base,task.id):task.cwd;
+    const workspace=this.taskRoot?join(taskData,'workspace'):join(base,task.id);
+    if(task.cwd!==workspace||(task.taskRoot!==undefined&&task.taskRoot!==taskData)||Boolean(task.taskRoot)!==Boolean(this.taskRoot))throw restoreFail('original_path_not_owned');
+    return {workspace,taskData};
+  }
+  async recoveryOwnsNativeCwd(cwd:string):Promise<boolean>{
+    await this.load();if(typeof cwd!=='string'||resolve(cwd)!==cwd)return false;
+    const roots=this.taskRoot?[this.taskRoot]:[this.chatRoot,join(this.root,'checkouts')];
+    for(const root of roots){const rel=relative(root,cwd),parts=rel.split('/');if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(parts[0])||parts.length!==(this.taskRoot?2:1)||(this.taskRoot&&parts[1]!=='workspace'))continue;await privateDir(root);const info=await lstat(cwd).catch((e:NodeJS.ErrnoException)=>{if(e.code==='ENOENT')return undefined;throw e;});if(info&&(info.isSymbolicLink()||!info.isDirectory()||await realpath(cwd)!==cwd))return false;return true;}
+    return false;
+  }
+  async recoveryRegistryIdentity(){await this.load();return privateDir(join(this.root,'.coffee'));}
+  async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null}):Promise<void>{
+    await this.load();await privateDir(join(this.root,'.coffee'));const current=this.state.conversations.find(c=>c.id===input.conversation.id);
+    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest){await this.save();return;}
+    if((current?sha(JSON.stringify(current)):null)!==input.expectedRegistry)throw restoreFail('registry_changed');
+    await this.recoveryPaths(input.conversation);await this.checkDirectory(input.conversation);
+    if(input.project){const existing=this.state.projects.find(p=>p.id===input.project!.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(input.project))throw restoreFail('project_changed');}
+    // Fields are allowlisted by the native adapter. Current roles, queue stores,
+    // authentication and MISHU execution journals never come through this seam.
+    const recovered=structuredClone(input.conversation);recovered.recoveryReceipt={operationId:input.operationId,digest:input.digest};
+    const at=this.state.conversations.findIndex(c=>c.id===recovered.id);if(at<0)this.state.conversations.push(recovered);else this.state.conversations[at]=recovered;
+    if(input.project&&!this.state.projects.some(p=>p.id===input.project!.id))this.state.projects.push(structuredClone(input.project));
+    this.state.deletedIds=this.state.deletedIds?.filter(id=>id!==recovered.id);
+    await this.save();
   }
   private conversationLock(id:string) { return 'conversation:'+id; }
   private async gitEnvironment(cwd:string,accountId?:string) {

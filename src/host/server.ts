@@ -1,4 +1,5 @@
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
 export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
@@ -68,7 +69,7 @@ export interface UserScope {
 
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -125,7 +126,9 @@ function repositoryClientOrUnavailable(factory:()=>BackupRepositoryAccess|undefi
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  authenticatedActor?:string;
   backup?:BackupCoordinator;
+  restore?:RestoreCoordinator;
   repository?:BackupRepositoryAccess;
   schedule?:BackupJobRunner;
   repositoryActivationUnavailable?:string;
@@ -246,7 +249,7 @@ export class HostServer {
       // one belongs to the identity-less (single-user) slot.
       const user = normalizeUsername(request.headers[USER_HEADER]);
       const actor=normalizeUsername(request.headers[ACTOR_HEADER])??user;
-      const slot = this.slotFor(user).then(slot=>({...slot,...(this.options.backup?.repositoryForActor?{repository:repositoryClientOrUnavailable(()=>this.options.backup!.repositoryForActor!(actor,user??LEGACY_BACKUP_SCOPE))}:{})}));
+      const slot = this.slotFor(user).then(slot=>({...slot,authenticatedActor:actor,...(this.options.backup?.repositoryForActor?{repository:repositoryClientOrUnavailable(()=>this.options.backup!.repositoryForActor!(actor,user??LEGACY_BACKUP_SCOPE))}:{})}));
       const hostSocket = new HostSocket(socket, slot, this.transfer, (scope, sessionId) => {
         this.transferTargets.set(scope, { slot, sessionId });
       }, options.metadataTimeoutMs ?? 10000,this.syncV2Enabled,work=>this.trackBackground(work));
@@ -295,7 +298,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
       };
       const scheduledStatus=async(target:UserSlot)=>({...await status(target),...(this.options.backup?.schedule?{schedule:await this.options.backup.schedule.status(target.user??LEGACY_BACKUP_SCOPE)}:{})});
       if(req.method==='GET'){json(res,200,await scheduledStatus(slot));return;}
@@ -314,6 +317,26 @@ export class HostServer {
         if(!Array.isArray(input.scopes)||input.scopes.some((scope:unknown)=>typeof scope!=='string'||!allowed.has(scope))){json(res,403,{error:'Schedule includes an unmanaged account scope'});return;}
         try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection});json(res,200,await scheduledStatus(slot));}
         catch(error){json(res,error instanceof BackupError?409:400,{error:error instanceof BackupError?error.message:'Invalid schedule configuration'});}return;
+      }
+      if(typeof input.action==='string'&&input.action.startsWith('restore-')){
+        res.setHeader('cache-control','no-store');const restore=this.options.backup?.restore;
+        const manage=!['restore-request','restore-cancel'].includes(input.action);
+        if(manage&&actor!==administrator){json(res,403,{error:'Recovery approval and publication require '+administrator});return;}
+        if(!restore){json(res,409,{error:'Restore service unavailable'});return;}
+        try{
+          if(input.action==='restore-request'){
+            const requestedScope=input.scope??dataScope;
+            if(typeof requestedScope!=='string'||requestedScope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(requestedScope))){json(res,403,{error:'Recovery request scope denied'});return;}
+            if(typeof input.taskId!=='string'||typeof input.jobId!=='string'){json(res,400,{error:'Choose a task and repository job'});return;}
+            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId}));return;
+          }
+          const action=input.action.slice('restore-'.length);
+          if(!['plan','revise','approve','publish','cancel'].includes(action)||typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an operation and current revision'});return;}
+          // Preparation reads the encrypted key and uses the same production boundary gate.
+          if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
+          const result=await restore.operate(actor??'',input.id,{action:action as 'plan'|'revise'|'approve'|'publish'|'cancel',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})});json(res,200,result);
+          if(action==='publish')this.broadcastSessions(await this.slotFor(result.scope===LEGACY_BACKUP_SCOPE?undefined:result.scope));
+        }catch(error){const code=error instanceof BackupError?error.code:'';json(res,code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Restore operation failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('repository-')){
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
@@ -409,7 +432,8 @@ export class HostServer {
       if((!slot.index||!this.syncV2Enabled)&&!syncRoute[2].startsWith('recent-')){json(res,503,{error:'sync_unavailable'});return;}
       try {
         const id=decodeURIComponent(syncRoute[1]);if(!id||id.length>256||/[\/\\\x00]/.test(id)){json(res,400,{error:'invalid_conversation'});return;}
-        if(slot.workspaces && ((!await slot.workspaces.lookup(id)&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
+        const recovered=await slot.workspaces?.lookup(id);if(recovered?.recoveryReceipt)await slot.index?.recover(id,recovered.recoveryReceipt.operationId);
+        if(slot.workspaces && ((!recovered&&!slot.registry.get(id))||await slot.workspaces.isArchived(id))){json(res,404,{error:'conversation_unavailable'});return;}
         const args=Object.fromEntries(readUrl.searchParams);if(args.displayMode!==undefined&&!['compact','detailed'].includes(args.displayMode)){json(res,400,{error:'invalid_display_mode'});return;}if(args.cursor?.length>4096){json(res,400,{error:'invalid_cursor'});return;}
         let value:unknown;
         if(syncRoute[2].startsWith('recent-')){
@@ -719,14 +743,14 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence,async id=>(await scope.workspaces!.lookup(id))?.recoveryReceipt?.operationId):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -820,6 +844,12 @@ export class HostServer {
     }catch{console.warn('[pi-coffee] MISHU saved-scope discovery unavailable; stored state retained.');}
   }
 
+  /** Controlled live-owner seam for independent restoration jobs. */
+  async prepareRestoreScope(user:string|undefined){await this.slotFor(user);}
+  async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>,operationId?:string):Promise<T>{
+    const slot=await this.slotFor(user);if(slot.lifecycleLocks.has(taskId)||slot.registry.get(taskId)?.isBusy)throw new BackupError('target_busy','Task has live execution or lifecycle work');
+    slot.lifecycleLocks.add(taskId);try{await slot.registry.stopIdle(taskId);await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+  }
   address(): HostAddress {
     const address = this.http.address();
     if (address === null || typeof address === "string") {
@@ -934,6 +964,7 @@ class HostSocket implements SessionSink {
   private recentHistory=false;
   private displayMode:"compact"|"detailed"="detailed";
   private bindingEpoch?:string;
+  private recoveryGeneration?:string;
   private index?:ConversationIndex;
   private messageQueue: Promise<void>;
   private urgentControls=0;
@@ -1101,7 +1132,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot,repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await slot.schedule.status(this.user??LEGACY_BACKUP_SCOPE)))}:{})});break;
+          const slot=await this.slot,repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.authenticatedActor&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE)))}:{}),tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await slot.schedule.status(this.user??LEGACY_BACKUP_SCOPE)))}:{})});break;
         }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
@@ -1138,6 +1169,7 @@ class HostSocket implements SessionSink {
           if(!this.session||!this.opened)throw new NotOpenError();
           this.send(this.session.queueFrame);break;
         case "queue_action": {
+          await this.assertRecoveryInput(frame);
           if(!this.session||!this.opened)throw new NotOpenError();
           if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
           try {await this.session.changeQueue(frame);this.send({v:1,type:'ack',operation:'queue_action',requestId:frame.requestId});}
@@ -1258,7 +1290,7 @@ class HostSocket implements SessionSink {
       this.send({
         v: 1,
         type: "error",
-        code: error instanceof ConversationIndexError ? error.code : error instanceof SessionBusyError
+        code: error instanceof BackupError ? error.code : error instanceof ConversationIndexError ? error.code : error instanceof SessionBusyError
           ? "busy"
           : error instanceof NotOpenError
             ? "not_open"
@@ -1280,6 +1312,7 @@ class HostSocket implements SessionSink {
     if(task?.engine && task.engine!=="pi" && frame.nativeProtocol!==1)throw new Error("This Task requires a native-Agent capable client");
     const listed=frame.sessionId && !task ? (await this.registry.list()).find(s=>s.id===frame.sessionId) : undefined;
     if(frame.sessionId && this.workspaces && !task && !listed)throw new Error("Unknown Task: conversation unavailable");
+    if(task?.recoveryReceipt)await this.index?.recover(task.id,task.recoveryReceipt.operationId);
     const engine=task?.engine ?? listed?.engine ?? "pi";
     // Resolve asynchronous metadata before taking the history/replay snapshot.
     // Nothing may yield between that snapshot, attaching and sending its replay.
@@ -1312,7 +1345,7 @@ class HostSocket implements SessionSink {
     // Switching away while native history loads must not leave a phantom subscriber.
     if(this.closed){result.session.detach(this);return;}
     this.metadataEpoch++;
-    this.session = result.session;this.bindingEpoch=syncPage?.bindingEpoch;
+    this.session = result.session;this.bindingEpoch=syncPage?.bindingEpoch;this.recoveryGeneration=task?.recoveryReceipt?.operationId;
     this.opened = true;
     const state = result.session.currentState;
     // Attach before replaying. No await occurs between these operations, so a
@@ -1321,6 +1354,7 @@ class HostSocket implements SessionSink {
     this.send({
       v: 1,
       type: "opened",
+      ...(this.recoveryGeneration?{recoveryGeneration:this.recoveryGeneration}:{}),
       ...(syncPage?{syncProtocol:2 as const,bindingEpoch:syncPage.bindingEpoch,baseRevision:syncPage.baseRevision}:{}),
       engine,
       capabilities,
@@ -1374,8 +1408,13 @@ class HostSocket implements SessionSink {
     }
   }
 
+  private async assertRecoveryInput(frame:ClientFrame){
+    if(!this.session)return;const generation=(await this.workspaces?.lookup(this.session.id))?.recoveryReceipt?.operationId;
+    if(generation&&(this.recoveryGeneration!==generation||frame.recoveryGeneration!==generation))throw new BackupError('recovery_generation_required','This task was restored. Review its current history and explicitly submit a new input; old pending messages remain drafts.');
+  }
   private async prompt(frame: Extract<ClientFrame, { type: "prompt" }>): Promise<void> {
     const originSession=this.session,originGeneration=originSession?.commandGeneration;
+    await this.assertRecoveryInput(frame);
     if(this.workspaces && this.session && await this.workspaces.isArchived(this.session.id)) throw new Error("Restore the archived conversation first");
     if(this.session && this.lifecycleLocks.has(this.session.id))throw new Error("Conversation lifecycle operation in progress");
     if (!this.session || !this.opened) throw new NotOpenError();

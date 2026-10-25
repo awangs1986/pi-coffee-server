@@ -58,7 +58,7 @@ export interface NativeRecoveryAdapter {readonly version:string;resolve(scope:st
 export interface CheckpointObject {path:string;kind:'file'|'directory'|'symlink';size:number;mode?:number;linkTarget?:string;sha256?:string;role:RecoverySource['role'];}
 export interface CheckpointManifest {
  schemaVersion:1;checkpointId:string;captureAt:string;adapterVersion:string;groupId:string;epoch:number;
- members:RecoveryMember[];runtime:{serverVersion:string|null;commit:string|null};sources:{id:string;recoveryKey:string;role:RecoverySource['role']}[];coverage:'complete';objects:CheckpointObject[];totalBytes:number;
+ members:RecoveryMember[];runtime:{serverVersion:string|null;commit:string|null};sources:{id:string;recoveryKey:string;role:RecoverySource['role'];originalPath?:string}[];coverage:'complete';objects:CheckpointObject[];totalBytes:number;
 }
 export interface BackupTaskStatus {
  taskId:string;engine:AgentEngine;state:'unprotected'|'protected'|'waiting'|'unavailable'|'capturing'|'failed';
@@ -119,7 +119,7 @@ export class BackupCoordinator {
    for(const source of group.sources){assert();if(source.path!==undefined)await copySource(source.path,join(staging,'objects',source.id),'objects/'+source.id,source.role,objects,budget,{maxBytes:this.options.maxBytes??1024*1024*1024,maxFiles:this.options.maxFiles??100000},assert);else {budget.bytes+=source.data.byteLength;budget.files++;if(budget.bytes>(this.options.maxBytes??1024*1024*1024)||budget.files>(this.options.maxFiles??100000))throw new BackupError('resource_limit','Capture resource limit exceeded');await durableBytes(join(staging,'objects',source.id),source.data);objects.push({path:'objects/'+source.id,kind:'file',mode:0o600,size:source.data.byteLength,sha256:digest(source.data),role:source.role});}}
    await abortable(group.validate(),captureSignal);assert();
    const runtime=await readReleaseIdentity(process.cwd());assert();
-   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:acquiredLease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role})=>({id,recoveryKey,role})),coverage:'complete',objects,totalBytes:budget.bytes};
+   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:acquiredLease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role,path})=>({id,recoveryKey,role,...(path?{originalPath:resolve(path)}:{})})),coverage:'complete',objects,totalBytes:budget.bytes};
    if(Buffer.byteLength(JSON.stringify(manifest))>32*1024*1024)throw new BackupError('resource_limit','Manifest resource limit exceeded');
    await durableWrite(join(staging,'manifest.json'),JSON.stringify(manifest));
    await durableWrite(join(staging,'seal'),digest(JSON.stringify(manifest))+'\n');
