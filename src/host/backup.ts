@@ -81,6 +81,8 @@ export class BackupCoordinator {
   if(!this.initialized)this.initialized=(async()=>{await mkdir(this.root,{recursive:true,mode:0o700});await checkedDirectory(this.root);await mkdir(join(this.root,'sealed'),{mode:0o700,recursive:true});await checkedDirectory(join(this.root,'sealed'));await mkdir(join(this.root,'staging'),{mode:0o700,recursive:true});await checkedDirectory(join(this.root,'staging'));})();
   return this.initialized;
  }
+ /** Invalidate metadata for an independent reader after another process seals a point. */
+ refreshStatusInventory(){this.inventory=undefined;this.metadata.clear();}
  async status(scope:string,taskId:string,engine:AgentEngine):Promise<BackupTaskStatus>{
   const key=this.key(scope,taskId),excluded=DEFERRED_BACKUP_ENGINES.includes(engine as typeof DEFERRED_BACKUP_ENGINES[number]);
   const base:BackupTaskStatus={taskId,engine,state:'unprotected',coverage:excluded?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:excluded?'Deferred engine outside this release':'Native writer coverage is not verified'};
