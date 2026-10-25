@@ -7,10 +7,14 @@ import {verifySealedCheckpoint,type CheckpointManifest,type CaptureLease} from '
 import type {Conversation,Project,Workspaces} from './workspaces.js';
 import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,sha,syncDir,treeDigest} from './restore-files.js';
 export interface RestoreAction {source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number};}
-export interface NativeRestorePreparation {conversation:Conversation;project?:Project;actions:RestoreAction[];nativeBindings:string[];warnings:string[];}
+export interface NativeRestoreOptions {mode?:'missing-only'|'replace';selectedTaskIds?:string[];}
+export interface NativeMergeContext {operationId:string;digest:string;assertValid:()=>void;}
+export interface NativeRestorePreparation {nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];nativeBindings:string[];warnings:string[];}
 export interface NativeRestoreAdapter {
  readonly version:string;
- prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string):Promise<NativeRestorePreparation>;
+ prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string,options?:NativeRestoreOptions):Promise<NativeRestorePreparation>;
+ /** Serialized, approval-bound row/index merge. Called under the group lease on every retry. */
+ publishNativeMerge?(plan:Record<string,unknown>,context:NativeMergeContext):Promise<void>;
  restoreLease():Promise<CaptureLease>;
 }
 export interface RestoreScope {workspaces:Workspaces;adapter?:NativeRestoreAdapter;withPublication?:<T>(taskId:string,run:()=>Promise<T>,operationId:string)=>Promise<T>;}
@@ -18,7 +22,7 @@ export interface RestorePlan {
  schemaVersion:1;id:string;scope:string;taskId:string;jobId:string;requestedBy:string;revision:number;createdAt:string;updatedAt:string;
  state:'requested'|'staged'|'approved'|'publishing'|'cancelled'|'completed'|'completed-after-cancel'|'failed';phase:'requested'|'prepared'|'task'|'native'|'registry'|'complete';
  checkpointId?:string;manifestSha256?:string;adapterVersion?:string;nativeBindings?:string[];digest?:string;approvedBy?:string;approvedRevision?:number;approvalDigest?:string;cancelRequested?:boolean;errorCode?:string;
- plan?:{conversation:Conversation;project?:Project;actions:RestoreAction[];expectedRegistry:string|null;registryDigest:string;registryIdentity:{dev:number;ino:number;uid:number};checkpointDirectory:string;warnings:string[]};
+ plan?:{nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];expectedRegistry:string|null;registryDigest:string;registryIdentity:{dev:number;ino:number;uid:number};checkpointDirectory:string;warnings:string[]};
 }
 export type RestoreMaterialSource=Pick<BackupRepository,'jobs'|'extract'>;
 export interface RestoreCoordinatorOptions {root:string;/** Direct repository is for trusted isolated jobs; production supplies a scoped broker factory. */
@@ -58,7 +62,7 @@ export class RestoreCoordinator {
   if(!manifest.members.some(m=>m.scope===p.scope&&m.taskId===p.taskId&&['pi','codex'].includes(m.engine)))throw restoreFail('native_adapter_unavailable');
   const prepared=await scope.adapter.prepareRestore({directory,manifest},p.scope,p.taskId,stage);
   const current=await scope.workspaces.lookup(p.taskId);p.checkpointId=point.checkpointId;p.manifestSha256=point.manifestSha256;p.adapterVersion=scope.adapter.version;p.nativeBindings=prepared.nativeBindings;
-  p.plan={conversation:prepared.conversation,project:prepared.project,actions:prepared.actions,expectedRegistry:current?sha(JSON.stringify(current)):null,registryDigest:sha(JSON.stringify({conversation:prepared.conversation,project:prepared.project})),registryIdentity:await scope.workspaces.recoveryRegistryIdentity(),checkpointDirectory:directory,warnings:prepared.warnings};
+  p.plan={...(prepared.nativeMerge?{nativeMerge:prepared.nativeMerge}:{}),conversation:prepared.conversation,project:prepared.project,actions:prepared.actions,expectedRegistry:current?sha(JSON.stringify(current)):null,registryDigest:sha(JSON.stringify({conversation:prepared.conversation,project:prepared.project})),registryIdentity:await scope.workspaces.recoveryRegistryIdentity(),checkpointDirectory:directory,warnings:prepared.warnings};
   p.digest=this.planDigest(p);p.phase='prepared';p.state='staged';assertHeld();await this.save(p);
  }
  private planDigest(p:RestorePlan){return sha(JSON.stringify({scope:p.scope,id:p.id,requestedBy:p.requestedBy,jobId:p.jobId,checkpointId:p.checkpointId,manifestSha256:p.manifestSha256,adapterVersion:p.adapterVersion,revision:p.revision,nativeBindings:p.nativeBindings,plan:p.plan}));}
@@ -67,15 +71,16 @@ export class RestoreCoordinator {
   const run=async()=>{const lease=await scope.adapter!.restoreLease();try{
    p.state='publishing';await this.save(p);const plan=p.plan!;await verifySealedCheckpoint(plan.checkpointDirectory,p.manifestSha256);assertHeld();if(JSON.stringify(await scope.workspaces.recoveryRegistryIdentity())!==JSON.stringify(plan.registryIdentity))throw restoreFail('registry_authority_changed');
    const current=await scope.workspaces.lookup(p.taskId),receipt=current?.recoveryReceipt;
-   if(receipt?.operationId===p.id&&receipt.digest===p.digest){await this.reconcileActions(p,assertHeld);await scope.workspaces.importRecoveredTask({operationId:p.id,digest:p.digest!,conversation:plan.conversation,project:plan.project,expectedRegistry:plan.expectedRegistry});p.phase='registry';await this.save(p);}else{
+   if(receipt?.operationId===p.id&&receipt.digest===p.digest){await this.reconcileActions(p,assertHeld);await this.mergeNative(scope,p,lease,assertHeld);await scope.workspaces.importRecoveredTask({operationId:p.id,digest:p.digest!,conversation:plan.conversation,project:plan.project,expectedRegistry:plan.expectedRegistry});p.phase='registry';await this.save(p);}else{
     if((current?sha(JSON.stringify(current)):null)!==plan.expectedRegistry)throw restoreFail('registry_changed');
-    for(const phase of ['task','native'] as const){await this.allowed(p.approvedBy!,p.scope,true);for(const action of plan.actions.filter(a=>a.phase===phase)){lease.assertValid();await this.publishAction(action,assertHeld);}await this.options.onPublication?.({operationId:p.id,scope:p.scope,taskId:p.taskId,phase});assertHeld();p.phase=phase;await this.save(p);}
+    for(const phase of ['task','native'] as const){await this.allowed(p.approvedBy!,p.scope,true);for(const action of plan.actions.filter(a=>a.phase===phase)){lease.assertValid();await this.publishAction(action,assertHeld);}if(phase==='native')await this.mergeNative(scope,p,lease,assertHeld);await this.options.onPublication?.({operationId:p.id,scope:p.scope,taskId:p.taskId,phase});assertHeld();p.phase=phase;await this.save(p);}
     lease.assertValid();assertHeld();await this.allowed(p.approvedBy!,p.scope,true);await scope.workspaces.importRecoveredTask({operationId:p.id,digest:p.digest!,conversation:plan.conversation,project:plan.project,expectedRegistry:plan.expectedRegistry});await this.options.onPublication?.({operationId:p.id,scope:p.scope,taskId:p.taskId,phase:'registry'});assertHeld();p.phase='registry';await this.save(p);
    }
    assertHeld();p.phase='complete';p.cancelRequested=await this.cancelled(p);p.state=p.cancelRequested?'completed-after-cancel':'completed';delete p.errorCode;await this.save(p);
   }catch(e){assertHeld();p.state='failed';p.errorCode=(e as {code?:string}).code??'restore_failed';await this.save(p);throw e;}finally{lease.release();}};
   if(scope.withPublication)await scope.withPublication(p.taskId,run,p.id);else await run();
  }
+ private async mergeNative(scope:RestoreScope,p:RestorePlan,lease:CaptureLease,assertHeld:()=>void){if(!p.plan?.nativeMerge)return;if(!scope.adapter?.publishNativeMerge)throw restoreFail('native_merge_unavailable');await scope.adapter.publishNativeMerge(p.plan.nativeMerge,{operationId:p.id,digest:p.digest!,assertValid:()=>{assertHeld();lease.assertValid();}});}
  private async reconcileActions(p:RestorePlan,assertHeld:()=>void){for(const action of p.plan!.actions)await this.publishAction(action,assertHeld);}
  private async publishAction(action:RestoreAction,assertHeld:()=>void){
   assertHeld();
