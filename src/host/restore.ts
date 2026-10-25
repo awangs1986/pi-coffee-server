@@ -5,10 +5,10 @@ import {join,resolve,dirname} from 'node:path';
 import type {BackupRepository} from './backup-repository.js';
 import {verifySealedCheckpoint,type CheckpointManifest,type CaptureLease} from './backup.js';
 import type {Conversation,Project,Workspaces} from './workspaces.js';
-import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,sha,syncDir,treeDigest} from './restore-files.js';
-export interface RestoreAction {source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number};}
+import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,restoreParent,sha,syncDir,treeDigest} from './restore-files.js';
+export interface RestoreAction {source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number;guardRoot?:string};}
 export interface NativeRestoreOptions {mode?:'missing-only'|'replace';selectedTaskIds?:string[];}
-export interface NativeMergeContext {operationId:string;digest:string;assertValid:()=>void;}
+export interface NativeMergeContext {operationId:string;digest:string;publicationFd?:number;assertValid:()=>void;}
 export interface NativeRestorePreparation {nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];nativeBindings:string[];warnings:string[];}
 export interface NativeRestoreAdapter {
  readonly version:string;
@@ -80,11 +80,11 @@ export class RestoreCoordinator {
   }catch(e){assertHeld();p.state='failed';p.errorCode=(e as {code?:string}).code??'restore_failed';await this.save(p);throw e;}finally{lease.release();}};
   if(scope.withPublication)await scope.withPublication(p.taskId,run,p.id);else await run();
  }
- private async mergeNative(scope:RestoreScope,p:RestorePlan,lease:CaptureLease,assertHeld:()=>void){if(!p.plan?.nativeMerge)return;if(!scope.adapter?.publishNativeMerge)throw restoreFail('native_merge_unavailable');await scope.adapter.publishNativeMerge(p.plan.nativeMerge,{operationId:p.id,digest:p.digest!,assertValid:()=>{assertHeld();lease.assertValid();}});}
+ private async mergeNative(scope:RestoreScope,p:RestorePlan,lease:CaptureLease,assertHeld:()=>void){if(!p.plan?.nativeMerge)return;if(!scope.adapter?.publishNativeMerge)throw restoreFail('native_merge_unavailable');await scope.adapter.publishNativeMerge(p.plan.nativeMerge,{operationId:p.id,digest:p.digest!,publicationFd:(lease as CaptureLease&{publicationFd?:number}).publicationFd,assertValid:()=>{assertHeld();lease.assertValid();}});}
  private async reconcileActions(p:RestorePlan,assertHeld:()=>void){for(const action of p.plan!.actions)await this.publishAction(action,assertHeld);}
  private async publishAction(action:RestoreAction,assertHeld:()=>void){
   assertHeld();
-  const parent=await privateDir(dirname(action.target));if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
+  const parent=await restoreParent(dirname(action.target),action.parent.guardRoot);if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
   if(await exists(action.target)){const actual=await lstat(action.target);if(actual.isSymbolicLink()||actual.dev!==action.dev||actual.ino!==action.ino||await treeDigest(action.target)!==action.digest)throw restoreFail('target_changed');return;}
   const source=await lstat(action.source);if(source.dev!==action.dev||source.ino!==action.ino||await treeDigest(action.source)!==action.digest)throw restoreFail('stage_changed');
   // Linux renameat2(RENAME_NOREPLACE), via the trusted local helper, avoids a
