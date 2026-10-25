@@ -2,7 +2,6 @@ import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
