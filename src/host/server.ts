@@ -3,7 +3,6 @@ import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -68,6 +67,7 @@ export interface UserScope {
   sshme?: RunnerManager;
 }
 
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};

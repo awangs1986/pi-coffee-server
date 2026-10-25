@@ -16,7 +16,7 @@ const safeId=(value:string)=>/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
 const digest=(bytes:Uint8Array|string)=>createHash('sha256').update(bytes).digest('hex');
 export class BackupError extends Error {constructor(readonly code:string,message:string){super(message);}}
 export interface WriterProof {known:boolean;active?:boolean;reason?:string;}
-export interface CaptureLease {readonly epoch:number;readonly signal:AbortSignal;assertValid():void;release():void;}
+export interface CaptureLease {/** Trusted importer only: inherit through an explicit child stdio slot, never a native/model environment. */ readonly publicationFd?:number;readonly epoch:number;readonly signal:AbortSignal;assertValid():void;release():void;}
 
 /** The admission point must surround the *whole* writer lifetime, including descendants.
  * A proof callback audits custody outside this process. No proof means unknown,
@@ -34,6 +34,9 @@ export class WriterAdmissionFence {
  async runWriter<T>(writerClass:string,run:()=>Promise<T>):Promise<T>{
   const release=this.beginWriter(writerClass);try{return await run();}finally{release();}
  }
+ /** Publication owns an irreversible multi-file step; enforced implementations
+  * may block new admissions until its physical work settles. */
+ async publicationLease():Promise<CaptureLease>{return this.lease();}
  async lease():Promise<CaptureLease>{
   const epoch=this.epoch;
   if(this.active)throw new BackupError('writers_active','Consistency group has active writers');

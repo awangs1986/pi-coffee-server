@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {createServer,request} from 'node:http';import {createConnection} from 'node:net';import {mkdtemp,rm} from 'node:fs/promises';import {join,resolve} from 'node:path';import {tmpdir} from 'node:os';import {once} from 'node:events';import {spawn} from 'node:child_process';
 import {ProviderHttpBroker} from '../src/host/provider-http-broker.js';
 import {codexProviderTransportArgs,piProviderTransportOverrides} from '../src/host/provider-native-transport.js';
@@ -25,11 +25,12 @@ it('starts the actual loopback runner and preserves native stdout while exposing
  }finally{await broker.close();upstream.closeAllConnections();await new Promise<void>(ok=>upstream.close(()=>ok()));await rm(root,{recursive:true,force:true});}
 });
 it('overrides transport only and preserves provider/model identities without exposing original credentials',()=>{
- expect(codexProviderTransportArgs('same-provider',32191)).toEqual(['-c','model_providers.same-provider.base_url="http://127.0.0.1:32191/v1"','-c','model_providers.same-provider.env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c','model_providers.same-provider.requires_openai_auth=false','-c','model_providers.same-provider.supports_websockets=false']);
+ expect(codexProviderTransportArgs('same-provider',32191)).toEqual(['-c','model_provider=\"same-provider\"','-c','model_providers.same-provider.name=\"same-provider\"','-c','model_providers.same-provider.base_url="http://127.0.0.1:32191/v1"','-c','model_providers.same-provider.env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c','model_providers.same-provider.requires_openai_auth=false','-c','model_providers.same-provider.supports_websockets=false']);
  expect(piProviderTransportOverrides(['same-provider'],32191)).toEqual({'same-provider':{baseUrl:'http://127.0.0.1:32191/v1',apiKey:'managed-provider-placeholder'}});
  expect(()=>codexProviderTransportArgs('x.url=bad',32191)).toThrow();
 });
 
-it('loads the Pi transport override without replacing its model catalog',async()=>{
- const oldProvider=process.env.PI_COFFEE_PROVIDER_ID,oldPort=process.env.PI_COFFEE_PROVIDER_PORT;process.env.PI_COFFEE_PROVIDER_ID='original-provider';process.env.PI_COFFEE_PROVIDER_PORT='32191';try{const module=await import('../src/host/managed-pi-provider.mjs');const calls:unknown[]=[],handlers=new Map();module.default({registerProvider:(...args:unknown[])=>calls.push(args),on:(event:string,handler:unknown)=>handlers.set(event,handler)});expect(calls).toEqual([['original-provider',{baseUrl:'http://127.0.0.1:32191/v1',apiKey:'managed-provider-placeholder'}]]);expect(handlers.size).toBe(0);}finally{if(oldProvider===undefined)delete process.env.PI_COFFEE_PROVIDER_ID;else process.env.PI_COFFEE_PROVIDER_ID=oldProvider;if(oldPort===undefined)delete process.env.PI_COFFEE_PROVIDER_PORT;else process.env.PI_COFFEE_PROVIDER_PORT=oldPort;}
+it('loads the approved public Pi catalog without installing credentials or an authorization hook',async()=>{
+ const oldProvider=process.env.PI_COFFEE_PROVIDER_ID,oldPort=process.env.PI_COFFEE_PROVIDER_PORT;process.env.PI_COFFEE_PROVIDER_ID='original-provider';process.env.PI_COFFEE_PROVIDER_PORT='32191';const models=[{id:'original-model',name:'Original',reasoning:false,input:['text'],contextWindow:8192,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}];vi.stubGlobal('fetch',async(url:string)=>{expect(url).toBe('http://127.0.0.1:32191/_coffee/models');return new Response(JSON.stringify({schema:1,provider:'original-provider',api:'openai-completions',models}),{status:200});});
+ try{const module=await import('../src/host/managed-pi-provider.mjs');const calls:unknown[]=[],handlers=new Map();await module.default({registerProvider:(...args:unknown[])=>calls.push(args),on:(event:string,handler:unknown)=>handlers.set(event,handler)});expect(calls).toMatchObject([['original-provider',{baseUrl:'http://127.0.0.1:32191/v1',api:'openai-completions',models,apiKey:expect.any(String)}]]);expect(JSON.stringify(calls)).toContain('managed-placeholder');expect(handlers.size).toBe(0);}finally{vi.unstubAllGlobals();if(oldProvider===undefined)delete process.env.PI_COFFEE_PROVIDER_ID;else process.env.PI_COFFEE_PROVIDER_ID=oldProvider;if(oldPort===undefined)delete process.env.PI_COFFEE_PROVIDER_PORT;else process.env.PI_COFFEE_PROVIDER_PORT=oldPort;}
 });

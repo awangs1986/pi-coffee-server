@@ -1,3 +1,4 @@
+import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
@@ -54,6 +55,7 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
  * Login is Codex's own (`codex login` once in the VM, credentials in
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
+  nativeCustody?:NativeWriterCustody;
   instructions?:()=>Promise<string|undefined>;
   /** Host-proven empty Chat only; revoked durably before any prompt admission. */
   allowEmptyRecovery?:()=>Promise<boolean>;
@@ -66,6 +68,8 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
   /** Shared Codex home (auth, config, session rollouts); Codex's default when omitted. */
   codexHome?: string;
   model?: string;
+  protectedProvider?:string;
+  allowedModels?:string[];
   reasoningEffort?: string;
   /** Codex sandbox for the agent's own tools; full access mirrors Pi's Execution Seam (ADR-0005). */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -146,13 +150,19 @@ export class CodexSessionFactory implements PiSessionFactory {
     finally { this.connecting = undefined; }
   }
 
+  private async nativeServer(options:ConstructorParameters<typeof CodexAppServer>[0]):Promise<CodexAppServer>{
+    if(!this.options.nativeCustody)return new CodexAppServer(options);
+    const launch=await this.options.nativeCustody.prepare({engine:'codex',executable:options.cliPath,args:options.args,cwd:options.cwd,env:options.env});
+    return new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
+  }
+
   private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? []),...(this.options.preparation?Object.entries(forkPreparationConfig()).flatMap(([key,value])=>['-c',key+'='+JSON.stringify(value)]):[])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment({...this.options.env,...await this.options.envForSession?.()}),
       ...(this.options.codexHome === undefined ? {} : { CODEX_HOME: this.options.codexHome }),
     };
-    const server = new CodexAppServer({
+    const server = await this.nativeServer({
       cliPath: this.options.cliPath ?? "codex",
       args,
       cwd: this.options.cwd,
@@ -171,7 +181,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       if (parsed) { this.rateLimits = parsed; this.rateLimitsReadAt = Date.now(); }
     });
     // The VM admin logs Codex in, not the users: say so loudly when nobody has.
-    void server.request("getAuthStatus", {}).then((status) => {
+    if(!this.options.protectedProvider)void server.request("getAuthStatus", {}).then((status) => {
       const method = (status as Obj | null)?.authMethod;
       if (method === null || method === undefined) {
         console.warn(`[codex] ${this.options.cwd}: no Codex login in ${this.options.codexHome ?? "~/.codex"}; run \`codex login\` as the VM owner or set an API key`);
@@ -183,7 +193,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
     if(engine!=="codex")throw new Error("This adapter only discovers Codex models");
     // A short-lived native connection lists models only: no thread/start or turn/start.
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
@@ -191,7 +201,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       const config=configResult.config as Obj | undefined;
       const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
       const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
-      return {...codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),context:{preset:"272k"}};
+      return {...filterProtectedCodexModels(codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),this.options.allowedModels),context:{preset:"272k"}};
     }finally{await server.stop();}
   }
 
@@ -203,7 +213,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     return this.commandDiscovery;
   }
   private async discoverCommands():Promise<CommandInfo[]> {
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_skills","0.1.0");
@@ -363,9 +373,11 @@ export class CodexSessionFactory implements PiSessionFactory {
         ...(typeof response.reasoningEffort==='string'?{reasoningEffort:response.reasoningEffort}:initialEffort?{reasoningEffort:initialEffort}:{}),
       });
     }
+    if(this.options.protectedProvider&&response.modelProvider!==this.options.protectedProvider)throw Error('Native Codex provider is outside the protected transport');
     const thread = response.thread as Obj;
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
+      allowedModels:this.options.allowedModels,
       freshEmpty:!resumed||preferences.emptyContext===true&&(!this.options.allowEmptyRecovery||await this.options.allowEmptyRecovery()),
       cwd: this.options.cwd,
       preset,
@@ -565,6 +577,7 @@ interface CodexPreferences {
   reasoningEffort?:string;
 }
 interface CodexSessionSettings {
+  allowedModels?:string[];
   planMode?:boolean;
   freshEmpty?:boolean;
   developerInstructions?:string;
@@ -706,6 +719,7 @@ class CodexSession implements PiSession {
   }
 
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    if(this.settings.allowedModels&&!this.settings.allowedModels.includes(this.model??''))throw Error('Choose a model enrolled in the protected provider transport');
     const command=/^\/(review|init|plan|recap)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if(/^\/[a-z][a-z0-9-]*(?:\s|$)/i.test(text.trim())&&!command)throw Error("Native command requires the Web command dispatcher; no prompt was sent");
     if(command&&images?.length)throw Error('Native command does not accept attachments');
@@ -847,11 +861,12 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {},10000) as Obj;
-    const models=codexModelChoices(result,this.model,this.effort);
+    const models=filterProtectedCodexModels(codexModelChoices(result,this.model,this.effort),this.settings.allowedModels);
     return {...models,speed:{mode:this.speed,fastAvailable:models.models.some(m=>m.id===models.current?.id&&m.fastMode===true)},context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
+    if(this.settings.allowedModels&&!this.settings.allowedModels.includes(id))throw Error('This model is not enrolled in the protected provider transport');
     // Applied as an override on the next turn; Codex has no per-thread setter.
     await this.updatePreferences({model:id});
   }
@@ -1299,3 +1314,5 @@ function codexModelChoices(result:Obj,configuredModel?:string,configuredEffort?:
       thinkingLevels: levels,
     };
 }
+
+function filterProtectedCodexModels(models:PiModels,allowed?:readonly string[]):PiModels{if(!allowed)return models;return {...models,models:models.models.filter(model=>allowed.includes(model.id)),current:models.current&&allowed.includes(models.current.id)?models.current:null};}

@@ -6,13 +6,14 @@ export interface ProviderHttpBrokerOptions {
  socket:string;peerUid:number;operations:readonly ProviderOperation[];
  /** Re-read current actor/provider authority and refresh credentials outside the
   * model namespace for each request. Throw on revocation or expired authority. */
- credentials:()=>Promise<Record<string,string>>;
+ credentials:(request:{method:string;path:string;body:Buffer})=>Promise<Record<string,string>>;
+ metadata?:()=>Promise<unknown>;
  maxRequestBytes?:number;maxResponseBytes?:number;maxConcurrent?:number;timeoutMs?:number;socketMode?:0o600|0o660;
 }
 const peerFd=(socket:Socket)=>(socket as Socket&{_handle?:{fd?:number}})._handle?.fd;
 function checkedPeer(socket:Socket,uid:number){const fd=peerFd(socket);if(fd===undefined||kernelPeerCredentials(fd).uid!==uid)throw Error('Provider peer refused');}
 function validUid(uid:number){return Number.isSafeInteger(uid)&&uid>=0;}
-const passRequest=['content-type','accept','anthropic-version','anthropic-beta','openai-beta'];
+const passRequest=['content-type','accept','anthropic-version','anthropic-beta','openai-beta','originator','user-agent','session_id','conversation_id','x-client-request-id'];
 const passResponse=['content-type','cache-control','retry-after','x-request-id','request-id'];
 /** One endpoint is one trusted grant. No request supplies an upstream URL,
  * credential, executable, account or path on the host filesystem. */
@@ -33,12 +34,13 @@ export class ProviderHttpBroker {
  }
  private async handle(req:IncomingMessage,res:ServerResponse){
   const fail=(status:number)=>{if(res.headersSent)res.destroy();else{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end('{"error":"provider_transport_refused"}\n');}};
+  if(req.method==='GET'&&req.url==='/_coffee/models'&&this.options.metadata){if(this.active>=(this.options.maxConcurrent??4)){fail(429);return;}this.active++;try{const body=JSON.stringify(await this.options.metadata());if(Buffer.byteLength(body)>1024*1024)throw Error();res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(body);}catch{fail(403);}finally{this.active--;}return;}
   const endpoint=this.routes.get((req.method??'')+' '+(req.url??''));if(!endpoint){req.resume();fail(403);return;}if(this.active>=(this.options.maxConcurrent??4)){req.resume();fail(429);return;}
   this.active++;let upstream:ReturnType<typeof httpRequest>|undefined;let timer:NodeJS.Timeout|undefined;
   try{
    const chunks:Buffer[]=[];let length=0;for await(const chunk of req.iterator({destroyOnReturn:false})){length+=chunk.length;if(length>(this.options.maxRequestBytes??32*1024**2)){req.resume();fail(413);return;}chunks.push(Buffer.from(chunk));}
    const body=Buffer.concat(chunks);if(req.method==='POST'){try{const value=JSON.parse(body.toString('utf8'));if(!value||typeof value!=='object'||Array.isArray(value))throw Error();}catch{fail(400);return;}}
-   let credentials:Record<string,string>;try{credentials=await this.options.credentials();}catch{fail(403);return;}
+   let credentials:Record<string,string>;try{credentials=await this.options.credentials({method:req.method??'',path:req.url??'',body});}catch{fail(403);return;}
    const headers:Record<string,string>={};for(const name of passRequest){const value=req.headers[name];if(typeof value==='string')headers[name]=value;}
    for(const [name,value] of Object.entries(credentials)){validateHeaderName(name);validateHeaderValue(name,value);if(['host','connection','content-length','transfer-encoding','upgrade','proxy-authorization'].includes(name.toLowerCase()))throw Error('Unsafe provider credential header');headers[name]=value;}
    headers['content-length']=String(body.length);headers['accept-encoding']='identity';
