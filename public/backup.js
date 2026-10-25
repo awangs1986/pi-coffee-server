@@ -21,7 +21,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
    refresh.disabled=true;
    try{const data=await request(body,active.signal);if(!current()){if(dialog===modal)close();return;}
     scope=data.scope;output.replaceChildren();
-    if(data.canManage&&data.managedScopes?.length){account.hidden=false;const value=scope;account.replaceChildren();for(const name of data.managedScopes){const option=document.createElement('option');option.value=name;option.textContent=name;account.append(option);}account.value=value;}
+    if(data.canManage&&data.managedScopes?.length){account.hidden=false;const value=scope;account.replaceChildren();for(const name of data.managedScopes){const option=document.createElement('option');option.value=name;option.textContent=name==='__legacy_default__'?'原有账号范围':name;account.append(option);}account.value=value;}
     else account.hidden=true;
     const excluded=document.createElement('p');excluded.textContent='本期保护 Pi / Codex；Claude / Cursor / Grok 延期，不计入已保护范围。';output.append(excluded);
     if(!data.tasks?.length){const empty=document.createElement('p');empty.textContent='当前账号没有任务。';output.append(empty);}

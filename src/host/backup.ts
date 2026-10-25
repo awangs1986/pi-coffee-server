@@ -7,9 +7,11 @@ import {join,resolve,relative,isAbsolute,dirname} from 'node:path';
 import type {AgentEngine} from '../shared/protocol.js';
 
 export const BACKUP_PROTOCOL_VERSION=1;
+/** Reserved data-scope identity; cannot collide with a valid Gitea username. */
+export const LEGACY_BACKUP_SCOPE='__legacy_default__';
 export const BACKUP_ENGINES=['pi','codex'] as const;
 export const DEFERRED_BACKUP_ENGINES=['claude','cursor','grok'] as const;
-const validScope=(value:string)=>normalizeUsername(value)===value;
+const validScope=(value:string)=>value===LEGACY_BACKUP_SCOPE||normalizeUsername(value)===value;
 const safeId=(value:string)=>/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
 const digest=(bytes:Uint8Array|string)=>createHash('sha256').update(bytes).digest('hex');
 export class BackupError extends Error {constructor(readonly code:string,message:string){super(message);}}

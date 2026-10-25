@@ -1,4 +1,4 @@
-import {BackupCoordinator,BackupError} from './backup.js';
+import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -38,7 +38,7 @@ import {
   type ServerFrame,
 } from "../shared/protocol.js";
 
-import { normalizeUsername, USER_HEADER, taskNamespace } from "../shared/identity.js";
+import { normalizeUsername, USER_HEADER, ACTOR_HEADER, taskNamespace } from "../shared/identity.js";
 
 import { PI_ONLY_ENGINES, type AgentSessionFactory as PiSessionFactory } from "./agent-adapter.js";
 
@@ -131,7 +131,7 @@ interface UserSlot {
 
 async function backupStatuses(slot:UserSlot){
  if(!slot.workspaces)return [];
- return Promise.all((await slot.workspaces.list()).conversations.map(task=>slot.backup?slot.backup.status(slot.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'})));
+ return Promise.all((await slot.workspaces.list()).conversations.map(task=>slot.backup?slot.backup.status(slot.user??LEGACY_BACKUP_SCOPE,task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'})));
 }
 
 export interface HostAddress {
@@ -264,6 +264,8 @@ export class HostServer {
     }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
+    const rawActor=req.headers[ACTOR_HEADER],actor=rawActor===undefined?user:normalizeUsername(rawActor);
+    if(rawActor!==undefined&&!actor){json(res,400,{error:'Valid actor identity required'});return;}
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
@@ -271,30 +273,30 @@ export class HostServer {
     if(req.url==='/api/backup'){
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
-      const administrator=this.options.backup?.administrator??'awangs';
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',canManage:user===administrator,managedScopes:user===administrator?[...new Set([user,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),excludedEngines:['claude','cursor','grok']});
+      const administrator=this.options.backup?.administrator??'awangs',dataScope=slot.user??LEGACY_BACKUP_SCOPE;
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
       if(input.action==='status'){
-        if(user!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
-        if(typeof input.scope!=='string'||(input.scope!==user&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
-        const target=await this.slotFor(input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
+        if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+        if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||(input.scope!==dataScope&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        const target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
       }
       if(typeof input.taskId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.taskId)){json(res,400,{error:'Invalid task identity'});return;}
-      if(user!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+      if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
       let target=slot;
-      if(input.scope!==undefined&&input.scope!==user){
-        if(typeof input.scope!=='string'||!this.options.backup?.scopes?.includes(input.scope)){json(res,403,{error:'Scope is not managed by this backup service'});return;}
-        target=await this.slotFor(input.scope);
+      if(input.scope!==undefined&&input.scope!==dataScope){
+        if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||!this.options.backup?.scopes?.includes(input.scope)){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);
       }
       const task=await target.workspaces?.lookup(input.taskId);
       if(!task){json(res,404,{error:'Unknown task'});return;}
       if(!['capture','cancel'].includes(String(input.action))){json(res,400,{error:'Unknown backup operation'});return;}
       if(!coordinator){json(res,409,{error:'Native writer coverage is not verified'});return;}
       try{
-        if(input.action==='cancel'){json(res,200,{cancelled:coordinator.cancel(target.user??'default',task.id)});return;}
-        json(res,200,await coordinator.capture(target.user??'default',task.id,task.engine??'pi'));
+        if(input.action==='cancel'){json(res,200,{cancelled:coordinator.cancel(target.user??LEGACY_BACKUP_SCOPE,task.id)});return;}
+        json(res,200,await coordinator.capture(target.user??LEGACY_BACKUP_SCOPE,task.id,task.engine??'pi'));
       }catch(error){json(res,error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Backup operation failed'});}return;
     }
     if(req.url==='/api/mishu'){
@@ -1035,7 +1037,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??'',tasks:await backupStatuses(slot)});break;
+          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,tasks:await backupStatuses(slot)});break;
         }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.

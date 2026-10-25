@@ -1,4 +1,4 @@
-import {BackupCoordinator,BackupError,WriterAdmissionFence,type NativeRecoveryAdapter} from './host/backup.js';
+import {BackupCoordinator,BackupError,WriterAdmissionFence,LEGACY_BACKUP_SCOPE,type NativeRecoveryAdapter} from './host/backup.js';
 import {PiNativeRecoveryAdapter} from './host/pi-recovery.js';
 import {NativeWriterCustody} from './host/native-custody.js';
 import {BackupSourceCustody} from './host/backup-source-custody.js';
@@ -155,7 +155,7 @@ async function run(selectedRole: Role): Promise<void> {
     const workspaces=new Workspaces(user ? join(workRoot,"projects") : process.env.PI_COFFEE_PROJECT_ROOT ?? join(workRoot,"projects"),{taskRoot:taskRootForScope(process.env.PI_COFFEE_TASK_ROOT,process.env.PI_COFFEE_TASK_DEFAULT_USER,user,taskAccounts),chatRoot:user ? join(workRoot,"chats") : process.env.PI_COFFEE_CHAT_ROOT ?? join(workRoot,"chats"),ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(writerFence)workspaces.setBackupWriterFence(writerFence);
     await workspaces.list();
-    if(writerFence)recoveryAdapters.set(user??'default',new PiNativeRecoveryAdapter({scope:user??'default',workspaces,sessionDir:nativeSessionDir,agentDir:piOptions.agentDir,fence:writerFence,sourceCustody:sourceProof}));
+    if(writerFence)recoveryAdapters.set(user??LEGACY_BACKUP_SCOPE,new PiNativeRecoveryAdapter({scope:user??LEGACY_BACKUP_SCOPE,workspaces,sessionDir:nativeSessionDir,agentDir:piOptions.agentDir,fence:writerFence,sourceCustody:sourceProof}));
     const codexCommand=process.env.PI_COFFEE_CODEX_COMMAND ?? process.env.PI_COFFEE_CODEX_BIN ?? (agent==="codex" ? "codex" : undefined);
     const bookkeeping=sessionDir ?? join(cwd,".pi-coffee");
     const runners=new RunnerManager(sessionDir ? join(sessionDir,"runners") : join(homedir(),".local/share/pi-coffee/runners",...(user ? ["users",user] : ["default"])));

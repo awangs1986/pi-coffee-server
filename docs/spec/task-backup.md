@@ -20,13 +20,13 @@ This supported configuration requires an explicit owned private Pi agent directo
 
 ## Interfaces and enablement
 
-`GET /api/backup` uses the existing authenticated Web-to-Host user scope and lists only that user's tasks. The settings menu's Task backup dialog shows state, checkpoint identity, capture time, age, coverage and reasons. Ordinary users can read their own status. Administrator `awangs` can request or cancel capture; explicitly configured managed account names can be selected for administration. Unrecognized account/path input is rejected.
+`GET /api/backup` uses the existing authenticated Web-to-Host user scope and lists only that user's tasks. The settings menu's Task backup dialog shows state, checkpoint identity, capture time, age, coverage and reasons. Ordinary users can read their own status. Administrator `awangs` is authorized by the authenticated actor forwarded by Web, independently of the routed data scope. Legacy owner routing retains its original default store; its reserved backup scope cannot collide with a real account named `default`. Browser-supplied actor/scope headers do not grant authority. The administrator can request or cancel capture; explicitly configured managed account names can be selected for administration. Unrecognized account/path input is rejected.
 
 `get_backup_status` over the authenticated Host WebSocket returns the same own-scope protection rows; client-supplied foreign scopes are ignored.
 
 `POST /api/backup` supports capture/cancel by task identity and administrator status selection by managed scope. Web applies its normal authenticated route and Origin policy. Capture is bounded to one coordinator operation, 30 seconds, 1 GiB and 100,000 source objects by default; new work has priority. Private checkpoint staging is not published or reused after restart. Trusted consumption verifies sealed materials; corrupted/partial points are not handed to the repository worker.
 
-`PI_COFFEE_BACKUP_ROOT` opts into private source ledgers, shared native custody, writer fences and the coordinator. It must be outside all live source trees. `PI_COFFEE_BACKUP_USERS` is the comma-separated account administration allowlist. Existing runtime behavior is preserved when capture is not configured. Configuring this does not enable daily repository backup, retention or restoration.
+`PI_COFFEE_BACKUP_ROOT` opts into private source ledgers, shared native custody, writer fences and the coordinator. It must be outside all live source trees. `PI_COFFEE_BACKUP_USERS` is the comma-separated data-scope administration allowlist (routing scope IDs such as `gitea-2`, with `__legacy_default__` for the legacy source), rather than display login names. The actor's own routed source is available without selecting a different scope. Existing runtime behavior is preserved when capture is not configured. Configuring this does not enable daily repository backup, retention or restoration.
 
 ## Remaining implementation gates
 
