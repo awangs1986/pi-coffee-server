@@ -24,7 +24,7 @@ export class ManagedWriterFence extends WriterAdmissionFence {
  }
  override async publicationLease():Promise<CaptureLease>{
   const lease=await this.cutLease(true);try{lease.assertValid();this.publications++;}catch(error){lease.release();throw error;}let released=false;
-  return {epoch:lease.epoch,signal:lease.signal,publicationFd:lease.publicationFd,assertValid:()=>lease.assertValid(),release:()=>{if(!released){released=true;try{lease.release();}finally{this.publications--;}}}};
+  return {epoch:lease.epoch,signal:lease.signal,publicationFd:lease.publicationFd,assertValid:()=>lease.assertValid(),release:()=>{if(!released){released=true;try{lease.release();}finally{this.publications--;this.revision++;}}}};
  }
  override async runRecoveryPublication<T>(authority:RecoveryPublication,run:()=>Promise<T>):Promise<T>{if(!this.publications||authority.lease.publicationFd===undefined||![...this.kernelCuts].some(cut=>cut.fd===authority.lease.publicationFd))throw new BackupError('recovery_publication_required','Managed registry import requires the held physical publication lease');this.managed.publicationGate?.assertApprovedOperation(authority.operationId,authority.digest);authority.lease.assertValid();const result=await run();authority.lease.assertValid();return result;}
  override async lease():Promise<CaptureLease>{return this.cutLease(false);}
