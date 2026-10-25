@@ -19,7 +19,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -497,6 +497,14 @@ export class Workspaces {
     await checkedTaskRoot(c.taskRoot);
     await writeTaskJson(join(c.taskRoot,'history'),'conversation.json',{schemaVersion:1,role:'display-export-only',conversationId:id,engine:c.engine ?? 'pi',exportedAt:new Date().toISOString(),...history});
   }
+  /** Preserve typed native provenance before lifecycle records are replaced.
+   * These records identify required sources; adapters still require actual
+   * native files/SQL witnesses before they can protect or restore a task. */
+  private retainNativeHistory(c:Conversation,bindings:{engine:AgentEngine;nativeId:string|undefined}[],operationIds:(string|undefined)[]=[]){
+    const retained=[...(c.retainedNativeBindings??[])];for(const binding of bindings)if(binding.nativeId&&!retained.some(old=>old.engine===binding.engine&&old.nativeId===binding.nativeId))retained.push({engine:binding.engine,nativeId:binding.nativeId});
+    if(retained.length)c.retainedNativeBindings=retained;
+    const operations=[...new Set([...(c.retiredOperationIds??[]),...operationIds.filter((id):id is string=>Boolean(id))])];if(operations.length)c.retiredOperationIds=operations;
+  }
   async beginTakeover(id:string,operation:TakeoverState){return this.mutate(async()=>{
     const c=this.conversation(id);
     const handoff=operation.purpose==='compaction'&&operation.from==='codex'&&operation.to==='codex';
@@ -512,6 +520,7 @@ export class Workspaces {
     const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
     const old={...c};
     if(operation.purpose==='compaction'&&(c.archived||c.cleanupStarted||c.workspaceRemoved||c.nativeBinding?.id!==operation.sourceNativeId))throw new Error('Task binding changed during context replacement');
+    this.retainNativeHistory(c,[{engine:operation.from,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}],[operation.id]);
     c.takeoverSegments=[...(c.takeoverSegments??[]),{...(operation.purpose?{purpose:operation.purpose,version:operation.version}:{}),id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
     c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     try{await this.save();}catch(error){
@@ -524,7 +533,8 @@ export class Workspaces {
     const c=this.conversation(id);
     if(c.workspaceKind!=='chat'||!CHAT_ENGINES.includes(c.engine??'pi')||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi or Codex Chat can clear context');
     if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
-    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds,takeoverSegments:c.takeoverSegments,takeover:c.takeover,takeoverTitle:c.takeoverTitle};
+    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds,takeoverSegments:c.takeoverSegments,takeover:c.takeover,takeoverTitle:c.takeoverTitle};
+    this.retainNativeHistory(c,[...(c.takeoverSegments??[]).map(segment=>({engine:segment.from,nativeId:segment.nativeId})),{engine:c.engine??'pi',nativeId:operation.expectedNativeId},...(c.takeover?.nativeId?[{engine:c.takeover.to,nativeId:c.takeover.nativeId}]:[])],[...(c.takeoverSegments??[]).map(segment=>segment.id),c.takeover?.id,c.contextReset?.id,operation.id]);
     delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString(),...(operation.title?{title:operation.title}:{})};
     if(c.engine==='codex')c.nativeContextEmpty=true;
@@ -541,7 +551,8 @@ export class Workspaces {
   async rebindCodexThread(id:string,expectedNativeId:string,nativeId:string){return this.mutate(async()=>{
     const c=this.conversation(id);
     if(c.engine!=='codex'||c.nativeBinding?.id!==expectedNativeId||c.archived||c.workspaceRemoved||c.cleanupStarted)throw new Error('Native context changed; refresh before changing settings');
-    const previous={nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    this.retainNativeHistory(c,[{engine:'codex',nativeId:expectedNativeId}]);
     c.nativeBinding={state:'bound',id:nativeId};c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),expectedNativeId])];
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
@@ -603,7 +614,7 @@ export class Workspaces {
     if(error&&target.creationState==='creating'){target.creationState='failed';target.creationError='Fork failed; retained files require inspection';}
     await this.save();return structuredClone(target);
   },()=>this.conversationLock(targetId));}
-  async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
+  async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);this.retainNativeHistory(c,[{engine:c.engine??'pi',nativeId}]);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
   async createChatConversation(id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
