@@ -25,7 +25,7 @@ def safe(path, directory=False):
         raise ValueError('unsafe_native_source')
     return p
 
-def snapshot(request):
+def roots(request):
     home = safe(request['home'], True)
     config_path = home / 'config.toml'
     config = tomllib.loads(safe(config_path).read_text()) if config_path.exists() else {}
@@ -40,12 +40,16 @@ def snapshot(request):
     for key in ['model_instructions_file', 'developer_instructions_file', 'experimental_instructions_file']:
         if config.get(key):
             raise ValueError('external_native_resource')
-    if config.get('skills', {}).get('config') or config.get('plugins'):
+    if config.get('skills', {}).get('config') or config.get('plugins') or config.get('profiles') or config.get('profile'):
         raise ValueError('external_native_resource')
     unknown = [p for p in sql.glob('*.sqlite') if p.name not in SCHEMAS]
     if unknown:
         raise ValueError('unsupported_native_schema')
-    result = {'schemaVersion': 1, 'cliVersion': '0.159.1', 'nativeHome': str(home), 'sqliteHome': str(sql), 'databases': {}}
+    return {'schemaVersion': 1, 'cliVersion': '0.159.1', 'nativeHome': str(home), 'sqliteHome': str(sql), 'databases': {}}
+
+def snapshot(request):
+    result = roots(request)
+    home, sql = pathlib.Path(result['nativeHome']), pathlib.Path(result['sqliteHome'])
     for name in SCHEMAS:
         path = sql / name
         if not path.exists():
@@ -175,6 +179,7 @@ try:
     request = json.loads(sys.stdin.readline())
     os.umask(0o077)
     if request['operation'] == 'snapshot': result = snapshot(request)
+    elif request['operation'] == 'roots': result = roots(request)
     elif request['operation'] == 'initialize': result = initialize(request['path'], request['name'])
     elif request['operation'] == 'merge': result = merge(request)
     else: raise ValueError('unsupported_operation')
