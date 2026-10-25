@@ -1,7 +1,9 @@
+import {BackupExtractionStore} from './backup-extraction-store.js';
+import {emitSealedCheckpoint} from './backup-checkpoint-stream.js';
 import {hardenCurrentProcess,processProtection} from './linux-file-lease.js';
-import {constants} from 'node:fs';import {open,lstat,realpath,readFile,rm} from 'node:fs/promises';import {isAbsolute,resolve,join} from 'node:path';import {randomUUID} from 'node:crypto';
+import {constants} from 'node:fs';import {open,lstat,realpath,readFile,rm,mkdir} from 'node:fs/promises';import {isAbsolute,resolve,join} from 'node:path';import {randomUUID} from 'node:crypto';
 import {BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';import {BackupRepository} from './backup-repository.js';
-import {BackupBrokerError,type BackupBrokerPolicy,type BackupBrokerRequest,type BackupKeyServiceConfig,type BackupBrokerQualification} from './backup-key-protocol.js';import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';
+import {BackupBrokerError,type BackupBrokerPolicy,type BackupBrokerRequest,type BackupKeyServiceConfig,type BackupBrokerQualification,type BackupExtractionDescriptor} from './backup-key-protocol.js';import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';
 import {requestUnixPeer} from './backup-repository-client.js';
 const scopeValid=(value:unknown):value is string=>typeof value==='string'&&(value===LEGACY_BACKUP_SCOPE||/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(value));
 const uuid=/^[0-9a-f]{8}-[0-9a-f-]{27}$/;
@@ -18,7 +20,7 @@ export class BackupKeyService {
  }
  private async authorize(request:PeerRequest){
   if(!request||request.schema!==1||typeof request.id!=='string'||!uuid.test(request.id)||!request._peer||request._peer.uid!==this.config.hostUid||!Number.isSafeInteger(request._peer.pid)||request._peer.pid<1)throw new BackupBrokerError('peer_identity_mismatch');
-  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','selection','recoveryPackage','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
+  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','selection','recoveryPackage','jobId','extractionId','checkpointId','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
   const policy=await ownedJson(this.config.authorityFile) as BackupBrokerPolicy,context=request.context;
   if(policy.schema!==1||!Number.isSafeInteger(policy.revision)||!scopeValid(policy.administrator)||!Array.isArray(policy.scopes)||policy.scopes.some(scope=>!scopeValid(scope))||!policy.actors||typeof policy.actors!=='object')throw new BackupBrokerError('authority_unavailable');
   if(!context||Object.keys(context).some(key=>!['actor','dataScope','authorityRevision'].includes(key))||!scopeValid(context.actor)||!scopeValid(context.dataScope)||!Number.isSafeInteger(context.authorityRevision))throw new BackupBrokerError('invalid_request');
@@ -27,7 +29,7 @@ export class BackupKeyService {
   if(!actor||!Array.isArray(actor.scopes)||!actor.scopes.includes(context.dataScope)||!policy.scopes.includes(context.dataScope))throw new BackupBrokerError('scope_denied');
   const scope=request.scope??context.dataScope;if(!scopeValid(scope)||!policy.scopes.includes(scope)||!actor.scopes.includes(scope))throw new BackupBrokerError('scope_denied');
   const administrator=context.actor===policy.administrator&&actor.role==='administrator';
-  if(!['status','jobs','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
+  if(!['status','jobs','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
   if(!['status','qualification'].includes(request.operation)&&!administrator)throw new BackupBrokerError('administrator_required');
   if(!administrator&&scope!==context.dataScope)throw new BackupBrokerError('scope_denied');
   return {policy,actor,scope,administrator};
@@ -39,7 +41,7 @@ export class BackupKeyService {
   // A fresh authenticated source-owner RPC supplies mechanical admission state,
   // not a configured Boolean or persisted signature-only qualification.
   try{
-   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,id:randomUUID(),operation:'qualify-backup',challenge});
+   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,id:randomUUID(),operation:'qualify-backup',challenge},5000);
    const value=response?.result??response;
    if(value.schema!==1||value.challenge!==challenge||value.enforcement!=='managed-bwrap-flock-v1'||value.admission!=='protected-only'||value.legacy!=='drained'||(!Number.isSafeInteger(value.policyRevision)||value.policyRevision<1)||!/^[0-9a-f]{64}$/.test(value.profileDigest)||value.authority?.uid!==this.config.sourceUid||!Number.isSafeInteger(value.authority.pid)||value.authority.pid<1)throw new BackupBrokerError('source_boundary_unqualified');
    const status=await readFile('/proc/'+value.authority.pid+'/status','utf8'),raw=await readFile('/proc/'+value.authority.pid+'/stat','utf8'),boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth=raw.slice(raw.lastIndexOf(')')+2).split(' ')[19];
@@ -47,16 +49,16 @@ export class BackupKeyService {
    return {...base,state:'qualified',sourceRevision:value.policyRevision};
   }catch{return {...base,state:'unavailable',reason:'source_boundary_unqualified'};}
  }
- async dispatch(raw:unknown){
-  const request=raw as Partial<PeerRequest>;const operation=typeof request?.operation==='string'&&['configure','backup','export-recovery','verify-recovery','rotate','recover'].includes(request.operation)?request.operation:undefined;
-  try{const result=await this.handle(raw);if(operation)await this.audit(request,operation,'succeeded');return result;}
+ async dispatch(raw:unknown,emit?:(frame:unknown)=>Promise<void>){
+  const request=raw as Partial<PeerRequest>;const operation=typeof request?.operation==='string'&&['configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction'].includes(request.operation)?request.operation:undefined;
+  try{const result=await this.handle(raw,emit);if(operation)await this.audit(request,operation,'succeeded');return result;}
   catch(error){if(operation)await this.audit(request,operation,publicBrokerCode(error));throw error;}
  }
  private async audit(request:Partial<PeerRequest>,operation:string,result:string){
   const context=request.context;const entry={schema:1,operation,result,at:new Date().toISOString(),...(context&&scopeValid(context.actor)&&scopeValid(context.dataScope)?{actor:context.actor,dataScope:context.dataScope,authorityRevision:Number.isSafeInteger(context.authorityRevision)?context.authorityRevision:null}:{}),...(typeof request.id==='string'&&uuid.test(request.id)?{id:request.id}:{})};
   const file=await open(join(this.config.privateRoot,'broker-audit.jsonl'),constants.O_APPEND|constants.O_CREAT|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);try{const info=await file.stat();if(info.uid!==process.getuid?.()||(info.mode&0o077)||info.nlink!==1||!info.isFile())throw new BackupBrokerError('service_audit_unavailable');await file.writeFile(JSON.stringify(entry)+'\n');await file.sync();}finally{await file.close();}
  }
- private async handle(raw:unknown){
+ private async handle(raw:unknown,emit?:(frame:unknown)=>Promise<void>){
   const request=raw as PeerRequest,{scope,administrator}=await this.authorize(request);
   const qualification=await this.qualification();
   if(request.operation==='qualification')return qualification;
@@ -71,6 +73,26 @@ export class BackupKeyService {
    case 'verify-recovery':if(typeof request.recoveryPackage!=='string'||request.recoveryPackage.length>8192)throw new BackupBrokerError('invalid_recovery_copy');await this.repository.verifyRecoveryPackage(request.recoveryPackage);return {verified:true};
    case 'rotate':await this.repository.rotateRecoveryKey();return {rotated:true};
    case 'recover':await this.repository.recoverInterruptedOperation();return {reconciled:true};
+   case 'stage-extraction':{
+    if(typeof request.jobId!=='string'||!uuid.test(request.jobId)||request.recoveryPackage!==undefined&&(typeof request.recoveryPackage!=='string'||request.recoveryPackage.length>8192))throw new BackupBrokerError('invalid_restore_request');
+    const policy=(await this.authorize(request)).policy,job=(await this.repository.jobs()).find(job=>job.id===request.jobId&&job.state==='succeeded');if(!job)throw new BackupBrokerError('unknown_snapshot');
+    const grants=policy.actors[request.context.actor].scopes;if(job.points.some(point=>!grants.includes(point.scope)||!policy.scopes.includes(point.scope)))throw new BackupBrokerError('scope_denied');
+    const handle=await new BackupExtractionStore(this.config.privateRoot).create(request.id),root=handle.root;
+    try{
+     await this.repository.extract(request.jobId,join(root,'material'),request.recoveryPackage);await this.authorize(request);
+     const checkpoints=new Map<string,BackupExtractionDescriptor['checkpoints'][number]>();for(const point of job.points)checkpoints.set(point.checkpointId,{checkpointId:point.checkpointId,manifestSha256:point.manifestSha256,scope:point.scope,taskId:point.taskId});
+     const descriptor:BackupExtractionDescriptor={extractionId:request.id,jobId:request.jobId,expiresAt:new Date(Date.now()+5*60*1000).toISOString(),scopes:[...new Set(job.points.map(point=>point.scope))],checkpoints:[...checkpoints.values()]};
+     if(descriptor.checkpoints.length>1000)throw new BackupBrokerError('extraction_capacity');
+     await writeReceipt(join(root,'receipt.json'),{...descriptor,actor:request.context.actor,dataScope:request.context.dataScope,authorityRevision:request.context.authorityRevision});await handle.assertHeld();return descriptor;
+    }catch(error){await handle.remove();throw error;}finally{handle.lease.release();}
+   }
+   case 'restore-checkpoint':{
+    const handle=await this.extraction(request,'shared'),{root,receipt}=handle;try{if(typeof request.checkpointId!=='string'||!uuid.test(request.checkpointId)||!emit)throw new BackupBrokerError('invalid_restore_request');const point=receipt.checkpoints.find(point=>point.checkpointId===request.checkpointId);if(!point)throw new BackupBrokerError('unknown_checkpoint');
+    await emitSealedCheckpoint(join(root,'material',point.checkpointId),emit,point.manifestSha256);await handle.assertHeld();return new BackupKeyStreamComplete();}finally{handle.lease.release();}
+   }
+   case 'close-extraction':{
+    const handle=await this.extraction(request,'exclusive');try{await handle.remove();return {closed:true};}finally{handle.lease.release();}
+   }
    case 'backup':{
     if(!Array.isArray(request.selection)||request.selection.length<1||request.selection.length>1000||request.selection.some(item=>!item||Object.keys(item).some(key=>!['scope','taskId','expectedCheckpointId'].includes(key))||!scopeValid(item.scope)||!['string'].includes(typeof item.taskId)||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.taskId)||item.expectedCheckpointId!==undefined&&!uuid.test(item.expectedCheckpointId)))throw new BackupBrokerError('invalid_selection');
     const policy=(await this.authorize(request)).policy;const grants=policy.actors[request.context.actor].scopes;
@@ -86,6 +108,17 @@ export class BackupKeyService {
    default:throw new BackupBrokerError('invalid_operation');
   }
  }
+ private async extraction(request:PeerRequest,mode:'shared'|'exclusive'){
+  if(typeof request.extractionId!=='string'||!uuid.test(request.extractionId))throw new BackupBrokerError('invalid_restore_request');
+  const handle=await new BackupExtractionStore(this.config.privateRoot).open(request.extractionId,mode);try{const receipt=await handle.receipt() as BackupExtractionDescriptor&{actor:string;dataScope:string;authorityRevision:number};
+   if(receipt.extractionId!==request.extractionId||receipt.actor!==request.context.actor||receipt.dataScope!==request.context.dataScope||receipt.authorityRevision!==request.context.authorityRevision||!Number.isFinite(Date.parse(receipt.expiresAt))||Date.parse(receipt.expiresAt)<Date.now()||!Array.isArray(receipt.checkpoints)||!Array.isArray(receipt.scopes))throw new BackupBrokerError('extraction_expired');
+   const policy=(await this.authorize(request)).policy;if(receipt.scopes.some(scope=>!policy.scopes.includes(scope)||!policy.actors[request.context.actor].scopes.includes(scope)))throw new BackupBrokerError('scope_denied');return {...handle,receipt};
+  }catch(error){handle.lease.release();throw error;}
+ }
+
 }
-export async function ownedJson(path:string){const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const info=await file.stat();if(!info.isFile()||info.uid!==process.getuid?.()||(info.mode&0o077)||info.nlink!==1||info.size>65536||await realpath(path)!==resolve(path))throw new BackupBrokerError('service_configuration_invalid');const buffer=Buffer.alloc(65537),result=await file.read(buffer,0,buffer.length,0);if(result.bytesRead!==info.size||result.bytesRead>65536)throw new BackupBrokerError('service_configuration_invalid');return JSON.parse(buffer.subarray(0,result.bytesRead).toString('utf8'));}finally{await file.close();}}
+export class BackupKeyStreamComplete {}
+export async function ownedJson(path:string,maxBytes=65536){const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const info=await file.stat();if(!info.isFile()||info.uid!==process.getuid?.()||(info.mode&0o077)||info.nlink!==1||info.size>maxBytes||await realpath(path)!==resolve(path))throw new BackupBrokerError('service_configuration_invalid');const buffer=Buffer.alloc(maxBytes+1),result=await file.read(buffer,0,buffer.length,0);if(result.bytesRead!==info.size||result.bytesRead>maxBytes)throw new BackupBrokerError('service_configuration_invalid');return JSON.parse(buffer.subarray(0,result.bytesRead).toString('utf8'));}finally{await file.close();}}
 export function publicBrokerCode(error:unknown){return error instanceof BackupBrokerError||error instanceof BackupError?error.code:'broker_failed';}
+
+async function writeReceipt(path:string,value:unknown){const file=await open(path,'wx',0o600);try{await file.writeFile(JSON.stringify(value));await file.sync();}finally{await file.close();}}

@@ -54,7 +54,7 @@ unknown scope and ordinary foreign-scope requests fail closed. A user cannot gai
 administrator access by being on a managed data route or holding a Host token.
 
 Allowed control operations are status, jobs, qualification, configure, backup,
-explicit recovery export/verification, rotation and interrupted-job recovery.
+explicit recovery export/verification, rotation, interrupted-job recovery and named restore-material extraction.
 Only explicit administrator export returns a recovery package. Status and errors
 contain no secret. Mutation audit records actor, data scope, revision, operation,
 result and time without request bodies or passwords. Web wiring must stream an
@@ -70,6 +70,18 @@ size/count and content bounds, rejects extras/truncation/identity mismatch, and
 verifies the seal and every object before Restic. Plain transfer staging is
 removed after the repository operation, including failure. Restic retains its
 independent verified cgroup budget and native lock rules.
+
+Restore material uses a bounded private five-minute export lease bound to the
+current actor, routed scope and authority revision. The service extracts the
+selected successful repository job privately, then streams only its named sealed
+checkpoints over the authenticated endpoint. The Host supplies a new private local
+staging directory to its client; that path never enters IPC. Each received manifest
+and object is verified before publication. Closing the lease removes service
+material under an exclusive kernel lock; expired completed leases can be collected
+without racing active streams. Lock authority lives in the separate private
+`restore-export-locks` directory and is never unlinked when material is removed.
+Incomplete crash remnants remain private and count
+against the eight-export capacity until an operator reconciles them.
 
 ## Installation templates and operator entry
 
