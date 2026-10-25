@@ -17,6 +17,7 @@ it('seals real Pi JSONL with task registry/files only after supervised native li
  try{
   const owner=new BackupSourceCustody(join(root,'source-ledger')),work=join(root,'owned-work'),nativeDir=join(root,'owned-native');await owner.allocate(work);await owner.allocate(nativeDir);const agentDir=join(root,'agent');await owner.allocate(agentDir);
   const nativeCustody=new NativeWriterCustody(join(root,'native-custody'));
+  // Controlled synthetic writer set only: provenance/subreaper ancestry alone do not qualify unrestricted OS tools.
   const sourceProof=async()=>({known:(await owner.owns(work)).state==='owned'&&(await owner.owns(nativeDir)).state==='owned'&&(await owner.owns(agentDir)).state==='owned'});
   const fence=new WriterAdmissionFence({writerClasses:['native','platform'],uncoveredWriters:[],probe:async()=>{const source=await sourceProof(),state=await nativeCustody.state();return {known:source.known&&state.state==='quiescent',active:state.state==='active'};}});
   const store=new Workspaces(join(work,'projects'));store.setBackupWriterFence(fence);await store.createChatConversation('native-task');
