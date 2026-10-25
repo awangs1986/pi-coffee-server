@@ -22,7 +22,9 @@ export function renderBackupRetention(data,{request,refresh,isCurrent}){
  };
  for(const plan of (data.retention.plans||[]).slice(0,30).reverse())showPlan(plan);
  if(data.repository?.enabled&&!data.repository.activationUnavailable){
-  const preview=document.createElement('button');preview.type='button';preview.textContent='预览当前账号保留计划';preview.onclick=async()=>{preview.disabled=true;try{const plan=await request({action:'retention-preview',scope:data.scope,scopes:[data.scope],timeZone:'America/Toronto'});if(isCurrent())showPlan(plan);}catch(error){if(isCurrent())text(section,'p',error.message||'保留计划预览失败');}finally{preview.disabled=false;}};section.append(preview);
+  const addPreview=(label,scopes)=>{const preview=document.createElement('button');preview.type='button';preview.textContent=label;preview.onclick=async()=>{preview.disabled=true;try{const plan=await request({action:'retention-preview',scope:data.scope,scopes,timeZone:'America/Toronto'});if(isCurrent())showPlan(plan);}catch(error){if(isCurrent())text(section,'p',error.message||'保留计划预览失败');}finally{preview.disabled=false;}};section.append(preview);};
+  addPreview('预览当前账号保留计划',[data.scope]);
+  if(data.managedScopes?.length>1)addPreview('预览所有受管账号保留计划',[...new Set(data.managedScopes)]);
  }
  return section;
 }

@@ -9,7 +9,7 @@ activation, identity qualification and restore acceptance remain separate gates.
 The authenticated backup administrator (`awangs`) opens the backup panel and selects
 a managed account. “预览当前账号保留计划” produces a durable plan containing exact
 snapshot identities, keep reasons, scope, time zone, revision and approval digest.
-No deletion starts on preview. Download the JSON when the list exceeds the display
+For checkpoints shared by accounts, use “预览所有受管账号保留计划” to review their union; single-account preview preserves snapshots containing other accounts. No deletion starts on preview. Download the JSON when the list exceeds the display
 limit, then use “批准并执行此计划” to approve that concrete revision. Ordinary users
 cannot preview or execute cleanup and receive no pin/retention administration data.
 
