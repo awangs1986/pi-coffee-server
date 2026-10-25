@@ -53,7 +53,12 @@ Policy schema:
 Use actual data-scope IDs rather than display usernames; the reserved legacy
 scope is `__legacy_default__`. The token file must be a private regular file,
 never an inline token in policy, argv or a public Issue. Use the real Host bind;
-loopback is not assumed. The Host publishes an authenticated task inventory,
+loopback is not assumed. In Host startup configure the trusted connection with
+`PI_COFFEE_BACKUP_INVENTORY_URL` (the actual Host origin) and
+`PI_COFFEE_BACKUP_INVENTORY_TOKEN_FILE` (an absolute private token-file path).
+Both must be supplied together. Browser JSON cannot override them. Host schedule
+status/configuration gets a fresh client bound to the actual authenticated actor
+and data scope; it never borrows the independent daemon's privileged identity. The Host publishes an authenticated task inventory,
 including tasks without any checkpoint. A manual inventory publication does not
 prove current completeness. Private schedules and profiles are not repository
 artifacts and must not be committed.
@@ -115,3 +120,16 @@ or uncertainty handling causes the crash/transport regression to fail.
 These are process-crash and transport tests, not power-loss, production disk,
 actual distinct-UID deployment or provider-continuation acceptance. Complete source
 checks, complete acceptance matrix and independent review remain parent #141.
+
+## Capture resource bounds
+
+The Host passes trusted startup bounds to its coordinator:
+`PI_COFFEE_BACKUP_MAX_BYTES` defaults to 1073741824,
+`PI_COFFEE_BACKUP_MAX_FILES` to 100000, and
+`PI_COFFEE_BACKUP_CAPTURE_TIMEOUT_MS` to 30000 (maximum 1800000).
+Values must be positive safe decimal integers. Invalid values stop startup before
+listeners open. Overflow/deadline failure keeps the previous seal and reports
+unprotected/waiting/failed coverage; it cannot publish an incomplete checkpoint.
+These are operator settings, not Browser request parameters. No direct repository
+key-root fallback is constructed by normal Host startup; without a scoped broker
+connection repository actions stay unavailable.

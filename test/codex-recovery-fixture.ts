@@ -1,4 +1,7 @@
 import {it,expect} from 'vitest';
+import {SessionManager} from '@earendil-works/pi-coding-agent';
+import {GroupedRecoveryAdapter} from '../src/host/grouped-recovery.js';
+import {PiNativeRecoveryAdapter} from '../src/host/pi-recovery.js';
 import {mkdtemp,mkdir,writeFile,readFile,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join,resolve,dirname} from 'node:path';import {execFileSync,spawn} from 'node:child_process';import {randomUUID} from 'node:crypto';import {once} from 'node:events';
 import {Workspaces} from '../src/host/workspaces.js';
@@ -47,4 +50,11 @@ export async function preparedCodexRecovery(binary:string,hooks?:{populate?:(f:A
  execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('DELETE FROM threads WHERE id=?',(sys.argv[2],));c.commit();c.close()",join(f.sql,'state_5.sqlite'),f.id]);
  await rm(join(f.home,'session_index.jsonl'));await hooks?.lose?.(f);await f.store.archive(f.task.id,true);await f.store.deleteWorkspace(f.task.id,f.task.id,()=>rm(f.rollout),true);
  const restore=new RestoreCoordinator({root:join(f.root,'restores'),repository,authorize:async(actor,scope,manage)=>scope==='alice'&&(manage?actor==='awangs':actor==='alice'),scope:async()=>({workspaces:f.store,adapter:f.adapter})});const request=await restore.request('alice','alice',{taskId:f.task.id,jobId:job.id});const plan=await restore.operate('awangs',request.id,{action:'plan',revision:1});await restore.operate('awangs',request.id,{action:'approve',revision:1,digest:plan.digest});return {...f,other,restore,plan,repository};
+}
+
+/** Two independently registered native engines share one verified fixture cut. */
+export async function groupCodexWithPi(f:Awaited<ReturnType<typeof codexFixture>>){
+ const other=new Workspaces(join(f.root,'synthetic-pi','projects'));await other.createChatConversation('pi-member');const task=(await other.lookup('pi-member'))!,native=join(f.root,'synthetic-pi','sessions'),agent=join(f.root,'synthetic-pi','agent');await mkdir(native,{mode:0o700});await mkdir(agent,{mode:0o700});SessionManager.create(task.cwd,native,{id:'synthetic-pi-native'}).appendMessage({role:'user',content:'Other account private history',timestamp:1});await other.setNativeBinding(task.id,{state:'bound',id:'synthetic-pi-native'});
+ const pi=new PiNativeRecoveryAdapter({scope:'synthetic-pi',workspaces:other,sessionDir:native,agentDir:agent,fence:f.fence,sourceCustody:async()=>({known:true})});
+ f.coordinator=new BackupCoordinator({root:join(f.root,'checkpoints'),adapter:new GroupedRecoveryAdapter({groupId:'shared-pi-codex-fixture',fence:f.fence,inventory:async()=>[{scope:'alice',taskId:f.task.id,engine:'codex'},{scope:'synthetic-pi',taskId:task.id,engine:'pi'}],resolve:(scope,id)=>scope==='alice'?f.adapter.resolve(scope,id):pi.resolve(scope,id)})});return {other,task};
 }

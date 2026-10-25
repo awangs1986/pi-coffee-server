@@ -27,3 +27,18 @@ print(json.dumps(result))`));expect(state.queued_items).toEqual([]);expect(state
   const archive=JSON.parse(await readFile(join(f.task.cwd,'.recovery-history',f.plan.checkpointId!,'codex-inert-execution.json'),'utf8'));expect(JSON.stringify(archive)).toContain('Selected historical queued command');expect(JSON.stringify(archive)).not.toContain('FOREIGN PRIVATE INPUT');expect(archive.automaticReplay).toBe(false);
  }finally{await rm(f.root,{recursive:true,force:true});}
 },90000);
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('Codex recovery rejects an incompatible current global memory context without overwriting its owner or publishing the task',async()=>{
+ let fixture:Awaited<ReturnType<typeof codexFixture>>|undefined;try{
+  await expect(preparedCodexRecovery(process.env.PI_COFFEE_TEST_RESTIC!,{
+   populate:async f=>{fixture=f;sql(f,`import sqlite3,sys,pathlib
+c=sqlite3.connect(pathlib.Path(sys.argv[1])/'memories_1.sqlite');c.execute('INSERT INTO stage1_outputs(thread_id,source_updated_at,raw_memory,rollout_summary,generated_at) VALUES (?,1,?,?,1)',(sys.argv[2],'Selected source memory','Selected summary'));c.execute("INSERT INTO jobs(kind,job_key,status,retry_remaining,last_success_watermark) VALUES ('memory_consolidate_global','global','done',0,1)");c.execute('INSERT INTO consolidation_progress VALUES (1,1)');c.commit()
+`);},
+   lose:async f=>{sql(f,`import sqlite3,sys,pathlib
+c=sqlite3.connect(pathlib.Path(sys.argv[1])/'memories_1.sqlite');c.execute('DELETE FROM stage1_outputs');c.execute('DELETE FROM jobs');c.execute('DELETE FROM consolidation_progress');c.execute("INSERT INTO stage1_outputs(thread_id,source_updated_at,raw_memory,rollout_summary,generated_at) VALUES ('current-neighbor-owner',2,'Newer neighbor context','Newer neighbor summary',2)");c.commit()
+`);}
+  })).rejects.toMatchObject({code:'shared_memory_conflict'});expect(fixture).toBeDefined();const f=fixture!;expect(JSON.parse(sql(f,`import sqlite3,sys,pathlib,json
+c=sqlite3.connect(pathlib.Path(sys.argv[1])/'memories_1.sqlite');print(json.dumps(c.execute('SELECT thread_id,raw_memory FROM stage1_outputs').fetchall()))
+`))).toEqual([['current-neighbor-owner','Newer neighbor context']]);expect(await f.store.lookup(f.task.id)).toBeUndefined();expect((await f.store.list()).conversations.map(task=>task.id)).toEqual(['neighbor']);
+ }finally{if(fixture)await rm(fixture.root,{recursive:true,force:true});}
+},90000);

@@ -1,5 +1,5 @@
 import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
-import type {WriterAdmissionFence} from './backup.js';
+import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
 import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
 import {copyForkTree} from './fork-files.js';
 import type {GitHubAccounts} from './github-accounts.js';
@@ -37,7 +37,7 @@ export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
 export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface WorkspaceOptions { deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
 export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
@@ -95,6 +95,7 @@ export class Workspaces {
   private tails = new Map<string, Promise<unknown>>();
   private saveTail: Promise<void> = Promise.resolve();
   private initialized = false;
+  private startupReconciliationPending=false;
   private loading?: Promise<void>;
   private readonly runStatusWrites=new Set<Promise<void>>();
   readonly chatRoot:string;
@@ -104,7 +105,7 @@ export class Workspaces {
   private readonly githubAccounts?:GitHubAccounts;
   private readonly pendingAccounts=new Map<string,string>();
   private readonly taskRoot?:string;
-  constructor(readonly root: string, options:WorkspaceOptions={}) {
+  constructor(readonly root: string, private options:WorkspaceOptions={}) {
     this.root = resolve(root);
     this.chatRoot=resolve(options.chatRoot ?? join(this.root,"..","chats"));
     if(this.chatRoot===this.root || this.chatRoot.startsWith(this.root+"/") || this.root.startsWith(this.chatRoot+"/"))throw new Error("Chat and Project roots must be separate");
@@ -114,8 +115,9 @@ export class Workspaces {
     this.taskRoot=options.taskRoot ? resolve(options.taskRoot) : undefined;
   }
   private async load() {
-    if(this.initialized)return;
-    if(!this.loading)this.loading=this.loadState();
+    if(this.initialized&&!this.startupReconciliationPending)return;
+    if(this.initialized&&this.options.deferStartupReconciliation?.())return;
+    if(!this.loading)this.loading=this.initialized?this.reconcileStartup():this.loadState();
     try {await this.loading;} finally {this.loading=undefined;}
   }
   private async loadState() {
@@ -131,19 +133,23 @@ export class Workspaces {
       this.state={...data,version:2};
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
+    this.initialized=true;this.startupReconciliationPending=true;
+    if(!this.options.deferStartupReconciliation?.())await this.reconcileStartup();
+  }
+  private async reconcileStartup(){const run=async()=>{
     let interrupted=false;
     for(const c of this.state.conversations){if(c.fork?.status==='preparing'){c.fork.status='failed';c.fork.error='Host restarted during Fork; retained files and native history require inspection. No automatic retry.';interrupted=true;}if(c.forking?.status==='preparing'){c.forking.status='failed';c.forking.error='Fork interrupted by Host restart';interrupted=true;}}
     for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
     for(const c of this.state.conversations) if(c.runState==="running" || c.lastRunStatus==="running") {c.runState="interrupted";c.lastRunStatus="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
-    if(interrupted)await this.save();
-    this.initialized=true;
+    if(interrupted)await this.saveState();this.startupReconciliationPending=false;
+    };if(this.backupWriterFence)await this.backupWriterFence.runWriter('platform',run);else await run();
   }
   private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
-  private async saveState() {
+  private async saveState(exportTasks=true) {
     const next=this.saveTail.then(async()=>{
       await durableJson(join(this.root,'.coffee','state.json'),this.state);
-      for(const c of this.state.conversations)if(c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
+      for(const c of this.state.conversations)if(exportTasks&&c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
     });this.saveTail=next.catch(()=>undefined);return next;
   }
   /** Git operations serialize per project; only metadata publication is VM-wide. */
@@ -178,9 +184,12 @@ export class Workspaces {
     return false;
   }
   async recoveryRegistryIdentity(){await this.load();return privateDir(join(this.root,'.coffee'));}
-  async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null}):Promise<void>{
+  async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null;publication?:RecoveryPublication}):Promise<void>{
+    if(this.backupWriterFence){if(!input.publication||input.publication.operationId!==input.operationId||input.publication.digest!==input.digest)throw restoreFail('recovery_publication_required');return this.backupWriterFence.runRecoveryPublication(input.publication,()=>this.importRecoveredTaskState(input,true));}return this.importRecoveredTaskState(input,false);
+  }
+  private async importRecoveredTaskState(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null},publication:boolean):Promise<void>{
     await this.load();await privateDir(join(this.root,'.coffee'));const current=this.state.conversations.find(c=>c.id===input.conversation.id);
-    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest){await this.save();return;}
+    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest){if(publication)await this.saveState(false);else await this.save();return;}
     if((current?sha(JSON.stringify(current)):null)!==input.expectedRegistry)throw restoreFail('registry_changed');
     await this.recoveryPaths(input.conversation);await this.checkDirectory(input.conversation);
     if(input.project){const existing=this.state.projects.find(p=>p.id===input.project!.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(input.project))throw restoreFail('project_changed');}
@@ -190,7 +199,7 @@ export class Workspaces {
     const at=this.state.conversations.findIndex(c=>c.id===recovered.id);if(at<0)this.state.conversations.push(recovered);else this.state.conversations[at]=recovered;
     if(input.project&&!this.state.projects.some(p=>p.id===input.project!.id))this.state.projects.push(structuredClone(input.project));
     this.state.deletedIds=this.state.deletedIds?.filter(id=>id!==recovered.id);
-    await this.save();
+    if(publication)await this.saveState(false);else await this.save();
   }
   private conversationLock(id:string) { return 'conversation:'+id; }
   private async gitEnvironment(cwd:string,accountId?:string) {

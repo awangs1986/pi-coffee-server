@@ -11,7 +11,7 @@ import {readCodexHistory} from '../src/host/codex/history.js';
 import {ManagedNativeCustody} from '../src/host/managed-native.js';
 import {CodexSessionFactory} from '../src/host/codex-adapter.js';
 
-it('a scoped Codex job seals the effective shared SQLite home and committed WAL with its ordinary native history',async()=>{
+it('a scoped Codex job seals the effective shared SQLite home and binding with its ordinary native history',async()=>{
  const f=await codexFixture();try{
   await f.adapter.resolve('alice',f.task.id).catch(e=>{throw new Error(e.code);});const result=await f.coordinator.capture('alice',f.task.id,'codex');expect(result.state).toBe('protected');const point=(await f.coordinator.sealedCheckpoint('alice',f.task.id))!;expect(point.manifest.members).toEqual([{scope:'alice',taskId:f.task.id,engine:'codex',adapterVersion:f.adapter.version,nativeBindings:[f.id]}]);
   const source=point.manifest.sources.find(s=>s.recoveryKey==='codex/group-v1')!;const material=JSON.parse(await readFile(join(point.directory,'objects',source.id),'utf8'));expect(material.sqliteHome).toBe(f.sql);expect(material.databases['state_5.sqlite'].tables.threads[0].id).toBe(f.id);expect(material.databases['thread_history_1.sqlite']).toBeDefined();
@@ -19,7 +19,7 @@ it('a scoped Codex job seals the effective shared SQLite home and committed WAL 
   await expect(f.adapter.resolve('bob',f.task.id)).rejects.toMatchObject({code:'closure_incomplete'});
  }finally{await rm(f.root,{recursive:true,force:true});}
 });
-it('the Codex checkpoint includes committed WAL rows and preserves its earlier point when an unknown migration appears',async()=>{
+it('the Codex checkpoint includes committed WAL rows and preserves its earlier point when an unknown schema table appears',async()=>{
  const f=await codexFixture();try{
   execFileSync('/usr/bin/python3',['-c',"import sqlite3,os,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');c.execute('UPDATE threads SET title=? WHERE id=?',('Committed WAL title',sys.argv[2]));c.commit();os._exit(0)",join(f.sql,'state_5.sqlite'),f.id]);
   expect((await readFile(join(f.sql,'state_5.sqlite-wal'))).length).toBeGreaterThan(0);const result=await f.coordinator.capture('alice',f.task.id,'codex');expect(result.state).toBe('protected');const point=(await f.coordinator.sealedCheckpoint('alice',f.task.id))!,source=point.manifest.sources.find(s=>s.recoveryKey==='codex/group-v1')!;expect(JSON.parse(await readFile(join(point.directory,'objects',source.id),'utf8')).databases['state_5.sqlite'].tables.threads[0].title).toBe('Committed WAL title');

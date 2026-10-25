@@ -62,15 +62,18 @@ original item IDs and content through `thread/read`.
   retaining the older point, encrypted recovery, native read/resume and bounded
   fork history with original IDs.
 - `test/codex-restore-crash.test.ts`: SIGKILL after task files, after the first SQL
-  commit before its receipt, after native publication and after registry import;
-  two restart workers converge while preserving neighbors and another account.
+  commit before its receipt, after native publication and after registry import, plus a physically persisted half-index suffix;
+  two restart workers converge while preserving neighbors and another account;
+  the partial-index case checks the complete neighbor prefix byte-for-byte.
 - `test/codex-recovery-rejections.test.ts`: unsupported CLI/configuration and
   unknown memory owners retain the prior point; late native row collisions
   reject publication without task registry adoption.
 - `test/codex-shared-context.test.ts`: populated global/stage-one memory, paused
-  goals, cleared worker ownership and inert selected queue history.
+  goals, cleared worker ownership and inert selected queue history; an
+  incompatible current global memory owner is rejected without overwriting it.
 - `test/codex-replacement.test.ts`: selected file/row replacement with fresh
-  encrypted safety material and preserved neighbor/preimage.
+  encrypted mixed-account safety material and preserved neighbor/preimage;
+  later manual file/SQL writes after approval are rejected.
 - `test/codex-publication-fence.test.ts`: inherited kernel exclusion while the
   controller closes its publication descriptor, followed by approved retry.
 - `test/codex-group-restore.test.ts`: Codex restoration from a mixed Pi/Codex

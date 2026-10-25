@@ -24,6 +24,9 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('previews exact deletions, protect
   const store=new Workspaces(join(root,'projects'));await store.list();const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No models');}};host=new HostServer({port:0,token:'private',requireUser:true,factory,backup:{coordinator,repository,scopes:['alice','bob']},scopeForUser:()=>({factory,workspaces:store})});await host.start();
   const previewResponse=await fetch(`http://127.0.0.1:${host.address().port}/api/backup`,{method:'POST',headers:{authorization:'Bearer private','x-pi-coffee-user':'alice','x-pi-coffee-actor':'awangs','content-type':'application/json'},body:JSON.stringify({action:'retention-preview',scopes:['alice','bob']})});expect(previewResponse.status).toBe(200);
   let preview=await previewResponse.json();expect(preview.remove.map(row=>row.snapshotId)).toEqual([second.snapshotId]);expect(preview.keep.map(row=>row.snapshotId)).toEqual(expect.arrayContaining([first.snapshotId,bob.snapshotId,latest.snapshotId]));
+  await expect(repository.executeRetention(preview.id,preview.revision+1,preview.digest)).rejects.toMatchObject({code:'stale_retention_approval'});
+  await expect(repository.executeRetention(preview.id,preview.revision,'0'.repeat(64))).rejects.toMatchObject({code:'stale_retention_approval'});
+  expect((await repository.retentionPlans('alice')).find(plan=>plan.id===preview.id)?.state).toBe('previewed');
   const changed=await repository.pinRecoveryJob(second.id,{operationId:'22222222-2222-4222-8222-222222222222',revision:1,ttlMs:3600000});
   await expect(repository.executeRetention(preview.id,preview.revision,preview.digest)).rejects.toMatchObject({code:'retention_plan_stale'});
   await repository.releaseRecoveryPin(changed.id,changed.operationId,changed.revision);
