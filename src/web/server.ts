@@ -288,6 +288,7 @@ export class WebServer {
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
         const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined,path==='/api/backup'?session?.login??this.auth?.principalOf(request)?.user??this.defaultUser:undefined);
         const body=await result.json();
+        if(path==='/api/backup')response.setHeader('cache-control','no-store');
         if(result.ok)this.recordTransferGrant(body, session ? `identity:${session.id}` : this.auth ? `auth:${this.auth.principalOf(request)!.user}` : "local");
         json(response,result.status,body);
       } catch {json(response,502,{error:"VM unavailable or invalid request"});}

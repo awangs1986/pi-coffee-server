@@ -1,3 +1,4 @@
+import {BackupRepository} from './host/backup-repository.js';
 import {BackupCoordinator,BackupError,WriterAdmissionFence,LEGACY_BACKUP_SCOPE,type NativeRecoveryAdapter} from './host/backup.js';
 import {PiNativeRecoveryAdapter} from './host/pi-recovery.js';
 import {NativeWriterCustody} from './host/native-custody.js';
@@ -130,6 +131,7 @@ async function run(selectedRole: Role): Promise<void> {
   const backupRoot=wantHost?process.env.PI_COFFEE_BACKUP_ROOT?.trim():undefined;
   const recoveryAdapters=new Map<string,NativeRecoveryAdapter>();
   const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);}}}):undefined;
+  const backupRepository=backupRoot&&backupCoordinator?new BackupRepository({root:join(backupRoot,'repository-runtime'),coordinator:backupCoordinator}):undefined;
   const sourceCustody=backupRoot?new BackupSourceCustody(join(backupRoot,'source-ownership')):undefined;
   const custody=backupRoot?new NativeWriterCustody(join(backupRoot,'native-custody','shared-native-group')):undefined;
   const writerFence=backupRoot?new WriterAdmissionFence({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
@@ -188,7 +190,7 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
-    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
+    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,repository:backupRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes',administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,

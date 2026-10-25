@@ -23,6 +23,29 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
     scope=data.scope;output.replaceChildren();
     if(data.canManage&&data.managedScopes?.length){account.hidden=false;const value=scope;account.replaceChildren();for(const name of data.managedScopes){const option=document.createElement('option');option.value=name;option.textContent=name==='__legacy_default__'?'原有账号范围':name;account.append(option);}account.value=value;}
     else account.hidden=true;
+    if(data.repository){
+     const repository=data.repository,section=document.createElement('section');
+     const heading=document.createElement('h3');heading.textContent=`加密仓库 · Restic ${repository.backend?.version||''}`;
+     const enabled=document.createElement('p');enabled.textContent=repository.enabled?'已启用 · 已验证离线恢复副本':repository.configured?'待导出并验证离线恢复副本':'尚未配置备份目标';section.append(heading,enabled);
+     for(const point of repository.points||[]){const label=document.createElement('p');label.textContent=`${point.taskId} · 加密备份采集于 ${point.captureAt} · 点龄 ${Math.floor(Math.max(0,point.ageMs||0)/3600000)} 小时${point.stale?' · 超过 24 小时':''}`;section.append(label);}
+     for(const job of repository.jobs||[]){const label=document.createElement('p');label.textContent=`作业 ${job.id} · ${job.state} · 验证 ${job.verification}${job.errorCode?' · '+job.errorCode:''}`;section.append(label);}
+     if(repository.activationUnavailable){const reason=document.createElement('p');reason.textContent=repository.activationUnavailable;section.append(reason);}
+     if(data.canManage&&!repository.activationUnavailable){
+      const operate=async(body)=>{try{const result=await request(body,active.signal);if(current())await read({action:'status',scope});return result;}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'仓库操作失败';section.append(message);}return null;}};
+      if(!repository.configured){
+       const destination=document.createElement('input');destination.placeholder='已有私有备份目录的绝对路径';destination.setAttribute('aria-label','备份目标目录');
+       const configure=document.createElement('button');configure.type='button';configure.textContent='配置加密仓库';configure.onclick=()=>void operate({action:'repository-configure',destination:destination.value});section.append(destination,configure);
+      }else{
+       const exportCopy=document.createElement('button');exportCopy.type='button';exportCopy.textContent='导出离线恢复包';
+       exportCopy.onclick=async()=>{exportCopy.disabled=true;try{const result=await request({action:'repository-export'},active.signal);if(!current())return;const url=URL.createObjectURL(new Blob([result.recoveryPackage],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download='pi-coffee-offline-recovery.json';link.click();URL.revokeObjectURL(url);await read({action:'status',scope});}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'导出失败';section.append(message);}}finally{exportCopy.disabled=false;}};
+       const recovery=document.createElement('input');recovery.type='file';recovery.accept='.json,application/json';recovery.setAttribute('aria-label','选择已保存的离线恢复包');
+       recovery.onchange=async()=>{const file=recovery.files?.[0];if(file&&file.size<=8192)await operate({action:'repository-verify',recoveryPackage:await file.text()});};section.append(exportCopy,recovery);
+       if(repository.enabled){const rotate=document.createElement('button');rotate.type='button';rotate.textContent='轮换密钥（须重验新离线副本）';rotate.onclick=()=>void operate({action:'repository-rotate'});section.append(rotate);const run=document.createElement('button');run.type='button';run.textContent='备份当前账号封存点';run.onclick=()=>void operate({action:'repository-backup',scope});section.append(run);}
+       const recover=document.createElement('button');recover.type='button';recover.textContent='核对中断作业';recover.onclick=()=>void operate({action:'repository-recover'});section.append(recover);
+      }
+     }
+     output.append(section);
+    }
     const excluded=document.createElement('p');excluded.textContent='本期保护 Pi / Codex；Claude / Cursor / Grok 延期，不计入已保护范围。';output.append(excluded);
     if(!data.tasks?.length){const empty=document.createElement('p');empty.textContent='当前账号没有任务。';output.append(empty);}
     for(const task of data.tasks||[]){
