@@ -140,7 +140,7 @@ export class BackupRepository {
   }finally{for(const lease of leases)lease.release();}
  }
  async previewRetention(input:{scopes:string[];timeZone?:string}):Promise<RepositoryRetentionPlan>{return this.exclusive(async()=>{
-  await this.initializeRetention();const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');const catalog=await this.retentionCatalog(config),{pins,leases}=await this.retentionPins();
+  await this.initializeRetention();let config:RepositoryConfig;try{config=await this.config();}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')throw fail('repository_unconfigured');throw error;}if(!config.enabled)throw fail('offline_copy_required');const catalog=await this.retentionCatalog(config),{pins,leases}=await this.retentionPins();
   try{const decision=planRetention(catalog,pins,{...input,now:this.now()}),plan:RepositoryRetentionPlan={...decision,schema:1,id:randomUUID(),revision:1,createdAt:this.time(),repositoryId:config.repositoryId,catalogDigest:retentionDigest({catalog,pins}),digest:'',state:'previewed',phase:'preview',deletedSnapshotIds:[]};plan.digest=this.retentionApprovalDigest(plan);await this.saveRetention(plan);return plan;}finally{for(const lease of leases)lease.release();}
  });}
  async retentionPlans(scope?:string):Promise<RepositoryRetentionPlan[]>{await this.initializeRetention();const result:RepositoryRetentionPlan[]=[];for(const name of await readdir(join(this.root,'retention'))){if(!idPattern.test(name.slice(0,-5))||!name.endsWith('.json'))continue;const plan=JSON.parse(await privateText(join(this.root,'retention',name),32*1024*1024)) as RepositoryRetentionPlan;if(scope===undefined||plan.scopes.includes(scope))result.push(plan);}return result.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
@@ -180,8 +180,11 @@ export class BackupRepository {
  /** Explicit worker restart recovery. Native unlock removes only Restic's stale locks;
   * it never uses --no-lock or --remove-all and cannot evict a live operation. */
  async recoverInterruptedOperation():Promise<void>{
-  await this.initialize();const lock=join(this.root,'operation-lock'),recoveryLock=join(this.root,'recovery-lock');
-  try{await mkdir(recoveryLock,{mode:0o700});}catch{throw fail('repository_busy');}
+  await this.initialize();const lock=join(this.root,'operation-lock');
+  // Preserve unknown authorities from older candidates; new recovery ownership
+  // is a permanent kernel flock and needs no PID/age-based lock deletion.
+  if(await exists(join(this.root,'recovery-lock')))throw fail('repository_busy');
+  const recoveryLease=acquireFileLease(join(this.root,'recovery.lock'),'exclusive');if(!recoveryLease)throw fail('repository_busy');
   try{
    if(await exists(lock)){
     const info=await privateDirectory(lock),owner=JSON.parse(await privateText(join(lock,'owner.json'),8192));
@@ -202,7 +205,7 @@ export class BackupRepository {
     }
     await this.audit('worker-reconciled',config.keyId);
    });
-  }finally{await rm(recoveryLock,{recursive:true,force:true});}
+  }finally{recoveryLease.release();}
  }
  private async verifyExtraction(destination:string,points:RepositoryPoint[]){
   const ids=new Map(points.map(point=>[point.checkpointId,point.manifestSha256]));

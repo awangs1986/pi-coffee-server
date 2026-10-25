@@ -20,3 +20,27 @@ it('keeps exactly the 30/12/12 union across real calendar periods without job-ti
  expect(reasons).toContainEqual({kind:'weekly',scope:'alice',period:'2026-08-03'});expect(reasons).toContainEqual({kind:'monthly',scope:'alice',period:'2025-11'});
  expect(reasons).not.toContainEqual({kind:'monthly',scope:'alice',period:'2025-10'});
 });
+
+// Calendar identity uses the configured local civil date, including year/week
+// boundaries and the repeated hour when daylight saving time ends.
+it('uses Toronto civil day and Monday week boundaries across years and repeated hours',()=>{
+ const records=[snapshot('a','2026-01-01T00:30:00Z'),snapshot('b','2026-01-01T05:30:00Z'),snapshot('c','2026-01-05T04:30:00Z'),snapshot('d','2026-01-05T05:30:00Z'),snapshot('e','2026-11-01T05:30:00Z'),snapshot('f','2026-11-01T06:30:00Z')];
+ const toronto=planRetention(records,[],{scopes:['alice'],now:Date.parse('2026-11-02T08:00:00Z'),timeZone:'America/Toronto'});
+ const reasons=(id:string)=>toronto.keep.find(row=>row.snapshotId===id.repeat(64))?.reasons??[];
+ expect(reasons('a')).toContainEqual({kind:'daily',scope:'alice',period:'2025-12-31'});
+ expect(reasons('a')).toContainEqual({kind:'monthly',scope:'alice',period:'2025-12'});
+ expect(reasons('c')).toContainEqual({kind:'weekly',scope:'alice',period:'2025-12-29'});
+ expect(reasons('d')).toContainEqual({kind:'weekly',scope:'alice',period:'2026-01-05'});
+ expect(reasons('f')).toContainEqual({kind:'daily',scope:'alice',period:'2026-11-01'});
+ expect(toronto.remove.map(row=>row.snapshotId)).toContain('e'.repeat(64));
+ const utc=planRetention(records,[],{scopes:['alice'],now:Date.parse('2026-11-02T08:00:00Z'),timeZone:'UTC'});
+ expect(utc.keep.flatMap(row=>row.reasons)).not.toContainEqual({kind:'monthly',scope:'alice',period:'2025-12'});
+});
+it('keeps the last point of an archived task even when another task owns every calendar bucket',()=>{
+ const records=[snapshot('a','2026-10-25T07:00:00Z','alice','archived'),snapshot('b','2026-10-25T08:00:00Z','alice','archived'),snapshot('c','2026-10-25T09:00:00Z','alice','active')];
+ const plan=planRetention(records,[],{scopes:['alice'],now:Date.parse('2026-10-26T08:00:00Z')});
+ expect(plan.keep.find(row=>row.snapshotId==='b'.repeat(64))?.reasons).toEqual([{kind:'last-complete',scope:'alice',taskId:'archived'}]);
+ expect(plan.remove.map(row=>row.snapshotId)).toEqual(['a'.repeat(64)]);
+});
+
+it('rejects an invalid civil-time zone as a typed retention input error',()=>{expect(()=>planRetention([],[],{scopes:['alice'],now:0,timeZone:'Invalid/Zone'})).toThrow(expect.objectContaining({code:'invalid_retention'}));});

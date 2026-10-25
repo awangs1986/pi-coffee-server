@@ -12,7 +12,7 @@ export interface RepositoryRetentionPlan extends RetentionDecision {schema:1;id:
 export function planRetention(records:RetentionSnapshot[],pins:RecoveryPin[],input:{scopes:string[];now:number;timeZone?:string}):RetentionDecision{
  const timeZone=input.timeZone??'America/Toronto';
  if(!Array.isArray(input.scopes)||!input.scopes.length||input.scopes.length>256||new Set(input.scopes).size!==input.scopes.length||input.scopes.some(scope=>scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(scope)!==scope)||!Number.isFinite(input.now)||records.length>100000||pins.length>100000)throw new BackupError('invalid_retention','Invalid retention selection');
- const format=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
+ let format:Intl.DateTimeFormat;try{format=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});}catch{throw new BackupError('invalid_retention','Invalid retention time zone');}
  const scopes=[...input.scopes].sort(),allowed=new Set(scopes),reasons=new Map<string,RetentionReason[]>();
  const keep=(id:string,reason:RetentionReason)=>{const list=reasons.get(id)??[];if(!list.some(value=>JSON.stringify(value)===JSON.stringify(reason)))list.push(reason);reasons.set(id,list);};
  const catalog=new Map<string,RetentionSnapshot>();

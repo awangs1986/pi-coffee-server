@@ -2,7 +2,7 @@ import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>;
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -117,16 +117,20 @@ const REPOSITORY_UNAVAILABLE={configured:false,enabled:false,errorCode:'reposito
 async function repositoryStatus(factory:()=>BackupRepositoryAccess|undefined,scope:string,activationUnavailable?:string){
   try{const repository=factory();return repository?{...await repository.status(scope),...(activationUnavailable?{activationUnavailable}:{})}:undefined;}catch{return {...REPOSITORY_UNAVAILABLE};}
 }
+async function retentionStatus(factory:()=>BackupRepositoryAccess|undefined,scope:string){
+  try{const repository=factory();if(!repository)return undefined;const [plans,pins]=await Promise.all([repository.retentionPlans(scope),repository.recoveryPins(scope)]);return {available:true,plans,pins};}catch{return {available:false,errorCode:'retention_status_unavailable',plans:[],pins:[]};}
+}
 function repositoryClientOrUnavailable(factory:()=>BackupRepositoryAccess|undefined):BackupRepositoryAccess|undefined{
   try{return factory();}catch{
     const unavailable=async():Promise<never>=>{throw new BackupError('repository_status_unavailable','Backup repository service unavailable');};
-    return {status:unavailable,configure:unavailable,exportRecoveryPackage:unavailable,verifyRecoveryPackage:unavailable,rotateRecoveryKey:unavailable,backup:unavailable,recoverInterruptedOperation:unavailable};
+    return {status:unavailable,configure:unavailable,exportRecoveryPackage:unavailable,verifyRecoveryPackage:unavailable,rotateRecoveryKey:unavailable,backup:unavailable,recoverInterruptedOperation:unavailable,previewRetention:unavailable,executeRetention:unavailable,retentionPlans:unavailable,recoveryPins:unavailable};
   }
 }
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
   authenticatedActor?:string;
+  backupAdministrator?:string;
   backup?:BackupCoordinator;
   restore?:RestoreCoordinator;
   repository?:BackupRepositoryAccess;
@@ -298,7 +302,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
       };
       const scheduledStatus=async(target:UserSlot)=>({...await status(target),...(this.options.backup?.schedule?{schedule:await this.options.backup.schedule.status(target.user??LEGACY_BACKUP_SCOPE)}:{})});
       if(req.method==='GET'){json(res,200,await scheduledStatus(slot));return;}
@@ -337,6 +341,27 @@ export class HostServer {
           const result=await restore.operate(actor??'',input.id,{action:action as 'plan'|'revise'|'approve'|'publish'|'cancel',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})});json(res,200,result);
           if(action==='publish')this.broadcastSessions(await this.slotFor(result.scope===LEGACY_BACKUP_SCOPE?undefined:result.scope));
         }catch(error){const code=error instanceof BackupError?error.code:'';json(res,code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Restore operation failed'});}return;
+      }
+      if(typeof input.action==='string'&&input.action.startsWith('retention-')){
+        if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+        const allowed=new Set([dataScope,...this.options.backup?.scopes??[]]),scope=input.scope??dataScope;
+        if(typeof scope!=='string'||!allowed.has(scope)){json(res,403,{error:'Unmanaged retention scope'});return;}
+        if(this.options.backup?.activationUnavailable){json(res,409,{error:this.options.backup.activationUnavailable});return;}
+        try{
+          const target=await this.slotFor(scope===LEGACY_BACKUP_SCOPE?undefined:scope),repository=repositoryFor(target);if(!repository){json(res,409,{error:'Backup repository service unavailable'});return;}
+          if(input.action==='retention-status'){const [plans,pins]=await Promise.all([repository.retentionPlans(scope),repository.recoveryPins(scope)]);json(res,200,{plans,pins});return;}
+          if(input.action==='retention-preview'){
+            const scopes=input.scopes??[scope];if(!Array.isArray(scopes)||!scopes.length||scopes.some((value:unknown)=>typeof value!=='string'||!allowed.has(value))){json(res,403,{error:'Retention includes an unmanaged scope'});return;}
+            if(input.timeZone!==undefined&&typeof input.timeZone!=='string'){json(res,400,{error:'Invalid retention time zone'});return;}
+            json(res,200,await repository.previewRetention({scopes:scopes as string[],timeZone:input.timeZone as string|undefined}));return;
+          }
+          if(input.action==='retention-execute'){
+            if(typeof input.id!=='string'||!Number.isSafeInteger(input.revision)||typeof input.digest!=='string'){json(res,400,{error:'Provide the exact reviewed plan revision and digest'});return;}
+            const plan=(await repository.retentionPlans(scope)).find(plan=>plan.id===input.id);if(!plan||plan.scopes.some(value=>!allowed.has(value))){json(res,403,{error:'Retention plan is outside the managed scope'});return;}
+            json(res,200,await repository.executeRetention(input.id,input.revision as number,input.digest));return;
+          }
+          json(res,400,{error:'Unknown retention operation'});
+        }catch(error){json(res,error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Retention operation failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('repository-')){
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
@@ -750,7 +775,7 @@ export class HostServer {
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -1132,7 +1157,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot,repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.authenticatedActor&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE)))}:{}),tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await slot.schedule.status(this.user??LEGACY_BACKUP_SCOPE)))}:{})});break;
+          const slot=await this.slot,repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.authenticatedActor&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE)))}:{}),...(slot.authenticatedActor===slot.backupAdministrator?{retention:JSON.parse(JSON.stringify(await retentionStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE)??null))}:{}),tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await slot.schedule.status(this.user??LEGACY_BACKUP_SCOPE)))}:{})});break;
         }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
