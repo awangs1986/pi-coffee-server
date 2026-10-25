@@ -64,6 +64,9 @@ original item IDs and content through `thread/read`.
 - `test/codex-restore-crash.test.ts`: SIGKILL after task files, after the first SQL
   commit before its receipt, after native publication and after registry import;
   two restart workers converge while preserving neighbors and another account.
+- `test/codex-recovery-rejections.test.ts`: unsupported CLI/configuration and
+  unknown memory owners retain the prior point; late native row collisions
+  reject publication without task registry adoption.
 - `test/codex-shared-context.test.ts`: populated global/stage-one memory, paused
   goals, cleared worker ownership and inert selected queue history.
 - `test/codex-replacement.test.ts`: selected file/row replacement with fresh
