@@ -6,7 +6,7 @@ import {ManagedLaunchPolicy,LegacyAdmissionFence} from './host/managed-launch-po
 import {ManagedSourceAuthority,loadManagedSourceConfig,startManagedAdmissionControl} from './host/managed-source-authority.js';
 import {BackupRepositoryClient,readBackupRepositoryClientConfig} from './host/backup-repository-client.js';
 import {RestoreCoordinator,type NativeRestoreAdapter} from './host/restore.js';
-import {BackupRepository} from './host/backup-repository.js';
+import {BackupJobRunner,type BackupInventoryConnection} from './host/backup-job-runner.js';
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE,type NativeRecoveryAdapter} from './host/backup.js';
 import {PiNativeRecoveryAdapter} from './host/pi-recovery.js';
 import {AdmissionNativeCustody} from './host/native-custody.js';
@@ -55,6 +55,8 @@ if (role !== "host" && role !== "web" && role !== "relay" && role !== "all") {
 
 async function run(selectedRole: Role): Promise<void> {
   process.umask(0o077);
+  const wantHost = selectedRole !== "web" && selectedRole !== "relay";
+  const captureLimits=wantHost&&(process.env.PI_COFFEE_BACKUP_ROOT||process.env.PI_COFFEE_MANAGED_PROFILE_FILE)?{maxBytes:positiveBackupBound('PI_COFFEE_BACKUP_MAX_BYTES',1024*1024*1024),maxFiles:positiveBackupBound('PI_COFFEE_BACKUP_MAX_FILES',100000),captureTimeoutMs:positiveBackupBound('PI_COFFEE_BACKUP_CAPTURE_TIMEOUT_MS',30000,1800000)}:undefined;
   // The Relay is the only process that may hold upstream credentials. `all`
   // starts it when either the LLM key or the Serper key is configured; the
   // generic LLM routes remain unavailable when only search is enabled.
@@ -78,7 +80,6 @@ async function run(selectedRole: Role): Promise<void> {
   });
   if (relay) await relay.start();
 
-  const wantHost = selectedRole !== "web" && selectedRole !== "relay";
   const managedConfig=wantHost&&process.env.PI_COFFEE_MANAGED_PROFILE_FILE?await loadManagedSourceConfig(process.env.PI_COFFEE_MANAGED_PROFILE_FILE):undefined;
   const managedAuthority=managedConfig?new ManagedSourceAuthority(managedConfig):undefined,legacyPolicy=new ManagedLaunchPolicy();
   const workdir = managedConfig?join(managedConfig.sourceParent,'scopes',LEGACY_BACKUP_SCOPE,'work'):process.env.PI_COFFEE_WORKDIR ?? process.cwd();
@@ -145,8 +146,11 @@ async function run(selectedRole: Role): Promise<void> {
   if(managedConfig)await mkdir(join(managedConfig.sourceParent,'authority'),{recursive:true,mode:0o700});
   const recoveryAdapters=new Map<string,NativeRecoveryAdapter&NativeRestoreAdapter>();
   const restoreScopes=new Map<string,Workspaces>();
-  const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);}}}):undefined;
-  const backupRepository=!brokerConfig&&backupRoot&&backupCoordinator?new BackupRepository({root:join(backupRoot,'repository-runtime'),coordinator:backupCoordinator}):undefined;
+  const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),...captureLimits,adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);}}}):undefined;
+  // Ordinary HTTP/WS requests always obtain a fresh actor+scope facade. The
+  // independent scheduler CLI owns its privileged worker profile separately.
+  const scheduleForActor=brokerConfig&&backupRoot&&backupCoordinator?(actor:string|undefined,dataScope:string)=>actor?new BackupJobRunner({root:join(backupRoot,'schedule'),coordinator:backupCoordinator,repository:new BackupRepositoryClient({...brokerConfig,actor,dataScope})}):undefined:undefined;
+  const scheduleConnection=backupRoot?trustedBackupInventoryConnection():undefined;
   const restoreCoordinator=backupRoot?new RestoreCoordinator({root:join(backupRoot,'restore-runtime'),materialSource:async context=>{if(!brokerConfig||!managedAuthority)throw new BackupError('restore_material_broker_unavailable','An authorized scoped material broker is required');if(!restoreScopes.has(context.scope))await host?.prepareRestoreScope(context.scope===LEGACY_BACKUP_SCOPE?undefined:context.scope);if(!(await managedAuthority.sourceProof(context.scope)).known)throw new BackupError('writers_unknown','Managed restore source is not qualified');return new BackupRepositoryClient({...brokerConfig,actor:context.actor,dataScope:context.scope});},
     authorize:async(actor,scope,manage)=>{const managed=scope===LEGACY_BACKUP_SCOPE||envList('PI_COFFEE_BACKUP_USERS').includes(scope)||scope===actor;return managed&&(manage?actor==='awangs':actor===scope);},
     scope:async scope=>{if(!restoreScopes.has(scope)){await host?.prepareRestoreScope(scope===LEGACY_BACKUP_SCOPE?undefined:scope);}const workspaces=restoreScopes.get(scope);if(!workspaces)throw new BackupError('unknown_scope','Restore scope unavailable');return {workspaces,adapter:recoveryAdapters.get(scope),withPublication:(id,run,operationId)=>host!.withRestorePublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,id,run,operationId)};}
@@ -218,7 +222,7 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
-    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,repository:backupRepository,restore:restoreCoordinator,...(brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
+    ...(backupCoordinator?{backup:{coordinator:backupCoordinator,restore:restoreCoordinator,...(scheduleForActor?{scheduleForActor,scheduleConnection}:{}),...(brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,
@@ -354,4 +358,14 @@ function envList(name: string, separator = ","): string[] {
     .split(separator)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+/** Operator-only resource limits: invalid settings fail before listeners open. */
+function positiveBackupBound(name:string,fallback:number,max=Number.MAX_SAFE_INTEGER){const raw=process.env[name];if(raw===undefined)return fallback;if(!/^[1-9][0-9]*$/.test(raw)||!Number.isSafeInteger(Number(raw))||Number(raw)>max)throw new Error('Invalid '+name);return Number(raw);}
+function trustedBackupInventoryConnection():BackupInventoryConnection|undefined{
+  const value=process.env.PI_COFFEE_BACKUP_INVENTORY_URL,tokenFile=process.env.PI_COFFEE_BACKUP_INVENTORY_TOKEN_FILE;
+  if(value===undefined&&tokenFile===undefined)return undefined;
+  if(!value||!tokenFile||resolve(tokenFile)!==tokenFile)throw new Error('Set PI_COFFEE_BACKUP_INVENTORY_URL and an absolute PI_COFFEE_BACKUP_INVENTORY_TOKEN_FILE together');
+  const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new Error('Invalid PI_COFFEE_BACKUP_INVENTORY_URL');
+  return {url:url.origin,tokenFile,actor:'awangs'};
 }
