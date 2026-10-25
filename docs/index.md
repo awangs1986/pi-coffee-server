@@ -1,6 +1,8 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
+- Pi/Codex backup candidate: [checkpoint/source-custody contract and remaining gates](spec/task-backup.md), [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130). Source checkpoints only; encrypted daily backups and restore publication remain pending.
+
 - Latest scoped spec refresh (2026-10-23): [UI source baseline, evidence and unresolved gaps](reviews/spec-freshness-20261023-ui.md). Candidate v0.53 at `1bc2b27`; documentation-only refresh, not a deployment claim.
 
 - MISHU #7–#15 secretary experience candidate: [source and acceptance record](reviews/mishu-experience-candidate.md), [Host contracts](spec/mishu.md), [independent product authority](spec/mishu-secretary-experience.md), [installed-package/native/Browser acceptance](development/mishu-experience.md). Memory scope filters retain complete-binding capacity counts including tombstones. Pi Chat remains the only secretary source; candidate publication and production activation are separate.

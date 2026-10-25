@@ -3,7 +3,7 @@ import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
-import { USER_HEADER } from "../shared/identity.js";
+import { USER_HEADER,ACTOR_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json, parseRequestTarget } from "../shared/http.js";
@@ -278,7 +278,7 @@ export class WebServer {
         json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion)});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
-    if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    if(path === "/api/backup" || path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
@@ -286,7 +286,7 @@ export class WebServer {
         if(request.method === "POST" && (this.identity ? !this.identity.originAllowed(request) : this.auth ? !this.auth.originAllowed(request) : request.headers.origin !== `${this.scheme}://${request.headers.host}`)) {json(response,403,{error:"Invalid origin"});return;}
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
-        const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined);
+        const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined,path==='/api/backup'?session?.login??this.auth?.principalOf(request)?.user??this.defaultUser:undefined);
         const body=await result.json();
         if(result.ok)this.recordTransferGrant(body, session ? `identity:${session.id}` : this.auth ? `auth:${this.auth.principalOf(request)!.user}` : "local");
         json(response,result.status,body);
@@ -408,9 +408,9 @@ export class WebServer {
     request.pipe(upstreamReq);
   }
 
-  private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown) {
+  private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown,actor?:string) {
     const url=new URL(route.hostUrl);url.protocol=url.protocol==="wss:" ? "https:" : "http:";url.pathname=path;url.search="";
-    return fetch(url,{method,headers:{authorization:`Bearer ${route.hostToken}`,"content-type":"application/json",...(route.user?{[USER_HEADER]:route.user}:{})},...(value===undefined ? {} : {body:JSON.stringify(value)}),signal:AbortSignal.timeout(125000),redirect:"error"});
+    return fetch(url,{method,headers:{authorization:`Bearer ${route.hostToken}`,"content-type":"application/json",...(route.user?{[USER_HEADER]:route.user}:{}),...(actor?{[ACTOR_HEADER]:actor}:{})},...(value===undefined ? {} : {body:JSON.stringify(value)}),signal:AbortSignal.timeout(125000),redirect:"error"});
   }
 
   private async assertHostCompatibility(route: { hostUrl: string; hostToken: string; user?:string }): Promise<void> {

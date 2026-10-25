@@ -1,3 +1,4 @@
+import type {WriterAdmissionFence} from './backup.js';
 import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
 import {copyForkTree} from './fork-files.js';
 import type {GitHubAccounts} from './github-accounts.js';
@@ -87,6 +88,8 @@ interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<
 interface State { displayMode?:"compact"|"detailed"; sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
+  backupWriterFence?:WriterAdmissionFence;
+  setBackupWriterFence(fence:WriterAdmissionFence){this.backupWriterFence=fence;}
   private state: State = {version:2,projects:[],conversations:[]};
   private tails = new Map<string, Promise<unknown>>();
   private saveTail: Promise<void> = Promise.resolve();
@@ -135,7 +138,8 @@ export class Workspaces {
     if(interrupted)await this.save();
     this.initialized=true;
   }
-  private async save() {
+  private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
+  private async saveState() {
     const next=this.saveTail.then(async()=>{
       const temp=join(this.root,'.coffee',randomUUID()+'.tmp');
       await writeFile(temp,JSON.stringify(this.state,null,2),{mode:0o600});await rename(temp,join(this.root,'.coffee','state.json'));
@@ -143,7 +147,8 @@ export class Workspaces {
     });this.saveTail=next.catch(()=>undefined);return next;
   }
   /** Git operations serialize per project; only metadata publication is VM-wide. */
-  private async mutate<T>(run:()=>Promise<T>, key:()=>string=()=>"registry"):Promise<T> {
+  private async mutate<T>(run:()=>Promise<T>, key:()=>string=()=>"registry",admitted=false):Promise<T> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.mutate(run,key,true));
     await this.load();const name=key();
     const next=(this.tails.get(name) ?? Promise.resolve()).catch(()=>undefined).then(async()=> {
       const dir=join(this.root,'.coffee','locks');await mkdir(dir,{recursive:true,mode:0o700});
@@ -160,23 +165,25 @@ export class Workspaces {
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false) {
+  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
+    const release=this.backupWriterFence?.beginWriter('platform');try {
     const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
     return raw||args.includes('-z')?r.stdout:r.stdout.trim();
+    }finally{release?.();}
   }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
     catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
   }
   private async gitResult(cwd:string,args:string[],maxBuffer=2*1024*1024):Promise<{code:number;stdout:string;stderr:string}> {
-    try {
+    const release=this.backupWriterFence?.beginWriter('platform');try {try {
       const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
       return {code:0,stdout:String(r.stdout),stderr:String(r.stderr)};
     } catch(error) {
       const e=error as NodeJS.ErrnoException & {stdout?:string;stderr?:string};
       if(typeof e.code==='number')return {code:e.code,stdout:String(e.stdout ?? ''),stderr:String(e.stderr ?? e.message)};
       throw error;
-    }
+    }}finally{release?.();}
   }
   private async remoteBranchSha(cwd:string,branch:string,remote='origin'):Promise<string|undefined> {
     const row=await this.git(cwd,['ls-remote','--heads',remote,`refs/heads/${branch}`]);
@@ -420,7 +427,8 @@ export class Workspaces {
     if(!info?.isDirectory() || info.isSymbolicLink())throw new Error('Workspace directory unavailable; restore it explicitly');
     return c.cwd;
   }
-  async dataRoot(id:string) {
+  async dataRoot(id:string):Promise<string> {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.dataRootAdmitted(id)):this.dataRootAdmitted(id);}
+  private async dataRootAdmitted(id:string) {
     await this.load();const c=this.conversation(id);await this.checkDirectory(c);
     if(c.taskRoot){await prepareTaskRoot(c.taskRoot);return c.taskRoot;}
     const root=c.workspaceKind==='chat' ? c.cwd : join(c.cwd,'.pi-coffee');
@@ -441,7 +449,8 @@ export class Workspaces {
     const c=await this.lookup(id);const root=await this.dataRoot(id);
     return join(root,c?.taskRoot?'attachments':'inbox');
   }
-  async exportHistory(id:string,history:AgentHistory) {
+  async exportHistory(id:string,history:AgentHistory):Promise<void> {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.exportHistoryAdmitted(id,history)):this.exportHistoryAdmitted(id,history);}
+  private async exportHistoryAdmitted(id:string,history:AgentHistory) {
     const c=await this.lookup(id);if(!c?.taskRoot || c.workspaceRemoved || c.cleanupStarted)return;
     await checkedTaskRoot(c.taskRoot);
     await writeTaskJson(join(c.taskRoot,'history'),'conversation.json',{schemaVersion:1,role:'display-export-only',conversationId:id,engine:c.engine ?? 'pi',exportedAt:new Date().toISOString(),...history});

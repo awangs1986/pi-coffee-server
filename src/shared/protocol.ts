@@ -211,6 +211,7 @@ export interface UiResponse {
 }
 
 export type ClientFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"get_backup_status"}
   | {v:typeof PROTOCOL_VERSION;type:"set_display_mode";mode:"compact"|"detailed";requestId?:string}
   | ({v:typeof PROTOCOL_VERSION;type:"queue_action";requestId:string} & QueueAction)
   | {v:typeof PROTOCOL_VERSION;type:"get_queue"}
@@ -280,6 +281,7 @@ export type ClientFrame = (
     }) & {conversationId?:string;bindingEpoch?:string};
 
 export type ServerFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"backup_status";scope:string;tasks:{taskId:string;engine:AgentEngine;state:string;coverage:string;checkpointId:string|null;captureAt:string|null;ageMs:number|null;stale:boolean;reason?:string}[]}
   | {v:typeof PROTOCOL_VERSION;type:"agent_command_result";sessionId:string;requestId?:string;name:string;text:string}
   | {v:typeof PROTOCOL_VERSION;type:"mishu_watch";panel?:{counts:Record<string,number>;items:{key:string;kind:string;conv?:string;text:string;link?:string;priority:number}[]};notice?:{text:string;link?:string;conv?:string;kind:string}}
   | {v:typeof PROTOCOL_VERSION;type:"sync_changed";sessionId:string;conversationId:string;bindingEpoch:string;headRevision:string;sourceFreshness:"unknown"|"reconciling"|"current"}
@@ -440,6 +442,8 @@ function parseClientFrame(value:Record<string,unknown>):ClientFrame {
   switch (value.type) {
     case "open":
       return parseOpen(value);
+    case "get_backup_status":
+      return {v:PROTOCOL_VERSION,type:"get_backup_status"};
     case "list_sessions":
       return { v: PROTOCOL_VERSION, type: "list_sessions" };
     case "get_model_catalog":

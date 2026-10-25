@@ -1,3 +1,4 @@
+import type {WriterAdmissionFence} from './backup.js';
 import {mkdir,writeFile,rename,unlink,lstat,open,readdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,resolve,sep} from 'node:path';
@@ -10,12 +11,13 @@ interface MemoryBook {enabled:boolean;revision:number;entries:MemoryEntry[];oper
 interface MemoryState {version:1;books:Record<string,MemoryBook>}
 export class MishuMemory {
  private tail:Promise<unknown>=Promise.resolve();private loaded?:Promise<void>;private state:MemoryState={version:1,books:{}};
- constructor(private root:string){}
+ constructor(private root:string,private writerFence?:()=>WriterAdmissionFence|undefined){}
  private key(id:string,binding:string){return id+':'+binding;}
  private async directory(create=false){let current:string=sep;for(const part of resolve(this.root).split(sep).filter(Boolean)){current=join(current,part);let stat;try{stat=await lstat(current);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;if(!create)return false;try{await mkdir(current,{mode:0o700});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST')throw e;}stat=await lstat(current);}if(!stat.isDirectory()||stat.isSymbolicLink())throw Error('MISHU memory directory is unsafe');}return true;}
  private async read(file:string){const handle=await open(file,constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=await handle.stat();if(!stat.isFile()||stat.nlink!==1||stat.size>MEMORY_LIMITS.bytes)throw Error('MISHU memory file is unsafe or exceeds capacity');const buffer=Buffer.alloc(MEMORY_LIMITS.bytes+1),{bytesRead}=await handle.read(buffer,0,buffer.length,0);if(bytesRead>MEMORY_LIMITS.bytes)throw Error('MISHU memory capacity exceeded');return buffer.subarray(0,bytesRead);}finally{await handle.close();}}
  private async load(){await(this.loaded??=(async()=>{try{if(!await this.directory())return;const bytes=(await this.read(join(this.root,'memory.json'))).toString('utf8');const value=JSON.parse(bytes);if(value.version!==1||!value.books||typeof value.books!=='object'||Buffer.byteLength(bytes)>MEMORY_LIMITS.bytes)throw Error();for(const b of Object.values(value.books) as MemoryBook[]){if(typeof b.enabled!=='boolean'||!Number.isInteger(b.revision)||!Array.isArray(b.entries)||b.entries.length>MEMORY_LIMITS.entries||!Array.isArray(b.operations))throw Error();for(const e of b.entries)if(typeof e.id!=='string'||!Number.isInteger(e.revision)||typeof e.text!=='string'||!Array.isArray(e.history)||!e.source)throw Error();}this.state=value;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw Error('MISHU memory unavailable: corrupt or unsupported memory.json; preserve it and restore a private backup. Ordinary Chat remains available');}})());}
- private async persist(next:MemoryState,validate?:()=>Promise<void>){
+ private async persist(next:MemoryState,validate?:()=>Promise<void>,admitted=false):Promise<void>{
+  const fence=this.writerFence?.();if(fence&&!admitted)return fence.runWriter('platform',()=>this.persist(next,validate,true));
   const bytes=JSON.stringify(next);if(Buffer.byteLength(bytes)>MEMORY_LIMITS.bytes)throw Error('MISHU memory capacity exceeded; export and diagnose storage before saving');await this.directory(true);const file=join(this.root,'memory.json');
   let previous:Buffer|undefined;try{previous=await this.read(file);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   // At most 32 immutable predecessor snapshots; never overwrite or silently restore one.

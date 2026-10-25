@@ -1,3 +1,4 @@
+import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -37,7 +38,7 @@ import {
   type ServerFrame,
 } from "../shared/protocol.js";
 
-import { normalizeUsername, USER_HEADER, taskNamespace } from "../shared/identity.js";
+import { normalizeUsername, USER_HEADER, ACTOR_HEADER, taskNamespace } from "../shared/identity.js";
 
 import { PI_ONLY_ENGINES, type AgentSessionFactory as PiSessionFactory } from "./agent-adapter.js";
 
@@ -63,6 +64,8 @@ export interface UserScope {
 }
 
 export interface HostServerOptions {
+  /** Trusted source coordinator; omitted until native writer custody is verified. */
+  backup?: {coordinator:BackupCoordinator; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -108,6 +111,7 @@ export interface HostServerOptions {
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  backup?:BackupCoordinator;
   mishu?:MishuCoordinator;
   user: string | undefined;
   workdir?: string;
@@ -123,6 +127,11 @@ interface UserSlot {
   lifecycleLocks: Set<string>;
   workspaceReads: Map<string, Promise<unknown>>;
 
+}
+
+async function backupStatuses(slot:UserSlot){
+ if(!slot.workspaces)return [];
+ return Promise.all((await slot.workspaces.list()).conversations.map(task=>slot.backup?slot.backup.status(slot.user??LEGACY_BACKUP_SCOPE,task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'})));
 }
 
 export interface HostAddress {
@@ -244,20 +253,52 @@ export class HostServer {
     if(this.options.runtimeStatus?.().mode==='emergency')return undefined;
     try{return dirname(createRequire(import.meta.url).resolve('pi-coffee-mishu/package.json'));}catch{return undefined;}
   }
-  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse) {
+  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse,admitted=false):Promise<void> {
     if(req.url==='/api/mishu/runtime'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       const token=req.headers.authorization?.replace(/^Bearer /,'')??'';
       const slots=await Promise.all([...this.slots.values()]);
       const slot=slots.find(s=>s.mishu?.accepts(token));
       if(!slot?.mishu){json(res,401,{error:'Invalid MISHU capability'});return;}
-      try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
+      const release=slot.workspaces?.backupWriterFence?.beginWriter('platform');try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}finally{release?.();}return;
     }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
+    const rawActor=req.headers[ACTOR_HEADER],actor=rawActor===undefined?user:normalizeUsername(rawActor);
+    if(rawActor!==undefined&&!actor){json(res,400,{error:'Valid actor identity required'});return;}
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    if(req.method==='POST'&&req.url!=='/api/backup'&&slot.workspaces?.backupWriterFence&&!admitted)return slot.workspaces.backupWriterFence.runWriter('platform',()=>this.handleApi(req,res,true));
+    if(req.url==='/api/backup'){
+      if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
+      const coordinator=this.options.backup?.coordinator;
+      const administrator=this.options.backup?.administrator??'awangs',dataScope=slot.user??LEGACY_BACKUP_SCOPE;
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),excludedEngines:['claude','cursor','grok']});
+      if(req.method==='GET'){json(res,200,await status(slot));return;}
+      if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
+      const input=await readJson(req,8192);
+      if(input.action==='status'){
+        if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+        if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||(input.scope!==dataScope&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        const target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
+      }
+      if(typeof input.taskId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.taskId)){json(res,400,{error:'Invalid task identity'});return;}
+      if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+      let target=slot;
+      if(input.scope!==undefined&&input.scope!==dataScope){
+        if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||!this.options.backup?.scopes?.includes(input.scope)){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);
+      }
+      const task=await target.workspaces?.lookup(input.taskId);
+      if(!task){json(res,404,{error:'Unknown task'});return;}
+      if(!['capture','cancel'].includes(String(input.action))){json(res,400,{error:'Unknown backup operation'});return;}
+      if(!coordinator){json(res,409,{error:'Native writer coverage is not verified'});return;}
+      try{
+        if(input.action==='cancel'){json(res,200,{cancelled:coordinator.cancel(target.user??LEGACY_BACKUP_SCOPE,task.id)});return;}
+        json(res,200,await coordinator.capture(target.user??LEGACY_BACKUP_SCOPE,task.id,task.engine??'pi'));
+      }catch(error){json(res,error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Backup operation failed'});}return;
+    }
     if(req.url==='/api/mishu'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       if(!slot.mishu||!this.mishuExtension()){json(res,503,{error:'MISHU plugin is not installed on this Host'});return;}
@@ -614,14 +655,14 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues')):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, backup:this.options.backup?.coordinator, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -987,14 +1028,17 @@ class HostSocket implements SessionSink {
 
     try {
       if(frame.type==='prompt'&&receivedGeneration!==undefined)this.session?.assertCommandGeneration(receivedGeneration);
-      if(this.syncProtocol===2&&this.session&&!['open','list_sessions','close'].includes(frame.type)){
+      if(this.syncProtocol===2&&this.session&&!['open','list_sessions','get_backup_status','close'].includes(frame.type)){
         if(frame.conversationId!==this.session.id||frame.bindingEpoch!==this.bindingEpoch)throw new Error('Conversation identity changed; reopen before sending this command');
       }
-      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
+      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_backup_status","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
           await this.open(frame);
           break;
+        case "get_backup_status": {
+          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,tasks:await backupStatuses(slot)});break;
+        }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
           if(!this.listing){

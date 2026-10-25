@@ -6,6 +6,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 await checkedReleaseVersion(root);
 await mkdir(resolve(root, "dist/src/host"), { recursive: true });
 await cp(resolve(root, "src/host/import-zip.py"), resolve(root, "dist/src/host/import-zip.py"));
+await cp(resolve(root, 'src/host/native-custody-supervisor.py'), resolve(root, 'dist/src/host/native-custody-supervisor.py'));
+await cp(resolve(root, 'src/host/native-custody-launcher.mjs'), resolve(root, 'dist/src/host/native-custody-launcher.mjs'));
 
 await cp(resolve(root, 'src/host/github-tools.mjs'), resolve(root, 'dist/src/host/github-tools.mjs'));
 
