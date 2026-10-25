@@ -37,3 +37,18 @@ node dist/src/restore-cli.js publish --profile /private/host-recovery.json --id 
 ```
 
 `status`, `cancel`, and `revise` use the same authenticated endpoint and current revision. Cross-account selection requires the configured administrator and managed-scope allowlist. Request/cancel metadata alone never grants approval, native execution, restored provider authentication or automatic input replay.
+
+Shared native files are coordinated before account approval. Children from the
+same verified full checkpoint cut may bind an identical native target to one
+validated staged inode and exact replacement preimage. Their approval digests
+and the account vector are then recalculated. Later children require the
+publisher's matching completed registry receipt; byte equality alone never
+adopts an unrelated existing file. Replacement retains the old file at the one
+approved exchange source.
+
+For a single missing Pi task, an unchanged parent already used by a healthy
+registered neighbor may be reused only with a current binding/parent-chain
+proof. The plan binds the neighbor's registry and exact native-file inode/hash
+witnesses; publication checks them again and preserves that parent's inode.
+Different content, an unknown owner or changed witnesses reject the plan or
+publication. Historical text is not scanned or rewritten to infer ownership.
