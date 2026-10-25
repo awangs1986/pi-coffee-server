@@ -1,15 +1,15 @@
 import {createServer,createConnection,type Server,type Socket} from 'node:net';
 import {randomBytes,createHash} from 'node:crypto';
-import {lstat,realpath,readFile,open,chmod} from 'node:fs/promises';
+import {lstat,realpath,readFile,open,chmod,mkdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {once} from 'node:events';
 import {spawn} from 'node:child_process';
-import {hardenCurrentProcess,processProtection,kernelPeerCredentials} from './linux-file-lease.js';
+import {hardenCurrentProcess,processProtection,kernelPeerCredentials,acquireFileLease} from './linux-file-lease.js';
 import {ManagedLaunchPolicy} from './managed-launch-policy.js';
 import type {ManagedProviderTransports,ManagedNativeCustody} from './managed-native.js';
 import type {NativeWriterCustody} from './native-custody.js';
-import {BackupError,type BackupCoordinator} from './backup.js';
+import {BackupError,verifySealedCheckpoint,type BackupCoordinator,type SealedCheckpoint,type WriterAdmissionFence} from './backup.js';
 import {ManagedSourceContinuation,type QualifiedSourceIdentity} from './managed-source-continuation.js';
 
 interface ProcessIdentity {pid:number;uid:number;boot:string;birth:string;}
@@ -24,23 +24,26 @@ async function request(socketPath:string,expectedUid:number,body:unknown){
  const connection=createConnection(socketPath);let text='';const timer=setTimeout(()=>connection.destroy(safe()),5000);
  try{await once(connection,'connect');if(kernelPeerCredentials(fd(connection)).uid!==expectedUid)throw safe();connection.write(JSON.stringify(body)+'\n');for await(const chunk of connection){text+=String(chunk);if(Buffer.byteLength(text)>1024*1024)throw safe();const line=text.indexOf('\n');if(line>=0)return JSON.parse(text.slice(0,line));}throw safe();}finally{clearTimeout(timer);connection.destroy();}
 }
-async function listen(path:string,allowedUids:number[],handler:(request:Record<string,unknown>,socket:Socket)=>Promise<void>):Promise<Server>{
+export async function listenManagedControl(path:string,allowedUids:number[],handler:(request:Record<string,unknown>,socket:Socket)=>Promise<void>):Promise<Server>{
  const control=await lstat(dirname(path));if(!control.isDirectory()||control.isSymbolicLink()||control.uid!==process.getuid?.()||(control.mode&0o022)!==0||await realpath(dirname(path))!==resolve(dirname(path)))throw safe();if(await lstat(path).then(()=>true,()=>false))throw safe();
  const server=createServer(socket=>{void(async()=>{try{if(!allowedUids.includes(kernelPeerCredentials(fd(socket)).uid))throw safe();let buffered='';for await(const chunk of socket.iterator({destroyOnReturn:false})){buffered+=String(chunk);if(Buffer.byteLength(buffered)>1024*1024)throw safe();const line=buffered.indexOf('\n');if(line<0)continue;const input:unknown=JSON.parse(buffered.slice(0,line));if(!input||typeof input!=='object'||Array.isArray(input)||Object.hasOwn(input,'_peer'))throw safe();await handler(input as Record<string,unknown>,socket);break;}}catch{if(!socket.destroyed)await send(socket,{schema:1,error:'managed-authority-unavailable'}).catch(()=>undefined);}finally{socket.end();}})();});
- server.listen(path);await once(server,'listening');await chmod(path,0o666);return server;
+ server.listen(path);await once(server,'listening');await chmod(path,0o660);return server;
 }
 
 /** A live handoff is performed in the old Host, under the same object used by
  * every future native launch. Unknown custody is never cleared by a restart. */
-export async function startManagedAdmissionControl(options:{socket:string;allowedUid:number;policy:ManagedLaunchPolicy;custody:NativeWriterCustody}){
- return listen(options.socket,[options.allowedUid],async(input,socket)=>{if(input.schema!==1||input.operation!=='retire-unrestricted'||typeof input.challenge!=='string'||input.challenge.length>128||Object.keys(input).some(k=>!['schema','operation','challenge'].includes(k)))throw safe();const state=options.policy.requestProtectedOnly(),native=await options.custody.state();if(state.admission!=='protected-only'||state.legacy!=='drained'||native.state!=='quiescent')throw safe();await send(socket,{schema:1,challenge:input.challenge,authority:await identity(),admission:'protected-only',legacy:'drained',policyRevision:state.revision});});
+export async function startManagedAdmissionControl(options:{socket:string;allowedUid:number;policy:ManagedLaunchPolicy;custody:NativeWriterCustody;writerFence?:WriterAdmissionFence;coldCutRoot?:string}){
+ return listenManagedControl(options.socket,[options.allowedUid],async(input,socket)=>{if(input.schema!==1||!['retire-unrestricted','hold-cold-export'].includes(String(input.operation))||typeof input.challenge!=='string'||input.challenge.length>128||Object.keys(input).some(k=>!['schema','operation','challenge'].includes(k)))throw safe();const state=options.policy.requestProtectedOnly(),native=await options.custody.state();if(state.admission!=='protected-only'||state.legacy!=='drained'||native.state!=='quiescent')throw safe();if(input.operation==='retire-unrestricted'){await send(socket,{schema:1,challenge:input.challenge,authority:await identity(),admission:'protected-only',legacy:'drained',policyRevision:state.revision});return;}
+  if(!options.writerFence||!options.coldCutRoot)throw safe();await mkdir(options.coldCutRoot,{recursive:true,mode:0o700});await privateDirectory(options.coldCutRoot);const logical=await options.writerFence.publicationLease(),kernel=(()=>{try{return acquireFileLease(join(options.coldCutRoot!,'cold-export.lock'),'exclusive');}catch(error){logical.release();throw error;}})();if(!kernel){logical.release();throw safe();}const cutId=randomBytes(24).toString('hex');let probing=false;const heartbeat=async()=>{if(probing)return;probing=true;try{options.policy.assertProtectedOnly();if((await options.custody.state()).state!=='quiescent')throw safe();logical.assertValid();kernel.assertHeld();await send(socket,{schema:1,type:'cold-heartbeat',cutId});}catch{socket.destroy();}finally{probing=false;}};
+  const timer=setInterval(()=>void heartbeat(),1000),deadline=setTimeout(()=>socket.destroy(),30*60*1000);try{logical.assertValid();kernel.assertHeld();await send(socket,{schema:1,type:'cold-cut',challenge:input.challenge,authority:await identity(),cutId,groupId:'legacy-'+createHash('sha256').update(resolve(options.coldCutRoot!)).digest('hex').slice(0,32),epoch:logical.epoch});await once(socket,'close');}finally{clearInterval(timer);clearTimeout(deadline);kernel.release();logical.release();}
+ });
 }
 
 /** Long-lived source Host owner; configuration alone cannot make it qualified.
  * Only its live handoff, actual process hardening, source identities and real
  * namespace probes unlock sourceProof or checkpoint export. */
 export class ManagedSourceAuthority {
- readonly policy=new ManagedLaunchPolicy();private handoff?:Handoff;private qualified=false;private activating=false;private continued=false;private readonly scopes=new Map<string,{custody:ManagedNativeCustody;digest:string}>();private server?:Server;
+ readonly policy=new ManagedLaunchPolicy();private handoff?:Handoff;private qualified=false;private activating=false;private continued=false;private readonly scopes=new Map<string,{custody:ManagedNativeCustody;digest:string}>();private server?:Server;private readonly enrollmentPoints=new Map<string,SealedCheckpoint>();
  constructor(readonly config:ManagedSourceConfig){if(config.schema!==1||[config.executorUid,config.legacyHostUid,config.keyUid].some(uid=>!Number.isSafeInteger(uid)||uid<1)||new Set([config.executorUid,config.legacyHostUid,config.keyUid]).size!==3)throw safe();}
  register(scope:string,custody:ManagedNativeCustody){if(this.qualified||this.activating||this.scopes.has(scope))throw safe();this.scopes.set(scope,{custody,digest:createHash('sha256').update(JSON.stringify(custody.profile)).digest('hex')});}
  private continuation(){return new ManagedSourceContinuation(join(this.config.sourceParent,'authority','source-qualification.json'));}
@@ -63,9 +66,10 @@ export class ManagedSourceAuthority {
  }
  async sourceProof(scope:string){try{if(!this.qualified||!this.scopes.has(scope)||!this.handoff&&!this.continued)throw safe();await this.processAndSources();this.policy.assertProtectedOnly();const protection=processProtection();if(protection.dumpable!==0||protection.noNewPrivs!==1)throw safe();if(this.continued){await this.continuation().verify(await this.sourceIdentity());await this.knownCustody();}else{const legacy=await identity(this.handoff!.pid);if(legacy.uid!==this.handoff!.uid||legacy.boot!==this.handoff!.boot||legacy.birth!==this.handoff!.birth)throw safe();}return {known:true};}catch{return {known:false,reason:'managed-source-prerequisites-unqualified'};}}
  async qualification(challenge:string){if(!/^[a-zA-Z0-9_-]{16,128}$/.test(challenge)||!(await this.sourceProof(this.scopes.keys().next().value??'')).known)throw safe();return {schema:1,challenge,authority:await identity(),policyRevision:this.policy.status().revision,admission:'protected-only',legacy:'drained',profileDigest:createHash('sha256').update(JSON.stringify([...this.scopes].map(([scope,s])=>[scope,s.digest]))).digest('hex'),enforcement:'managed-bwrap-flock-v1'};}
- async startServer(coordinator:BackupCoordinator){if(this.server)throw safe();this.server=await listen(this.config.sourceSocket,[this.config.keyUid],async(input,socket)=>{
+ async withEnrollmentPoint<T>(point:SealedCheckpoint,run:()=>Promise<T>):Promise<T>{const manifest=await verifySealedCheckpoint(point.directory,createHash('sha256').update(JSON.stringify(point.manifest)).digest('hex'));for(const member of manifest.members)if(!(await this.sourceProof(member.scope)).known)throw safe();if(this.enrollmentPoints.has(manifest.checkpointId))throw safe();this.enrollmentPoints.set(manifest.checkpointId,{directory:point.directory,manifest});try{return await run();}finally{this.enrollmentPoints.delete(manifest.checkpointId);}}
+ async startServer(coordinator:BackupCoordinator){if(this.server)throw safe();this.server=await listenManagedControl(this.config.sourceSocket,[this.config.keyUid],async(input,socket)=>{
   if(input.schema!==1||typeof input.challenge!=='string')throw safe();if(input.operation==='qualify-backup'){await send(socket,await this.qualification(input.challenge));return;}
-  if(input.operation!=='export-checkpoint'||typeof input.scope!=='string'||typeof input.taskId!=='string'||!this.scopes.has(input.scope)||Object.keys(input).some(k=>!['schema','operation','scope','taskId','expectedCheckpointId','challenge','id'].includes(k)))throw safe();await this.qualification(input.challenge);const point=await coordinator.sealedCheckpoint(input.scope,input.taskId);if(!point||input.expectedCheckpointId!==undefined&&input.expectedCheckpointId!==point.manifest.checkpointId)throw safe();
+  if(input.operation!=='export-checkpoint'||typeof input.scope!=='string'||typeof input.taskId!=='string'||!this.scopes.has(input.scope)||Object.keys(input).some(k=>!['schema','operation','scope','taskId','expectedCheckpointId','challenge','id'].includes(k)))throw safe();await this.qualification(input.challenge);const staged=typeof input.expectedCheckpointId==='string'?this.enrollmentPoints.get(input.expectedCheckpointId):undefined,point=staged??await coordinator.sealedCheckpoint(input.scope,input.taskId);if(!point||!point.manifest.members.some(member=>member.scope===input.scope&&member.taskId===input.taskId)||input.expectedCheckpointId!==undefined&&input.expectedCheckpointId!==point.manifest.checkpointId)throw safe();
   const manifest=Buffer.from(JSON.stringify(point.manifest));await send(socket,{schema:1,type:'header',checkpointId:point.manifest.checkpointId,manifestBytes:manifest.length});for(let offset=0;offset<manifest.length;offset+=192*1024)await send(socket,{type:'manifest',data:manifest.subarray(offset,offset+192*1024).toString('base64')});
   for(const object of point.manifest.objects){await send(socket,{type:'object',object});if(object.kind==='file'){const hash=createHash('sha256');let size=0;for await(const chunk of (await open(join(point.directory,object.path),constants.O_RDONLY|constants.O_NOFOLLOW)).createReadStream({highWaterMark:192*1024})){hash.update(chunk);size+=chunk.length;await send(socket,{type:'chunk',data:chunk.toString('base64')});}if(size!==object.size||hash.digest('hex')!==object.sha256)throw safe();}await send(socket,{type:'object-end'});}
   await send(socket,{type:'end',checkpointId:point.manifest.checkpointId,manifestSha256:createHash('sha256').update(manifest).digest('hex')});

@@ -1,5 +1,5 @@
 """Pinned local Codex storage boundary. No providers, native execution or secrets in output errors."""
-import base64, ctypes, hashlib, json, os, pathlib, signal, sqlite3, sys, tomllib, tempfile
+import base64, ctypes, hashlib, json, os, pathlib, signal, sqlite3, sys, tomllib, tempfile, shutil
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SCHEMAS = json.loads((ROOT / 'codex-schema-01591.json').read_text())
@@ -104,8 +104,30 @@ def durable(path, value):
     finally:
         if os.path.exists(temporary): os.unlink(temporary)
 
+def inspection_copy(path):
+    # Read only the original main/WAL bytes. SQLite recovery and all preflight
+    # transactions happen in private scratch, including SHM creation.
+    temporary = tempfile.TemporaryDirectory(prefix='coffee-native-preflight-')
+    try:
+        total = 0
+        for suffix in ['', '-wal']:
+            source = pathlib.Path(str(path)+suffix)
+            if not source.exists(): continue
+            source = safe(source)
+            total += source.stat().st_size
+            if total > 1024**3: raise ValueError('resource_limit')
+            shutil.copyfile(source, pathlib.Path(temporary.name)/(path.name+suffix))
+        source = sqlite3.connect(pathlib.Path(temporary.name)/path.name, timeout=0)
+        memory = sqlite3.connect(':memory:')
+        try: source.backup(memory)
+        finally: source.close()
+        return memory, temporary
+    except:
+        temporary.cleanup()
+        raise
+
 def merge(request):
-    plan = request['plan']; root = safe(plan['sqliteHome'], True)
+    plan = request['plan']; root = safe(plan['sqliteHome'], True); dry = request['operation'] == 'preflight'
     journal_path = pathlib.Path(plan['journal']); safe(journal_path.parent, True)
     if journal_path.exists():
         journal = json.loads(safe(journal_path).read_text())
@@ -116,11 +138,14 @@ def merge(request):
     for name in dict.fromkeys([*plan['databases'], *plan.get('replacements', {})]):
         changes = plan['databases'].get(name, {})
         if name not in SCHEMAS: raise ValueError('unsupported_native_schema')
-        path = safe(root / name)
+        target = root / name
+        path = safe(request.get('sourceOverrides', {}).get(str(target), target) if dry else target)
         identity = plan['databaseIdentities'][name]
         info = path.stat()
         if [info.st_dev, info.st_ino] != identity: raise ValueError('native_store_changed')
-        c = sqlite3.connect(path, timeout=0)
+        temporary = None
+        if dry: c, temporary = inspection_copy(path)
+        else: c = sqlite3.connect(path, timeout=0)
         try:
             qualified(c, name); c.row_factory = sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('BEGIN IMMEDIATE')
             pending = []
@@ -153,7 +178,8 @@ def merge(request):
                     else: pending.append((table,columns,row))
             # The intent is durable before SQL commits. On a lost response the
             # exact planned rows reconcile; unrelated rows are never touched.
-            journal['databases'][name] = 'started'; durable(journal_path, journal)
+            if not dry:
+                journal['databases'][name] = 'started'; durable(journal_path, journal)
             # Children are retired before parents; selected rows are replaced
             # only after comparing their entire approved preimage in this same
             # transaction. No unrelated row or native sequence is restored.
@@ -166,10 +192,13 @@ def merge(request):
                     columns = list(row)
                     c.execute('INSERT INTO "'+group['table']+'" ('+','.join('"'+key+'"' for key in columns)+') VALUES ('+','.join('?' for _ in columns)+')', [decode(row[key]) for key in columns])
             c.commit()
-            print(json.dumps({'event':'committed','database':name}), flush=True)
-            if sys.stdin.readline().strip() != 'continue': raise ValueError('native_controller_lost')
-            journal['databases'][name] = 'done'; durable(journal_path, journal)
-        finally: c.close()
+            if not dry:
+                print(json.dumps({'event':'committed','database':name}), flush=True)
+                if sys.stdin.readline().strip() != 'continue': raise ValueError('native_controller_lost')
+                journal['databases'][name] = 'done'; durable(journal_path, journal)
+        finally:
+            c.close()
+            if temporary is not None: temporary.cleanup()
     return {'merged': True}
 
 try:
@@ -181,7 +210,7 @@ try:
     if request['operation'] == 'snapshot': result = snapshot(request)
     elif request['operation'] == 'roots': result = roots(request)
     elif request['operation'] == 'initialize': result = initialize(request['path'], request['name'])
-    elif request['operation'] == 'merge': result = merge(request)
+    elif request['operation'] in ('merge', 'preflight'): result = merge(request)
     else: raise ValueError('unsupported_operation')
     output = json.dumps(result, separators=(',', ':'))
     if len(output) > 64*1024*1024: raise ValueError('resource_limit')

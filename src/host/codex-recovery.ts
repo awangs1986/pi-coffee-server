@@ -1,4 +1,4 @@
-import {prepareCodexRestore,publishCodexMerge,validateCodexReplacementSafety} from './codex-restore.js';
+import {prepareCodexRestore,publishCodexMerge,preflightCodexMerge,validateCodexReplacementSafety} from './codex-restore.js';
 import type {CheckpointManifest} from './backup.js';
 import type {NativeRestoreOptions,NativeMergeContext} from './restore.js';
 import {spawn} from 'node:child_process';
@@ -23,6 +23,7 @@ export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
  constructor(readonly options:CodexRecoveryOptions){}
  async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,options?:NativeRestoreOptions){await this.custody();const lease=await this.options.fence.lease();try{const result=await prepareCodexRestore(this.options,point,scope,taskId,stage,options);lease.assertValid();return result;}finally{lease.release();}}
  async validateReplacementSafety(plan:Record<string,unknown>,context:{directory:string;manifest:CheckpointManifest;currentRegistry:Conversation|undefined;scope:string;taskId:string}){return validateCodexReplacementSafety(plan,context);}
+ async preflightNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext&{sourceOverrides:Record<string,string>}){await this.custody();return preflightCodexMerge(plan,context);}
  async publishNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext){await this.custody();return publishCodexMerge(plan,context,this.options.onDatabaseCommit);}
  async restoreLease(){await this.custody();return this.options.fence.publicationLease();}
  private async custody(){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unknown');}
