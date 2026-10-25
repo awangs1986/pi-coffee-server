@@ -21,7 +21,7 @@ export class BackupKeyService {
  }
  private async authorize(request:PeerRequest){
   if(!request||request.schema!==1||typeof request.id!=='string'||!uuid.test(request.id)||!request._peer||request._peer.uid!==this.config.hostUid||!Number.isSafeInteger(request._peer.pid)||request._peer.pid<1)throw new BackupBrokerError('peer_identity_mismatch');
-  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','selection','recoveryPackage','jobId','extractionId','checkpointId','operationId','revision','ttlMs','pinId','pinIds','scopes','timeZone','retentionId','digest','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
+  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','query','selection','recoveryPackage','jobId','extractionId','checkpointId','operationId','revision','ttlMs','pinId','pinIds','scopes','timeZone','retentionId','digest','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
   const policy=await ownedJson(this.config.authorityFile) as BackupBrokerPolicy,context=request.context;
   if(policy.schema!==1||!Number.isSafeInteger(policy.revision)||!scopeValid(policy.administrator)||!Array.isArray(policy.scopes)||policy.scopes.some(scope=>!scopeValid(scope))||!policy.actors||typeof policy.actors!=='object')throw new BackupBrokerError('authority_unavailable');
   if(!context||Object.keys(context).some(key=>!['actor','dataScope','authorityRevision'].includes(key))||!scopeValid(context.actor)||!scopeValid(context.dataScope)||!Number.isSafeInteger(context.authorityRevision))throw new BackupBrokerError('invalid_request');
@@ -30,8 +30,8 @@ export class BackupKeyService {
   if(!actor||!Array.isArray(actor.scopes)||!actor.scopes.includes(context.dataScope)||!policy.scopes.includes(context.dataScope))throw new BackupBrokerError('scope_denied');
   const scope=request.scope??context.dataScope;if(!scopeValid(scope)||!policy.scopes.includes(scope)||!actor.scopes.includes(scope))throw new BackupBrokerError('scope_denied');
   const administrator=context.actor===policy.administrator&&actor.role==='administrator';
-  if(!['status','jobs','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction','pin-recovery-job','release-recovery-pin','recovery-pins','hold-recovery-pins','retention-preview','retention-plans','retention-execute'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
-  if(!['status','qualification'].includes(request.operation)&&!administrator)throw new BackupBrokerError('administrator_required');
+  if(!['status','jobs','recovery-points','recovery-job','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction','pin-recovery-job','release-recovery-pin','recovery-pins','hold-recovery-pins','retention-preview','retention-plans','retention-execute'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
+  if(!['status','qualification','recovery-points','recovery-job'].includes(request.operation)&&!administrator)throw new BackupBrokerError('administrator_required');
   if(!administrator&&scope!==context.dataScope)throw new BackupBrokerError('scope_denied');
   return {policy,actor,scope,administrator};
  }
@@ -65,6 +65,8 @@ export class BackupKeyService {
   if(request.operation==='qualification')return qualification;
   if(request.operation==='status'){const state=await this.repository.status(scope);return {...state,qualification};}
   if(request.operation==='jobs')return (await this.repository.jobs()).filter(job=>job.selection?.some(item=>item.scope===scope)||job.points.some(item=>item.scope===scope)).map(job=>({...job,selection:job.selection.filter(item=>item.scope===scope),points:job.points.filter(item=>item.scope===scope)}));
+  if(request.operation==='recovery-points')return this.repository.recoveryPoints(scope,request.query);
+  if(request.operation==='recovery-job'){if(typeof request.jobId!=='string'||!uuid.test(request.jobId))throw new BackupBrokerError('invalid_recovery_job');return (await this.repository.recoveryJob(request.jobId,scope))??null;}
   if(!administrator)throw new BackupBrokerError('administrator_required');
   if(qualification.state!=='qualified')throw new BackupBrokerError('activation_unqualified');
   await this.authorize(request); // Re-read current policy after external qualification.

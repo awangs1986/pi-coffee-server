@@ -5,6 +5,7 @@ it('reports scoped state over authenticated Unix IPC and rejects stale authority
  const bob=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'bob',dataScope:'bob',authorityRevision:7});
  expect(await bob.status('bob')).toMatchObject({configured:false,enabled:false,qualification:{state:'unavailable',reason:'service_identity_not_separate',processProtection:{dumpable:0,noNewPrivs:1}}});
  await expect(bob.status('awangs')).rejects.toMatchObject({code:'scope_denied'});
+ expect(await bob.recoveryPoints('bob',{limit:1})).toEqual({points:[]});await expect(bob.recoveryPoints('awangs',{limit:1})).rejects.toMatchObject({code:'scope_denied'});await expect(bob.recoveryPoints('bob',{limit:101})).rejects.toMatchObject({code:'invalid_recovery_query'});expect(await bob.recoveryJob('11111111-1111-4111-8111-111111111111')).toBeUndefined();await expect(bob.recoveryJob('11111111-1111-4111-8111-111111111111','awangs')).rejects.toMatchObject({code:'scope_denied'});
  await expect(bob.exportRecoveryPackage()).rejects.toMatchObject({code:'administrator_required'});
  await expect(bob.previewRetention({scopes:['bob']})).rejects.toMatchObject({code:'administrator_required'});
  await expect(bob.pinRecoveryJob('11111111-1111-4111-8111-111111111111',{operationId:'22222222-2222-4222-8222-222222222222',revision:1})).rejects.toMatchObject({code:'administrator_required'});

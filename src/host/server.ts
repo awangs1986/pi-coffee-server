@@ -67,7 +67,7 @@ export interface UserScope {
   sshme?: RunnerManager;
 }
 
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>&Partial<Pick<BackupRepository,'recoveryPoints'>>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
@@ -318,6 +318,10 @@ export class HostServer {
         if(!Array.isArray(input.scopes)||input.scopes.some((scope:unknown)=>typeof scope!=='string'||!allowed.has(scope))){json(res,403,{error:'Schedule includes an unmanaged account scope'});return;}
         try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection});json(res,200,await scheduledStatus(slot));}
         catch(error){json(res,error instanceof BackupError?409:400,{error:error instanceof BackupError?error.message:'Invalid schedule configuration'});}return;
+      }
+      if(input.action==='recovery-points'){
+        res.setHeader('cache-control','no-store');const scope=input.scope??dataScope;if(typeof scope!=='string'||scope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(scope))){json(res,403,{error:'Recovery catalog scope denied'});return;}
+        try{const target=await this.slotFor(scope===LEGACY_BACKUP_SCOPE?undefined:scope),repository=repositoryFor(target);if(!repository?.recoveryPoints){json(res,409,{error:'Retained checkpoint catalog unavailable'});return;}json(res,200,await repository.recoveryPoints(scope,input.query as import('./recovery-point-catalog.js').RecoveryPointQuery|undefined));}catch(error){json(res,error instanceof BackupError?400:503,{error:error instanceof BackupError?error.message:'Retained checkpoint catalog unavailable'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('account-restore-')){
         res.setHeader('cache-control','no-store');const recovery=this.options.backup?.accountRecovery,action=input.action.slice('account-restore-'.length);
