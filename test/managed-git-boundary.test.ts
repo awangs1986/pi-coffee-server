@@ -1,0 +1,19 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,mkdir,writeFile,readFile,rm,stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,dirname} from 'node:path';
+import {execFileSync,spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {Workspaces} from '../src/host/workspaces.js';
+import {ManagedNativeCustody} from '../src/host/managed-native.js';
+import {ManagedWriterFence} from '../src/host/managed-writer-fence.js';
+import {HostServer} from '../src/host/server.js';
+
+it('a workspace Git fsmonitor cannot execute as the source Host outside native grants through authenticated changes',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'managed-git-boundary-')),source=join(root,'source'),authority=join(root,'authority'),upstream=join(root,'upstream');for(const path of [source,authority,upstream])await mkdir(path,{mode:0o700});const git=(cwd:string,...args:string[])=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',env:{...process.env,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_AUTHOR_NAME:'Synthetic boundary',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Synthetic boundary',GIT_COMMITTER_EMAIL:'fixture@example.invalid'}});
+ git(upstream,'init','--quiet','-b','main');await writeFile(join(upstream,'README.md'),'initial');git(upstream,'add','.');git(upstream,'commit','--quiet','-m','initial');const store=new Workspaces(join(source,'projects'));const project=await store.registerProject('fixture',upstream),task=await store.createConversation(project.id,undefined,'task','pi');git(task.cwd,'config','user.name','Synthetic boundary');git(task.cwd,'config','user.email','fixture@example.invalid');
+ const marker=join(authority,'outside-grants'),lock=join(authority,'group.lock'),custody=new ManagedNativeCustody(join(authority,'custody'),{sourceParent:root,lock,sources:[{path:source,destination:source}],runtimeRoots:[dirname(dirname(process.execPath))],environment:{HOME:source,PATH:'/usr/bin:/bin'},cwd:task.cwd}),setup=await custody.prepare({executable:process.execPath,args:['-e',`const fs=require('node:fs');try{fs.writeFileSync(${JSON.stringify(marker)},'namespace-escaped');process.exit(90);}catch{process.exit(0);}`]}),native=spawn(process.execPath,[setup.cliPath],{env:{PATH:process.env.PATH,...setup.env},stdio:'ignore'});expect((await once(native,'exit'))[0]).toBe(0);await expect.poll(async()=>(await custody.state()).state).toBe('quiescent');const fence=new ManagedWriterFence({lock,custody});store.setBackupWriterFence(fence);
+ await writeFile(join(task.cwd,'unsafe-filter.mjs'),`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'privileged-host-side-effect');process.stdout.write('synthetic-token\\0');`);git(task.cwd,'config','core.fsmonitor',process.execPath+' '+join(task.cwd,'unsafe-filter.mjs'));await writeFile(join(task.cwd,'.gitattributes'),'*.txt filter=fixture\n');await writeFile(join(task.cwd,'safe.txt'),'new user content');const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No provider');}},host=new HostServer({port:0,token:'fixture',requireUser:true,factory,scopeForUser:()=>({factory,workspaces:store})});
+ try{await host.start();const result=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'alice','content-type':'application/json'},body:JSON.stringify({action:'changes',id:task.id})});const body=await result.text();console.log(JSON.stringify({status:result.status,body}));expect([200,409]).toContain(result.status);await expect(stat(marker)).rejects.toMatchObject({code:'ENOENT'});expect(await readFile(join(task.cwd,'safe.txt'),'utf8')).toBe('new user content');
+ }finally{await host.close();await rm(root,{recursive:true,force:true});}
+},15000);
