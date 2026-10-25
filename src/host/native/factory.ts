@@ -1,3 +1,4 @@
+import type {WriterAdmissionFence} from '../backup.js';
 import {CODEX_HANDOFF_VERSION,handoffSummaryPrompt,handoffSeedPrompt} from '../codex/handoff.js';
 import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js';
 import {NativeSettingsStore} from './settings.js';
@@ -22,7 +23,7 @@ import type { Workspaces } from "../workspaces.js";
 import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
-export interface NativeAgentOptions { instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions { writerFence?:WriterAdmissionFence; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
@@ -361,6 +362,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
     catch(error){await session.stop();throw error;}
   }
   private async createNative(sessionId:string):Promise<AgentSession> {
+    const task=await this.options.workspaces.lookup(sessionId);
+    if(!this.options.writerFence||(task?.engine??'pi')==='pi')return this.createNativeAdmitted(sessionId);
+    const release=this.options.writerFence.beginWriter('unmanaged-native');
+    try{const session=await this.createNativeAdmitted(sessionId),stop=session.stop.bind(session);session.stop=async()=>{try{await stop();}finally{release();}};return session;}catch(error){release();throw error;}
+  }
+  private async createNativeAdmitted(sessionId:string):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
     if(task?.fork&&task.fork.status!=='completed')throw new Error(task.fork.error??'Fork preparation is not complete');
     if(!task && this.options.legacyCodex && (await this.options.legacyCodex.list().catch(()=>[])).some(s=>s.id===sessionId))return this.options.legacyCodex.create({sessionId});

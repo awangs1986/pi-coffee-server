@@ -38,10 +38,10 @@ it('captures a controlled native source at an idle cut and keeps the sealed poin
   const native=SessionManager.create(task.cwd,nativeDir);native.appendMessage({role:'user',content:'checkpoint generation one',timestamp:1000});
   const nativeFile=native.getSessionFile()!;
   await writeFile(join(task.cwd,'draft.txt'),'original uncommitted text');
-  const fence=new WriterAdmissionFence({writerClasses:['fixture-native','fixture-workspace'],uncoveredWriters:[]});
+  const fence=new WriterAdmissionFence({writerClasses:['fixture-native','fixture-workspace'],uncoveredWriters:[],probe:async()=>({known:true})});
   const adapter={version:'pi-fixture-1',async resolve(scope:string,taskId:string){
    if(scope!=='awangs'||taskId!=='native-task')throw Error('Unknown native graph');
-   return {groupId:'shared-fixture-native',fence,members:[{scope,taskId,engine:'pi' as const,nativeBindings:[native.getSessionId()]}],sources:[{id:'native',path:nativeFile,role:'native' as const},{id:'workspace',path:task.cwd,role:'workspace' as const}],async validate(){const copy=SessionManager.open(nativeFile);if(copy.getSessionId()!==native.getSessionId())throw Error('Binding changed');}};
+   return {groupId:'shared-fixture-native',fence,members:[{scope,taskId,engine:'pi' as const,nativeBindings:[native.getSessionId()]}],sources:[{id:'native',recoveryKey:'native-session/'+native.getSessionId(),path:nativeFile,role:'native' as const},{id:'workspace',recoveryKey:'workspace',path:task.cwd,role:'workspace' as const},{id:'task-data',recoveryKey:'task-data',data:Buffer.from('{}'),role:'task-data' as const},{id:'registry',recoveryKey:'registry',data:Buffer.from(JSON.stringify(task)),role:'registry' as const}],async validate(){const copy=SessionManager.open(nativeFile);if(copy.getSessionId()!==native.getSessionId())throw Error('Binding changed');}};
   }};
   let now=Date.parse('2026-10-24T00:00:00Z');
   const backup=new BackupCoordinator({root:join(root,'checkpoints'),adapter,now:()=>now});
