@@ -3,7 +3,7 @@ import {constants,closeSync,existsSync,fstatSync,fsyncSync,lstatSync,mkdirSync,o
 import {dirname,join,resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {BackupError} from './backup.js';
-import {restorePlanDigest,type RestorePlan} from './restore.js';
+import {restorePlanDigest,type RestorePlan,type RestorePublicationPreparation} from './restore.js';
 
 interface Intent {operationId:string;revision:number;digest:string;}
 interface GateRecord {schema:1;groupId:string;pending:Intent[];}
@@ -36,5 +36,9 @@ export class ManagedPublicationGate {
  hasPending(){return this.record().pending.length>0;}
  assertApprovedOperation(operationId:string,digest:string){const context=this.context.getStore();if(!context?.active||context.intent.operationId!==operationId||context.intent.digest!==digest)throw refused();this.assertPublication();}
  assertPublication(){const record=this.record();if(!record.pending.length)return;const context=this.context.getStore();if(!context?.active||record.pending.length!==1||!same(record.pending[0],context.intent))throw refused();}
- async withApprovedPublication<T>(operationId:string,run:()=>Promise<T>):Promise<T>{if(this.busy)throw refused();this.busy=true;try{const record=this.reconcile(),plan=this.readPlan(operationId),intent=approved(plan);if(!['approved','publishing','failed','completed','completed-after-cancel'].includes(plan.state)||record.pending.some(item=>!same(item,intent)))throw refused();if(!record.pending.length){record.pending=[intent];this.save(record);}const context={intent,active:true};try{return await this.context.run(context,run);}finally{context.active=false;this.reconcile();}}finally{this.busy=false;}}
+ async withApprovedPublication<T>(operationId:string,run:()=>Promise<T>,preparation?:RestorePublicationPreparation):Promise<T>{if(this.busy)throw refused();this.busy=true;try{const record=this.reconcile(),plan=this.readPlan(operationId),intent=approved(plan);if(!['approved','publishing','failed','completed','completed-after-cancel'].includes(plan.state)||record.pending.some(item=>!same(item,intent)))throw refused();const context={intent,active:true};try{return await this.context.run(context,async()=>{
+   // The exact-job context may acquire its physical EX for a read-only preflight.
+   // A newly stale approval must not create an irreversible pending intent.
+   await preparation?.preflight();const current=this.record();if(current.pending.some(item=>!same(item,intent)))throw refused();if(!current.pending.length){current.pending=[intent];this.save(current);}await preparation?.commitIntent();return run();
+  });}finally{context.active=false;this.reconcile();}}finally{this.busy=false;}}
 }
