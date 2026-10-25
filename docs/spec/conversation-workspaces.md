@@ -60,6 +60,11 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 
 独立 clone 保证平台不共享本地文件和 Git 状态；同一 VM 的端口、外部数据库与其他服务仍可能共享。并行运行应用时按任务选不同端口、区分测试数据；首版不因此新增 VM、容器或端口编排服务。远端集成仍通过 Gitea PR，独立 clone 不消除合并冲突。
 
+For repositories without any remote refs, explicit Work creation first publishes
+a file-free initial commit on the configured default branch. The normal
+CW-07 branch/SHA/independent-clone contract then applies. Selection is read-only;
+see [empty repository behavior](gitea-workspaces.md#empty-repository-work-creation-2026-10-25).
+
 ## 2.2 前端必须展示的信息
 
 **CW-09（任务上下文）**：当前任务的上下文区必须让用户明确看到以下信息；完整路径可复制，长路径可折行或展开，不只显示 basename。字段来自固定路由和 Host 实际状态，Server 不另建权威工作区索引。

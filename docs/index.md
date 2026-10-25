@@ -1,3 +1,6 @@
+- Create a private Gitea repository directly in the Work repository picker: [creation flow](spec/gitea-workspaces.md#create-a-gitea-repository-from-the-picker-2026-10-25).
+- Empty Gitea/GitHub repository Work creation: [initialization and concurrency contract](spec/gitea-workspaces.md#empty-repository-work-creation-2026-10-25).
+
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 

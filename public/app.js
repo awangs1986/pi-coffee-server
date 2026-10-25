@@ -3541,13 +3541,13 @@ function closeProjectCreateMenu(){$('#project-create-menu')?.classList.add('hidd
 async function createGiteaProject(){
   if(projectCreating || activeId || pendingOpenId)return;
   projectCreating=true;renderProjectContext();
-  const previousProject=ui.projectSelect.value;
+  const previousProject=ui.projectSelect.value,epoch=taskSelectionEpoch;
   try {
     const name=await askModal({title:'新建 Gitea 项目',text:'创建私有 Gitea 仓库。名称使用英文字母、数字、短横线或下划线。',input:'',okLabel:'创建'});
-    if(!name)return;
+    if(!name || epoch!==taskSelectionEpoch)return;
     const project=await workspaceApi({action:'project',name});
     await loadWorkspace();
-    if(!activeId && !pendingOpenId && $('#task-kind').value==='project' && ui.projectSelect.value===previousProject){
+    if(epoch===taskSelectionEpoch && !activeId && !pendingOpenId && $('#task-kind').value==='project' && ui.projectSelect.value===previousProject){
       ui.projectSelect.value=project.id;
       ui.projectSelect.dispatchEvent(new Event('change'));
     }
@@ -3578,6 +3578,8 @@ async function openGitHubPicker(forge='github') {
   if(activeId || pendingOpenId || githubAdding)return;
   repositoryPickerForge=forge;
   const seq=++githubSeq,search=$('#github-search');
+  $('#repository-create-gitea').classList.toggle('hidden',forge!=='gitea');
+  $('#repository-create-gitea').disabled=projectCreating;
   $('#github-title').textContent=forge==='gitea'?'选择已有 Gitea 仓库':'添加 GitHub 仓库';
   search.placeholder=forge==='gitea'?'搜索仓库，或输入 owner/repo':'搜索仓库，或粘贴 owner/repo、仓库 URL';
   search.setAttribute('aria-label','搜索 '+FORGE_NAMES[forge]+' 仓库');
@@ -3651,6 +3653,10 @@ function selectNewTaskProject(id) {
   if(activeId || pendingOpenId || $('#task-kind').value!=='project' || ![...ui.projectSelect.options].some(o=>o.value===id))return;
   ui.projectSelect.value=id;ui.projectSelect.dispatchEvent(new Event('change'));
 }
+$('#repository-create-gitea').addEventListener('click',()=>{
+  if(repositoryPickerForge!=='gitea' || githubAdding || projectCreating)return;
+  closeGitHubPicker();void createGiteaProject();
+});
 $('#github-account-select').addEventListener('change',()=>{if(githubAdding)return;githubAccountId=$('#github-account-select').value;void openGitHubPicker('github');});
 $('#github-account-manage').addEventListener('click',()=>{closeGitHubPicker();githubAccountManager.open();});
 $('#github-search').addEventListener('input',renderGitHubPicker);
