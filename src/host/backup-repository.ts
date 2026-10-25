@@ -157,7 +157,7 @@ export class BackupRepository {
    if(remaining.some(snapshot=>!current.remove.some(row=>row.snapshotId===snapshot)))throw fail('retention_plan_stale');
    plan.state='executing';delete plan.errorCode;plan.phase='forgetting';await this.saveRetention(plan);
    if(remaining.length)await this.command(config,['forget',...remaining]);
-   plan.deletedSnapshotIds=plan.remove.map(row=>row.snapshotId).sort();await this.saveRetention(plan);await this.options.onRetentionPhase?.({id:plan.id,phase:'forgotten'});
+   plan.deletedSnapshotIds=plan.remove.map(row=>row.snapshotId).sort();await this.saveRetention(plan);for(const job of await this.jobs())if(job.snapshotId&&plan.deletedSnapshotIds.includes(job.snapshotId)){job.retiredAt??=this.time();job.retentionId=plan.id;await this.saveJob(job);}await this.options.onRetentionPhase?.({id:plan.id,phase:'forgotten'});
    plan.phase='pruning';await this.saveRetention(plan);if(plan.remove.length)await this.command(config,['prune']);await this.command(config,['check','--read-data']);await this.options.onRetentionPhase?.({id:plan.id,phase:'pruned'});
    plan.phase='journal';await this.saveRetention(plan);for(const job of await this.jobs())if(job.snapshotId&&plan.deletedSnapshotIds.includes(job.snapshotId)){job.retiredAt??=this.time();job.retentionId=plan.id;await this.saveJob(job);}await this.options.onRetentionPhase?.({id:plan.id,phase:'journaled'});
    plan.phase='complete';plan.state='completed';plan.finishedAt=this.time();await this.saveRetention(plan);return plan;
