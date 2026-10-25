@@ -3,11 +3,12 @@ async function fixture(hostUid=process.getuid!()){const root=await mkdtemp(join(
 async function close(f:{root:string;child:ChildProcess}){f.child.kill('SIGTERM');await new Promise<void>(r=>f.child.once('exit',()=>r()));await rm(f.root,{recursive:true,force:true});}
 it('reports scoped state over authenticated Unix IPC and rejects stale authority, foreign scope and key operations',async()=>{const f=await fixture();try{
  const bob=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'bob',dataScope:'bob',authorityRevision:7});
- expect(await bob.status('bob')).toMatchObject({configured:false,enabled:false,qualification:{state:'unavailable',reason:'service_identity_not_separate'}});
+ expect(await bob.status('bob')).toMatchObject({configured:false,enabled:false,qualification:{state:'unavailable',reason:'service_identity_not_separate',processProtection:{dumpable:0,noNewPrivs:1}}});
  await expect(bob.status('awangs')).rejects.toMatchObject({code:'scope_denied'});
  await expect(bob.exportRecoveryPackage()).rejects.toMatchObject({code:'administrator_required'});
  const admin=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'bob',authorityRevision:7});
  await expect(admin.configure()).rejects.toMatchObject({code:'activation_unqualified'});
+ const audit=await readFile(join(f.root,'private','broker-audit.jsonl'),'utf8');expect(audit).toContain('activation_unqualified');expect(audit).toContain('awangs');expect(audit).not.toContain('recoveryPackage');
  await expect(readFile(join(f.root,'private','repository-runtime','password'))).rejects.toMatchObject({code:'ENOENT'});
  await writeFile(join(f.root,'authority.json'),JSON.stringify({schema:1,revision:8,administrator:'awangs',scopes:['awangs','bob'],actors:{awangs:{scopes:['awangs','bob'],role:'administrator'},bob:{scopes:['bob'],role:'reader'}}}),{mode:0o600});
  await expect(admin.status('bob')).rejects.toMatchObject({code:'authority_stale'});
@@ -50,4 +51,10 @@ it('bounds concurrent incomplete requests and refuses to replace an existing ser
  for(const socket of held)socket.destroy();held.length=0;
  const bob=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'bob',dataScope:'bob',authorityRevision:7});for(let i=0;;i++){try{expect(await bob.status()).toMatchObject({configured:false});break;}catch(error){if(i>50)throw error;await new Promise(r=>setTimeout(r,10));}}
  }finally{for(const socket of held)socket.destroy();await close(f);}
+},30000);
+
+it('loads a private Host client profile containing only IPC identity metadata',async()=>{const f=await fixture();try{
+ const profile=join(f.root,'client.json'),options={schema:1,socket:f.socket,serviceUid:process.getuid!(),actor:'bob',dataScope:'bob',authorityRevision:7};await writeFile(profile,JSON.stringify(options),{mode:0o600});const client=await BackupRepositoryClient.fromConfig(profile);expect(await client.status()).toMatchObject({configured:false});
+ await writeFile(profile,JSON.stringify({...options,keyRoot:'/private/key-root'}),{mode:0o600});await expect(BackupRepositoryClient.fromConfig(profile)).rejects.toMatchObject({code:'client_configuration_invalid'});
+ }finally{await close(f);}
 },30000);

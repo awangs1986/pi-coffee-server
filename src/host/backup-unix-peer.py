@@ -1,5 +1,6 @@
 """Fixed local transport. Kernel peer identity is authority; bodies are never logged."""
 import json
+import ctypes
 import os
 from pathlib import Path
 import signal
@@ -185,6 +186,9 @@ def client(path, expected_uid, maximum=LIMIT, streaming=False):
 
 
 try:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(4, 0, 0, 0, 0) != 0 or libc.prctl(38, 1, 0, 0, 0) != 0:
+        raise ValueError('process protection unavailable')
     if sys.argv[1] == 'serve' and len(sys.argv) == 3:
         serve(sys.argv[2])
     elif sys.argv[1] == 'client' and len(sys.argv) == 4:

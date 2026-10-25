@@ -4,7 +4,7 @@ const identifier=/^[0-9a-f]{8}-[0-9a-f-]{27}$/;
 /** Incoming paths are manifest-relative objects, never Host-selected source paths.
  * This root belongs to the key service and is never exposed to Host callers. */
 export class BackupCheckpointReceiver {
- constructor(private options:{root:string;socket:string;sourceUid:number;maxBytes?:number;maxFiles?:number;timeoutMs?:number}){}
+ constructor(private options:{root:string;socket:string;sourceUid:number;allowedScopes?:string[];maxBytes?:number;maxFiles?:number;timeoutMs?:number}){}
  async receive(scope:string,taskId:string,expectedCheckpointId?:string):Promise<SealedCheckpoint>{
   const root=resolve(this.options.root);await mkdir(root,{recursive:true,mode:0o700});await privateDirectory(root);const staging=join(root,'transfer-'+randomUUID());await mkdir(staging,{mode:0o700});
   const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname;
@@ -15,8 +15,9 @@ export class BackupCheckpointReceiver {
    const parseManifest=async()=>{
     if(manifest)return;if(!checkpointId||manifestSize!==manifestBytes)throw new BackupBrokerError('source_transfer_invalid');
     const bytes=Buffer.concat(manifestChunks);manifestChunks=[];manifest=JSON.parse(bytes.toString('utf8'));
-    if(!manifest||manifest.schemaVersion!==1||manifest.checkpointId!==checkpointId||manifest.coverage!=='complete'||!Array.isArray(manifest.members)||!manifest.members.some(m=>m.scope===scope&&m.taskId===taskId)||manifest.members.some(m=>!['pi','codex'].includes(m.engine))||!Array.isArray(manifest.objects)||manifest.objects.length>(this.options.maxFiles??100000))throw new BackupBrokerError('source_transfer_invalid');
-    const paths=new Set<string>();for(const object of manifest.objects){if(!safePath(object.path)||paths.has(object.path)||!['directory','file','symlink'].includes(object.kind)||!Number.isSafeInteger(object.size)||object.size<0||object.size>(this.options.maxBytes??1024**3))throw new BackupBrokerError('source_transfer_invalid');paths.add(object.path);}
+    if(!manifest||manifest.schemaVersion!==1||manifest.checkpointId!==checkpointId||manifest.coverage!=='complete'||!Array.isArray(manifest.members)||!manifest.members.some(m=>m.scope===scope&&m.taskId===taskId)||manifest.members.some(m=>!['pi','codex'].includes(m.engine)||!(this.options.allowedScopes??[scope]).includes(m.scope))||!Array.isArray(manifest.objects)||manifest.objects.length>(this.options.maxFiles??100000))throw new BackupBrokerError('source_transfer_invalid');
+    let declaredBytes=0;const paths=new Set<string>();for(const object of manifest.objects){if(!safePath(object.path)||paths.has(object.path)||!['directory','file','symlink'].includes(object.kind)||!Number.isSafeInteger(object.size)||object.size<0||object.size>(this.options.maxBytes??1024**3))throw new BackupBrokerError('source_transfer_invalid');paths.add(object.path);if(object.kind==='file')declaredBytes+=object.size;}
+    if(!Number.isSafeInteger(manifest.totalBytes)||manifest.totalBytes!==declaredBytes||declaredBytes>(this.options.maxBytes??1024**3))throw new BackupBrokerError('source_transfer_limit');
     await writeNew(join(staging,'manifest.json'),bytes);await writeNew(join(staging,'seal'),Buffer.from(createHash('sha256').update(bytes).digest('hex')+'\n'));await mkdir(join(staging,'objects'),{mode:0o700});
    };
    for await(const line of createInterface({input:child.stdout,crlfDelay:Infinity})){

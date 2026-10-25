@@ -1,3 +1,4 @@
+import {hardenCurrentProcess,processProtection} from './linux-file-lease.js';
 import {constants} from 'node:fs';import {open,lstat,realpath,readFile,rm} from 'node:fs/promises';import {isAbsolute,resolve,join} from 'node:path';import {randomUUID} from 'node:crypto';
 import {BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';import {BackupRepository} from './backup-repository.js';
 import {BackupBrokerError,type BackupBrokerPolicy,type BackupBrokerRequest,type BackupKeyServiceConfig,type BackupBrokerQualification} from './backup-key-protocol.js';import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';
@@ -10,7 +11,7 @@ interface PeerRequest extends BackupBrokerRequest {_peer:{pid:number;uid:number;
 export class BackupKeyService {
  private readonly repository:BackupRepository;private points=new Map<string,import('./backup.js').SealedCheckpoint>();
  private constructor(private config:BackupKeyServiceConfig){this.repository=new BackupRepository({root:join(config.privateRoot,'repository-runtime'),coordinator:{sealedCheckpoint:async(scope,taskId)=>this.points.get(scope+'/'+taskId)}});}
- static async load(path:string){const config=await ownedJson(path) as BackupKeyServiceConfig;
+ static async load(path:string){const protection=hardenCurrentProcess();if(protection.dumpable!==0||protection.noNewPrivs!==1)throw new BackupBrokerError('service_boundary_unavailable');const config=await ownedJson(path) as BackupKeyServiceConfig;
   if(config.schema!==1||config.serviceUid!==process.getuid?.()||![config.serviceUid,config.hostUid,config.sourceUid].every(uid=>Number.isSafeInteger(uid)&&uid>=0)||!['socket','privateRoot','authorityFile','sourceSocket','binary','destination','node','handler'].every(key=>typeof config[key as keyof BackupKeyServiceConfig]==='string'&&isAbsolute(config[key as keyof BackupKeyServiceConfig] as string)))throw new BackupBrokerError('service_configuration_invalid');
   const info=await lstat(config.privateRoot);if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==config.serviceUid||(info.mode&0o077)||await realpath(config.privateRoot)!==resolve(config.privateRoot))throw new BackupBrokerError('service_configuration_invalid');
   return new BackupKeyService(config);
@@ -32,20 +33,30 @@ export class BackupKeyService {
   return {policy,actor,scope,administrator};
  }
  async qualification():Promise<BackupBrokerQualification>{
-  const base={serviceUid:this.config.serviceUid,sourceUid:this.config.sourceUid,hostUid:this.config.hostUid};
+  const protection=processProtection(),base={serviceUid:this.config.serviceUid,sourceUid:this.config.sourceUid,hostUid:this.config.hostUid,processProtection:protection};
+  if(protection.dumpable!==0||protection.noNewPrivs!==1)return {...base,state:'unavailable',reason:'service_process_unprotected'};
   if(this.config.serviceUid===this.config.hostUid||this.config.serviceUid===this.config.sourceUid)return {...base,state:'unavailable',reason:'service_identity_not_separate'};
   // A fresh authenticated source-owner RPC supplies mechanical admission state,
   // not a configured Boolean or persisted signature-only qualification.
   try{
-   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,operation:'qualify-backup',challenge});
+   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,id:randomUUID(),operation:'qualify-backup',challenge});
    const value=response?.result??response;
-   if(value.schema!==1||value.challenge!==challenge||value.enforcement!=='managed-bwrap-flock-v1'||value.admission!=='protected-only'||value.legacy!=='drained'||!Number.isSafeInteger(value.policyRevision)||!/^[0-9a-f]{64}$/.test(value.profileDigest)||value.authority?.uid!==this.config.sourceUid||!Number.isSafeInteger(value.authority.pid)||value.authority.pid<1)throw new BackupBrokerError('source_boundary_unqualified');
-   const info=await lstat('/proc/'+value.authority.pid),raw=await readFile('/proc/'+value.authority.pid+'/stat','utf8'),boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth=raw.slice(raw.lastIndexOf(')')+2).split(' ')[19];
-   if(info.uid!==this.config.sourceUid||value.authority.birth!==birth||value.authority.boot!==boot)throw new BackupBrokerError('source_boundary_unqualified');
+   if(value.schema!==1||value.challenge!==challenge||value.enforcement!=='managed-bwrap-flock-v1'||value.admission!=='protected-only'||value.legacy!=='drained'||(!Number.isSafeInteger(value.policyRevision)||value.policyRevision<1)||!/^[0-9a-f]{64}$/.test(value.profileDigest)||value.authority?.uid!==this.config.sourceUid||!Number.isSafeInteger(value.authority.pid)||value.authority.pid<1)throw new BackupBrokerError('source_boundary_unqualified');
+   const status=await readFile('/proc/'+value.authority.pid+'/status','utf8'),raw=await readFile('/proc/'+value.authority.pid+'/stat','utf8'),boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth=raw.slice(raw.lastIndexOf(')')+2).split(' ')[19];
+   if(['Z','X'].includes(raw.slice(raw.lastIndexOf(')')+2).split(' ')[0])||!status.split('\n').some(line=>{if(!line.startsWith('Uid:'))return false;const ids=line.slice(4).trim().split(/\s+/).map(Number);return ids.length===4&&ids.every(uid=>uid===this.config.sourceUid);})||value.authority.birth!==birth||value.authority.boot!==boot)throw new BackupBrokerError('source_boundary_unqualified');
    return {...base,state:'qualified',sourceRevision:value.policyRevision};
   }catch{return {...base,state:'unavailable',reason:'source_boundary_unqualified'};}
  }
  async dispatch(raw:unknown){
+  const request=raw as Partial<PeerRequest>;const operation=typeof request?.operation==='string'&&['configure','backup','export-recovery','verify-recovery','rotate','recover'].includes(request.operation)?request.operation:undefined;
+  try{const result=await this.handle(raw);if(operation)await this.audit(request,operation,'succeeded');return result;}
+  catch(error){if(operation)await this.audit(request,operation,publicBrokerCode(error));throw error;}
+ }
+ private async audit(request:Partial<PeerRequest>,operation:string,result:string){
+  const context=request.context;const entry={schema:1,operation,result,at:new Date().toISOString(),...(context&&scopeValid(context.actor)&&scopeValid(context.dataScope)?{actor:context.actor,dataScope:context.dataScope,authorityRevision:Number.isSafeInteger(context.authorityRevision)?context.authorityRevision:null}:{}),...(typeof request.id==='string'&&uuid.test(request.id)?{id:request.id}:{})};
+  const file=await open(join(this.config.privateRoot,'broker-audit.jsonl'),constants.O_APPEND|constants.O_CREAT|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);try{const info=await file.stat();if(info.uid!==process.getuid?.()||(info.mode&0o077)||info.nlink!==1||!info.isFile())throw new BackupBrokerError('service_audit_unavailable');await file.writeFile(JSON.stringify(entry)+'\n');await file.sync();}finally{await file.close();}
+ }
+ private async handle(raw:unknown){
   const request=raw as PeerRequest,{scope,administrator}=await this.authorize(request);
   const qualification=await this.qualification();
   if(request.operation==='qualification')return qualification;
@@ -64,11 +75,12 @@ export class BackupKeyService {
     if(!Array.isArray(request.selection)||request.selection.length<1||request.selection.length>1000||request.selection.some(item=>!item||Object.keys(item).some(key=>!['scope','taskId','expectedCheckpointId'].includes(key))||!scopeValid(item.scope)||!['string'].includes(typeof item.taskId)||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.taskId)||item.expectedCheckpointId!==undefined&&!uuid.test(item.expectedCheckpointId)))throw new BackupBrokerError('invalid_selection');
     const policy=(await this.authorize(request)).policy;const grants=policy.actors[request.context.actor].scopes;
     for(const item of request.selection)if(!policy.scopes.includes(item.scope)||!grants.includes(item.scope))throw new BackupBrokerError('scope_denied');
+    const previous=(await this.repository.jobs()).find(job=>job.id===request.id);if(previous){for(const item of request.selection)if(item.expectedCheckpointId&&!previous.points.some(point=>point.scope===item.scope&&point.taskId===item.taskId&&point.checkpointId===item.expectedCheckpointId))throw new BackupBrokerError('operation_conflict');return this.repository.backup(request.selection.map(({scope,taskId})=>({scope,taskId})),undefined,request.id);}
     const ingestRoot=join(this.config.privateRoot,'ingest',request.id);let remaining=1024**3;
     try{
-     for(const item of request.selection){const receiver=new BackupCheckpointReceiver({root:ingestRoot,socket:this.config.sourceSocket,sourceUid:this.config.sourceUid,maxBytes:remaining});const point=await receiver.receive(item.scope,item.taskId,item.expectedCheckpointId);remaining-=point.manifest.totalBytes;if(remaining<0)throw new BackupBrokerError('source_transfer_limit');this.points.set(item.scope+'/'+item.taskId,point);}
+     for(const item of request.selection){const cached=this.points.get(item.scope+'/'+item.taskId);if(cached){if(item.expectedCheckpointId&&cached.manifest.checkpointId!==item.expectedCheckpointId)throw new BackupBrokerError('checkpoint_identity_conflict');continue;}const receiver=new BackupCheckpointReceiver({root:ingestRoot,socket:this.config.sourceSocket,sourceUid:this.config.sourceUid,allowedScopes:grants.filter(grant=>policy.scopes.includes(grant)),maxBytes:remaining});const point=await receiver.receive(item.scope,item.taskId,item.expectedCheckpointId);remaining-=point.manifest.totalBytes;if(remaining<0)throw new BackupBrokerError('source_transfer_limit');for(const member of point.manifest.members)this.points.set(member.scope+'/'+member.taskId,point);}
      await this.authorize(request);const current=await this.qualification();if(current.state!=='qualified'||current.sourceRevision!==qualification.sourceRevision)throw new BackupBrokerError('activation_unqualified');
-     return await this.repository.backup(request.selection);
+     return await this.repository.backup(request.selection.map(({scope,taskId})=>({scope,taskId})),undefined,request.id);
     }finally{await rm(ingestRoot,{recursive:true,force:true});this.points.clear();}
    }
    default:throw new BackupBrokerError('invalid_operation');
