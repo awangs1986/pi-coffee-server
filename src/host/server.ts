@@ -1,3 +1,4 @@
+import {BackupCoordinator,BackupError} from './backup.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -63,6 +64,8 @@ export interface UserScope {
 }
 
 export interface HostServerOptions {
+  /** Trusted source coordinator; omitted until native writer custody is verified. */
+  backup?: {coordinator:BackupCoordinator; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -258,6 +261,30 @@ export class HostServer {
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    if(req.url==='/api/backup'){
+      if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
+      const coordinator=this.options.backup?.coordinator;
+      const administrator=this.options.backup?.administrator??'awangs';
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',tasks:await Promise.all((await target.workspaces!.list()).conversations.map(task=>coordinator?coordinator.status(target.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'}))),excludedEngines:['claude','cursor','grok']});
+      if(req.method==='GET'){json(res,200,await status(slot));return;}
+      if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
+      const input=await readJson(req,8192);
+      if(typeof input.taskId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.taskId)){json(res,400,{error:'Invalid task identity'});return;}
+      if(user!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+      let target=slot;
+      if(input.scope!==undefined&&input.scope!==user){
+        if(typeof input.scope!=='string'||!this.options.backup?.scopes?.includes(input.scope)){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        target=await this.slotFor(input.scope);
+      }
+      const task=await target.workspaces?.lookup(input.taskId);
+      if(!task){json(res,404,{error:'Unknown task'});return;}
+      if(!['capture','cancel'].includes(String(input.action))){json(res,400,{error:'Unknown backup operation'});return;}
+      if(!coordinator){json(res,409,{error:'Native writer coverage is not verified'});return;}
+      try{
+        if(input.action==='cancel'){json(res,200,{cancelled:coordinator.cancel(target.user??'default',task.id)});return;}
+        json(res,200,await coordinator.capture(target.user??'default',task.id,task.engine??'pi'));
+      }catch(error){json(res,error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Backup operation failed'});}return;
+    }
     if(req.url==='/api/mishu'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       if(!slot.mishu||!this.mishuExtension()){json(res,503,{error:'MISHU plugin is not installed on this Host'});return;}
