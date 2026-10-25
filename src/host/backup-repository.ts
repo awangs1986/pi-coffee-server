@@ -21,7 +21,7 @@ const fail=(code:string)=>new BackupError(code,({offline_copy_required:'Export a
  * no live source paths, repository passwords or native stores enter browser status. */
 export class BackupRepository {
  readonly root:string;private now:()=>number;private lockNonce?:string;
- constructor(private options:{root:string;coordinator:BackupCoordinator;now?:()=>number;timeoutMs?:number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
+ constructor(private options:{root:string;coordinator:Pick<BackupCoordinator,'sealedCheckpoint'>;now?:()=>number;timeoutMs?:number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
  private async initialize(){await mkdir(this.root,{recursive:true,mode:0o700});await privateDirectory(this.root);await mkdir(join(this.root,'jobs'),{recursive:true,mode:0o700});await privateDirectory(join(this.root,'jobs'));}
  private async config():Promise<RepositoryConfig>{await this.initialize();return JSON.parse(await privateText(join(this.root,'config.json'),32768));}
  private async saveConfig(config:RepositoryConfig){await atomicJson(this.root,'config.json',config);}
