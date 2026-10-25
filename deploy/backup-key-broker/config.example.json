@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "responseLimit": 2147483648,
   "socket": "/run/pi-coffee-backup/control.sock",
   "serviceUid": 2002,
   "hostUid": 2001,

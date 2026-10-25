@@ -8,6 +8,7 @@ it('reports scoped state over authenticated Unix IPC and rejects stale authority
  await expect(bob.exportRecoveryPackage()).rejects.toMatchObject({code:'administrator_required'});
  const admin=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'bob',authorityRevision:7});
  await expect(admin.configure()).rejects.toMatchObject({code:'activation_unqualified'});
+ const deniedStage=join(f.root,'denied-restored');await expect(admin.extract('11111111-1111-4111-8111-111111111111',deniedStage)).rejects.toMatchObject({code:'activation_unqualified'});await expect(readFile(deniedStage)).rejects.toMatchObject({code:'ENOENT'});
  const audit=await readFile(join(f.root,'private','broker-audit.jsonl'),'utf8');expect(audit).toContain('activation_unqualified');expect(audit).toContain('awangs');expect(audit).not.toContain('recoveryPackage');
  await expect(readFile(join(f.root,'private','repository-runtime','password'))).rejects.toMatchObject({code:'ENOENT'});
  await writeFile(join(f.root,'authority.json'),JSON.stringify({schema:1,revision:8,administrator:'awangs',scopes:['awangs','bob'],actors:{awangs:{scopes:['awangs','bob'],role:'administrator'},bob:{scopes:['bob'],role:'reader'}}}),{mode:0o600});

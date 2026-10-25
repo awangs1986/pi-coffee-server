@@ -4,11 +4,11 @@ const identifier=/^[0-9a-f]{8}-[0-9a-f-]{27}$/;
 /** Incoming paths are manifest-relative objects, never Host-selected source paths.
  * This root belongs to the key service and is never exposed to Host callers. */
 export class BackupCheckpointReceiver {
- constructor(private options:{root:string;socket:string;sourceUid:number;allowedScopes?:string[];maxBytes?:number;maxFiles?:number;timeoutMs?:number}){}
+ constructor(private options:{root:string;socket:string;sourceUid:number;allowedScopes?:string[];maxBytes?:number;maxFiles?:number;timeoutMs?:number;request?:unknown;signal?:AbortSignal}){}
  async receive(scope:string,taskId:string,expectedCheckpointId?:string):Promise<SealedCheckpoint>{
-  const root=resolve(this.options.root);await mkdir(root,{recursive:true,mode:0o700});await privateDirectory(root);const staging=join(root,'transfer-'+randomUUID());await mkdir(staging,{mode:0o700});
+  this.options.signal?.throwIfAborted();const root=resolve(this.options.root);await mkdir(root,{recursive:true,mode:0o700});await privateDirectory(root);const staging=join(root,'transfer-'+randomUUID());await mkdir(staging,{mode:0o700});
   const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname;
-  const child=spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.sourceUid),String(Math.floor(Math.min(2*1024**3,(this.options.maxBytes??1024**3)*1.4+64*1024**2)))],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});const timer=setTimeout(()=>child.kill('SIGKILL'),this.options.timeoutMs??5*60*1000);let processError=false;const exited=new Promise<number|null>(resolveExit=>{child.on('error',()=>{processError=true;resolveExit(1);});child.on('close',resolveExit);});child.stdin.on('error',()=>undefined);child.stdin.end(JSON.stringify({schema:1,id:randomUUID(),operation:'export-checkpoint',scope,taskId,...expectedCheckpointId?{expectedCheckpointId}:{}})+'\n');
+  const child=spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.sourceUid),String(Math.floor(Math.min(2*1024**3,(this.options.maxBytes??1024**3)*1.4+64*1024**2)))],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});const timer=setTimeout(()=>child.kill('SIGKILL'),this.options.timeoutMs??5*60*1000);let processError=false;const exited=new Promise<number|null>(resolveExit=>{child.on('error',()=>{processError=true;resolveExit(1);});child.on('close',resolveExit);});child.stdin.on('error',()=>undefined);const abort=()=>child.kill('SIGKILL');this.options.signal?.addEventListener('abort',abort,{once:true});child.stdin.end(JSON.stringify(this.options.request??{schema:1,id:randomUUID(),operation:'export-checkpoint',scope,taskId,...expectedCheckpointId?{expectedCheckpointId}:{}})+'\n');
   let file:FileHandle|undefined;
   try{
    let checkpointId='',manifestBytes=0,manifestChunks:Buffer[]=[],manifestSize=0,manifest:CheckpointManifest|undefined,index=0,current:CheckpointObject|undefined,fileBytes=0,totalBytes=0,ended=false;
@@ -40,7 +40,7 @@ export class BackupCheckpointReceiver {
    try{await rename(staging,destination);}catch(error){if(!['EEXIST','ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code??''))throw error;const old=await verifySealedCheckpoint(destination);if(JSON.stringify(old)!==JSON.stringify(verified))throw new BackupBrokerError('checkpoint_identity_conflict');await rm(staging,{recursive:true});}
    await syncDirectory(join(root,'sealed'));return {directory:destination,manifest:verified};
   }catch(error){child.kill('SIGKILL');await exited;throw error instanceof BackupBrokerError?error:new BackupBrokerError('source_transfer_failed');}
-  finally{clearTimeout(timer);await file?.close();await rm(staging,{recursive:true,force:true});}
+  finally{this.options.signal?.removeEventListener('abort',abort);clearTimeout(timer);await file?.close();await rm(staging,{recursive:true,force:true});}
  }
 }
 function safePath(path:unknown):path is string{return typeof path==='string'&&path.startsWith('objects/')&&!path.includes('\\')&&!isAbsolute(path)&&path.split('/').every(part=>part&&part!=='.'&&part!=='..');}
