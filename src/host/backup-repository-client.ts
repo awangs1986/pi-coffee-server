@@ -1,3 +1,4 @@
+import type {RecoveryPointQuery,RecoveryPointPage} from './recovery-point-catalog.js';
 import {once} from 'node:events';
 import type {RecoveryPin,RecoveryPinLease,RepositoryRetentionPlan} from './backup-retention.js';
 import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';import {verifySealedCheckpoint} from './backup.js';
@@ -13,13 +14,15 @@ export class BackupRepositoryClient {
  private async call(operation:BackupBrokerOperation,payload:Partial<BackupBrokerRequest>={},requestId?:string):Promise<any>{
   const request:BackupBrokerRequest={...payload,schema:1,id:requestId??randomUUID(),operation,context:{actor:this.options.actor,dataScope:this.options.dataScope,authorityRevision:this.options.authorityRevision}};
   if(Buffer.byteLength(JSON.stringify(request))>1024*1024)throw new BackupBrokerError('request_limit');
-  const result=await requestUnixPeer(this.options.socket,this.options.serviceUid,request,['status','qualification','jobs'].includes(operation)?Math.min(this.options.timeoutMs??5000,5000):this.options.timeoutMs);
+  const result=await requestUnixPeer(this.options.socket,this.options.serviceUid,request,['status','qualification','jobs','recovery-points','recovery-job'].includes(operation)?Math.min(this.options.timeoutMs??5000,5000):this.options.timeoutMs);
   if(!result||result.schema!==1||result.id!==request.id&&result.ok!==false)throw new BackupBrokerError('invalid_response');
   if(!result.ok)throw new BackupBrokerError(typeof result.error?.code==='string'&&/^[a-z_]{1,64}$/.test(result.error.code)?result.error.code:'broker_failed');
   return result.result;
  }
  status(scope=this.options.dataScope){return this.call('status',{scope});}
  jobs(scope=this.options.dataScope):Promise<RepositoryJob[]>{return this.call('jobs',{scope});}
+ recoveryPoints(scope=this.options.dataScope,query:RecoveryPointQuery={}):Promise<RecoveryPointPage>{return this.call('recovery-points',{scope,query});}
+ async recoveryJob(jobId:string,scope=this.options.dataScope):Promise<RepositoryJob|undefined>{return (await this.call('recovery-job',{scope,jobId}))??undefined;}
  qualification():Promise<BackupBrokerQualification>{return this.call('qualification');}
  configure():Promise<void>{return this.call('configure');}
  backup(selection:{scope:string;taskId:string;expectedCheckpointId?:string}[],signal?:AbortSignal,requestId?:string):Promise<RepositoryJob>{if(signal?.aborted)return Promise.reject(new BackupBrokerError('job_cancelled'));return this.call('backup',{selection},requestId);}

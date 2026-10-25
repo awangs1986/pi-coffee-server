@@ -4,7 +4,7 @@ export function renderRestoreControls({data,output,request,signal,current,refres
  const section=document.createElement('section'),heading=document.createElement('h3');heading.textContent='找回任务 · 管理员审核后接回';section.append(heading);
  const help=document.createElement('p');help.textContent='先隔离提取并验证，再批准本次修订，最后明确确认接回原路径。默认只找回缺失任务；历史输入不会自动执行。配置与凭证需要重新配置及认证。';section.append(help);
  const operate=async(button,body)=>{button.disabled=true;try{await request(body,signal);if(current())await refresh();}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'恢复操作失败';section.append(message);}}finally{button.disabled=false;}};
- for(const job of data.repository?.jobs||[]){if(job.state!=='succeeded')continue;for(const point of job.points||[]){
+ for(const job of data.repository?.jobs||[]){if(job.state!=='succeeded'||job.retiredAt)continue;for(const point of job.points||[]){
   const row=document.createElement('p'),label=document.createElement('span');label.textContent=`${point.taskId} · ${point.captureAt} `;
   const button=document.createElement('button');button.type='button';button.textContent='请求找回此任务';button.onclick=()=>void operate(button,{action:'restore-request',scope:data.scope,taskId:point.taskId,jobId:job.id});row.append(label,button);section.append(row);
  }}

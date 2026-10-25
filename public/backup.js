@@ -1,3 +1,5 @@
+import {renderBackupRetention} from './backup-retention.js';
+import {renderAccountRecoveryControls} from './account-recovery.js';
 import {renderRestoreControls} from './restore.js';
 /** Scoped protection status. Checkpoints and repository backups are distinct. */
 import {renderBackupSchedule} from './backup-schedule.js';
@@ -23,6 +25,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
    refresh.disabled=true;
    try{const data=await request(body,active.signal);if(!current()){if(dialog===modal)close();return;}
     scope=data.scope;output.replaceChildren();
+    const retention=renderBackupRetention(data,{request:body=>request(body,active.signal),refresh:()=>read({action:'status',scope}),isCurrent:()=>current()&&scope===data.scope});if(retention)output.append(retention);
     const scheduled=renderBackupSchedule(data,{request:body=>request(body,active.signal),refresh:()=>read({action:'status',scope}),isCurrent:current});if(scheduled)output.append(scheduled);
     if(data.canManage&&data.managedScopes?.length){account.hidden=false;const value=scope;account.replaceChildren();for(const name of data.managedScopes){const option=document.createElement('option');option.value=name;option.textContent=name==='__legacy_default__'?'原有账号范围':name;account.append(option);}account.value=value;}
     else account.hidden=true;
@@ -31,7 +34,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      const heading=document.createElement('h3');heading.textContent=`加密仓库 · Restic ${repository.backend?.version||''}`;
      const enabled=document.createElement('p');enabled.textContent=repository.errorCode==='repository_status_unavailable'?'备份服务暂不可用，无法确认仓库状态':repository.enabled?'已启用 · 已验证离线恢复副本':repository.configured?'待导出并验证离线恢复副本':'尚未配置备份目标';section.append(heading,enabled);
      for(const point of repository.points||[]){const label=document.createElement('p');label.textContent=`${point.taskId} · 加密备份采集于 ${point.captureAt} · 点龄 ${Math.floor(Math.max(0,point.ageMs||0)/3600000)} 小时${point.stale?' · 超过 24 小时':''}`;section.append(label);}
-     for(const job of repository.jobs||[]){const label=document.createElement('p');label.textContent=`作业 ${job.id} · ${job.state} · 验证 ${job.verification}${job.errorCode?' · '+job.errorCode:''}`;section.append(label);}
+     for(const job of repository.jobs||[]){const label=document.createElement('p');label.textContent=`作业 ${job.id} · ${job.state} · 验证 ${job.verification}${job.retiredAt?' · 已按保留计划回收':''}${job.errorCode?' · '+job.errorCode:''}`;section.append(label);}
      if(repository.activationUnavailable){const reason=document.createElement('p');reason.textContent=repository.activationUnavailable;section.append(reason);}
      if(data.canManage&&!repository.activationUnavailable){
       const operate=async(body)=>{try{const result=await request(body,active.signal);if(current())await read({action:'status',scope});return result;}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'仓库操作失败';section.append(message);}return null;}};
@@ -50,6 +53,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      output.append(section);
     }
     renderRestoreControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
+    renderAccountRecoveryControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     const excluded=document.createElement('p');excluded.textContent='本期保护 Pi / Codex；Claude / Cursor / Grok 延期，不计入已保护范围。';output.append(excluded);
     if(!data.tasks?.length){const empty=document.createElement('p');empty.textContent='当前账号没有任务。';output.append(empty);}
     for(const task of data.tasks||[]){
