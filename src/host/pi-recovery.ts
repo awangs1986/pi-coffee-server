@@ -13,7 +13,7 @@ import type {Workspaces,Conversation} from './workspaces.js';
 export class PiNativeRecoveryAdapter implements NativeRecoveryAdapter {
  readonly version='pi-1.1.0-jsonl-v3/coffee-checkpoint-v1';
  constructor(private options:{scope:string;workspaces:Workspaces;sessionDir:string;agentDir?:string;immutablePackages?:Record<string,string>;fence:WriterAdmissionFence;sourceCustody:()=>Promise<{known:boolean;reason?:string}>}){}
- async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unavailable');return preparePiRestore(this.options,point,scope,taskId,staging);}
+ async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string,restoreOptions?:import('./restore.js').NativeRestoreOptions){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unavailable');return preparePiRestore(this.options,point,scope,taskId,staging,restoreOptions);}
  async restoreLease(){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unavailable');return this.options.fence.lease();}
  async resolve(scope:string,taskId:string):Promise<NativeRecoveryGroup>{
   if(scope!==this.options.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');
