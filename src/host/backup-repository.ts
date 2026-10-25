@@ -81,10 +81,12 @@ export class BackupRepository {
   }
   config.retiredKeys=[];
  }
- async backup(selection:BackupSelection[],signal?:AbortSignal):Promise<RepositoryJob>{
+ async backup(selection:BackupSelection[],signal?:AbortSignal,requestId?:string):Promise<RepositoryJob>{
   await this.initialize();return this.exclusive(async()=>{
    const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');
-   const job:RepositoryJob={schema:1,id:randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId})=>({scope,taskId})),points:[],verification:'none'};
+   if(requestId&&!idPattern.test(requestId))throw fail('invalid_operation');
+   if(requestId){const existing=(await this.jobs()).find(job=>job.id===requestId);if(existing){if(JSON.stringify(existing.selection)!==JSON.stringify(selection))throw fail('operation_conflict');if(existing.state==='succeeded')return existing;throw fail(existing.state==='running'?'operation_uncertain':existing.errorCode??'repository_failed');}}
+   const job:RepositoryJob={schema:1,id:requestId??randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId})=>({scope,taskId})),points:[],verification:'none'};
    await this.saveJob(job);
    try{
     await this.destination(config);if(!selection.length||selection.length>100000)throw fail('invalid_selection');
