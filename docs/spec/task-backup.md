@@ -37,3 +37,18 @@ This supported configuration requires an explicit owned private Pi agent directo
 - Complete coverage of existing two-account task sources remains unmet while source provenance/configuration dependencies are unknown. A sealed point in a controlled synthetic Pi fixture is not production or whole-account acceptance.
 
 Claude, Cursor and Grok remain explicitly deferred/excluded. Their current execution implementations remain available; their writers/dependencies cannot be ignored when they affect an in-scope source.
+
+## Independent schedule candidate (#138)
+
+`BackupJobRunner` persists local-date/revision dispatches, three bounded attempts
+(initial, +15, +60 minutes), worker observations and scoped incidents. An
+independent CLI daemon polls every 30 seconds without Web, a browser or a model.
+It consumes the authenticated Host task inventory and only sealed source points;
+repository coverage uses confirmed successful saved points. An outage retains
+last confirmed metadata and visibly marks coverage unknown. Original capture
+age is separate from job completion and worker observation. Shared kernel leases
+and stable repository request IDs reconcile controller death and response loss.
+Ordinary status is scope-owned; only the authenticated administrator may update
+a plan within the trusted managed allowlist. See [configuration and operational
+limits](../deployment/backup-schedule.md). This candidate is not production
+activation or completion of retention/account recovery and final acceptance.

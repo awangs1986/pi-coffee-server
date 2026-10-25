@@ -3,7 +3,7 @@
 function providerId(value:string){if(!/^[A-Za-z0-9_-]{1,80}$/.test(value))throw Error('Unsupported provider identifier');return value;}
 export function providerLoopbackBaseUrl(port:number){if(!Number.isSafeInteger(port)||port<1024||port>65535)throw Error('Invalid provider loopback port');return `http://127.0.0.1:${port}/v1`;}
 export function codexProviderTransportArgs(provider:string,port:number):string[]{
- const prefix=`model_providers.${providerId(provider)}.`,base=providerLoopbackBaseUrl(port);return ['-c',prefix+'base_url='+JSON.stringify(base),'-c',prefix+'env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c',prefix+'requires_openai_auth=false','-c',prefix+'supports_websockets=false'];
+ const prefix=`model_providers.${providerId(provider)}.`,base=providerLoopbackBaseUrl(port);return ['-c','model_provider='+JSON.stringify(provider),'-c',prefix+'name='+JSON.stringify(provider),'-c',prefix+'base_url='+JSON.stringify(base),'-c',prefix+'env_key="PI_COFFEE_PROVIDER_PLACEHOLDER"','-c',prefix+'requires_openai_auth=false','-c',prefix+'supports_websockets=false'];
 }
 /** Pi1.1.0 registerProvider baseUrl override retains its existing model catalog.
  * Mount no native auth file and provide only these public placeholder keys. */
