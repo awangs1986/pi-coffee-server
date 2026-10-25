@@ -73,7 +73,19 @@ def main():
     if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
         raise RuntimeError('Native process identity signalling unavailable')
     environment = {k: v for k, v in os.environ.items() if not k.startswith('PI_COFFEE_CUSTODY_')}
-    native = subprocess.Popen([command['executable'], *command['args'], *sys.argv[1:]], env=environment)
+    arguments = [command['executable'], *command['args'], *sys.argv[1:]]
+    descriptors = []
+    managed_lock = None
+    if os.environ.get('PI_COFFEE_MANAGED_PROFILE'):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('coffee_managed_profile', Path(__file__).with_name('managed-native-profile.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        arguments, descriptors, managed_lock = module.prepare(os.environ['PI_COFFEE_MANAGED_PROFILE'], root, arguments[0], arguments[1:])
+        environment = {'PATH': '/usr/bin:/bin'}
+    native = subprocess.Popen(arguments, env=environment, pass_fds=descriptors)
+    for descriptor in descriptors:
+        os.close(descriptor)
     native_signal_fd = os.pidfd_open(native.pid)
     for signum in pending:
         forward(signum, None)
@@ -92,6 +104,8 @@ def main():
             break
     if native_status is None:
         raise RuntimeError('Native exit not observed')
+    if managed_lock is not None:
+        os.close(managed_lock)
     publish('quiescent')
     return native_status if native_status >= 0 else 128 - native_status
 
