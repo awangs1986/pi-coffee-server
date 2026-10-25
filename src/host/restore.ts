@@ -1,3 +1,4 @@
+import {projectSealedCheckpointMember} from './grouped-recovery.js';
 import {publishApprovedReplacement,type ReplacementPreimage} from './restore-replacement.js';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
@@ -7,15 +8,16 @@ import type {RecoveryPin} from './backup-retention.js';
 import type {BackupRepository} from './backup-repository.js';
 import {verifySealedCheckpoint,type CheckpointManifest,type CaptureLease} from './backup.js';
 import type {Conversation,Project,Workspaces} from './workspaces.js';
-import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,sha,syncDir,treeDigest} from './restore-files.js';
-export interface RestoreAction {replace?:ReplacementPreimage;source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number};}
+import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,restoreParent,sha,syncDir,treeDigest} from './restore-files.js';
+export interface RestoreAction {replace?:ReplacementPreimage;source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number;guardRoot?:string};}
 export interface NativeRestoreOptions {mode?:'missing-only'|'replace';selectedTaskIds?:string[];}
-export interface NativeMergeContext {operationId:string;digest:string;assertValid:()=>void;}
+export interface NativeMergeContext {operationId:string;digest:string;publicationFd?:number;assertValid:()=>void;}
 export interface NativeRestorePreparation {nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];nativeBindings:string[];warnings:string[];}
 export interface NativeRestoreAdapter {
  readonly version:string;
  prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string,options?:NativeRestoreOptions):Promise<NativeRestorePreparation>;
  /** Serialized, approval-bound row/index merge. Called under the group lease on every retry. */
+ validateReplacementSafety?(plan:Record<string,unknown>,context:{directory:string;manifest:CheckpointManifest;currentRegistry:Conversation|undefined;scope:string;taskId:string}):Promise<void>;
  publishNativeMerge?(plan:Record<string,unknown>,context:NativeMergeContext):Promise<void>;
  restoreLease():Promise<CaptureLease>;
 }
@@ -26,6 +28,7 @@ export interface RestorePlan {
  publicationAttempted?:boolean;recoveryPins?:RecoveryPin[];pinReleasePending?:boolean;checkpointGroup?:{id:string;captureAt:string;members:CheckpointManifest['members'];externalMemberCount:number;dependencies:{recoveryKey:string;role:string}[]};checkpointId?:string;manifestSha256?:string;adapterVersion?:string;nativeBindings?:string[];digest?:string;approvedBy?:string;approvedRevision?:number;approvalDigest?:string;cancelRequested?:boolean;errorCode?:string;
  plan?:{safety?:{jobId:string;checkpointId:string;captureAt:string;targets:{path:string;digest:string}[]};nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];expectedRegistry:string|null;registryDigest:string;registryIdentity:{dev:number;ino:number;uid:number};checkpointDirectory:string;warnings:string[]};
 }
+export function restorePlanDigest(p:RestorePlan){return sha(JSON.stringify({scope:p.scope,id:p.id,requestedBy:p.requestedBy,mode:p.mode??'missing-only',selectedTaskIds:p.selectedTaskIds,checkpointGroup:p.checkpointGroup,jobId:p.jobId,checkpointId:p.checkpointId,manifestSha256:p.manifestSha256,adapterVersion:p.adapterVersion,revision:p.revision,nativeBindings:p.nativeBindings,recoveryPins:p.recoveryPins?.map(pin=>({id:pin.id,jobId:pin.jobId,snapshotId:pin.snapshotId})),plan:p.plan}));}
 export type RestoreMaterialSource=Pick<BackupRepository,'jobs'|'extract'>&Partial<Pick<BackupRepository,'pinRecoveryJob'|'releaseRecoveryPin'|'withRecoveryPins'|'recoveryJob'|'recoveryPoints'>>;
 /** Internal execution capability supplied only while a trusted parent holds its real vector lease. */
 export interface RestoreExecutionContext {pins:Pick<RecoveryPin,'jobId'|'snapshotId'>[];assertHeld:()=>void;}
@@ -36,6 +39,10 @@ export interface RestoreCoordinatorOptions {root:string;safetyCheckpoint?:(conte
  * including a crash after publication but before its journal update. */
 export class RestoreCoordinator {
  readonly root:string;constructor(private options:RestoreCoordinatorOptions){this.root=resolve(options.root);}
+ /** Trusted source-authority seam, never an HTTP reader projection. A durable
+  * publication intent precedes every mutation and remains pending after worker
+  * loss until the approved job has rolled forward to its complete receipt. */
+ async pendingPublications(){await privateDir(this.root,true);const result:{operationId:string;scope:string;taskId:string;revision:number;groupId?:string;state:RestorePlan['state'];phase:RestorePlan['phase']}[]=[];const names=await readdir(this.root);if(names.length>20000)throw restoreFail('restore_journal_capacity');for(const name of names){if(!/^[0-9a-f-]{36}\.json$/.test(name))continue;const p=await this.read(name.slice(0,-5));if(p.schemaVersion!==1||p.id!==name.slice(0,-5)||!p.scope||!p.taskId||!Number.isSafeInteger(p.revision))throw restoreFail('restore_journal_invalid');if(p.phase!=='complete'&&(p.publicationAttempted||p.state==='publishing'||p.state==='failed'&&p.approvedBy||['task','native','registry'].includes(p.phase)))result.push({operationId:p.id,scope:p.scope,taskId:p.taskId,revision:p.revision,groupId:p.checkpointGroup?.id,state:p.state,phase:p.phase});}return result;}
  private async allowed(actor:string,scope:string,manage:boolean){if(!await this.options.authorize(actor,scope,manage))throw restoreFail('forbidden');}
  private date(){return new Date((this.options.now??Date.now)()).toISOString();}
  private path(id:string){if(!/^[0-9a-f-]{36}$/.test(id))throw restoreFail('invalid_operation');return join(this.root,id+'.json');}
@@ -69,26 +76,30 @@ export class RestoreCoordinator {
   await this.pinJob(p,repository,p.jobId);if(!await exists(extract))await repository.extract(p.jobId,extract);
   const directory=join(extract,point.checkpointId),manifest=await verifySealedCheckpoint(directory,point.manifestSha256);
   if(!manifest.members.some(m=>m.scope===p.scope&&m.taskId===p.taskId&&['pi','codex'].includes(m.engine)))throw restoreFail('native_adapter_unavailable');
-  const prepared=await scope.adapter.prepareRestore({directory,manifest},p.scope,p.taskId,stage,{mode:p.mode??'missing-only',selectedTaskIds:p.selectedTaskIds});
-  const safety=prepared.actions.some(action=>action.replace)||p.mode==='replace'&&prepared.nativeMerge?await this.prepareSafety(actor,p,repository,stage,prepared.actions):undefined;
+  const selected=await projectSealedCheckpointMember({directory,manifest},p.scope,p.taskId,point.manifestSha256);
+  const prepared=await scope.adapter.prepareRestore(selected,p.scope,p.taskId,stage,{mode:p.mode??'missing-only',selectedTaskIds:p.selectedTaskIds});
+  const safety=prepared.actions.some(action=>action.replace)||p.mode==='replace'&&prepared.nativeMerge?await this.prepareSafety(actor,p,repository,stage,prepared.actions,prepared.nativeMerge):undefined;
   const current=await scope.workspaces.lookup(p.taskId);p.checkpointGroup={id:manifest.groupId,captureAt:manifest.captureAt,members:manifest.members.filter(member=>member.scope===p.scope),externalMemberCount:manifest.members.filter(member=>member.scope!==p.scope).length,dependencies:manifest.sources.map(source=>({recoveryKey:manifest.members.some(member=>member.scope!==p.scope)?'shared-'+source.role:source.recoveryKey,role:source.role}))};p.checkpointId=point.checkpointId;p.manifestSha256=point.manifestSha256;p.adapterVersion=scope.adapter.version;p.nativeBindings=prepared.nativeBindings;
+
   p.plan={...(safety?{safety}:{}),...(prepared.nativeMerge?{nativeMerge:prepared.nativeMerge}:{}),conversation:prepared.conversation,project:prepared.project,actions:prepared.actions,expectedRegistry:current?sha(JSON.stringify(current)):null,registryDigest:sha(JSON.stringify({conversation:prepared.conversation,project:prepared.project})),registryIdentity:await scope.workspaces.recoveryRegistryIdentity(),checkpointDirectory:directory,warnings:prepared.warnings};
   p.digest=this.planDigest(p);p.phase='prepared';p.state='staged';assertHeld();await this.save(p);
  }
- private async prepareSafety(actor:string,p:RestorePlan,repository:RestoreMaterialSource,stage:string,actions:RestoreAction[]){
+ private async prepareSafety(actor:string,p:RestorePlan,repository:RestoreMaterialSource,stage:string,actions:RestoreAction[],nativeMerge?:Record<string,unknown>){
   if(!this.options.safetyCheckpoint)throw restoreFail('replacement_safety_unavailable');const reference=await this.options.safetyCheckpoint({actor,scope:p.scope,taskId:p.taskId,operationId:p.id,revision:p.revision});
   const job=repository.recoveryJob?await repository.recoveryJob(reference.jobId,p.scope):(await repository.jobs()).find(job=>job.id===reference.jobId&&job.state==='succeeded'&&job.verification==='repository-read'&&!job.retiredAt),point=job?.points.find(point=>point.scope===p.scope&&point.taskId===p.taskId&&point.checkpointId===reference.checkpointId);
-  if(!point||Date.parse(point.captureAt)<Date.parse(p.createdAt))throw restoreFail('replacement_safety_invalid');await this.pinJob(p,repository,reference.jobId);const extraction=join(stage,'safety-extract');await repository.extract(reference.jobId,extraction);const directory=join(extraction,point.checkpointId),manifest=await verifySealedCheckpoint(directory,point.manifestSha256);
-  if(manifest.members.some(member=>member.scope!==p.scope)||!manifest.members.some(member=>member.scope===p.scope&&member.taskId===p.taskId)||manifest.captureAt!==point.captureAt)throw restoreFail('replacement_safety_invalid');
+  if(!point||Date.parse(point.captureAt)<Date.parse(p.createdAt))throw restoreFail('replacement_safety_invalid');await this.pinJob(p,repository,reference.jobId);const extraction=join(stage,'safety-extract');await repository.extract(reference.jobId,extraction);const directory=join(extraction,point.checkpointId),fullManifest=await verifySealedCheckpoint(directory,point.manifestSha256),{manifest}=await projectSealedCheckpointMember({directory,manifest:fullManifest},p.scope,p.taskId,point.manifestSha256);
+  if(!manifest.members.some(member=>member.scope===p.scope&&member.taskId===p.taskId)||manifest.captureAt!==point.captureAt)throw restoreFail('replacement_safety_invalid');
   const registry=manifest.sources.find(source=>source.recoveryKey==='registry');if(!registry)throw restoreFail('replacement_safety_invalid');const saved=await readJson(join(directory,'objects',registry.id)),current=await (await this.options.scope(p.scope)).workspaces.lookup(p.taskId);if(saved.scope!==p.scope||saved.conversation?.id!==p.taskId||sha(JSON.stringify(saved.conversation))!==sha(JSON.stringify(current)))throw restoreFail('replacement_safety_changed');
-  const targets=[];for(const action of actions.filter(action=>action.replace)){const sources=manifest.sources.filter(source=>source.originalPath===action.target);if(!sources.length)throw restoreFail('replacement_safety_incomplete');const digests=await Promise.all(sources.map(source=>treeDigest(join(directory,'objects',source.id))));if(digests.some(digest=>digest!==action.replace!.digest))throw restoreFail('replacement_safety_changed');targets.push({path:action.target,digest:action.replace!.digest});}
+  if(nativeMerge){const adapter=(await this.options.scope(p.scope)).adapter;if(!adapter?.validateReplacementSafety)throw restoreFail('replacement_safety_unavailable');await adapter.validateReplacementSafety(nativeMerge,{directory,manifest,currentRegistry:current,scope:p.scope,taskId:p.taskId});}
+  const targets=[];for(const action of actions.filter(action=>action.replace)){const sources=manifest.sources.filter(source=>source.originalPath&&(source.originalPath===action.target||action.target.startsWith(source.originalPath+'/')));if(!sources.length)throw restoreFail('replacement_safety_incomplete');const digests=await Promise.all(sources.map(source=>treeDigest(join(directory,'objects',source.id,source.originalPath===action.target?'':action.target.slice(source.originalPath!.length+1)))));if(digests.some(digest=>digest!==action.replace!.digest))throw restoreFail('replacement_safety_changed');targets.push({path:action.target,digest:action.replace!.digest});}
   return {jobId:reference.jobId,checkpointId:point.checkpointId,captureAt:point.captureAt,targets};
  }
- private planDigest(p:RestorePlan){return sha(JSON.stringify({scope:p.scope,id:p.id,requestedBy:p.requestedBy,mode:p.mode??'missing-only',selectedTaskIds:p.selectedTaskIds,checkpointGroup:p.checkpointGroup,jobId:p.jobId,checkpointId:p.checkpointId,manifestSha256:p.manifestSha256,adapterVersion:p.adapterVersion,revision:p.revision,nativeBindings:p.nativeBindings,recoveryPins:p.recoveryPins?.map(pin=>({id:pin.id,jobId:pin.jobId,snapshotId:pin.snapshotId})),plan:p.plan}));}
+ private planDigest(p:RestorePlan){return restorePlanDigest(p);}
  private async publish(p:RestorePlan,assertHeld:()=>void){
   const scope=await this.options.scope(p.scope);if(!scope.adapter||scope.adapter.version!==p.adapterVersion)throw restoreFail('adapter_version_changed');
+  assertHeld();p.state='publishing';p.publicationAttempted=true;await this.save(p);
   const run=async()=>{const lease=await scope.adapter!.restoreLease();const assertValid=()=>{assertHeld();lease.assertValid();};try{
-   p.state='publishing';p.publicationAttempted=true;await this.save(p);const plan=p.plan!;await verifySealedCheckpoint(plan.checkpointDirectory,p.manifestSha256);assertHeld();if(JSON.stringify(await scope.workspaces.recoveryRegistryIdentity())!==JSON.stringify(plan.registryIdentity))throw restoreFail('registry_authority_changed');
+   const plan=p.plan!;await verifySealedCheckpoint(plan.checkpointDirectory,p.manifestSha256);assertHeld();if(JSON.stringify(await scope.workspaces.recoveryRegistryIdentity())!==JSON.stringify(plan.registryIdentity))throw restoreFail('registry_authority_changed');
    const current=await scope.workspaces.lookup(p.taskId),receipt=current?.recoveryReceipt;
    if(receipt?.operationId===p.id&&receipt.digest===p.digest){await this.reconcileActions(p,assertValid);await this.mergeNative(scope,p,lease,assertHeld);await scope.workspaces.importRecoveredTask({operationId:p.id,digest:p.digest!,conversation:plan.conversation,project:plan.project,expectedRegistry:plan.expectedRegistry});p.phase='registry';await this.save(p);}else{
     if((current?sha(JSON.stringify(current)):null)!==plan.expectedRegistry)throw restoreFail('registry_changed');
@@ -99,11 +110,11 @@ export class RestoreCoordinator {
   }catch(e){assertHeld();p.state='failed';p.errorCode=(e as {code?:string}).code??'restore_failed';await this.save(p);throw e;}finally{lease.release();}};
   if(scope.withPublication)await scope.withPublication(p.taskId,run,p.id);else await run();
  }
- private async mergeNative(scope:RestoreScope,p:RestorePlan,lease:CaptureLease,assertHeld:()=>void){if(!p.plan?.nativeMerge)return;if(!scope.adapter?.publishNativeMerge)throw restoreFail('native_merge_unavailable');await scope.adapter.publishNativeMerge(p.plan.nativeMerge,{operationId:p.id,digest:p.digest!,assertValid:()=>{assertHeld();lease.assertValid();}});}
+ private async mergeNative(scope:RestoreScope,p:RestorePlan,lease:CaptureLease,assertHeld:()=>void){if(!p.plan?.nativeMerge)return;if(!scope.adapter?.publishNativeMerge)throw restoreFail('native_merge_unavailable');await scope.adapter.publishNativeMerge(p.plan.nativeMerge,{operationId:p.id,digest:p.digest!,publicationFd:lease.publicationFd,assertValid:()=>{assertHeld();lease.assertValid();}});}
  private async reconcileActions(p:RestorePlan,assertHeld:()=>void){for(const action of p.plan!.actions)await this.publishAction(action,assertHeld);}
  private async publishAction(action:RestoreAction,assertHeld:()=>void){
   assertHeld();if(action.replace){await publishApprovedReplacement({...action,replace:action.replace},{assertValid:assertHeld});return;}
-  const parent=await privateDir(dirname(action.target));if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
+  const parent=await restoreParent(dirname(action.target),action.parent.guardRoot);if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
   if(await exists(action.target)){const actual=await lstat(action.target);if(actual.isSymbolicLink()||actual.dev!==action.dev||actual.ino!==action.ino||await treeDigest(action.target)!==action.digest)throw restoreFail('target_changed');return;}
   const source=await lstat(action.source);if(source.dev!==action.dev||source.ino!==action.ino||await treeDigest(action.source)!==action.digest)throw restoreFail('stage_changed');
   // Linux renameat2(RENAME_NOREPLACE), via the trusted local helper, avoids a

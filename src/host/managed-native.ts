@@ -2,6 +2,7 @@ import {NativeWriterCustody} from './native-custody.js';
 import {lstat,realpath,writeFile} from 'node:fs/promises';
 import {resolve,relative,isAbsolute,dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import type {ManagedPublicationGate} from './managed-publication-gate.js';
 
 export interface ManagedProviderTransport {provider:string;socket:string;serviceUid:number;port:number;models:string[];}
 export type ManagedProviderTransports={pi?:ManagedProviderTransport;codex?:ManagedProviderTransport};
@@ -16,8 +17,15 @@ const environmentKeys=new Set(['HOME','PATH','LANG','LC_ALL','TERM','NO_COLOR','
  * a mandatory fresh kernel namespace. No unrestricted fallback is possible. */
 export class ManagedNativeCustody extends NativeWriterCustody {
  readonly profile:ManagedNativeProfile;
- constructor(root:string,profile:ManagedNativeProfile){super(root);this.profile=structuredClone(profile);for(const source of this.profile.sources)Object.freeze(source);Object.freeze(this.profile.sources);Object.freeze(this.profile.runtimeRoots);Object.freeze(this.profile.environment);if(this.profile.providerTransports){for(const value of Object.values(this.profile.providerTransports)){Object.freeze(value.models);Object.freeze(value);}Object.freeze(this.profile.providerTransports);}Object.freeze(this.profile);}
+ constructor(root:string,profile:ManagedNativeProfile,private gates?:{publication?:ManagedPublicationGate}){super(root);this.profile=structuredClone(profile);for(const source of this.profile.sources)Object.freeze(source);Object.freeze(this.profile.sources);Object.freeze(this.profile.runtimeRoots);Object.freeze(this.profile.environment);if(this.profile.providerTransports){for(const value of Object.values(this.profile.providerTransports)){Object.freeze(value.models);Object.freeze(value);}Object.freeze(this.profile.providerTransports);}Object.freeze(this.profile);}
  override async prepare(command:{executable:string;args?:string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex'}){
+  return this.prepareCommand(command,false);
+ }
+ /** Fixed read-only qualification program, never an arbitrary native command.
+  * A pending recovery must still prove its namespace before it can reconcile. */
+ async prepareSourceQualification(){return this.prepareCommand({executable:'/usr/bin/python3',args:['-c',"import json,os,pathlib,subprocess\ns=pathlib.Path('/proc/self/status').read_text()\np=subprocess.run(['/usr/bin/unshare','-Ur','true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nprint(json.dumps({'nnp':'NoNewPrivs:\\t1' in s,'zeroCaps':'CapEff:\\t0000000000000000' in s,'nestedDenied':p.returncode!=0}))"]},true);}
+ private async prepareCommand(command:{executable:string;args?:string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex'},qualification:boolean){
+  if(!qualification)this.gates?.publication?.assertAdmission();
   const parent=resolve(this.profile.sourceParent),parentInfo=await lstat(parent);
   if(!parentInfo.isDirectory()||parentInfo.isSymbolicLink()||parentInfo.uid!==process.getuid?.()||(parentInfo.mode&0o077)!==0||await realpath(parent)!==parent)throw Error('Managed source parent is not private');
   const lock=resolve(this.profile.lock);if(!within(parent,lock)||!within(parent,this.root))throw Error('Managed authority is outside its private parent');
@@ -36,7 +44,7 @@ export class ManagedNativeCustody extends NativeWriterCustody {
   for(const key of ['HOME','PI_CODING_AGENT_DIR','CODEX_HOME','CODEX_SQLITE_HOME']){const path=environment[key];if(path&&!sources.some(source=>path===source.destination||within(source.destination,path)))throw Error('Managed native data directory is outside source grants');}
   const provider=command.engine?this.profile.providerTransports?.[command.engine]:undefined;if(command.engine&&this.profile.requireProviderTransport&&!provider)throw Error('Managed provider transport is not configured');
   if(provider&&(!/^[A-Za-z0-9_-]{1,80}$/.test(provider.provider)||!isAbsolute(provider.socket)||!Number.isSafeInteger(provider.serviceUid)||provider.serviceUid<1||!Number.isSafeInteger(provider.port)||provider.port<1024||provider.port>65535||!Array.isArray(provider.models)||!provider.models.length||provider.models.some(model=>typeof model!=='string'||!model)))throw Error('Managed provider transport is invalid');
-  const prepared=await super.prepare(command),directory=prepared.env.PI_COFFEE_CUSTODY_DIR,file=join(directory,'managed-profile.json');
+  if(!qualification)this.gates?.publication?.assertAdmission();const prepared=await super.prepare(command),directory=prepared.env.PI_COFFEE_CUSTODY_DIR,file=join(directory,'managed-profile.json');
   await writeFile(file,JSON.stringify({schema:1,sourceParent:parent,lock,sources,runtimeRoots,environment,cwd,...(provider?{provider:{...provider,engine:command.engine,node:process.execPath,runtime:dirname(fileURLToPath(new URL(import.meta.url.endsWith('.ts')?'../../dist/src/host/provider-loopback.mjs':'./provider-loopback.mjs',import.meta.url)))}}:{})}),{mode:0o600,flag:'wx',flush:true});
   return {...prepared,env:{...prepared.env,PI_COFFEE_MANAGED_PROFILE:file}};
  }
