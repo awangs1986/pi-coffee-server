@@ -1,4 +1,5 @@
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import {QueueStore} from './queue-store.js';
@@ -67,7 +68,7 @@ export interface UserScope {
 
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepository; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepository; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -279,7 +280,7 @@ export class HostServer {
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
       const administrator=this.options.backup?.administrator??'awangs',dataScope=slot.user??LEGACY_BACKUP_SCOPE;
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor??'',target.user??LEGACY_BACKUP_SCOPE):[],excludedEngines:['claude','cursor','grok']});
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(this.options.backup?.repository?{repository:{...await this.options.backup.repository.status(target.user??LEGACY_BACKUP_SCOPE),...(this.options.backup.activationUnavailable?{activationUnavailable:this.options.backup.activationUnavailable}:{})}}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor??'',target.user??LEGACY_BACKUP_SCOPE):[],excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
@@ -287,6 +288,17 @@ export class HostServer {
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
         if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||(input.scope!==dataScope&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
         const target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
+      }
+      if(typeof input.action==='string'&&input.action.startsWith('account-restore-')){
+        res.setHeader('cache-control','no-store');const recovery=this.options.backup?.accountRecovery,action=input.action.slice('account-restore-'.length);
+        if(!['request','plan','approve','publish','cancel','revise'].includes(action)){json(res,400,{error:'Unknown account recovery action'});return;}
+        if(!['request','cancel'].includes(action)&&actor!==administrator){json(res,403,{error:'Account recovery approval and publication require '+administrator});return;}
+        if(!recovery){json(res,409,{error:'Account recovery service unavailable'});return;}
+        try{if(action==='request'){const scope=input.scope??dataScope;if(typeof scope!=='string'||scope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(scope))){json(res,403,{error:'Account recovery scope denied'});return;}json(res,200,await recovery.request(actor??'',scope,{jobIds:input.jobIds as string[],...(input.mode!==undefined?{mode:input.mode as 'missing-only'|'replace'}:{})}));return;}
+          if(typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an account operation and current revision'});return;}
+          if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
+          json(res,200,await recovery.operate(actor??'',input.id,{action:action as 'plan'|'approve'|'publish'|'cancel'|'revise',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})}));
+        }catch(error){json(res,error instanceof BackupError&&error.code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Account recovery operation failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('restore-')){
         res.setHeader('cache-control','no-store');const restore=this.options.backup?.restore;
