@@ -1,11 +1,11 @@
-import {execFileSync} from 'node:child_process';import {lstat} from 'node:fs/promises';import {dirname} from 'node:path';import type {RestoreAction} from './restore.js';import {privateDir,restoreFail,syncDir,treeDigest} from './restore-files.js';
+import {execFileSync} from 'node:child_process';import {lstat} from 'node:fs/promises';import {dirname} from 'node:path';import type {RestoreAction} from './restore.js';import {restoreParent,restoreFail,syncDir,treeDigest} from './restore-files.js';
 export interface ReplacementPreimage {dev:number;ino:number;digest:string;}
 export interface ReplacementAction extends RestoreAction {replace:ReplacementPreimage;}
 /** Called only under approved revision, verified current-safety material and the
  * native group/publication lease. Atomic exchange leaves the old tree at the
  * private staged source, never deleted or rolled back over a later writer. */
 export async function publishApprovedReplacement(action:ReplacementAction,context:{assertValid:()=>void;afterExchange?:()=>Promise<void>}){
- context.assertValid();const parent=await privateDir(dirname(action.target));if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
+ context.assertValid();const parent=await restoreParent(dirname(action.target),action.parent.guardRoot);if(parent.dev!==action.parent.dev||parent.ino!==action.parent.ino||parent.uid!==action.parent.uid)throw restoreFail('target_parent_changed');
  const target=await lstat(action.target),source=await lstat(action.source);if(target.isSymbolicLink()||source.isSymbolicLink())throw restoreFail('replacement_target_changed');
  const matches=async(path:string,actual:{dev:number;ino:number},expected:ReplacementPreimage)=>actual.dev===expected.dev&&actual.ino===expected.ino&&await treeDigest(path)===expected.digest;
  const newIdentity={dev:action.dev,ino:action.ino,digest:action.digest};

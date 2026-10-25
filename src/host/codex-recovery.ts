@@ -1,4 +1,4 @@
-import {prepareCodexRestore,publishCodexMerge} from './codex-restore.js';
+import {prepareCodexRestore,publishCodexMerge,validateCodexReplacementSafety} from './codex-restore.js';
 import type {CheckpointManifest} from './backup.js';
 import type {NativeRestoreOptions,NativeMergeContext} from './restore.js';
 import {spawn} from 'node:child_process';
@@ -22,12 +22,13 @@ export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
  readonly version='codex-0.159.1-sqlx58-history7/coffee-checkpoint-v1';
  constructor(readonly options:CodexRecoveryOptions){}
  async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,options?:NativeRestoreOptions){await this.custody();const lease=await this.options.fence.lease();try{const result=await prepareCodexRestore(this.options,point,scope,taskId,stage,options);lease.assertValid();return result;}finally{lease.release();}}
+ async validateReplacementSafety(plan:Record<string,unknown>,context:{directory:string;manifest:CheckpointManifest;currentRegistry:Conversation|undefined;scope:string;taskId:string}){return validateCodexReplacementSafety(plan,context);}
  async publishNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext){await this.custody();return publishCodexMerge(plan,context,this.options.onDatabaseCommit);}
  async restoreLease(){await this.custody();const fence=this.options.fence as WriterAdmissionFence&{publicationLease?:WriterAdmissionFence['lease']};return fence.publicationLease?fence.publicationLease():fence.lease();}
  private async custody(){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unknown');}
  async resolve(scope:string,taskId:string):Promise<NativeRecoveryGroup>{
   const o=this.options;if(scope!==o.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');await this.custody();
-  if(o.cliVersion!=='0.159.1')throw new BackupError('closure_incomplete','Native Codex version is not qualified');const task=await o.workspaces.lookup(taskId);if(!task||task.engine!=='codex'||!task.nativeBinding?.id)throw new BackupError('closure_incomplete','Codex task binding unavailable');assertTask(task);await o.workspaces.file(taskId,'');
+  if(o.cliVersion!=='0.159.1')throw new BackupError('native_version_unqualified','Native Codex version is not qualified');const task=await o.workspaces.lookup(taskId);if(!task||task.engine!=='codex'||!task.nativeBinding?.id)throw new BackupError('closure_incomplete','Codex task binding unavailable');assertTask(task);await o.workspaces.file(taskId,'');
   const lease=await o.fence.lease();let snapshot:CodexStoreSnapshot;let sources:RecoverySource[];let fingerprint:string;
   try{
    snapshot=await codexStore({operation:'snapshot',home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome});lease.assertValid();
@@ -39,7 +40,7 @@ export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
    const state=snapshot.databases['state_5.sqlite'].tables;for(const id of selected)if(!state.threads.some(row=>row.id===id&&row.rollout_path===byId.get(id)!.path))throw new BackupError('closure_incomplete','Native index binding missing');
    for(const edge of state.thread_spawn_edges??[])if(selected.has(String(edge.parent_thread_id))!==selected.has(String(edge.child_thread_id)))throw new BackupError('closure_incomplete','Native spawn dependency outside task');
    if((state.thread_attachments??[]).some(row=>selected.has(String(row.thread_id))))throw new BackupError('closure_incomplete','Attachment resource mapping is not qualified');
-   const all=await o.workspaces.list(),project=all.projects.find(p=>p.id===task.projectId);
+   const all=await o.workspaces.list(),ownedIds=new Set(all.conversations.filter(t=>t.engine==='codex').flatMap(t=>[t.nativeBinding?.id,...t.retainedNativeIds??[]].filter((id):id is string=>Boolean(id))));if((snapshot.databases['memories_1.sqlite']?.tables.stage1_outputs??[]).some(row=>!ownedIds.has(String(row.thread_id))))throw new BackupError('closure_incomplete','Shared memory has an unmapped native owner');const project=all.projects.find(p=>p.id===task.projectId);
    sources=[{id:'registry',recoveryKey:'registry',role:'registry',data:Buffer.from(JSON.stringify({schemaVersion:1,scope,conversation:task,project}))},{id:'workspace',recoveryKey:'workspace',role:'workspace',path:task.cwd},{id:'task-data',recoveryKey:'task-data',role:'task-data',path:task.taskRoot??task.cwd},{id:'codex-group',recoveryKey:'codex/group-v1',role:'native',data:Buffer.from(JSON.stringify(snapshot))}];
    for(const id of selected)sources.push({id:'codex-'+sha(id).slice(0,24),recoveryKey:'codex/rollout/'+id,role:'native',path:byId.get(id)!.path});
    for(const name of ['session_index.jsonl','history.jsonl','memories','skills','prompts','AGENTS.md','config.toml'])if(await present(join(snapshot.nativeHome,name)))sources.push({id:'codex-resource-'+sha(name).slice(0,16),recoveryKey:'codex/resource/'+name,role:'native',path:join(snapshot.nativeHome,name)});

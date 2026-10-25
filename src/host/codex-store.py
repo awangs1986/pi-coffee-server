@@ -21,7 +21,7 @@ def qualified(c, name):
 def safe(path, directory=False):
     p = pathlib.Path(path)
     s = p.lstat()
-    if p.resolve() != p or s.st_uid != os.getuid() or p.is_symlink() or (not directory and (not p.is_file() or s.st_nlink != 1)):
+    if p.resolve() != p or s.st_uid != os.getuid() or p.is_symlink() or (directory and s.st_mode & 0o077) or (not directory and (not p.is_file() or s.st_nlink != 1)):
         raise ValueError('unsafe_native_source')
     return p
 
@@ -109,7 +109,8 @@ def merge(request):
             raise ValueError('native_receipt_changed')
     else:
         journal = {'operationId': request['operationId'], 'digest': request['digest'], 'databases': {}}
-    for name, changes in plan['databases'].items():
+    for name in dict.fromkeys([*plan['databases'], *plan.get('replacements', {})]):
+        changes = plan['databases'].get(name, {})
         if name not in SCHEMAS: raise ValueError('unsupported_native_schema')
         path = safe(root / name)
         identity = plan['databaseIdentities'][name]
@@ -119,6 +120,18 @@ def merge(request):
         try:
             qualified(c, name); c.row_factory = sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('BEGIN IMMEDIATE')
             pending = []
+            replacements = []
+            for group in plan.get('replacements', {}).get(name, []):
+                table, key, ids = group['table'], group['key'], group['ids']
+                if table not in SCHEMAS[name]['schema'] or key not in [v[1] for v in c.execute('PRAGMA table_info("'+table+'")')] or not ids:
+                    raise ValueError('unsupported_native_schema')
+                current = [{key: encode(value) for key,value in dict(row).items()} for row in c.execute('SELECT * FROM "'+table+'" WHERE "'+key+'" IN ('+','.join('?' for _ in ids)+')', ids)]
+                canonical = lambda rows: sorted(json.dumps(row, sort_keys=True, separators=(',', ':')) for row in rows)
+                before, after, observed = canonical(group['before']), canonical(group['after']), canonical(current)
+                if observed == before:
+                    if before != after: replacements.append(group)
+                elif name not in journal['databases'] or observed != after:
+                    raise ValueError('native_row_changed')
             for table, rows in changes.items():
                 if table not in SCHEMAS[name]['schema'] or table in ('sqlite_sequence','_sqlx_migrations'):
                     raise ValueError('unsupported_native_schema')
@@ -137,8 +150,17 @@ def merge(request):
             # The intent is durable before SQL commits. On a lost response the
             # exact planned rows reconcile; unrelated rows are never touched.
             journal['databases'][name] = 'started'; durable(journal_path, journal)
+            # Children are retired before parents; selected rows are replaced
+            # only after comparing their entire approved preimage in this same
+            # transaction. No unrelated row or native sequence is restored.
+            for group in reversed(replacements):
+                c.execute('DELETE FROM "'+group['table']+'" WHERE "'+group['key']+'" IN ('+','.join('?' for _ in group['ids'])+')', group['ids'])
             for table, columns, row in pending:
                 c.execute('INSERT INTO "'+table+'" ('+','.join('"'+key+'"' for key in columns)+') VALUES ('+','.join('?' for _ in columns)+')', [row[key] for key in columns])
+            for group in replacements:
+                for row in group['after']:
+                    columns = list(row)
+                    c.execute('INSERT INTO "'+group['table']+'" ('+','.join('"'+key+'"' for key in columns)+') VALUES ('+','.join('?' for _ in columns)+')', [decode(row[key]) for key in columns])
             c.commit()
             print(json.dumps({'event':'committed','database':name}), flush=True)
             if sys.stdin.readline().strip() != 'continue': raise ValueError('native_controller_lost')
