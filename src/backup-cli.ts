@@ -19,6 +19,9 @@ try{
  const runner=new BackupJobRunner({root:join(root,'schedule'),repository,coordinator});
  const controller=new AbortController();process.once('SIGINT',()=>controller.abort());process.once('SIGTERM',()=>controller.abort());
  switch(command){
+  case 'retention-preview':{const scopes=JSON.parse(required('scopes'));if(!Array.isArray(scopes)||scopes.some(scope=>typeof scope!=='string'))throw Error('Invalid retention scopes');console.log(JSON.stringify(await repository.previewRetention({scopes,timeZone:options.get('--time-zone')})));break;}
+  case 'retention-status':console.log(JSON.stringify({plans:await repository.retentionPlans(required('scope')),pins:await repository.recoveryPins(required('scope'))}));break;
+  case 'retention-execute':{const revision=Number(required('revision'));if(!Number.isSafeInteger(revision))throw Error('Invalid plan revision');console.log(JSON.stringify(await repository.executeRetention(required('plan'),revision,required('digest'))));break;}
   case 'schedule-configure':{
    const file=required('policy'),info=await lstat(file);if(!info.isFile()||info.isSymbolicLink()||(info.mode&0o077)!==0||info.size>32768)throw Error('Schedule policy must be private');
    await runner.configure(JSON.parse(await readFile(file,'utf8')));console.log(JSON.stringify({configured:true}));break;
@@ -44,6 +47,6 @@ try{
   case 'rotate':await repository.rotateRecoveryKey();console.log(JSON.stringify({rotationPending:true}));break;
   case 'recover':await repository.recoverInterruptedOperation();console.log(JSON.stringify({reconciled:true}));break;
   case 'status':console.log(JSON.stringify(await repository.status(required('scope'))));break;
-  default:throw Error('Use configure, export, verify, run, recover, status or schedule-{configure,tick,status,daemon}');
+  default:throw Error('Use configure, export, verify, run, recover, status, schedule-{configure,tick,status,daemon} or retention-{preview,status,execute}');
  }
 }catch(error){console.error(JSON.stringify({error:error instanceof BackupError?error.code:error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'&&/^[a-z_]{1,64}$/.test(error.code)?error.code:'invalid_cli_request'}));process.exitCode=1;}
