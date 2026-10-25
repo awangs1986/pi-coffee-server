@@ -1,4 +1,5 @@
 import {renderBackupRetention} from './backup-retention.js';
+import {renderAccountRecoveryControls} from './account-recovery.js';
 import {renderRestoreControls} from './restore.js';
 /** Scoped protection status. Checkpoints and repository backups are distinct. */
 import {renderBackupSchedule} from './backup-schedule.js';
@@ -52,6 +53,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      output.append(section);
     }
     renderRestoreControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
+    renderAccountRecoveryControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     const excluded=document.createElement('p');excluded.textContent='本期保护 Pi / Codex；Claude / Cursor / Grok 延期，不计入已保护范围。';output.append(excluded);
     if(!data.tasks?.length){const empty=document.createElement('p');empty.textContent='当前账号没有任务。';output.append(empty);}
     for(const task of data.tasks||[]){

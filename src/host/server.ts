@@ -1,4 +1,5 @@
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
@@ -66,10 +67,10 @@ export interface UserScope {
   sshme?: RunnerManager;
 }
 
-export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>;
+export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>&Partial<Pick<BackupRepository,'recoveryPoints'>>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -302,7 +303,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
       };
       const scheduledStatus=async(target:UserSlot)=>({...await status(target),...(this.options.backup?.schedule?{schedule:await this.options.backup.schedule.status(target.user??LEGACY_BACKUP_SCOPE)}:{})});
       if(req.method==='GET'){json(res,200,await scheduledStatus(slot));return;}
@@ -322,6 +323,21 @@ export class HostServer {
         try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection});json(res,200,await scheduledStatus(slot));}
         catch(error){json(res,error instanceof BackupError?409:400,{error:error instanceof BackupError?error.message:'Invalid schedule configuration'});}return;
       }
+      if(input.action==='recovery-points'){
+        res.setHeader('cache-control','no-store');const scope=input.scope??dataScope;if(typeof scope!=='string'||scope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(scope))){json(res,403,{error:'Recovery catalog scope denied'});return;}
+        try{const target=await this.slotFor(scope===LEGACY_BACKUP_SCOPE?undefined:scope),repository=repositoryFor(target);if(!repository?.recoveryPoints){json(res,409,{error:'Retained checkpoint catalog unavailable'});return;}json(res,200,await repository.recoveryPoints(scope,input.query as import('./recovery-point-catalog.js').RecoveryPointQuery|undefined));}catch(error){json(res,error instanceof BackupError?400:503,{error:error instanceof BackupError?error.message:'Retained checkpoint catalog unavailable'});}return;
+      }
+      if(typeof input.action==='string'&&input.action.startsWith('account-restore-')){
+        res.setHeader('cache-control','no-store');const recovery=this.options.backup?.accountRecovery,action=input.action.slice('account-restore-'.length);
+        if(!['request','plan','approve','publish','cancel','revise'].includes(action)){json(res,400,{error:'Unknown account recovery action'});return;}
+        if(!['request','cancel'].includes(action)&&actor!==administrator){json(res,403,{error:'Account recovery approval and publication require '+administrator});return;}
+        if(!recovery){json(res,409,{error:'Account recovery service unavailable'});return;}
+        try{if(action==='request'){const scope=input.scope??dataScope;if(typeof scope!=='string'||scope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(scope))){json(res,403,{error:'Account recovery scope denied'});return;}json(res,200,await recovery.request(actor??'',scope,{jobIds:input.jobIds as string[],...(input.mode!==undefined?{mode:input.mode as 'missing-only'|'replace'}:{})}));return;}
+          if(typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an account operation and current revision'});return;}
+          if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
+          json(res,200,await recovery.operate(actor??'',input.id,{action:action as 'plan'|'approve'|'publish'|'cancel'|'revise',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})}));
+        }catch(error){json(res,error instanceof BackupError&&error.code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Account recovery operation failed'});}return;
+      }
       if(typeof input.action==='string'&&input.action.startsWith('restore-')){
         res.setHeader('cache-control','no-store');const restore=this.options.backup?.restore;
         const manage=!['restore-request','restore-cancel'].includes(input.action);
@@ -332,7 +348,7 @@ export class HostServer {
             const requestedScope=input.scope??dataScope;
             if(typeof requestedScope!=='string'||requestedScope!==dataScope&&(actor!==administrator||!this.options.backup?.scopes?.includes(requestedScope))){json(res,403,{error:'Recovery request scope denied'});return;}
             if(typeof input.taskId!=='string'||typeof input.jobId!=='string'){json(res,400,{error:'Choose a task and repository job'});return;}
-            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId}));return;
+            json(res,200,await restore.request(actor??'',requestedScope,{taskId:input.taskId,jobId:input.jobId,...(input.mode!==undefined?{mode:input.mode as 'missing-only'|'replace'}:{})}));return;
           }
           const action=input.action.slice('restore-'.length);
           if(!['plan','revise','approve','publish','cancel'].includes(action)||typeof input.id!=='string'||!Number.isSafeInteger(input.revision)){json(res,400,{error:'Choose an operation and current revision'});return;}

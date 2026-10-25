@@ -1,3 +1,4 @@
+import {recoveryPointPage,type RecoveryPointQuery} from './recovery-point-catalog.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {planRetention,type RecoveryPin,type RecoveryPinLease,type RepositoryRetentionPlan,type RetentionSnapshot} from './backup-retention.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
@@ -111,6 +112,8 @@ export class BackupRepository {
   });
  }
  async jobs():Promise<RepositoryJob[]>{await this.initialize();const jobs:RepositoryJob[]=[];for(const name of await readdir(join(this.root,'jobs'))){if(!/^[0-9a-f-]{36}\.json$/.test(name))continue;try{const job=JSON.parse(await privateText(join(this.root,'jobs',name),32*1024*1024));if(job.schema===1&&Array.isArray(job.points))jobs.push(job);}catch{/* Corrupt journal never becomes success. */}}return jobs.sort((a,b)=>b.startedAt.localeCompare(a.startedAt)||b.id.localeCompare(a.id));}
+ async recoveryPoints(scope:string,query:RecoveryPointQuery={}){return recoveryPointPage(await this.jobs(),scope,query);}
+ async recoveryJob(jobId:string,scope?:string):Promise<RepositoryJob|undefined>{await this.initialize();if(!idPattern.test(jobId))throw fail('invalid_recovery_job');let job:RepositoryJob;try{job=JSON.parse(await privateText(join(this.root,'jobs',jobId+'.json'),32*1024*1024));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;}if(job.schema!==1||job.id!==jobId||job.state!=='succeeded'||job.verification!=='repository-read'||job.retiredAt||!Array.isArray(job.points)||!Array.isArray(job.selection)||!job.snapshotId)return undefined;if(scope===undefined)return job;const points=job.points.filter(point=>point.scope===scope);return points.length?{...job,points,selection:job.selection.filter(item=>item.scope===scope)}:undefined;}
  async status(scope:string){
   let config:RepositoryConfig|undefined;try{config=await this.config();}catch{/* No key/path details in status. */}
   const jobs=(await this.jobs()).filter(job=>job.selection?.some(item=>item.scope===scope)||job.points.some(point=>point.scope===scope)).map(job=>({...job,selection:job.selection?.filter(item=>item.scope===scope)??[],points:job.points.filter(point=>point.scope===scope)}));
