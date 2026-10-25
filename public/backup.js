@@ -1,4 +1,5 @@
 /** Scoped protection status. Checkpoints and repository backups are distinct. */
+import {renderBackupSchedule} from './backup-schedule.js';
 export function initBackupControls({context,onOpen=()=>{},request=async(body,signal)=>{
  const response=await fetch('/api/backup',{method:body?'POST':'GET',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal});
  const data=await response.json();if(!response.ok)throw Error(data.error||'备份状态读取失败');return data;
@@ -21,12 +22,13 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
    refresh.disabled=true;
    try{const data=await request(body,active.signal);if(!current()){if(dialog===modal)close();return;}
     scope=data.scope;output.replaceChildren();
+    const scheduled=renderBackupSchedule(data,{request:body=>request(body,active.signal),refresh:()=>read({action:'status',scope}),isCurrent:current});if(scheduled)output.append(scheduled);
     if(data.canManage&&data.managedScopes?.length){account.hidden=false;const value=scope;account.replaceChildren();for(const name of data.managedScopes){const option=document.createElement('option');option.value=name;option.textContent=name==='__legacy_default__'?'原有账号范围':name;account.append(option);}account.value=value;}
     else account.hidden=true;
     if(data.repository){
      const repository=data.repository,section=document.createElement('section');
      const heading=document.createElement('h3');heading.textContent=`加密仓库 · Restic ${repository.backend?.version||''}`;
-     const enabled=document.createElement('p');enabled.textContent=repository.enabled?'已启用 · 已验证离线恢复副本':repository.configured?'待导出并验证离线恢复副本':'尚未配置备份目标';section.append(heading,enabled);
+     const enabled=document.createElement('p');enabled.textContent=repository.errorCode==='repository_status_unavailable'?'备份服务暂不可用，无法确认仓库状态':repository.enabled?'已启用 · 已验证离线恢复副本':repository.configured?'待导出并验证离线恢复副本':'尚未配置备份目标';section.append(heading,enabled);
      for(const point of repository.points||[]){const label=document.createElement('p');label.textContent=`${point.taskId} · 加密备份采集于 ${point.captureAt} · 点龄 ${Math.floor(Math.max(0,point.ageMs||0)/3600000)} 小时${point.stale?' · 超过 24 小时':''}`;section.append(label);}
      for(const job of repository.jobs||[]){const label=document.createElement('p');label.textContent=`作业 ${job.id} · ${job.state} · 验证 ${job.verification}${job.errorCode?' · '+job.errorCode:''}`;section.append(label);}
      if(repository.activationUnavailable){const reason=document.createElement('p');reason.textContent=repository.activationUnavailable;section.append(reason);}
