@@ -41,7 +41,7 @@ export class BackupKeyService {
   // A fresh authenticated source-owner RPC supplies mechanical admission state,
   // not a configured Boolean or persisted signature-only qualification.
   try{
-   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,id:randomUUID(),operation:'qualify-backup',challenge});
+   const challenge=randomUUID(),response=await requestUnixPeer(this.config.sourceSocket,this.config.sourceUid,{schema:1,id:randomUUID(),operation:'qualify-backup',challenge},5000);
    const value=response?.result??response;
    if(value.schema!==1||value.challenge!==challenge||value.enforcement!=='managed-bwrap-flock-v1'||value.admission!=='protected-only'||value.legacy!=='drained'||(!Number.isSafeInteger(value.policyRevision)||value.policyRevision<1)||!/^[0-9a-f]{64}$/.test(value.profileDigest)||value.authority?.uid!==this.config.sourceUid||!Number.isSafeInteger(value.authority.pid)||value.authority.pid<1)throw new BackupBrokerError('source_boundary_unqualified');
    const status=await readFile('/proc/'+value.authority.pid+'/status','utf8'),raw=await readFile('/proc/'+value.authority.pid+'/stat','utf8'),boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth=raw.slice(raw.lastIndexOf(')')+2).split(' ')[19];
