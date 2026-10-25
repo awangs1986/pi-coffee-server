@@ -33,3 +33,19 @@ it('rejects malformed forwarded actor identities at WebSocket admission',async()
   expect(response).toBe(400);
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('preserves authenticated administrator authority independently of routed and legacy data scope on each socket',async()=>{
+ const {RestoreCoordinator}=await import('../src/host/restore.js'),{LEGACY_BACKUP_SCOPE}=await import('../src/host/backup.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-backup-ws-principal-'));let server:HostServer|undefined;const sockets:WebSocket[]=[];
+ try{
+  const store=new Workspaces(join(root,'projects'));await store.list();
+  const restore=new RestoreCoordinator({root:join(root,'restore'),scope:async()=>({workspaces:store}),authorize:async(actor,scope,manage)=>manage?actor==='awangs':actor===scope});
+  const scoped=await restore.request('awangs','alice',{taskId:'scoped',jobId:'12345678-1234-4234-8234-123456789abc'}),legacy=await restore.request('awangs',LEGACY_BACKUP_SCOPE,{taskId:'legacy',jobId:'12345678-1234-4234-8234-123456789abc'});
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No model');}};
+  server=new HostServer({port:0,token:'private',factory,workspaces:store,backup:{coordinator:new BackupCoordinator({root:join(root,'checkpoints')}),restore},scopeForUser:()=>({factory,workspaces:store})});await server.start();
+  for(const [actor,scope,operation] of [['awangs','alice',scoped],['alice','alice',scoped],['awangs',undefined,legacy]] as const){
+   const socket=new WebSocket(`ws://127.0.0.1:${server.address().port}/host`,{headers:{authorization:'Bearer private','x-pi-coffee-actor':actor,...(scope?{'x-pi-coffee-user':scope}:{})}});sockets.push(socket);await once(socket,'open');
+   const next=once(socket,'message');socket.send(JSON.stringify({v:1,type:'get_backup_status'}));const result=JSON.parse((await next)[0].toString());expect(result.restores).toMatchObject([{id:operation.id,scope:scope??LEGACY_BACKUP_SCOPE}]);expect(JSON.stringify(result.restores)).not.toContain(operation.id===legacy.id?scoped.id:legacy.id);
+  }
+ }finally{for(const socket of sockets)socket.terminate();await server?.close();await rm(root,{recursive:true,force:true});}
+});
