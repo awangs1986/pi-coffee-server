@@ -1,0 +1,22 @@
+# Reviewed candidate only. Copy and replace every placeholder under the source
+# service identity; installation/enablement requires separate operator approval.
+[Unit]
+Description=PI Coffee independent daily backup scheduler
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/IMMUTABLE/RELEASE
+ExecStart=/ABSOLUTE/NODE dist/src/backup-cli.js schedule-daemon --root /PRIVATE/SOURCE/BACKUP_ROOT --broker-profile /PRIVATE/SOURCE/broker-client.json
+Restart=on-failure
+RestartSec=30
+UMask=0077
+Nice=15
+CPUQuota=100%
+MemoryMax=1G
+MemorySwapMax=0
+TasksMax=128
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
