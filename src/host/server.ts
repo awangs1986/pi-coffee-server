@@ -73,6 +73,7 @@ export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
 
+
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -319,6 +320,8 @@ export class HostServer {
       const scheduleFor=(target:UserSlot)=>this.options.backup?.scheduleForActor?scopedSchedule(()=>this.options.backup!.scheduleForActor!(actor,target.user??LEGACY_BACKUP_SCOPE)):this.options.backup?.schedule;
       const scheduledStatus=async(target:UserSlot)=>{const schedule=scheduleFor(target);return {...await status(target),...(schedule?{schedule:await scheduleStatus(schedule,target.user??LEGACY_BACKUP_SCOPE)}:{})};};
       if(req.method==='GET'){json(res,200,await scheduledStatus(slot));return;}
+
+
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
       if(input.action==='status'){

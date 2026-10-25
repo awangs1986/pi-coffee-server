@@ -10,6 +10,7 @@ import {ManagedLaunchPolicy} from './managed-launch-policy.js';
 import type {ManagedProviderTransports,ManagedNativeCustody} from './managed-native.js';
 import type {NativeWriterCustody} from './native-custody.js';
 import {BackupError,type BackupCoordinator} from './backup.js';
+import {ManagedSourceContinuation,type QualifiedSourceIdentity} from './managed-source-continuation.js';
 
 interface ProcessIdentity {pid:number;uid:number;boot:string;birth:string;}
 interface Handoff extends ProcessIdentity {revision:number;}
@@ -39,25 +40,28 @@ export async function startManagedAdmissionControl(options:{socket:string;allowe
  * Only its live handoff, actual process hardening, source identities and real
  * namespace probes unlock sourceProof or checkpoint export. */
 export class ManagedSourceAuthority {
- readonly policy=new ManagedLaunchPolicy();private handoff?:Handoff;private qualified=false;private readonly scopes=new Map<string,{custody:ManagedNativeCustody;digest:string}>();private server?:Server;
+ readonly policy=new ManagedLaunchPolicy();private handoff?:Handoff;private qualified=false;private activating=false;private continued=false;private readonly scopes=new Map<string,{custody:ManagedNativeCustody;digest:string}>();private server?:Server;
  constructor(readonly config:ManagedSourceConfig){if(config.schema!==1||[config.executorUid,config.legacyHostUid,config.keyUid].some(uid=>!Number.isSafeInteger(uid)||uid<1)||new Set([config.executorUid,config.legacyHostUid,config.keyUid]).size!==3)throw safe();}
- register(scope:string,custody:ManagedNativeCustody){if(this.scopes.has(scope))throw safe();this.scopes.set(scope,{custody,digest:createHash('sha256').update(JSON.stringify(custody.profile)).digest('hex')});}
+ register(scope:string,custody:ManagedNativeCustody){if(this.qualified||this.activating||this.scopes.has(scope))throw safe();this.scopes.set(scope,{custody,digest:createHash('sha256').update(JSON.stringify(custody.profile)).digest('hex')});}
+ private continuation(){return new ManagedSourceContinuation(join(this.config.sourceParent,'authority','source-qualification.json'));}
+ private async sourceIdentity():Promise<QualifiedSourceIdentity>{const paths=new Set([this.config.sourceParent]);for(const {custody}of this.scopes.values()){paths.add(custody.root);paths.add(custody.profile.lock);for(const source of custody.profile.sources)paths.add(source.path);}const identities=[];for(const path of [...paths].sort()){const stat=await lstat(path);identities.push({path,dev:stat.dev,ino:stat.ino,uid:stat.uid,directory:stat.isDirectory()});}return {profileDigest:createHash('sha256').update(JSON.stringify({config:this.config,scopes:[...this.scopes].map(([scope,s])=>[scope,s.digest])})).digest('hex'),paths:identities};}
+ private async knownCustody(){for(const {custody}of this.scopes.values())if((await custody.state()).state==='unknown')throw safe();}
  private async processAndSources(){
   if(process.getuid?.()!==this.config.executorUid||process.geteuid?.()!==this.config.executorUid||(process.getgroups?.()??[-1]).some(group=>group!==process.getgid?.()))throw safe();
   await privateDirectory(this.config.sourceParent,this.config.executorUid);for(const {custody,digest}of this.scopes.values()){if(custody.profile.sourceParent!==resolve(this.config.sourceParent)||createHash('sha256').update(JSON.stringify(custody.profile)).digest('hex')!==digest)throw safe();for(const source of custody.profile.sources){const stat=await lstat(source.path);if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==this.config.executorUid||await realpath(source.path)!==resolve(source.path))throw safe();}}
  }
  async activate(){
-  await this.processAndSources();if(!this.scopes.size)throw safe();hardenCurrentProcess();
+  if(this.activating||this.qualified)throw safe();this.activating=true;try{await this.processAndSources();if(!this.scopes.size)throw safe();hardenCurrentProcess();const continuation=this.continuation();
+  if(await continuation.available()){await continuation.verify(await this.sourceIdentity());await this.knownCustody();this.continued=true;}else{
   const challenge=randomBytes(32).toString('hex'),response=await request(this.config.legacyAdmissionSocket,this.config.legacyHostUid,{schema:1,operation:'retire-unrestricted',challenge});
   if(response.schema!==1||response.challenge!==challenge||response.admission!=='protected-only'||response.legacy!=='drained'||!Number.isSafeInteger(response.policyRevision)||!response.authority)throw safe();const owner=await identity(response.authority.pid);if(owner.pid!==response.authority.pid||owner.uid!==response.authority.uid||owner.boot!==response.authority.boot||owner.birth!==response.authority.birth||owner.uid!==this.config.legacyHostUid)throw safe();
-  this.handoff={...owner,revision:response.policyRevision};this.policy.assertProtectedOnly();
+  this.handoff={...owner,revision:response.policyRevision};}this.policy.assertProtectedOnly();
   for(const {custody}of this.scopes.values()){
-   const program="import json,os,pathlib,subprocess\ns=pathlib.Path('/proc/self/status').read_text()\np=subprocess.run(['/usr/bin/unshare','-Ur','true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\nprint(json.dumps({'nnp':'NoNewPrivs:\\t1' in s,'zeroCaps':'CapEff:\\t0000000000000000' in s,'nestedDenied':p.returncode!=0}))";
-   const launch=await custody.prepare({executable:'/usr/bin/python3',args:['-c',program]}),child=spawn(process.execPath,[launch.cliPath],{env:{PATH:process.env.PATH,...launch.env},stdio:['ignore','pipe','ignore']});let output='';child.stdout.on('data',bytes=>output+=String(bytes));const exited=await once(child,'exit');if(exited[0]!==0||output.length>4096)throw safe();const probe=JSON.parse(output);if(probe.nnp!==true||probe.zeroCaps!==true||probe.nestedDenied!==true)throw safe();
+   const launch=await custody.prepareSourceQualification(),child=spawn(process.execPath,[launch.cliPath],{env:{PATH:process.env.PATH,...launch.env},stdio:['ignore','pipe','ignore']});let output='';child.stdout.on('data',bytes=>output+=String(bytes));const exited=await once(child,'exit');if(exited[0]!==0||output.length>4096)throw safe();const probe=JSON.parse(output);if(probe.nnp!==true||probe.zeroCaps!==true||probe.nestedDenied!==true)throw safe();
   }
-  this.qualified=true;return this.qualification(randomBytes(16).toString('hex'));
+  await this.knownCustody();this.qualified=true;const qualification=await this.qualification(randomBytes(16).toString('hex'));if(!this.continued){await continuation.record(await this.sourceIdentity());this.continued=true;}return qualification;}catch(error){this.qualified=false;throw error;}finally{this.activating=false;}
  }
- async sourceProof(scope:string){try{if(!this.qualified||!this.scopes.has(scope)||!this.handoff)throw safe();await this.processAndSources();this.policy.assertProtectedOnly();const protection=processProtection();if(protection.dumpable!==0||protection.noNewPrivs!==1)throw safe();const legacy=await identity(this.handoff.pid);if(legacy.uid!==this.handoff.uid||legacy.boot!==this.handoff.boot||legacy.birth!==this.handoff.birth)throw safe();return {known:true};}catch{return {known:false,reason:'managed-source-prerequisites-unqualified'};}}
+ async sourceProof(scope:string){try{if(!this.qualified||!this.scopes.has(scope)||!this.handoff&&!this.continued)throw safe();await this.processAndSources();this.policy.assertProtectedOnly();const protection=processProtection();if(protection.dumpable!==0||protection.noNewPrivs!==1)throw safe();if(this.continued){await this.continuation().verify(await this.sourceIdentity());await this.knownCustody();}else{const legacy=await identity(this.handoff!.pid);if(legacy.uid!==this.handoff!.uid||legacy.boot!==this.handoff!.boot||legacy.birth!==this.handoff!.birth)throw safe();}return {known:true};}catch{return {known:false,reason:'managed-source-prerequisites-unqualified'};}}
  async qualification(challenge:string){if(!/^[a-zA-Z0-9_-]{16,128}$/.test(challenge)||!(await this.sourceProof(this.scopes.keys().next().value??'')).known)throw safe();return {schema:1,challenge,authority:await identity(),policyRevision:this.policy.status().revision,admission:'protected-only',legacy:'drained',profileDigest:createHash('sha256').update(JSON.stringify([...this.scopes].map(([scope,s])=>[scope,s.digest]))).digest('hex'),enforcement:'managed-bwrap-flock-v1'};}
  async startServer(coordinator:BackupCoordinator){if(this.server)throw safe();this.server=await listen(this.config.sourceSocket,[this.config.keyUid],async(input,socket)=>{
   if(input.schema!==1||typeof input.challenge!=='string')throw safe();if(input.operation==='qualify-backup'){await send(socket,await this.qualification(input.challenge));return;}
