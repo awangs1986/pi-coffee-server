@@ -6,7 +6,7 @@ import {createConnection} from 'node:net';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {ManagedSourceAuthority,startManagedAdmissionControl} from '../src/host/managed-source-authority.js';
-import {ManagedLaunchPolicy} from '../src/host/managed-launch-policy.js';
+import {ManagedLaunchPolicy,LegacyAdmissionFence} from '../src/host/managed-launch-policy.js';
 import {AdmissionNativeCustody} from '../src/host/native-custody.js';
 import {NativeAgentFactory} from '../src/host/native/factory.js';
 import {Workspaces} from '../src/host/workspaces.js';
@@ -30,4 +30,9 @@ it('listing unconfigured deferred engines does not enter a native execution admi
  const root=await mkdtemp(join(tmpdir(),'managed-engine-discovery-')),workspaces=new Workspaces(join(root,'projects')),calls:string[]=[];
  const pi={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No model execution');}},factory=new NativeAgentFactory({pi,workspaces,beforeNativeExecution:async engine=>{calls.push(engine);throw Error('Native launch must not happen');}});
  try{await factory.engines();expect(calls).toEqual([]);}finally{await rm(root,{recursive:true,force:true});}
+});
+
+it('retirement waits for already admitted platform writes and denies new ones without cancelling existing work',()=>{
+ const policy=new ManagedLaunchPolicy(),fence=new LegacyAdmissionFence(policy,{writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>({known:true})}),finish=fence.beginWriter('platform');
+ expect(policy.requestProtectedOnly()).toMatchObject({admission:'draining',legacy:'active'});expect(()=>fence.beginWriter('platform')).toThrow();expect(()=>fence.beginWriter('native')).toThrow();finish();expect(policy.assertProtectedOnly()).toMatchObject({admission:'protected-only',legacy:'drained'});
 });

@@ -1,7 +1,7 @@
 import {ManagedCheckpointRefresh} from './host/managed-checkpoint-refresh.js';
 import {ManagedNativeCustody} from './host/managed-native.js';
 import {ManagedWriterFence} from './host/managed-writer-fence.js';
-import {ManagedLaunchPolicy} from './host/managed-launch-policy.js';
+import {ManagedLaunchPolicy,LegacyAdmissionFence} from './host/managed-launch-policy.js';
 import {ManagedSourceAuthority,loadManagedSourceConfig,startManagedAdmissionControl} from './host/managed-source-authority.js';
 import {BackupRepositoryClient,readBackupRepositoryClientConfig} from './host/backup-repository-client.js';
 import {RestoreCoordinator,type NativeRestoreAdapter} from './host/restore.js';
@@ -152,7 +152,7 @@ async function run(selectedRole: Role): Promise<void> {
   const sourceCustody=backupRoot?new BackupSourceCustody(join(backupRoot,'source-ownership')):undefined;
   const custody=backupRoot?new AdmissionNativeCustody(join(backupRoot,'native-custody','shared-native-group'),legacyPolicy):undefined;
   let managedFence:ManagedWriterFence|undefined;const managedStores=new Map<string,Workspaces>();
-  const writerFence=backupRoot?new WriterAdmissionFence({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
+  const writerFence=backupRoot?new LegacyAdmissionFence(legacyPolicy,{writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await custody!.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}}):undefined;
   const allocateNew=async(path:string)=>{if(sourceCustody&&!await lstat(path).then(()=>true,()=>false)){await mkdir(dirname(path),{recursive:true,mode:0o700});await sourceCustody.allocate(path);}};
   const createScope = async (cwd:string,sessionDir:string|undefined,user?:string):Promise<UserScope> => {
     const scopeId=user??LEGACY_BACKUP_SCOPE,scopeRoot=managedConfig?join(managedConfig.sourceParent,'scopes',scopeId):undefined;
