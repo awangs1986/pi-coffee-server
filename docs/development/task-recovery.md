@@ -56,6 +56,11 @@ proof. The plan binds the neighbor's registry and exact native-file inode/hash
 witnesses; publication checks them again and preserves that parent's inode.
 Different content, an unknown owner or changed witnesses reject the plan or
 publication. Historical text is not scanned or rewritten to infer ownership.
+The neighbor may now run Codex while retaining its earlier Pi binding: recorded
+typed Pi identities/segments and the actual Pi header/parent chain still prove
+that ancestor's ownership. Its current engine alone neither grants nor removes
+that proof. A changed retained Pi file is refused before task publication, and
+an approved reuse preserves the healthy neighbor's registry and ancestor inode.
 
 A Codex SQLite database first created by a restore has two approved logical images: its qualified empty schema and the exact merged tables, including migration and sequence rows. A crash after the SQL commit can resume on the original published inode only when the durable SQL journal names the same operation, approval digest and database in `started` or `done` state, and the complete live logical image equals the approved postimage. Existing stores keep their selected-row rules. A receipt marker, equal file bytes, unknown rows, a changed schema or a replacement inode cannot authorize this continuation. `test/codex-created-database-crash.test.ts` executes this window with Restic and SIGKILL and verifies the refusal boundaries before completing the original recovery.
 
