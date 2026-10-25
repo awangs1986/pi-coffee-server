@@ -1,3 +1,4 @@
+import type {RepositoryRetentionPlan} from './backup-retention.js';
 import {BackupExtractionStore} from './backup-extraction-store.js';
 import {emitSealedCheckpoint} from './backup-checkpoint-stream.js';
 import {hardenCurrentProcess,processProtection} from './linux-file-lease.js';
@@ -20,7 +21,7 @@ export class BackupKeyService {
  }
  private async authorize(request:PeerRequest){
   if(!request||request.schema!==1||typeof request.id!=='string'||!uuid.test(request.id)||!request._peer||request._peer.uid!==this.config.hostUid||!Number.isSafeInteger(request._peer.pid)||request._peer.pid<1)throw new BackupBrokerError('peer_identity_mismatch');
-  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','selection','recoveryPackage','jobId','extractionId','checkpointId','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
+  if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','selection','recoveryPackage','jobId','extractionId','checkpointId','operationId','revision','ttlMs','pinId','pinIds','scopes','timeZone','retentionId','digest','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
   const policy=await ownedJson(this.config.authorityFile) as BackupBrokerPolicy,context=request.context;
   if(policy.schema!==1||!Number.isSafeInteger(policy.revision)||!scopeValid(policy.administrator)||!Array.isArray(policy.scopes)||policy.scopes.some(scope=>!scopeValid(scope))||!policy.actors||typeof policy.actors!=='object')throw new BackupBrokerError('authority_unavailable');
   if(!context||Object.keys(context).some(key=>!['actor','dataScope','authorityRevision'].includes(key))||!scopeValid(context.actor)||!scopeValid(context.dataScope)||!Number.isSafeInteger(context.authorityRevision))throw new BackupBrokerError('invalid_request');
@@ -29,7 +30,7 @@ export class BackupKeyService {
   if(!actor||!Array.isArray(actor.scopes)||!actor.scopes.includes(context.dataScope)||!policy.scopes.includes(context.dataScope))throw new BackupBrokerError('scope_denied');
   const scope=request.scope??context.dataScope;if(!scopeValid(scope)||!policy.scopes.includes(scope)||!actor.scopes.includes(scope))throw new BackupBrokerError('scope_denied');
   const administrator=context.actor===policy.administrator&&actor.role==='administrator';
-  if(!['status','jobs','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
+  if(!['status','jobs','qualification','configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction','pin-recovery-job','release-recovery-pin','recovery-pins','hold-recovery-pins','retention-preview','retention-plans','retention-execute'].includes(request.operation))throw new BackupBrokerError('invalid_operation');
   if(!['status','qualification'].includes(request.operation)&&!administrator)throw new BackupBrokerError('administrator_required');
   if(!administrator&&scope!==context.dataScope)throw new BackupBrokerError('scope_denied');
   return {policy,actor,scope,administrator};
@@ -50,7 +51,7 @@ export class BackupKeyService {
   }catch{return {...base,state:'unavailable',reason:'source_boundary_unqualified'};}
  }
  async dispatch(raw:unknown,emit?:(frame:unknown)=>Promise<void>){
-  const request=raw as Partial<PeerRequest>;const operation=typeof request?.operation==='string'&&['configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction'].includes(request.operation)?request.operation:undefined;
+  const request=raw as Partial<PeerRequest>;const operation=typeof request?.operation==='string'&&['configure','backup','export-recovery','verify-recovery','rotate','recover','stage-extraction','restore-checkpoint','close-extraction','pin-recovery-job','release-recovery-pin','recovery-pins','hold-recovery-pins','retention-preview','retention-plans','retention-execute'].includes(request.operation)?request.operation:undefined;
   try{const result=await this.handle(raw,emit);if(operation)await this.audit(request,operation,'succeeded');return result;}
   catch(error){if(operation)await this.audit(request,operation,publicBrokerCode(error));throw error;}
  }
@@ -68,6 +69,28 @@ export class BackupKeyService {
   if(qualification.state!=='qualified')throw new BackupBrokerError('activation_unqualified');
   await this.authorize(request); // Re-read current policy after external qualification.
   switch(request.operation){
+   case 'pin-recovery-job':{
+    if(typeof request.jobId!=='string'||!uuid.test(request.jobId)||typeof request.operationId!=='string'||!uuid.test(request.operationId)||!Number.isSafeInteger(request.revision))throw new BackupBrokerError('invalid_recovery_pin');
+    const policy=(await this.authorize(request)).policy,job=(await this.repository.jobs()).find(row=>row.id===request.jobId);if(!job)throw new BackupBrokerError('unknown_snapshot');this.requireScopes(policy,request,job.points.map(point=>point.scope));
+    return this.repository.pinRecoveryJob(request.jobId,{operationId:request.operationId,revision:request.revision!,ttlMs:request.ttlMs});
+   }
+   case 'release-recovery-pin':{
+    if(typeof request.pinId!=='string'||!uuid.test(request.pinId)||typeof request.operationId!=='string'||!uuid.test(request.operationId)||!Number.isSafeInteger(request.revision))throw new BackupBrokerError('invalid_recovery_pin');
+    const policy=(await this.authorize(request)).policy,pin=(await this.repository.recoveryPins()).find(row=>row.id===request.pinId);if(!pin)throw new BackupBrokerError('invalid_recovery_pin');this.requireScopes(policy,request,pin.scopes);await this.repository.releaseRecoveryPin(request.pinId,request.operationId,request.revision!);return {released:true};
+   }
+   case 'recovery-pins':{const policy=(await this.authorize(request)).policy;return (await this.repository.recoveryPins(scope)).filter(pin=>pin.scopes.every(value=>policy.scopes.includes(value)&&policy.actors[request.context.actor].scopes.includes(value)));}
+   case 'hold-recovery-pins':{
+    if(!emit||!Array.isArray(request.pinIds)||!request.pinIds.length||request.pinIds.length>1000||request.pinIds.some(id=>typeof id!=='string'||!uuid.test(id)))throw new BackupBrokerError('invalid_recovery_pin');
+    const policy=(await this.authorize(request)).policy,pins=await this.repository.recoveryPins();for(const id of request.pinIds){const pin=pins.find(pin=>pin.id===id);if(!pin)throw new BackupBrokerError('invalid_recovery_pin');this.requireScopes(policy,request,pin.scopes);}
+    await this.audit(request,'recovery-pin-lease-start','succeeded');
+    return this.repository.withRecoveryPins(request.pinIds,async lease=>{
+     const deadline=Date.now()+30*60000;await emit({schema:1,id:request.id,ok:true,result:{lease:true,pinIds:request.pinIds,deadlineAt:new Date(deadline).toISOString()}});
+     while(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,1000));lease.assertHeld();await this.authorize(request);await emit({schema:1,id:request.id,kind:'pin-heartbeat'});}return new BackupKeyStreamComplete();
+    });
+   }
+   case 'retention-preview':{const policy=(await this.authorize(request)).policy;if(!Array.isArray(request.scopes)||request.scopes.some(scope=>typeof scope!=='string'))throw new BackupBrokerError('invalid_retention');this.requireScopes(policy,request,request.scopes);return this.retentionView(await this.repository.previewRetention({scopes:request.scopes,timeZone:request.timeZone}),policy,request);}
+   case 'retention-plans':{const policy=(await this.authorize(request)).policy;return (await this.repository.retentionPlans(scope)).filter(plan=>plan.scopes.every(value=>policy.scopes.includes(value)&&policy.actors[request.context.actor].scopes.includes(value))).map(plan=>this.retentionView(plan,policy,request));}
+   case 'retention-execute':{if(typeof request.retentionId!=='string'||!uuid.test(request.retentionId)||!Number.isSafeInteger(request.revision)||typeof request.digest!=='string')throw new BackupBrokerError('invalid_retention');const policy=(await this.authorize(request)).policy,plan=(await this.repository.retentionPlans()).find(plan=>plan.id===request.retentionId);if(!plan)throw new BackupBrokerError('invalid_retention');this.requireScopes(policy,request,plan.scopes);return this.retentionView(await this.repository.executeRetention(plan.id,request.revision!,request.digest),policy,request);}
    case 'configure':await this.repository.configure({destination:this.config.destination,binary:this.config.binary});return {configured:true};
    case 'export-recovery':return this.repository.exportRecoveryPackage();
    case 'verify-recovery':if(typeof request.recoveryPackage!=='string'||request.recoveryPackage.length>8192)throw new BackupBrokerError('invalid_recovery_copy');await this.repository.verifyRecoveryPackage(request.recoveryPackage);return {verified:true};
@@ -108,6 +131,11 @@ export class BackupKeyService {
    default:throw new BackupBrokerError('invalid_operation');
   }
  }
+ private retentionView(plan:RepositoryRetentionPlan,policy:BackupBrokerPolicy,request:PeerRequest){
+  const allowed=(scope:string)=>policy.scopes.includes(scope)&&policy.actors[request.context.actor].scopes.includes(scope),pins=plan.pins.filter(pin=>pin.scopes.every(allowed)),pinIds=new Set(pins.map(pin=>pin.id));
+  return {...plan,pins,keep:plan.keep.map(row=>({...row,reasons:row.reasons.filter(reason=>'scope' in reason?allowed(reason.scope):'pinId' in reason?pinIds.has(reason.pinId):false)})).filter(row=>row.reasons.length),remove:plan.remove.filter(row=>row.scopes.every(allowed))};
+ }
+ private requireScopes(policy:BackupBrokerPolicy,request:PeerRequest,scopes:string[]){if(!scopes.length||scopes.some(scope=>!scopeValid(scope)||!policy.scopes.includes(scope)||!policy.actors[request.context.actor].scopes.includes(scope)))throw new BackupBrokerError('scope_denied');}
  private async extraction(request:PeerRequest,mode:'shared'|'exclusive'){
   if(typeof request.extractionId!=='string'||!uuid.test(request.extractionId))throw new BackupBrokerError('invalid_restore_request');
   const handle=await new BackupExtractionStore(this.config.privateRoot).open(request.extractionId,mode);try{const receipt=await handle.receipt() as BackupExtractionDescriptor&{actor:string;dataScope:string;authorityRevision:number};

@@ -117,6 +117,9 @@ def serve(config_path):
                     except (OSError, TimeoutError):
                         # Control disconnect is not cancellation of a durable job.
                         connected = False
+                        if request.get('operation') == 'hold-recovery-pins':
+                            child.terminate()
+                            break
             child.wait()
         except Exception:
             try:
@@ -178,6 +181,8 @@ def client(path, expected_uid, maximum=LIMIT, streaming=False):
                 sys.stdout.buffer.write(fail('response_limit'))
                 return 1
             sys.stdout.buffer.write(line)
+            if streaming:
+                sys.stdout.buffer.flush()
             if not streaming:
                 break
         return 0

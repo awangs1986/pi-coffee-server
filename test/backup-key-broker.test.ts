@@ -6,8 +6,15 @@ it('reports scoped state over authenticated Unix IPC and rejects stale authority
  expect(await bob.status('bob')).toMatchObject({configured:false,enabled:false,qualification:{state:'unavailable',reason:'service_identity_not_separate',processProtection:{dumpable:0,noNewPrivs:1}}});
  await expect(bob.status('awangs')).rejects.toMatchObject({code:'scope_denied'});
  await expect(bob.exportRecoveryPackage()).rejects.toMatchObject({code:'administrator_required'});
+ await expect(bob.previewRetention({scopes:['bob']})).rejects.toMatchObject({code:'administrator_required'});
+ await expect(bob.pinRecoveryJob('11111111-1111-4111-8111-111111111111',{operationId:'22222222-2222-4222-8222-222222222222',revision:1})).rejects.toMatchObject({code:'administrator_required'});
+ await expect(bob.withRecoveryPins(['11111111-1111-4111-8111-111111111111'],async()=>{throw Error('Ordinary caller must not acquire repository pin');})).rejects.toMatchObject({code:'administrator_required'});
+
  const admin=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'bob',authorityRevision:7});
  await expect(admin.configure()).rejects.toMatchObject({code:'activation_unqualified'});
+ await expect(admin.previewRetention({scopes:['bob']})).rejects.toMatchObject({code:'activation_unqualified'});
+ await expect(admin.executeRetention('11111111-1111-4111-8111-111111111111',1,'0'.repeat(64))).rejects.toMatchObject({code:'activation_unqualified'});
+
  const deniedStage=join(f.root,'denied-restored');await expect(admin.extract('11111111-1111-4111-8111-111111111111',deniedStage)).rejects.toMatchObject({code:'activation_unqualified'});await expect(readFile(deniedStage)).rejects.toMatchObject({code:'ENOENT'});
  const audit=await readFile(join(f.root,'private','broker-audit.jsonl'),'utf8');expect(audit).toContain('activation_unqualified');expect(audit).toContain('awangs');expect(audit).not.toContain('recoveryPackage');
  await expect(readFile(join(f.root,'private','repository-runtime','password'))).rejects.toMatchObject({code:'ENOENT'});
