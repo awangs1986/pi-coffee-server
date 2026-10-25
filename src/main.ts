@@ -1,3 +1,4 @@
+import {startColdEnrollmentControl} from './host/cold-enrollment-control.js';
 import {createHash} from 'node:crypto';
 import {ManagedPublicationGate} from './host/managed-publication-gate.js';
 import {GroupedRecoveryAdapter,type GroupedRecoveryMember} from './host/grouped-recovery.js';
@@ -63,6 +64,7 @@ if (role !== "host" && role !== "web" && role !== "relay" && role !== "all") {
 async function run(selectedRole: Role): Promise<void> {
   process.umask(0o077);
   const wantHost = selectedRole !== "web" && selectedRole !== "relay";
+  if(wantHost&&process.env.PI_COFFEE_COLD_ENROLLMENT_PROFILE&&!process.env.PI_COFFEE_MANAGED_PROFILE_FILE)throw new Error('Cold enrollment requires a managed source profile');
   const captureLimits=wantHost&&(process.env.PI_COFFEE_BACKUP_ROOT||process.env.PI_COFFEE_MANAGED_PROFILE_FILE)?{maxBytes:positiveBackupBound('PI_COFFEE_BACKUP_MAX_BYTES',1024*1024*1024),maxFiles:positiveBackupBound('PI_COFFEE_BACKUP_MAX_FILES',100000),captureTimeoutMs:positiveBackupBound('PI_COFFEE_BACKUP_CAPTURE_TIMEOUT_MS',30000,1800000)}:undefined;
   // The Relay is the only process that may hold upstream credentials. `all`
   // starts it when either the LLM key or the Serper key is configured; the
@@ -157,7 +159,7 @@ async function run(selectedRole: Role): Promise<void> {
   const publicationGate=managedConfig&&backupRoot?new ManagedPublicationGate({path:join(managedConfig.sourceParent,'authority','publication.json'),groupId:managedGroupId!,restoreRoot:join(backupRoot,'restore-runtime')}):undefined;
   const sourceMembers=async():Promise<GroupedRecoveryMember[]>=>{const tasks:GroupedRecoveryMember[]=[];for(const [scope,store]of managedStores)for(const task of (await store.list()).conversations)if(!task.workspaceRemoved&&!task.cleanupStarted&&['pi','codex'].includes(task.engine??'pi'))tasks.push({scope,taskId:task.id,engine:task.engine??'pi'});return tasks;};
   const resolveRecovery=async(scope:string,id:string)=>{const adapter=recoveryAdapters.get(scope);if(!adapter)throw new BackupError('writers_unknown','Native source custody unavailable');return adapter.resolve(scope,id);};
-  const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),...captureLimits,adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>managedConfig&&managedFence?new GroupedRecoveryAdapter({groupId:managedGroupId!,fence:managedFence,inventory:sourceMembers,resolve:resolveRecovery}).resolve(scope,id):resolveRecovery(scope,id)}}):undefined;
+  const backupCoordinator=backupRoot?new BackupCoordinator({root:join(backupRoot,'checkpoints'),...captureLimits,adapter:{version:'pi-coffee-native-recovery-v1',resolve:async(scope,id)=>managedConfig&&managedFence?new GroupedRecoveryAdapter({groupId:managedGroupId!,fence:managedFence,inventory:sourceMembers,resolve:resolveRecovery,maxBytes:captureLimits?.maxBytes,maxFiles:captureLimits?.maxFiles}).resolve(scope,id):resolveRecovery(scope,id)}}):undefined;
   // Ordinary HTTP/WS requests always obtain a fresh actor+scope facade. The
   // independent scheduler CLI owns its privileged worker profile separately.
   const scheduleForActor=brokerConfig&&backupRoot&&backupCoordinator?(actor:string|undefined,dataScope:string)=>actor?new BackupJobRunner({root:join(backupRoot,'schedule'),coordinator:backupCoordinator,repository:new BackupRepositoryClient({...brokerConfig,actor,dataScope})}):undefined:undefined;
@@ -250,8 +252,9 @@ async function run(selectedRole: Role): Promise<void> {
     savedMishuScopes:()=>savedMishuScopes(workdir,defaultScope!.workspaces!.root),
   });
   if(managedAuthority){for(const scope of [...new Set([...envList('PI_COFFEE_BACKUP_USERS'),...Object.keys(managedConfig?.scopeProviderTransports??{})])])if(scope!==LEGACY_BACKUP_SCOPE)await host!.prepareRestoreScope(scope);await managedAuthority.activate();await managedAuthority.startServer(backupCoordinator!);}
+  const coldEnrollment=managedAuthority&&accountRecovery&&brokerConfig&&process.env.PI_COFFEE_COLD_ENROLLMENT_PROFILE?await startColdEnrollmentControl({socket:process.env.PI_COFFEE_COLD_ENROLLMENT_SOCKET??join(managedConfig!.sourceParent,'authority','cold-enrollment.sock'),profile:process.env.PI_COFFEE_COLD_ENROLLMENT_PROFILE,accounts:accountRecovery,authority:managedAuthority,broker:brokerConfig}):undefined;
   const automaticCheckpoints=managedAuthority&&managedFence&&backupCoordinator?new ManagedCheckpointRefresh({coordinator:backupCoordinator,revision:()=>managedFence!.changeRevision,qualified:async()=>[...managedStores.keys()].length>0&&(await managedAuthority.sourceProof([...managedStores.keys()][0])).known,tasks:async()=>{const tasks=[];for(const [scope,store]of managedStores){for(const task of (await store.list()).conversations){if(!task.workspaceRemoved&&!task.cleanupStarted)tasks.push({scope,taskId:task.id,engine:task.engine??'pi' as const});}}return tasks;}}):undefined;
-  const admissionServer=wantHost&&!managedAuthority&&process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET&&custody?await startManagedAdmissionControl({socket:process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET,allowedUid:envNumber('PI_COFFEE_NATIVE_ADMISSION_UID',-1),policy:legacyPolicy,custody}):undefined;
+  const admissionServer=wantHost&&!managedAuthority&&process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET&&custody?await startManagedAdmissionControl({socket:process.env.PI_COFFEE_NATIVE_ADMISSION_SOCKET,allowedUid:envNumber('PI_COFFEE_NATIVE_ADMISSION_UID',-1),policy:legacyPolicy,custody,writerFence,coldCutRoot:process.env.PI_COFFEE_LEGACY_COLD_CUT_ROOT}):undefined;
   if (host) await host.start();
   automaticCheckpoints?.start();
 
@@ -325,6 +328,7 @@ async function run(selectedRole: Role): Promise<void> {
   if (web) await web.start();
 
   const shutdown = async () => {
+    if(coldEnrollment)await new Promise<void>(done=>coldEnrollment.close(()=>done()));
     await web?.close();
     await host?.close();
     await automaticCheckpoints?.close();await managedAuthority?.close();
