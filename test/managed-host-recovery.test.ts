@@ -1,0 +1,35 @@
+import {it,expect} from 'vitest';
+import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {SessionManager} from '@earendil-works/pi-coding-agent';
+import {ManagedNativeCustody} from '../src/host/managed-native.js';
+import {ManagedWriterFence} from '../src/host/managed-writer-fence.js';
+import {ManagedPublicationGate} from '../src/host/managed-publication-gate.js';
+import {Workspaces} from '../src/host/workspaces.js';
+import {HostServer} from '../src/host/server.js';
+import {BackupCoordinator} from '../src/host/backup.js';
+import {BackupRepository} from '../src/host/backup-repository.js';
+import {PiNativeRecoveryAdapter} from '../src/host/pi-recovery.js';
+import {RestoreCoordinator} from '../src/host/restore.js';
+const binary=process.env.PI_COFFEE_TEST_RESTIC;
+it.skipIf(!binary)('authenticated Host restore retires surviving MISHU authority under the exact managed publication cut and releases neighboring writers',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'managed-host-restore-')),source=join(root,'source'),authority=join(root,'authority'),restoreRoot=join(authority,'restore'),nativeRoot=join(source,'native'),agent=join(source,'agent'),disk=join(root,'disk');
+ for(const path of [source,authority,restoreRoot,nativeRoot,agent,disk])await mkdir(path,{mode:0o700,recursive:true});
+ const lock=join(authority,'group.lock'),gate=new ManagedPublicationGate({path:join(authority,'gate.json'),groupId:'managed-native',restoreRoot}),custody=new ManagedNativeCustody(join(authority,'custody'),{sourceParent:root,lock,sources:[{path:source,destination:'/coffee/source'}],runtimeRoots:[dirname(dirname(process.execPath))],environment:{HOME:'/coffee/source',PATH:'/usr/bin:/bin'},cwd:'/coffee/source'}),fence=new ManagedWriterFence({lock,custody,publicationGate:gate});
+ const setup=await custody.prepare({executable:process.execPath,args:['-e','']}),probe=spawn(process.execPath,[setup.cliPath],{env:{PATH:process.env.PATH,...setup.env},stdio:'ignore'});expect((await once(probe,'exit'))[0]).toBe(0);await expect.poll(async()=>(await custody.state()).state).toBe('quiescent');
+ const workspaces=new Workspaces(join(source,'projects'),{taskRoot:join(source,'tasks'),deferStartupReconciliation:()=>gate.hasPending()});workspaces.setBackupWriterFence(fence);const task=await workspaces.createChatConversation('task');await workspaces.createChatConversation('neighbor');await writeFile(join(task.cwd,'draft'),'restorable native workspace');const native=SessionManager.create(task.cwd,nativeRoot,{id:task.id});native.appendMessage({role:'user',content:'managed restoration history',timestamp:1});
+ const adapter=new PiNativeRecoveryAdapter({scope:'alice',workspaces,sessionDir:nativeRoot,agentDir:agent,fence,sourceCustody:async()=>({known:true})}),coordinator=new BackupCoordinator({root:join(authority,'checkpoints'),adapter}),repository=new BackupRepository({root:join(authority,'repository'),coordinator});let host:HostServer|undefined;
+ const restore=new RestoreCoordinator({root:restoreRoot,repository,authorize:async(actor,scope,manage)=>scope==='alice'&&(actor==='awangs'||!manage&&actor==='alice'),scope:async()=>({workspaces,adapter,withPublication:async(id,run,operationId,preparation)=>host!.withRestorePublication('alice',id,()=>gate.withApprovedPublication(operationId,run,preparation),operationId,{deferMetadata:true}),beforePublication:context=>host!.prepareRecoveryPublication('alice',context)})});
+ const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Recovery never opens native input');}};host=new HostServer({port:0,token:'fixture',requireUser:true,factory,scopeForUser:()=>({factory,workspaces}),backup:{coordinator,repository,restore,scopes:['alice']}});
+ const call=async(path:string,body:unknown,actor='alice')=>{const response=await fetch(`http://127.0.0.1:${host!.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'alice','x-pi-coffee-actor':actor,'content-type':'application/json'},body:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
+ try{await host.start();expect(await call('/api/mishu',{id:'task',action:'select',selected:true})).toMatchObject({status:200,data:{selected:true}});await expect.poll(async()=>(await coordinator.capture('alice','task','pi')).state,{timeout:5000}).toBe('protected');await repository.configure({destination:disk,binary:binary!});await repository.verifyRecoveryPackage(await repository.exportRecoveryPackage());const job=await repository.backup([{scope:'alice',taskId:'task'}]);await workspaces.archive('task',true);await workspaces.deleteWorkspace('task','task',()=>rm(native.getSessionFile()!),true);
+  const requested=await call('/api/backup',{action:'restore-request',taskId:'task',jobId:job.id});expect(requested.status).toBe(200);const id=requested.data.id;const beforeAuthority=await readFile(join(workspaces.root,'.coffee','mishu','state.json'),'utf8');
+  await expect(host.withRestorePublication('alice','task',()=>host!.prepareRecoveryPublication('alice',{taskId:'task',operationId:id,digest:'0'.repeat(64),lease:{epoch:0,signal:new AbortController().signal,assertValid(){},release(){}}}),id,{deferMetadata:true})).rejects.toThrow();
+  expect(await readFile(join(workspaces.root,'.coffee','mishu','state.json'),'utf8')).toBe(beforeAuthority);expect(await call('/api/mishu',{id:'task',action:'status'})).toMatchObject({status:409});
+  const plan=await call('/api/backup',{action:'restore-plan',id,revision:1},'awangs');expect(plan.status,JSON.stringify(plan)).toBe(200);expect((await call('/api/backup',{action:'restore-approve',id,revision:1,digest:plan.data.digest},'awangs')).status).toBe(200);
+  const published=await call('/api/backup',{action:'restore-publish',id,revision:1,digest:plan.data.digest},'awangs');expect(published,JSON.stringify(published)).toMatchObject({status:200,data:{state:'completed'}});expect(await readFile(join(task.cwd,'draft'),'utf8')).toBe('restorable native workspace');expect(SessionManager.open(native.getSessionFile()!).buildSessionContext().messages).toMatchObject([{role:'user',content:'managed restoration history'}]);expect(await call('/api/mishu',{id:'task',action:'status'})).toMatchObject({status:200,data:{selected:false,enabled:false}});expect(gate.hasPending()).toBe(false);await workspaces.createChatConversation('later-neighbor');expect(await workspaces.lookup('neighbor')).toBeDefined();expect(await workspaces.lookup('later-neighbor')).toBeDefined();
+ }finally{await host?.close();await rm(root,{recursive:true,force:true});}
+},120000);
