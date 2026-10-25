@@ -278,7 +278,7 @@ export class WebServer {
         json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion)});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
-    if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    if(path === "/api/backup" || path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
