@@ -72,6 +72,8 @@ it('retains the old point when a MISHU API write arrives during capture and reje
   await memory({operation:'save',operationId:'concurrent',kind:'preference',text:'new work wins'});release();
   expect(await capture).toMatchObject({state:'waiting',checkpointId:old.checkpointId,captureAt:old.captureAt});
   const point=(await backup.sealedCheckpoint('awangs',task.id))!,source=point.manifest.sources.find(s=>s.recoveryKey==='platform/mishu/notes-only-v1')!;expect(await readFile(join(point.directory,'objects',source.id),'utf8')).not.toContain('new work wins');
+  const novel=join(workspaces.root,'.coffee','mishu','context-v2.json');await writeFile(novel,JSON.stringify({notes:'unsupported future context source'}));
+  expect(await call('/api/backup',{action:'capture',taskId:task.id})).toMatchObject({state:'unavailable',checkpointId:old.checkpointId});await rm(novel);
   const file=join(workspaces.root,'.coffee','mishu','memory.json'),original=await readFile(file,'utf8'),unknown=JSON.parse(original);unknown.externalNotesPath='/unowned/context';await writeFile(file,JSON.stringify(unknown));
   expect(await call('/api/backup',{action:'capture',taskId:task.id})).toMatchObject({state:'unavailable',checkpointId:old.checkpointId});
   await rm(file);const victim=join(root,'private-note');await writeFile(victim,'PRIVATE_EXTERNAL_NOTE');await symlink(victim,file);

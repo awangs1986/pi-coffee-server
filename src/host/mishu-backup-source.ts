@@ -79,7 +79,21 @@ export async function collectMishuBackupSource(options:{root:string;taskId:strin
  const root=resolve(options.root),taskId=options.taskId;
  if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(taskId))fail();
  async function directory(path:string){const info=await lstat(path).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='ENOENT')throw e;return undefined;});if(!info){const parent=dirname(path);if(parent!==path)await directory(parent);return false;}if(!info.isDirectory()||info.isSymbolicLink()||await realpath(path)!==path)throw new BackupError('unsafe_source','Unsafe MISHU source directory');return true;}
- async function names(){if(!await directory(root))return [] as string[];const found=(await readdir(root)).filter(n=>['state.json','memory.json','consolidation-v1.json'].includes(n)||/^memory\.backup-[a-f0-9]{64}\.json$/.test(n)||/^state\.v1\.[a-f0-9]{64}\.json$/.test(n));if(await directory(join(root,'receipts')))for(const kind of ['receipts','assignments']){const name=kind+'-'+taskId+'.jsonl';if((await readdir(join(root,'receipts'))).includes(name))found.push('receipts/'+name);}return found.sort();}
+ const selectedName=(name:string)=>['state.json','memory.json','consolidation-v1.json'].includes(name)||/^memory\.backup-[a-f0-9]{64}\.json$/.test(name)||/^state\.v1\.[a-f0-9]{64}\.json$/.test(name);
+ // Named operational resources are deliberately excluded, never imported as authority.
+ // A novel durable source cannot silently acquire the same exclusion.
+ const operationalName=(name:string)=>['.pi-coffee-backup-source','diagnostic.json','rules.json','grant.key','usage-v1.json','watch','receipts','state.json.tmp'].includes(name)||/^writer\.sqlite(?:-(?:shm|wal|journal))?$/.test(name)||/^memory\.[a-f0-9-]{36}\.tmp$/.test(name)||/^usage-v1\.json\.[a-f0-9-]{36}\.tmp$/.test(name)||/^consolidation-v1\.json\.[a-f0-9-]{36}$/.test(name);
+ async function names(){
+  if(!await directory(root))return [] as string[];
+  const entries=await readdir(root);if(entries.some(name=>!selectedName(name)&&!operationalName(name)))fail();
+  const found=entries.filter(selectedName),receipts=join(root,'receipts');
+  if(await directory(receipts)){
+   const entries=await readdir(receipts);
+   if(entries.some(name=>!/^identities\.sqlite(?:-(?:shm|wal|journal))?$/.test(name)&&!/^(?:receipts|assignments)-[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.jsonl(?:\.tmp|\.torn-[0-9]+)?$/.test(name)))fail();
+   for(const kind of ['receipts','assignments']){const name=kind+'-'+taskId+'.jsonl';if(entries.includes(name))found.push('receipts/'+name);}
+  }
+  return found.sort();
+ }
  async function read(name:string){
   const path=join(root,name),before=await lstat(path);if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1||before.size>MAX_MISHU_STATE_BYTES||await realpath(path)!==path)throw new BackupError('unsafe_source','Unsafe MISHU source file');
   const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const info=await file.stat();if(info.dev!==before.dev||info.ino!==before.ino||info.size!==before.size)throw new BackupError('capture_revoked','MISHU source changed');const bytes=Buffer.alloc(info.size+1);let length=0;while(length<bytes.length){const {bytesRead}=await file.read(bytes,length,bytes.length-length,length);if(!bytesRead)break;length+=bytesRead;}const after=await file.stat();if(length!==info.size||after.mtimeMs!==info.mtimeMs||after.size!==info.size)throw new BackupError('capture_revoked','MISHU source changed');const data=bytes.subarray(0,length);return {data,fingerprint:[String(info.dev),String(info.ino),String(info.size),hash(data)].join(':')};}finally{await file.close();}
