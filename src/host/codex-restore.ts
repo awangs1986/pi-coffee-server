@@ -1,5 +1,5 @@
 import {constants} from 'node:fs';
-import {cp,mkdir,readFile,lstat,readdir,chmod,open} from 'node:fs/promises';
+import {cp,mkdir,readFile,lstat,readdir,chmod,open,realpath} from 'node:fs/promises';
 import {join,resolve,dirname,relative,isAbsolute} from 'node:path';
 import type {CheckpointManifest} from './backup.js';
 import type {Conversation,Project} from './workspaces.js';
@@ -19,7 +19,12 @@ export async function prepareCodexRestore(o:CodexRecoveryOptions,point:{director
  const registry=JSON.parse(await readFile(source('registry').path,'utf8'));if(registry.schemaVersion!==1||registry.scope!==scope||registry.conversation?.id!==taskId)throw restoreFail('registry_scope_mismatch');const original:Conversation=registry.conversation;
  if(original.engine!=='codex'||!original.nativeBinding?.id||original.takeoverSegments?.some(s=>s.from!=='codex'||s.to!=='codex'))throw restoreFail('unsupported_native_graph');
  const snapshot:CodexStoreSnapshot=JSON.parse(await readFile(source('codex/group-v1').path,'utf8'));if(snapshot.schemaVersion!==1||snapshot.cliVersion!=='0.159.1'||snapshot.nativeHome!==resolve(o.codexHome))throw restoreFail('native_home_changed');
- const current=await codexStore({operation:'snapshot',home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome});if(current.sqliteHome!==snapshot.sqliteHome)throw restoreFail('native_home_changed');
+ // An absent target is not a qualified backup source. Resolve only trusted
+ // current configuration/options, compare the sealed original mapping, then
+ // create private target roots; capture's snapshot operation remains strict.
+ await restoreTargetRoot(resolve(o.codexHome));
+ const targetRequest={home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome},targetRoots=await codexStore({operation:'restore-roots',...targetRequest});if(targetRoots.nativeHome!==snapshot.nativeHome||targetRoots.sqliteHome!==snapshot.sqliteHome)throw restoreFail('native_home_changed');await restoreTargetRoot(targetRoots.sqliteHome);
+ const current=await codexStore({operation:'inspect-restore-target',...targetRequest});if(current.sqliteHome!==snapshot.sqliteHome)throw restoreFail('native_home_changed');
  const bindings=new Set(member.nativeBindings);if(!bindings.has(original.nativeBinding.id)||[...original.retainedNativeIds??[]].some(id=>!bindings.has(id)))throw restoreFail('native_binding_missing');
  const paths=await o.workspaces.recoveryPaths(original),taskTarget=original.taskRoot??paths.workspace;if(await exists(taskTarget)&&!replace)throw restoreFail('target_exists_missing_only');
  const output=join(stage,'publish');await mkdir(output,{mode:0o700});const stagedTask=join(output,'task');
@@ -31,7 +36,7 @@ export async function prepareCodexRestore(o:CodexRecoveryOptions,point:{director
  const live=await o.workspaces.lookup(taskId);if(replace&&(!live||live.engine!=='codex'||live.nativeBinding?.id!==original.nativeBinding.id))throw restoreFail('replacement_binding_changed');if(replace){const state=await o.workspaces.list();if(state.conversations.some(task=>task.id!==taskId&&[task.nativeBinding?.id,...task.retainedNativeIds??[]].some(id=>id&&bindings.has(id))))throw restoreFail('shared_native_identity_requires_group_publication');}
  const actions:RestoreAction[]=[];const add=async(path:string,target:string,phase:'task'|'native')=>{if(!await exists(dirname(target)))await mkdir(dirname(target),{recursive:true,mode:0o700});await syncTree(path);const info=await lstat(path);const previous=await exists(target)?await lstat(target):undefined;if(previous&&!replace)throw restoreFail('native_target_conflict');actions.push({...(previous?{replace:{dev:previous.dev,ino:previous.ino,digest:await treeDigest(target)}}:{}),source:path,target,phase,digest:await treeDigest(path),dev:info.dev,ino:info.ino,parent:await restoreParent(dirname(target),phase==='native'?(within(snapshot.nativeHome,target)?snapshot.nativeHome:snapshot.sqliteHome):undefined)});};await add(stagedTask,taskTarget,'task');
  const plan:CodexMergePlan={schemaVersion:1,kind:'codex-01591',nativeHome:snapshot.nativeHome,sqliteHome:snapshot.sqliteHome,journal:join(stage,'codex-merge-journal.json'),replacements:{},databases:{},databaseIdentities:{},createdDatabases:{},assertions:[],appends:[]};
- const state=snapshot.databases['state_5.sqlite'].tables,targetState=current.databases['state_5.sqlite'].tables;
+ const state=snapshot.databases['state_5.sqlite'].tables,targetState=current.databases['state_5.sqlite']?.tables??{threads:[],thread_spawn_edges:[]};
  if(!replace&&targetState.threads.some(row=>bindings.has(String(row.id))))throw restoreFail('native_row_conflict');
  let canReplaceGlobal=false;
  const take=(db:string,table:string,rows:CodexRow[],allowSame=false)=>{if(!rows.length)return;const target=current.databases[db]?.tables[table]??[];const changes=rows.map(row=>{const keys=primaryKeys(table),conflict=target.find(value=>keys.every(key=>value[key]===row[key])&&JSON.stringify(value)!==JSON.stringify(row));if(conflict&&!(replace&&selectedTables.has(table))&&!(replace&&canReplaceGlobal&&['jobs','consolidation_progress'].includes(table)))throw restoreFail('native_row_conflict');const same=target.some(value=>JSON.stringify(value)===JSON.stringify(row));if(same&&!allowSame&&!replace)throw restoreFail('native_row_conflict');return {row,disposition:same?'same' as const:'insert' as const};});(plan.databases[db]??={})[table]=changes;};
@@ -83,6 +88,10 @@ export async function preflightCodexMerge(value:Record<string,unknown>,context:N
 export async function publishCodexMerge(value:Record<string,unknown>,context:NativeMergeContext,onDatabaseCommit?:(name:string)=>Promise<void>){const plan=value as CodexMergePlan;if(plan.kind!=='codex-01591'||plan.schemaVersion!==1)throw restoreFail('native_merge_unknown');context.assertValid();for(const item of plan.assertions){const info=await lstat(item.path);if(info.dev!==item.dev||info.ino!==item.ino||await treeDigest(item.path)!==item.digest)throw restoreFail('shared_resource_changed');}
  await codexStore({operation:'merge',plan,operationId:context.operationId,digest:context.digest},{publicationFd:context.publicationFd,onDatabaseCommit});context.assertValid();
  for(const append of plan.appends){context.assertValid();const info=await lstat(append.path);if(info.isSymbolicLink()||info.dev!==append.dev||info.ino!==append.ino)throw restoreFail('native_index_changed');const current=await readFile(append.path);if(sha(current)===append.after)continue;const suffix=Buffer.from(append.suffix);if(current.length<append.beforeSize||sha(current.subarray(0,append.beforeSize))!==append.before||current.length-append.beforeSize>suffix.length||!current.subarray(append.beforeSize).equals(suffix.subarray(0,current.length-append.beforeSize)))throw restoreFail('native_index_changed');const remainder=suffix.subarray(current.length-append.beforeSize);const file=await open(append.path,constants.O_WRONLY|constants.O_APPEND|constants.O_NOFOLLOW);try{const actual=await file.stat();if(actual.dev!==append.dev||actual.ino!==append.ino)throw restoreFail('native_index_changed');await file.writeFile(remainder);await file.sync();}finally{await file.close();}await syncDir(dirname(append.path));}
+}
+async function restoreTargetRoot(path:string){
+ if(!await exists(path)){let parent=dirname(path);while(!await exists(parent)){const next=dirname(parent);if(next===parent)throw restoreFail('unsafe_directory');parent=next;}const info=await lstat(parent);if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid?.()||await realpath(parent)!==resolve(parent))throw restoreFail('unsafe_directory');}
+ await privateDir(path,true);
 }
 function within(root:string,path:string){const rel=relative(root,resolve(path));return !rel.startsWith('..')&&!isAbsolute(rel);}
 async function writable(path:string):Promise<void>{const info=await lstat(path);if(info.isSymbolicLink())return;await chmod(path,info.isDirectory()?0o700:(info.mode&0o111)?0o700:0o600);if(info.isDirectory())for(const name of await readdir(path))await writable(join(path,name));}

@@ -25,14 +25,14 @@ def safe(path, directory=False):
         raise ValueError('unsafe_native_source')
     return p
 
-def roots(request):
+def roots(request, restore_target=False, require_sql=True):
     home = safe(request['home'], True)
     config_path = home / 'config.toml'
     config = tomllib.loads(safe(config_path).read_text()) if config_path.exists() else {}
-    sql = pathlib.Path(config.get('sqlite_home') or request.get('environmentSqliteHome') or home)
+    sql = pathlib.Path(config.get('sqlite_home') or request.get('environmentSqliteHome') or (request.get('sqliteHome') if restore_target else None) or home)
     if not sql.is_absolute() or (request.get('sqliteHome') and pathlib.Path(request['sqliteHome']) != sql):
         raise ValueError('sqlite_home_unresolved')
-    safe(sql, True)
+    if require_sql or sql.exists(): safe(sql, True)
     if (sql / 'memories_v2_1.sqlite').exists() or (home / 'memories_v2').exists() or config.get('features', {}).get('memory_tool_v2'):
         raise ValueError('unsupported_native_schema')
     # Configuration can name instruction/capability graphs outside these homes.
@@ -47,8 +47,8 @@ def roots(request):
         raise ValueError('unsupported_native_schema')
     return {'schemaVersion': 1, 'cliVersion': '0.159.1', 'nativeHome': str(home), 'sqliteHome': str(sql), 'databases': {}}
 
-def snapshot(request):
-    result = roots(request)
+def snapshot(request, restore_target=False):
+    result = roots(request, restore_target)
     home, sql = pathlib.Path(result['nativeHome']), pathlib.Path(result['sqliteHome'])
     for name in SCHEMAS:
         path = sql / name
@@ -70,7 +70,7 @@ def snapshot(request):
             tables[table] = [dict(zip(columns, map(encode, row))) for row in cursor]
         result['databases'][name] = {'schema': SCHEMAS[name]['schema'], 'migrations': SCHEMAS[name]['migrations'], 'tables': tables}
         copy.close()
-    if 'state_5.sqlite' not in result['databases']:
+    if not restore_target and 'state_5.sqlite' not in result['databases']:
         raise ValueError('native_binding_missing')
     return result
 
@@ -272,6 +272,8 @@ try:
     os.umask(0o077)
     if request['operation'] == 'snapshot': result = snapshot(request)
     elif request['operation'] == 'roots': result = roots(request)
+    elif request['operation'] == 'restore-roots': result = roots(request, restore_target=True, require_sql=False)
+    elif request['operation'] == 'inspect-restore-target': result = snapshot(request, restore_target=True)
     elif request['operation'] == 'initialize': result = initialize(request['path'], request['name'])
     elif request['operation'] == 'created-postimage': result = created_postimage(request)
     elif request['operation'] == 'verify-created': result = verify_created(request)

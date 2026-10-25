@@ -2,13 +2,13 @@ import {it,expect} from 'vitest';
 import {fork,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {join} from 'node:path';
-import {rm,readFile,writeFile,rename,lstat} from 'node:fs/promises';
+import {rm,readFile,writeFile,rename,lstat,readdir} from 'node:fs/promises';
 import {preparedCodexRecovery} from './codex-recovery-fixture.js';
 
-it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('first-created Codex database reconciles SIGKILL after SQL commit before its receipt',async()=>{
+for(const loss of ['optional','all'])it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)(`first-created Codex database reconciles SIGKILL after SQL commit before its receipt (${loss} stores lost)`,async()=>{
  const f=await preparedCodexRecovery(process.env.PI_COFFEE_TEST_RESTIC!,{
   populate:async f=>{execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(\"INSERT INTO thread_goals(thread_id,goal_id,objective,status,created_at_ms,updated_at_ms) VALUES (?,?,'Historical objective','active',1,1)\",(sys.argv[2],'original-goal'));c.commit();c.close()",join(f.sql,'goals_1.sqlite'),f.id]);},
-  lose:async f=>{await rm(join(f.sql,'goals_1.sqlite'));}
+  lose:async f=>{if(loss==='all'){for(const name of await readdir(f.sql))await rm(join(f.sql,name),{recursive:true,force:true});}else await rm(join(f.sql,'goals_1.sqlite'));}
  });let child:ReturnType<typeof fork>|undefined;
  try{
   child=fork('test/fixtures/codex-restore-worker.mjs',[f.root,f.plan.id,f.plan.digest!,'created-database'],{stdio:['ignore','ignore','ignore','ipc'],env:{PATH:process.env.PATH,HOME:f.root}});
