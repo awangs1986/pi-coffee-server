@@ -70,7 +70,7 @@ export type BackupScheduleAccess=Pick<BackupJobRunner,'status'|'configure'>;
 export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -307,7 +307,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),...(this.options.backup?.configureRepositoryForActor?{repositoryConfiguration:'service-managed'}:{}),excludedEngines:['claude','cursor','grok']};
       };
       const scheduleFor=(target:UserSlot)=>this.options.backup?.scheduleForActor?scopedSchedule(()=>this.options.backup!.scheduleForActor!(actor,target.user??LEGACY_BACKUP_SCOPE)):this.options.backup?.schedule;
       const scheduledStatus=async(target:UserSlot)=>{const schedule=scheduleFor(target);return {...await status(target),...(schedule?{schedule:await scheduleStatus(schedule,target.user??LEGACY_BACKUP_SCOPE)}:{})};};
@@ -356,6 +356,9 @@ export class HostServer {
         if(input.scope!==undefined&&input.scope!==dataScope){
           if(typeof input.scope!=='string'||!this.options.backup?.scopes?.includes(input.scope)){json(res,403,{error:'Scope is not managed by this backup service'});return;}
           target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);
+        }
+        if(input.action==='repository-configure'&&this.options.backup?.configureRepositoryForActor){
+          try{await this.options.backup.configureRepositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE);json(res,200,await status(target));}catch(error){json(res,409,{error:error instanceof BackupError?error.message:'Repository configuration failed'});}return;
         }
         const repository=repositoryFor(target);if(!repository){json(res,409,{error:'Encrypted repository is not configured on this Host'});return;}
         try{

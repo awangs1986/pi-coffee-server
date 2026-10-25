@@ -37,7 +37,9 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
       const operate=async(body)=>{try{const result=await request(body,active.signal);if(current())await read({action:'status',scope});return result;}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'仓库操作失败';section.append(message);}return null;}};
       if(!repository.configured){
        const destination=document.createElement('input');destination.placeholder='已有私有备份目录的绝对路径';destination.setAttribute('aria-label','备份目标目录');
-       const configure=document.createElement('button');configure.type='button';configure.textContent='配置加密仓库';configure.onclick=()=>void operate({action:'repository-configure',destination:destination.value});section.append(destination,configure);
+       const managed=data.repositoryConfiguration==='service-managed';
+       if(managed){const target=document.createElement('p');target.textContent='使用管理员在独立备份服务中配置的备份目标。';section.append(target);}else section.append(destination);
+       const configure=document.createElement('button');configure.type='button';configure.textContent='配置加密仓库';configure.onclick=()=>void operate({action:'repository-configure',scope,...(managed?{}:{destination:destination.value})});section.append(configure);
       }else{
        const exportCopy=document.createElement('button');exportCopy.type='button';exportCopy.textContent='导出离线恢复包';
        exportCopy.onclick=async()=>{exportCopy.disabled=true;try{const result=await request({action:'repository-export'},active.signal);if(!current())return;const url=URL.createObjectURL(new Blob([result.recoveryPackage],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download='pi-coffee-offline-recovery.json';link.click();URL.revokeObjectURL(url);await read({action:'status',scope});}catch(error){if(current()){const message=document.createElement('p');message.textContent=error.message||'导出失败';section.append(message);}}finally{exportCopy.disabled=false;}};
