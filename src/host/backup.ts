@@ -102,9 +102,9 @@ export class BackupCoordinator {
    const group=await abortable(this.options.adapter.resolve(scope,taskId),controller.signal);
    validateGroup(group,scope,taskId);
    if(group.sources.some(s=>s.path!==undefined&&(resolve(s.path)===this.root||this.root.startsWith(resolve(s.path)+'/')||resolve(s.path).startsWith(this.root+'/'))))throw new BackupError('unsafe_source','Checkpoint store overlaps a live source');
-   lease=await abortable(group.fence.lease().then(value=>{if(controller.signal.aborted){value.release();controller.signal.throwIfAborted();}return value;}),controller.signal);
-   const captureSignal=AbortSignal.any([controller.signal,lease.signal]);
-   const assert=()=>{controller.signal.throwIfAborted();lease!.assertValid();};assert();
+   const acquiredLease=await abortable(group.fence.lease().then(value=>{if(controller.signal.aborted){value.release();controller.signal.throwIfAborted();}return value;}),controller.signal);lease=acquiredLease;
+   const captureSignal=AbortSignal.any([controller.signal,acquiredLease.signal]);
+   const assert=()=>{controller.signal.throwIfAborted();acquiredLease.assertValid();};assert();
    await abortable(group.validate(),captureSignal);assert();
    const checkpointId=randomUUID(),captureAt=new Date(this.now()).toISOString();
    staging=join(this.root,'staging',checkpointId);await mkdir(staging,{mode:0o700});
@@ -113,7 +113,7 @@ export class BackupCoordinator {
    for(const source of group.sources){assert();if(source.path!==undefined)await copySource(source.path,join(staging,'objects',source.id),'objects/'+source.id,source.role,objects,budget,{maxBytes:this.options.maxBytes??1024*1024*1024,maxFiles:this.options.maxFiles??100000},assert);else {budget.bytes+=source.data.byteLength;budget.files++;if(budget.bytes>(this.options.maxBytes??1024*1024*1024)||budget.files>(this.options.maxFiles??100000))throw new BackupError('resource_limit','Capture resource limit exceeded');await durableBytes(join(staging,'objects',source.id),source.data);objects.push({path:'objects/'+source.id,kind:'file',mode:0o600,size:source.data.byteLength,sha256:digest(source.data),role:source.role});}}
    await abortable(group.validate(),captureSignal);assert();
    const runtime=await readReleaseIdentity(process.cwd());assert();
-   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:lease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role})=>({id,recoveryKey,role})),coverage:'complete',objects,totalBytes:budget.bytes};
+   const manifest:CheckpointManifest={schemaVersion:1,checkpointId,captureAt,adapterVersion:group.adapterVersion??this.options.adapter.version,groupId:group.groupId,epoch:acquiredLease.epoch,members:group.members,runtime:{serverVersion:runtime.version,commit:runtime.commit},sources:group.sources.map(({id,recoveryKey,role})=>({id,recoveryKey,role})),coverage:'complete',objects,totalBytes:budget.bytes};
    if(Buffer.byteLength(JSON.stringify(manifest))>32*1024*1024)throw new BackupError('resource_limit','Manifest resource limit exceeded');
    await durableWrite(join(staging,'manifest.json'),JSON.stringify(manifest));
    await durableWrite(join(staging,'seal'),digest(JSON.stringify(manifest))+'\n');

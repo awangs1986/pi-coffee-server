@@ -111,6 +111,7 @@ export interface HostServerOptions {
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  backup?:BackupCoordinator;
   mishu?:MishuCoordinator;
   user: string | undefined;
   workdir?: string;
@@ -126,6 +127,11 @@ interface UserSlot {
   lifecycleLocks: Set<string>;
   workspaceReads: Map<string, Promise<unknown>>;
 
+}
+
+async function backupStatuses(slot:UserSlot){
+ if(!slot.workspaces)return [];
+ return Promise.all((await slot.workspaces.list()).conversations.map(task=>slot.backup?slot.backup.status(slot.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'})));
 }
 
 export interface HostAddress {
@@ -265,7 +271,7 @@ export class HostServer {
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
       const administrator=this.options.backup?.administrator??'awangs';
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',canManage:user===administrator,managedScopes:user===administrator?[...new Set([user,...this.options.backup?.scopes??[]])]:[],tasks:await Promise.all((await target.workspaces!.list()).conversations.map(task=>coordinator?coordinator.status(target.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'}))),excludedEngines:['claude','cursor','grok']});
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',canManage:user===administrator,managedScopes:user===administrator?[...new Set([user,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
@@ -653,7 +659,7 @@ export class HostServer {
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, backup:this.options.backup?.coordinator, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -1019,14 +1025,17 @@ class HostSocket implements SessionSink {
 
     try {
       if(frame.type==='prompt'&&receivedGeneration!==undefined)this.session?.assertCommandGeneration(receivedGeneration);
-      if(this.syncProtocol===2&&this.session&&!['open','list_sessions','close'].includes(frame.type)){
+      if(this.syncProtocol===2&&this.session&&!['open','list_sessions','get_backup_status','close'].includes(frame.type)){
         if(frame.conversationId!==this.session.id||frame.bindingEpoch!==this.bindingEpoch)throw new Error('Conversation identity changed; reopen before sending this command');
       }
-      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
+      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_backup_status","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
       switch (frame.type) {
         case "open":
           await this.open(frame);
           break;
+        case "get_backup_status": {
+          const slot=await this.slot;this.send({v:1,type:'backup_status',scope:this.user??'',tasks:await backupStatuses(slot)});break;
+        }
         case "list_sessions":
           // Allowed before open: the sidebar needs the list to choose from.
           if(!this.listing){
