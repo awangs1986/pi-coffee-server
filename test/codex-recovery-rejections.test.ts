@@ -1,0 +1,15 @@
+import {it,expect} from 'vitest';import {rm} from 'node:fs/promises';import {join} from 'node:path';import {execFileSync} from 'node:child_process';
+import {codexFixture,preparedCodexRecovery} from './codex-recovery-fixture.js';import {CodexNativeRecoveryAdapter} from '../src/host/codex-recovery.js';import {BackupCoordinator} from '../src/host/backup.js';
+it('unknown CLI versions, external native overrides and unmapped shared memory owners never replace an earlier qualified point',async()=>{
+ const f=await codexFixture();try{
+  const first=await f.coordinator.capture('alice',f.task.id,'codex');expect(first.state).toBe('protected');
+  for(const [options,code]of [[{cliVersion:'0.159.2'},'native_version_unqualified'],[{nativeArgs:['--profile','unmapped']},'external_native_resource']] as const){const adapter=new CodexNativeRecoveryAdapter({...f.adapter.options,...options}),coordinator=new BackupCoordinator({root:join(f.root,'checkpoints'),adapter});const result=await coordinator.capture('alice',f.task.id,'codex');expect(result.state).toBe('unavailable');expect(result.reason).toContain(code==='native_version_unqualified'?'version':'mapping');expect(result.checkpointId).toBe(first.checkpointId);}
+  execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(\"INSERT INTO stage1_outputs(thread_id,source_updated_at,raw_memory,rollout_summary,generated_at) VALUES ('unmapped-owner',1,'private','private',1)\");c.commit()",join(f.sql,'memories_1.sqlite')]);const result=await f.coordinator.capture('alice',f.task.id,'codex');expect(result.state).not.toBe('protected');expect(result.checkpointId).toBe(first.checkpointId);
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('a selected native row appearing after approval fails publication without adopting it or publishing the task registry',async()=>{
+ const f=await preparedCodexRecovery(process.env.PI_COFFEE_TEST_RESTIC!);try{
+  execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode) VALUES (?,?,1,1,?,?,?,?,?,?)',(sys.argv[2],sys.argv[3],'cli','fixture',sys.argv[4],'Late native owner','{}','never'));c.commit()",join(f.sql,'state_5.sqlite'),f.id,f.rollout,f.task.cwd]);
+  await expect(f.restore.operate('awangs',f.plan.id,{action:'publish',revision:1,digest:f.plan.digest})).rejects.toMatchObject({code:'native_row_conflict'});expect(await f.store.lookup(f.task.id)).toBeUndefined();expect(execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute('SELECT title FROM threads WHERE id=?',(sys.argv[2],)).fetchone()[0])",join(f.sql,'state_5.sqlite'),f.id],{encoding:'utf8'}).trim()).toBe('Late native owner');expect((await f.restore.pendingPublications()).map(row=>row.operationId)).toContain(f.plan.id);
+ }finally{await rm(f.root,{recursive:true,force:true});}
+},90000);
