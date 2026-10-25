@@ -185,7 +185,7 @@ export class Workspaces {
   }
   async recoveryRegistryIdentity(){await this.load();return privateDir(join(this.root,'.coffee'));}
   async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null;publication?:RecoveryPublication}):Promise<void>{
-    if(this.backupWriterFence){if(!input.publication)throw restoreFail('recovery_publication_required');return this.backupWriterFence.runRecoveryPublication(input.publication,()=>this.importRecoveredTaskState(input,true));}return this.importRecoveredTaskState(input,false);
+    if(this.backupWriterFence){if(!input.publication||input.publication.operationId!==input.operationId||input.publication.digest!==input.digest)throw restoreFail('recovery_publication_required');return this.backupWriterFence.runRecoveryPublication(input.publication,()=>this.importRecoveredTaskState(input,true));}return this.importRecoveredTaskState(input,false);
   }
   private async importRecoveredTaskState(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null},publication:boolean):Promise<void>{
     await this.load();await privateDir(join(this.root,'.coffee'));const current=this.state.conversations.find(c=>c.id===input.conversation.id);
