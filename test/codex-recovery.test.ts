@@ -13,7 +13,7 @@ import {CodexSessionFactory} from '../src/host/codex-adapter.js';
 
 it('a scoped Codex job seals the effective shared SQLite home and committed WAL with its ordinary native history',async()=>{
  const f=await codexFixture();try{
-  await f.adapter.resolve('alice',f.task.id).catch(e=>{throw new Error(e.code);});const result=await f.coordinator.capture('alice',f.task.id,'codex');expect(result.state).toBe('protected');const point=(await f.coordinator.sealedCheckpoint('alice',f.task.id))!;expect(point.manifest.members).toEqual([{scope:'alice',taskId:f.task.id,engine:'codex',nativeBindings:[f.id]}]);
+  await f.adapter.resolve('alice',f.task.id).catch(e=>{throw new Error(e.code);});const result=await f.coordinator.capture('alice',f.task.id,'codex');expect(result.state).toBe('protected');const point=(await f.coordinator.sealedCheckpoint('alice',f.task.id))!;expect(point.manifest.members).toEqual([{scope:'alice',taskId:f.task.id,engine:'codex',adapterVersion:f.adapter.version,nativeBindings:[f.id]}]);
   const source=point.manifest.sources.find(s=>s.recoveryKey==='codex/group-v1')!;const material=JSON.parse(await readFile(join(point.directory,'objects',source.id),'utf8'));expect(material.sqliteHome).toBe(f.sql);expect(material.databases['state_5.sqlite'].tables.threads[0].id).toBe(f.id);expect(material.databases['thread_history_1.sqlite']).toBeDefined();
   const before=result.checkpointId,release=f.fence.beginWriter('native');expect((await f.coordinator.capture('alice',f.task.id,'codex')).checkpointId).toBe(before);release();
   await expect(f.adapter.resolve('bob',f.task.id)).rejects.toMatchObject({code:'closure_incomplete'});
