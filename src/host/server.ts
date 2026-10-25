@@ -71,6 +71,8 @@ export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'e
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; schedule?:BackupJobRunner; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+
+
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
   host?: string;
@@ -303,6 +305,8 @@ export class HostServer {
       };
       const scheduledStatus=async(target:UserSlot)=>({...await status(target),...(this.options.backup?.schedule?{schedule:await this.options.backup.schedule.status(target.user??LEGACY_BACKUP_SCOPE)}:{})});
       if(req.method==='GET'){json(res,200,await scheduledStatus(slot));return;}
+
+
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
       if(input.action==='status'){

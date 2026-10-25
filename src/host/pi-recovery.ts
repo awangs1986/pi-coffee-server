@@ -15,6 +15,8 @@ export class PiNativeRecoveryAdapter implements NativeRecoveryAdapter {
  constructor(private options:{scope:string;workspaces:Workspaces;sessionDir:string;agentDir?:string;immutablePackages?:Record<string,string>;fence:WriterAdmissionFence;sourceCustody:()=>Promise<{known:boolean;reason?:string}>}){}
  async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,staging:string,restoreOptions?:import('./restore.js').NativeRestoreOptions){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unavailable');return preparePiRestore(this.options,point,scope,taskId,staging,restoreOptions);}
  async restoreLease(){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unavailable');return this.options.fence.publicationLease();}
+
+
  async resolve(scope:string,taskId:string):Promise<NativeRecoveryGroup>{
   if(scope!==this.options.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');
   const custody=await this.options.sourceCustody();if(!custody.known)throw new BackupError('writers_unknown',custody.reason??'Native source custody unknown');
