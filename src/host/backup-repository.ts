@@ -1,3 +1,5 @@
+import {acquireFileLease,type FileLease} from './linux-file-lease.js';
+import {planRetention,type RecoveryPin,type RecoveryPinLease,type RepositoryRetentionPlan,type RetentionSnapshot} from './backup-retention.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {constants,createReadStream} from 'node:fs';
@@ -12,7 +14,7 @@ interface DestinationIdentity {path:string;dev:number;ino:number;uid:number;moun
 interface RepositoryConfig {schema:1;binary:string;destination:DestinationIdentity;repository?:DestinationIdentity;repositoryId:string;keyId:string;enabled:boolean;exported:boolean;passwordName?:string;retiredKeys?:{id:string;passwordName:string}[];}
 export interface BackupSelection {scope:string;taskId:string;}
 export interface RepositoryPoint extends BackupSelection {checkpointId:string;captureAt:string;engine:string;manifestSha256:string;}
-export interface RepositoryJob {schema:1;id:string;state:'running'|'succeeded'|'failed';startedAt:string;finishedAt?:string;selection:BackupSelection[];points:RepositoryPoint[];snapshotId?:string;dataBlobs?:number;verification:'none'|'repository-read';errorCode?:string;}
+export interface RepositoryJob {schema:1;id:string;state:'running'|'succeeded'|'failed';startedAt:string;finishedAt?:string;selection:BackupSelection[];points:RepositoryPoint[];snapshotId?:string;dataBlobs?:number;verification:'none'|'repository-read';errorCode?:string;retiredAt?:string;retentionId?:string;}
 interface RecoveryPackage {schema:1;backend:typeof RESTIC_PIN;repositoryId:string;keyId:string;password:string;repository:{path:string;identity:DestinationIdentity};recoveryInstructions:string[];}
 const idPattern=/^[0-9a-f-]{36}$/;
 const fail=(code:string)=>new BackupError(code,({offline_copy_required:'Export and independently verify the offline recovery copy before enabling backup',destination_unavailable:'Configured backup destination is unavailable',destination_changed:'Configured backup destination identity changed',repository_busy:'Another backup repository operation owns the lock',backend_untrusted:'Restic executable does not match the reviewed pin',checkpoint_unavailable:'No intact sealed checkpoint is available',recovery_verification_failed:'Offline recovery copy could not decrypt this repository',repository_failed:'Backup repository operation failed; previous successful points retained'} as Record<string,string>)[code]??'Backup repository operation refused');
@@ -21,7 +23,7 @@ const fail=(code:string)=>new BackupError(code,({offline_copy_required:'Export a
  * no live source paths, repository passwords or native stores enter browser status. */
 export class BackupRepository {
  readonly root:string;private now:()=>number;private lockNonce?:string;
- constructor(private options:{root:string;coordinator:Pick<BackupCoordinator,'sealedCheckpoint'>;now?:()=>number;timeoutMs?:number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
+ constructor(private options:{root:string;coordinator:Pick<BackupCoordinator,'sealedCheckpoint'>;now?:()=>number;timeoutMs?:number;onRetentionPhase?:(event:{id:string;phase:'forgotten'|'pruned'|'journaled'})=>Promise<void>}){this.root=resolve(options.root);this.now=options.now??Date.now;}
  private async initialize(){await mkdir(this.root,{recursive:true,mode:0o700});await privateDirectory(this.root);await mkdir(join(this.root,'jobs'),{recursive:true,mode:0o700});await privateDirectory(join(this.root,'jobs'));}
  private async config():Promise<RepositoryConfig>{await this.initialize();return JSON.parse(await privateText(join(this.root,'config.json'),32768));}
  private async saveConfig(config:RepositoryConfig){await atomicJson(this.root,'config.json',config);}
@@ -112,13 +114,64 @@ export class BackupRepository {
  async status(scope:string){
   let config:RepositoryConfig|undefined;try{config=await this.config();}catch{/* No key/path details in status. */}
   const jobs=(await this.jobs()).filter(job=>job.selection?.some(item=>item.scope===scope)||job.points.some(point=>point.scope===scope)).map(job=>({...job,selection:job.selection?.filter(item=>item.scope===scope)??[],points:job.points.filter(point=>point.scope===scope)}));
-  const points=new Map<string,RepositoryPoint>();for(const job of jobs.filter(j=>j.state==='succeeded'))for(const point of job.points)if(!points.has(point.taskId)||point.captureAt>points.get(point.taskId)!.captureAt)points.set(point.taskId,point);
+  const points=new Map<string,RepositoryPoint>();for(const job of jobs.filter(j=>j.state==='succeeded'&&!j.retiredAt))for(const point of job.points)if(!points.has(point.taskId)||point.captureAt>points.get(point.taskId)!.captureAt)points.set(point.taskId,point);
   return {configured:Boolean(config),enabled:config?.enabled??false,offlineCopyExported:config?.exported??false,backend:{name:'restic',version:RESTIC_PIN.version},jobs:jobs.slice(0,20),points:[...points.values()].map(p=>({...p,ageMs:Math.max(0,this.now()-Date.parse(p.captureAt)),stale:this.now()-Date.parse(p.captureAt)>86400000})),excludedEngines:['claude','cursor','grok']};
  }
+ async pinRecoveryJob(jobId:string,input:{operationId:string;revision:number;ttlMs?:number}):Promise<RecoveryPin>{
+  return this.exclusive(async()=>{
+   await this.initializeRetention();const ttl=input.ttlMs??86400000;if(!idPattern.test(jobId)||!idPattern.test(input.operationId)||!Number.isSafeInteger(input.revision)||input.revision<1||!Number.isSafeInteger(ttl)||ttl<1000||ttl>86400000)throw fail('invalid_recovery_pin');
+   const job=(await this.jobs()).find(row=>row.id===jobId&&row.state==='succeeded'&&row.verification==='repository-read'&&!row.retiredAt);if(!job?.snapshotId||!job.points.length)throw fail('unknown_snapshot');
+   const catalog=await this.retentionCatalog(await this.config());if(!catalog.some(row=>row.snapshotId===job.snapshotId))throw fail('unknown_snapshot');
+   const hash=createHash('sha256').update(input.operationId+':'+input.revision+':'+jobId).digest('hex'),id=hash.slice(0,8)+'-'+hash.slice(8,12)+'-'+hash.slice(12,16)+'-'+hash.slice(16,20)+'-'+hash.slice(20,32);
+   let previous:RecoveryPin|undefined;try{previous=JSON.parse(await privateText(join(this.root,'recovery-pins',id+'.json'),32768));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+   const pin:RecoveryPin={schema:1,id,operationId:input.operationId,revision:input.revision,jobId,snapshotId:job.snapshotId,scopes:[...new Set(job.points.map(point=>point.scope))].sort(),createdAt:previous?.createdAt??this.time(),expiresAt:new Date(this.now()+ttl).toISOString()};
+   await atomicJson(join(this.root,'recovery-pins'),id+'.json',pin);return pin;
+  });
+ }
+ async releaseRecoveryPin(id:string,operationId:string,revision:number):Promise<void>{await this.exclusive(async()=>{await this.initializeRetention();if(!idPattern.test(id))throw fail('invalid_recovery_pin');const pin=JSON.parse(await privateText(join(this.root,'recovery-pins',id+'.json'),32768)) as RecoveryPin;if(pin.operationId!==operationId||pin.revision!==revision)throw fail('recovery_pin_conflict');pin.releasedAt??=this.time();await atomicJson(join(this.root,'recovery-pins'),id+'.json',pin);});}
+ async recoveryPins(scope?:string):Promise<RecoveryPin[]>{await this.initializeRetention();const {pins,leases}=await this.retentionPins();try{return pins.filter(pin=>scope===undefined||pin.scopes.includes(scope));}finally{for(const lease of leases)lease.release();}}
+ /** Stable shared pin authorities survive expiry while the bounded active job
+  * holds its FDs. Permanent authority files are never removed with receipts. */
+ async withRecoveryPins<T>(ids:string[],run:(lease:RecoveryPinLease)=>Promise<T>):Promise<T>{
+  await this.initializeRetention();if(!Array.isArray(ids)||!ids.length||ids.length>1000||new Set(ids).size!==ids.length||ids.some(id=>!idPattern.test(id)))throw fail('invalid_recovery_pin');
+  const leases:FileLease[]=[],deadline=Date.now()+30*60000;
+  try{for(const id of [...ids].sort()){const lease=acquireFileLease(join(this.root,'recovery-pin-locks',id+'.lock'),'shared');if(!lease)throw fail('recovery_pin_busy');leases.push(lease);const pin=JSON.parse(await privateText(join(this.root,'recovery-pins',id+'.json'),32768)) as RecoveryPin;if(pin.id!==id||pin.releasedAt||Date.parse(pin.expiresAt)<=this.now())throw fail('recovery_pin_expired');}
+   const held={assertHeld:()=>{if(Date.now()>=deadline)throw fail('recovery_pin_lease_expired');for(const lease of leases)lease.assertHeld();}};held.assertHeld();const result=await run(held);held.assertHeld();return result;
+  }finally{for(const lease of leases)lease.release();}
+ }
+ async previewRetention(input:{scopes:string[];timeZone?:string}):Promise<RepositoryRetentionPlan>{return this.exclusive(async()=>{
+  await this.initializeRetention();const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');const catalog=await this.retentionCatalog(config),{pins,leases}=await this.retentionPins();
+  try{const decision=planRetention(catalog,pins,{...input,now:this.now()}),plan:RepositoryRetentionPlan={...decision,schema:1,id:randomUUID(),revision:1,createdAt:this.time(),repositoryId:config.repositoryId,catalogDigest:retentionDigest({catalog,pins}),digest:'',state:'previewed',phase:'preview',deletedSnapshotIds:[]};plan.digest=this.retentionApprovalDigest(plan);await this.saveRetention(plan);return plan;}finally{for(const lease of leases)lease.release();}
+ });}
+ async retentionPlans(scope?:string):Promise<RepositoryRetentionPlan[]>{await this.initializeRetention();const result:RepositoryRetentionPlan[]=[];for(const name of await readdir(join(this.root,'retention'))){if(!idPattern.test(name.slice(0,-5))||!name.endsWith('.json'))continue;const plan=JSON.parse(await privateText(join(this.root,'retention',name),32*1024*1024)) as RepositoryRetentionPlan;if(scope===undefined||plan.scopes.includes(scope))result.push(plan);}return result.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));}
+ async executeRetention(id:string,revision:number,digest:string):Promise<RepositoryRetentionPlan>{return this.exclusive(async()=>{
+  await this.initializeRetention();if(!idPattern.test(id))throw fail('invalid_retention');const plan=JSON.parse(await privateText(join(this.root,'retention',id+'.json'),32*1024*1024)) as RepositoryRetentionPlan;
+  if(revision!==plan.revision||digest!==plan.digest||plan.digest!==this.retentionApprovalDigest(plan))throw fail('stale_retention_approval');if(plan.state==='completed')return plan;
+  const config=await this.config();if(!config.enabled||config.repositoryId!==plan.repositoryId)throw fail('retention_repository_changed');const catalog=await this.retentionCatalog(config),{pins,leases}=await this.retentionPins();
+  try{
+   const current=planRetention(catalog,pins,{scopes:plan.scopes,timeZone:plan.timeZone,now:this.now()});
+   if(plan.phase==='preview'&&retentionDigest({catalog,pins})!==plan.catalogDigest)throw fail('retention_plan_stale');
+   const remaining=plan.remove.map(row=>row.snapshotId).filter(snapshot=>catalog.some(row=>row.snapshotId===snapshot));
+   // After an interrupted deletion, new references can protect remaining targets.
+   // Exact approved identities never expand to newly eligible snapshots.
+   if(remaining.some(snapshot=>!current.remove.some(row=>row.snapshotId===snapshot)))throw fail('retention_plan_stale');
+   plan.state='executing';delete plan.errorCode;plan.phase='forgetting';await this.saveRetention(plan);
+   if(remaining.length)await this.command(config,['forget',...remaining]);
+   plan.deletedSnapshotIds=plan.remove.map(row=>row.snapshotId).sort();await this.saveRetention(plan);await this.options.onRetentionPhase?.({id:plan.id,phase:'forgotten'});
+   plan.phase='pruning';await this.saveRetention(plan);if(plan.remove.length)await this.command(config,['prune']);await this.command(config,['check','--read-data']);await this.options.onRetentionPhase?.({id:plan.id,phase:'pruned'});
+   plan.phase='journal';await this.saveRetention(plan);for(const job of await this.jobs())if(job.snapshotId&&plan.deletedSnapshotIds.includes(job.snapshotId)){job.retiredAt??=this.time();job.retentionId=plan.id;await this.saveJob(job);}await this.options.onRetentionPhase?.({id:plan.id,phase:'journaled'});
+   plan.phase='complete';plan.state='completed';plan.finishedAt=this.time();await this.saveRetention(plan);return plan;
+  }catch(error){plan.state='failed';plan.errorCode=error instanceof BackupError?error.code:'retention_failed';await this.saveRetention(plan);throw error;}finally{for(const lease of leases)lease.release();}
+ });}
+ private async initializeRetention(){await this.initialize();for(const name of ['recovery-pins','recovery-pin-locks','retention']){await mkdir(join(this.root,name),{mode:0o700,recursive:true});await privateDirectory(join(this.root,name));}}
+ private async retentionCatalog(config:RepositoryConfig):Promise<RetentionSnapshot[]>{const snapshots=JSON.parse(await this.command(config,['snapshots','--json'])),jobs=await this.jobs();if(!Array.isArray(snapshots)||snapshots.length>100000)throw fail('retention_catalog_invalid');return snapshots.map(row=>{if(!row||typeof row.id!=='string'||!/^[0-9a-f]{64}$/.test(row.id))throw fail('retention_catalog_invalid');const matches=jobs.filter(job=>job.snapshotId===row.id&&!job.retiredAt),points=new Map<string,RepositoryPoint>();for(const job of matches)for(const point of job.points)points.set(point.scope+'/'+point.taskId+'/'+point.checkpointId,point);return {snapshotId:row.id,jobIds:matches.map(job=>job.id).sort(),verified:matches.length>0&&matches.every(job=>job.state==='succeeded'&&job.verification==='repository-read'),points:[...points.values()].sort((a,b)=>(a.scope+'/'+a.taskId).localeCompare(b.scope+'/'+b.taskId))};}).sort((a,b)=>a.snapshotId.localeCompare(b.snapshotId));}
+ private async retentionPins(){const pins:RecoveryPin[]=[],leases:FileLease[]=[];try{for(const name of (await readdir(join(this.root,'recovery-pins'))).sort()){if(!name.endsWith('.json')||!idPattern.test(name.slice(0,-5)))continue;const lease=acquireFileLease(join(this.root,'recovery-pin-locks',name.slice(0,-5)+'.lock'),'exclusive');if(lease)leases.push(lease);const pin=JSON.parse(await privateText(join(this.root,'recovery-pins',name),32768)) as RecoveryPin;if(pin.schema!==1||pin.id!==name.slice(0,-5)||!idPattern.test(pin.operationId)||!Array.isArray(pin.scopes)||!Number.isFinite(Date.parse(pin.expiresAt)))throw fail('recovery_pin_invalid');pins.push({...pin,activeLease:!lease});if(pins.length>100000)throw fail('recovery_pin_capacity');}return {pins,leases};}catch(error){for(const lease of leases)lease.release();throw error;}}
+ private retentionApprovalDigest(plan:RepositoryRetentionPlan){return retentionDigest({schema:plan.schema,id:plan.id,revision:plan.revision,createdAt:plan.createdAt,repositoryId:plan.repositoryId,catalogDigest:plan.catalogDigest,policy:plan.policy,timeZone:plan.timeZone,scopes:plan.scopes,keep:plan.keep,remove:plan.remove,pins:plan.pins});}
+ private async saveRetention(plan:RepositoryRetentionPlan){await atomicJson(join(this.root,'retention'),plan.id+'.json',plan);}
  /** Extract to a NEW private directory only. Publication/restore authorization is a separate Host operation. */
  async extract(jobId:string,destination:string,copy?:string,signal?:AbortSignal):Promise<void>{await this.exclusive(async()=>{
   if(!idPattern.test(jobId)||!isAbsolute(destination)||await exists(destination))throw fail('invalid_restore_target');
-  const config=await this.config(),job=(await this.jobs()).find(j=>j.id===jobId&&j.state==='succeeded');if(!job?.snapshotId)throw fail('unknown_snapshot');
+  const config=await this.config(),job=(await this.jobs()).find(j=>j.id===jobId&&j.state==='succeeded'&&!j.retiredAt);if(!job?.snapshotId)throw fail('unknown_snapshot');
   if(overlap(destination,config.destination.path)||overlap(destination,this.root))throw fail('invalid_restore_target');
   await mkdir(destination,{mode:0o700});await privateDirectory(destination);
   const extract=async(passwordFile?:string)=>{await this.command(config,['restore',job.snapshotId!,'--target',destination,'--verify'],{passwordFile,isolated:Boolean(copy),signal});await this.verifyExtraction(destination,job.points);};
@@ -219,3 +272,5 @@ async function checkKeyEnvelopes(repository:string){
   if(key.kdf!=='scrypt'||!Number.isSafeInteger(key.N)||key.N<2||key.N>262144||(key.N&(key.N-1))!==0||!Number.isSafeInteger(key.r)||key.r<1||key.r>32||!Number.isSafeInteger(key.p)||key.p<1||key.p>16||128*key.N*key.r>128*1024*1024||key.N*key.r*key.p>16*1024*1024||typeof key.salt!=='string'||Buffer.from(key.salt,'base64').length!==64||typeof key.data!=='string'||Buffer.from(key.data,'base64').length<32||Buffer.from(key.data,'base64').length>8192)throw fail('repository_failed');
  }
 }
+
+function retentionDigest(value:unknown){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
