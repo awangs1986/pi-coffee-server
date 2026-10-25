@@ -200,7 +200,7 @@ async function run(selectedRole: Role): Promise<void> {
     // Provenance and descendant custody do not fence writers launched through existing
     // daemons or unrestricted same-UID tools. No production enforcement provider is qualified.
     const sourceProof=async()=>{if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!scopeAgentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,scopeAgentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
-    const workspaces=new Workspaces(projectSource,{taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
+    const workspaces=new Workspaces(projectSource,{deferStartupReconciliation:()=>publicationGate?.hasPending()??false,taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(scopeFence)workspaces.setBackupWriterFence(scopeFence);
     await workspaces.list();restoreScopes.set(scopeId,workspaces);if(managedConfig)managedStores.set(scopeId,workspaces);
 
