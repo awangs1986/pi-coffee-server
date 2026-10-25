@@ -113,12 +113,16 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async extractMemory(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
+    const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');try{return await this.extractMemoryAdmitted(_id,input);}finally{release?.();}
+  }
+  private async extractMemoryAdmitted(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
     if(this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
     // An explicit provider registration is the sole optional extension. The normal
     // Harness, MISHU, MCP, project resources and subagents are never loaded here.
     const providerExtension=input.provider==='antigravity'?this.extensions().find(path=>path.endsWith('/pi-antigravity')):undefined;
     if(input.provider==='antigravity'&&!providerExtension)throw Error('Selected native provider unavailable for isolated memory extraction');
-    return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:this.options.cliPath,agentDir:this.options.agentDir,env:buildHostChildEnv(this.options.env),providerExtension});
+    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()]}):undefined;
+    return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:launch?.cliPath??this.options.cliPath,agentDir:this.options.agentDir,env:{...buildHostChildEnv(this.options.env),...launch?.env},providerExtension});
   }
 
   private extensions(): string[] { return this.options.runtime?.extensions() ?? this.options.extensions ?? []; }
@@ -218,6 +222,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async resetNative(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<PiSession>{
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.resetNativeAdmitted(sourceNativeId,options);}finally{release?.();}
+  }
+  private async resetNativeAdmitted(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<PiSession>{
     const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
     if(!source)throw new Error('Native Pi history is unavailable; no context was cleared');
     if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Reset destination already exists');
@@ -227,6 +234,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     return this.create({sessionId:options.sessionId,workspaceSessionId:options.workspaceSessionId,requireExisting:true});
   }
   async forkNative(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.forkNativeAdmitted(sourceNativeId,options);}finally{release?.();}
+  }
+  private async forkNativeAdmitted(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
     const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
     if(!source)throw new Error('Native Pi source history is unavailable; no replacement was created');
     if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Native Fork destination already exists');
@@ -305,6 +315,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async delete(sessionId: string): Promise<boolean> {
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.deleteAdmitted(sessionId);}finally{release?.();}
+  }
+  private async deleteAdmitted(sessionId:string):Promise<boolean>{
     const existing = (await this.listWithPaths()).find((session) => session.id === sessionId);
     if (existing === undefined) return false;
     if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(sessionId)) {

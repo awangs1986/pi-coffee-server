@@ -265,10 +265,15 @@ export class HostServer {
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;
       const administrator=this.options.backup?.administrator??'awangs';
-      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',tasks:await Promise.all((await target.workspaces!.list()).conversations.map(task=>coordinator?coordinator.status(target.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'}))),excludedEngines:['claude','cursor','grok']});
+      const status=async(target:UserSlot)=>({schemaVersion:1,scope:target.user??'',canManage:user===administrator,managedScopes:user===administrator?[...new Set([user,...this.options.backup?.scopes??[]])]:[],tasks:await Promise.all((await target.workspaces!.list()).conversations.map(task=>coordinator?coordinator.status(target.user??'default',task.id,task.engine??'pi'):Promise.resolve({taskId:task.id,engine:task.engine??'pi',state:'unprotected',coverage:['claude','cursor','grok'].includes(task.engine??'pi')?'excluded':'unavailable',checkpointId:null,captureAt:null,ageMs:null,stale:false,reason:['claude','cursor','grok'].includes(task.engine??'pi')?'Deferred engine outside this release':'Native writer coverage is not verified'}))),excludedEngines:['claude','cursor','grok']});
       if(req.method==='GET'){json(res,200,await status(slot));return;}
       if(req.method!=='POST'){json(res,405,{error:'Use GET or POST'});return;}
       const input=await readJson(req,8192);
+      if(input.action==='status'){
+        if(user!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
+        if(typeof input.scope!=='string'||(input.scope!==user&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
+        const target=await this.slotFor(input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await status(target));return;
+      }
       if(typeof input.taskId!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.taskId)){json(res,400,{error:'Invalid task identity'});return;}
       if(user!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
       let target=slot;
@@ -641,7 +646,7 @@ export class HostServer {
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues')):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));

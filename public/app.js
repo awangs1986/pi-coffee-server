@@ -1,3 +1,4 @@
+import {initBackupControls} from './backup.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
@@ -171,6 +172,8 @@ function captureSelection({task=true}={}){
 }
 let statusRequest=null,changesRequest=null,detailRequestSeq=0;
 const dialogs=createDialogManager(ui.app,ui.prompt);
+const backupControls=initBackupControls({context:()=>({user:currentUser}),onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
+$('#backup-btn')?.addEventListener('click',()=>void backupControls.open());
 let draftFiles = [];
 const decodingFiles=new Map();
 const imagesDecoding=()=>draftFiles.some(file=>decodingFiles.has(file));
@@ -1571,6 +1574,7 @@ async function whoAmI(epoch, signal) {
     const info = await response.json();
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
+    backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
     if(previousUser!==currentUser){displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
@@ -1597,6 +1601,7 @@ function revokeCachedIdentity(){
   connectionEpoch++;taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
+  backupControls.close();
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
