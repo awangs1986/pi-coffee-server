@@ -42,7 +42,10 @@ it('rejects symlink escapes and byte-budget overflow instead of calling partial 
   expect((await f.call({action:'capture',taskId:'task'})).data).toMatchObject({state:'failed',coverage:'unavailable',checkpointId:null,reason:'Source contains an unsafe path or unsupported file type'});
   await rm(join(f.task.cwd,'escape'));await writeFile(join(f.task.cwd,'large'),Buffer.alloc(8192));
   expect((await f.call({action:'capture',taskId:'task'})).data).toMatchObject({state:'failed',checkpointId:null,reason:'Capture resource limit exceeded'});
+  await rm(join(f.task.cwd,'large'));await writeFile(join(f.task.cwd,'local'),'inside-owned-tree');await symlink('local',join(f.task.cwd,'safe-link'));
+  expect((await f.call({action:'capture',taskId:'task'})).data.coverage).toBe('complete');
+  const safe=await f.backup.sealedCheckpoint('awangs','task');expect(safe!.manifest.objects.find(o=>o.path==='objects/workspace/safe-link')).toMatchObject({kind:'symlink',linkTarget:'local'});
   await mkdir(join(f.root,'checkpoints','staging','orphan'));await writeFile(join(f.root,'checkpoints','staging','orphan','seal'),'unfinished');
-  expect(await f.backup.sealedCheckpoint('awangs','task')).toBeUndefined();
+  expect((await f.backup.sealedCheckpoint('awangs','task'))!.manifest.checkpointId).toBe(safe!.manifest.checkpointId);
  }finally{await f.close();}
 });

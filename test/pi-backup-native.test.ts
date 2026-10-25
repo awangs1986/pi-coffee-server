@@ -39,7 +39,7 @@ it('seals real Pi JSONL with task registry/files only after supervised native li
   const reopened=SessionManager.open(join(point!.directory,'objects',nativeSource.id));expect(reopened.buildSessionContext().messages).toMatchObject([{role:'user',content:'native context must survive'}]);
   expect(await readFile(join(point!.directory,'objects','workspace','draft.md'),'utf8')).toBe('uncommitted native fixture');
   expect(JSON.parse(await readFile(join(point!.directory,'objects','registry'),'utf8')).conversation.id).toBe(task.id);
-  await writeFile(join(agentDir,'settings.json'),'{}');
+  await writeFile(join(agentDir,'settings.json'),JSON.stringify({skills:['/unowned/shared-skills']}));
   expect(await capture()).toMatchObject({state:'unavailable',checkpointId:result.checkpointId,reason:'Mutable native Pi configuration is not mapped for recovery'});await rm(join(agentDir,'settings.json'));
   const mishu=join(store.root,'.coffee','mishu');await mkdir(mishu,{recursive:true});await writeFile(join(mishu,'memory.json'),JSON.stringify({version:1,books:{'native-task:fixture':{entries:[{text:'external notes'}]}}}));
   expect(await capture()).toMatchObject({state:'unavailable',checkpointId:result.checkpointId,reason:'External MISHU context requires a recovery mapping'});await rm(join(mishu,'memory.json'));

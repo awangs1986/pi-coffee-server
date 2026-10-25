@@ -253,20 +253,21 @@ export class HostServer {
     if(this.options.runtimeStatus?.().mode==='emergency')return undefined;
     try{return dirname(createRequire(import.meta.url).resolve('pi-coffee-mishu/package.json'));}catch{return undefined;}
   }
-  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse) {
+  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse,admitted=false):Promise<void> {
     if(req.url==='/api/mishu/runtime'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       const token=req.headers.authorization?.replace(/^Bearer /,'')??'';
       const slots=await Promise.all([...this.slots.values()]);
       const slot=slots.find(s=>s.mishu?.accepts(token));
       if(!slot?.mishu){json(res,401,{error:'Invalid MISHU capability'});return;}
-      try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
+      const release=slot.workspaces?.backupWriterFence?.beginWriter('platform');try{json(res,200,await slot.mishu.runtime(token,await readJson(req,32768)));}catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}finally{release?.();}return;
     }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    if(req.method==='POST'&&req.url!=='/api/backup'&&slot.workspaces?.backupWriterFence&&!admitted)return slot.workspaces.backupWriterFence.runWriter('platform',()=>this.handleApi(req,res,true));
     if(req.url==='/api/backup'){
       if(!slot.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
       const coordinator=this.options.backup?.coordinator;

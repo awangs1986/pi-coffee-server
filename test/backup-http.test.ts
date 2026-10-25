@@ -45,6 +45,7 @@ it('captures a controlled native source at an idle cut and keeps the sealed poin
   }};
   let now=Date.parse('2026-10-24T00:00:00Z');
   const backup=new BackupCoordinator({root:join(root,'checkpoints'),adapter,now:()=>now});
+  expect(await backup.status('team.member','native-task','pi')).toMatchObject({state:'unprotected',checkpointId:null});
   const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Must not start an Agent');}};
   server=new HostServer({port:0,token:'backup-test',requireUser:true,factory,backup:{coordinator:backup},scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
   const call=async(body?:unknown,user='awangs')=>{

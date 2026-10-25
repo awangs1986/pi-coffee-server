@@ -1,3 +1,4 @@
+import {normalizeUsername} from '../shared/identity.js';
 import {renameSync} from 'node:fs';
 import {readReleaseIdentity} from '../shared/release.js';
 import {createHash,randomUUID} from 'node:crypto';
@@ -8,6 +9,7 @@ import type {AgentEngine} from '../shared/protocol.js';
 export const BACKUP_PROTOCOL_VERSION=1;
 export const BACKUP_ENGINES=['pi','codex'] as const;
 export const DEFERRED_BACKUP_ENGINES=['claude','cursor','grok'] as const;
+const validScope=(value:string)=>normalizeUsername(value)===value;
 const safeId=(value:string)=>/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
 const digest=(bytes:Uint8Array|string)=>createHash('sha256').update(bytes).digest('hex');
 export class BackupError extends Error {constructor(readonly code:string,message:string){super(message);}}
@@ -72,7 +74,7 @@ export class BackupCoordinator {
  private readonly tasks=new Map<string,{state:BackupTaskStatus['state'];reason?:string}>();
  private readonly captures=new Map<string,AbortController>();private initialized?:Promise<void>;private readonly metadata=new Map<string,Promise<SealedCheckpoint|undefined>>();private inventory?:Promise<SealedCheckpoint[]>;
  constructor(private options:BackupCoordinatorOptions){this.root=resolve(options.root);this.now=options.now??Date.now;}
- private key(scope:string,taskId:string){if(!safeId(scope)||!safeId(taskId))throw new BackupError('invalid_identity','Invalid backup identity');return scope+'/'+taskId;}
+ private key(scope:string,taskId:string){if(!validScope(scope)||!safeId(taskId))throw new BackupError('invalid_identity','Invalid backup identity');return scope+'/'+taskId;}
  private async initialize(){
   if(!this.initialized)this.initialized=(async()=>{await mkdir(this.root,{recursive:true,mode:0o700});await checkedDirectory(this.root);await mkdir(join(this.root,'sealed'),{mode:0o700,recursive:true});await checkedDirectory(join(this.root,'sealed'));await mkdir(join(this.root,'staging'),{mode:0o700,recursive:true});await checkedDirectory(join(this.root,'staging'));})();
   return this.initialized;
@@ -149,7 +151,7 @@ export class BackupCoordinator {
    try{
     await checkedDirectory(directory);const raw=await boundedText(join(directory,'manifest.json'),32*1024*1024),seal=(await boundedText(join(directory,'seal'),128)).trim();
     if(digest(raw)!==seal)continue;const manifest:CheckpointManifest=JSON.parse(raw);
-    if(manifest.schemaVersion!==1||manifest.checkpointId!==name||manifest.coverage!=='complete'||!Number.isFinite(Date.parse(manifest.captureAt))||!Array.isArray(manifest.members)||manifest.members.some(m=>!safeId(m.scope)||!safeId(m.taskId)))continue;
+    if(manifest.schemaVersion!==1||manifest.checkpointId!==name||manifest.coverage!=='complete'||!Number.isFinite(Date.parse(manifest.captureAt))||!Array.isArray(manifest.members)||manifest.members.some(m=>!validScope(m.scope)||!safeId(m.taskId)))continue;
     if(!Array.isArray(manifest.objects)||manifest.objects.length>(this.options.maxFiles??100000))continue;
     points.push({directory,manifest:keepObjects?manifest:{...manifest,objects:[],sources:[]}});
    }catch{/* Staging or damaged metadata cannot be a protected source checkpoint. */}
@@ -159,7 +161,7 @@ export class BackupCoordinator {
 
 }
 function validateGroup(group:NativeRecoveryGroup,scope:string,taskId:string){
- if(!safeId(group.groupId)||!group.members.length||!group.members.some(m=>m.scope===scope&&m.taskId===taskId)||group.members.some(m=>!safeId(m.scope)||!safeId(m.taskId)||!BACKUP_ENGINES.includes(m.engine as typeof BACKUP_ENGINES[number])||!m.nativeBindings.length))throw new BackupError('closure_incomplete','Native source closure is incomplete');
+ if(!safeId(group.groupId)||!group.members.length||!group.members.some(m=>m.scope===scope&&m.taskId===taskId)||group.members.some(m=>!validScope(m.scope)||!safeId(m.taskId)||!BACKUP_ENGINES.includes(m.engine as typeof BACKUP_ENGINES[number])||!m.nativeBindings.length))throw new BackupError('closure_incomplete','Native source closure is incomplete');
  if(!group.sources.length||new Set(group.sources.map(s=>s.id)).size!==group.sources.length||group.sources.some(s=>!safeId(s.id)||typeof s.recoveryKey!=='string'||!s.recoveryKey||s.recoveryKey.length>256||s.recoveryKey.startsWith('/')||s.recoveryKey.split('/').includes('..')||(s.path!==undefined&&!isAbsolute(s.path)))||!group.sources.some(s=>s.role==='native')||!group.sources.some(s=>s.role==='workspace')||!group.sources.some(s=>s.role==='registry')||!group.sources.some(s=>s.role==='task-data'))throw new BackupError('closure_incomplete','Native source closure is incomplete');
 }
 function publicReason(code:string){return ({configuration_incomplete:'Mutable native Pi configuration is not mapped for recovery',external_context:'External MISHU context requires a recovery mapping',writers_active:'Consistency group has active writers',capture_revoked:'Capture revoked by a writer; previous sealed checkpoint retained',writers_unknown:'Native writer coverage is not verified',capture_cancelled:'Capture cancelled; previous sealed checkpoint retained',capture_timeout:'Capture resource deadline exceeded',closure_incomplete:'Native source closure is incomplete',resource_limit:'Capture resource limit exceeded',unsafe_source:'Source contains an unsafe path or unsupported file type'} as Record<string,string>)[code]??'Capture failed; previous sealed checkpoint retained';}
