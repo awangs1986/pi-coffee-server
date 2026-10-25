@@ -142,7 +142,7 @@ export class BackupCoordinator {
   this.key(scope,taskId);await this.initialize();
   const points=verify?await this.readInventory(true):await(this.inventory??=this.readInventory(false));
   const candidates=points.filter(point=>point.manifest.members.some(m=>m.scope===scope&&m.taskId===taskId)).sort((a,b)=>b.manifest.captureAt.localeCompare(a.manifest.captureAt));
-  for(const point of candidates){try{if(verify)await verifyObjects(point.directory,point.manifest.objects);return point;}catch{/* Keep a damaged newest point from hiding the preceding intact point. */}}
+  for(const point of candidates){try{if(verify)await verifySealedCheckpoint(point.directory);return point;}catch{/* Keep a damaged newest point from hiding the preceding intact point. */}}
   return undefined;
  }
  private async readInventory(keepObjects:boolean):Promise<SealedCheckpoint[]>{
@@ -215,3 +215,19 @@ async function boundedText(path:string,limit:number){const info=await lstat(path
 async function fileDigest(path:string){const file=await open(path,'r'),hash=createHash('sha256');try{const buffer=Buffer.allocUnsafe(256*1024);for(;;){const {bytesRead}=await file.read(buffer,0,buffer.length,null);if(!bytesRead)break;hash.update(buffer.subarray(0,bytesRead));}return hash.digest('hex');}finally{await file.close();}}
 
 async function abortable<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{if(signal.aborted)throw signal.reason;return new Promise<T>((resolve,reject)=>{const cancel=()=>reject(signal.reason);signal.addEventListener('abort',cancel,{once:true});void work.then(resolve,reject).finally(()=>signal.removeEventListener('abort',cancel));});}
+
+/** Repository/restore boundary: authenticate the sealed manifest and the entire
+ * object tree, including rejecting extra files that Restic would otherwise read. */
+export async function verifySealedCheckpoint(directory:string,expectedManifestSha256?:string):Promise<CheckpointManifest>{
+ await checkedDirectory(directory);
+ const raw=await boundedText(join(directory,'manifest.json'),32*1024*1024),seal=(await boundedText(join(directory,'seal'),128)).trim();
+ if(digest(raw)!==seal||expectedManifestSha256&&digest(raw)!==expectedManifestSha256)throw new BackupError('checkpoint_damaged','Checkpoint manifest integrity failed');
+ const manifest:CheckpointManifest=JSON.parse(raw);
+ if(manifest.schemaVersion!==1||manifest.coverage!=='complete'||!Array.isArray(manifest.objects)||!Array.isArray(manifest.members)||!Number.isFinite(Date.parse(manifest.captureAt)))throw new BackupError('checkpoint_damaged','Checkpoint schema is not supported');
+ await verifyObjects(directory,manifest.objects);
+ const expected=new Set(manifest.objects.map(object=>object.path));
+ async function walk(path:string,name:string):Promise<void>{for(const child of await readdir(path)){const entry=name+'/'+child,full=join(path,child);if(!expected.delete(entry))throw new BackupError('checkpoint_damaged','Checkpoint contains unsealed material');if((await lstat(full)).isDirectory())await walk(full,entry);}}
+ const entries=await readdir(directory);if(entries.length!==3||!entries.every(entry=>['manifest.json','seal','objects'].includes(entry)))throw new BackupError('checkpoint_damaged','Checkpoint contains unsealed material');
+ await walk(join(directory,'objects'),'objects');if(expected.size)throw new BackupError('checkpoint_damaged','Checkpoint material missing');
+ return manifest;
+}

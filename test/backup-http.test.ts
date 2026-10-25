@@ -67,3 +67,30 @@ it('captures a controlled native source at an idle cut and keeps the sealed poin
   expect(await restarted.status('awangs','native-task','pi')).toMatchObject({checkpointId:captured.data.checkpointId,captureAt:captured.data.captureAt});
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
+
+it('keeps repository administration and recovery export away from ordinary accounts',async()=>{
+ const {BackupCoordinator}=await import('../src/host/backup.js');
+ const {BackupRepository}=await import('../src/host/backup-repository.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-repository-http-'));let server:HostServer|undefined;
+ try{
+  const stores=new Map<string,Workspaces>();for(const user of ['awangs','bob']){const store=new Workspaces(join(root,user,'projects'));stores.set(user,store);await store.createChatConversation(user+'-task');}
+  const coordinator=new BackupCoordinator({root:join(root,'checkpoints')}),repository=new BackupRepository({root:join(root,'repository-runtime'),coordinator});
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No native calls');}};
+  server=new HostServer({port:0,token:'backup-test',requireUser:true,factory,backup:{coordinator,repository},scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
+  const call=async(user:string,body?:unknown)=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/backup`,{method:body?'POST':'GET',headers:{authorization:'Bearer backup-test','x-pi-coffee-user':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,data:await response.json()};};
+  expect((await call('bob')).data.repository).toMatchObject({configured:false,enabled:false,jobs:[],points:[]});
+  for(const action of ['repository-export','repository-configure','repository-verify','repository-backup','repository-recover','repository-rotate'])expect((await call('bob',{action})).status).toBe(403);
+  expect((await call('awangs',{action:'repository-configure',destination:root,binary:'/bin/true'})).status).toBe(409);
+ }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});
+
+it('refuses key activation when production wiring has no enforceable model-secret boundary',async()=>{
+ const {BackupCoordinator}=await import('../src/host/backup.js');const {BackupRepository}=await import('../src/host/backup-repository.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-key-boundary-'));let server:HostServer|undefined;try{
+  const workspaces=new Workspaces(join(root,'projects'));await workspaces.createChatConversation('task');const coordinator=new BackupCoordinator({root:join(root,'checkpoints')}),repository=new BackupRepository({root:join(root,'runtime'),coordinator});
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No model');}};
+  server=new HostServer({port:0,token:'boundary',requireUser:true,factory,backup:{coordinator,repository,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'},scopeForUser:()=>({factory,workspaces})});await server.start();
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/api/backup`,{method:'POST',headers:{authorization:'Bearer boundary','x-pi-coffee-user':'awangs','content-type':'application/json'},body:JSON.stringify({action:'repository-export'})});expect(response.status).toBe(409);expect(await response.json()).toEqual({error:'Runtime secret is not isolated from unrestricted model processes'});
+  await expect(import('node:fs/promises').then(fs=>fs.stat(join(root,'runtime','password')))).rejects.toMatchObject({code:'ENOENT'});
+ }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});
