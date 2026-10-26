@@ -1,3 +1,5 @@
+- Per-conversation GitHub access for Gitea Work: [selection, runtime recreation and isolation](spec/github-accounts.md#github-access-for-a-gitea-work-conversation-2026-10-26).
+
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 

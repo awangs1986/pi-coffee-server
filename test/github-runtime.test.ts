@@ -12,7 +12,7 @@ it('uses independent Git and gh identities concurrently, denies unbound calls an
  expect((await exec('/bin/bash',['-lc','command -v gh'],{env:{...process.env,...first}})).stdout.trim()).toBe(join(manager.root,'tools','one','gh'));
  expect((await exec('/bin/bash',['-lc','gh api user'],{env:{...process.env,...second}})).stdout).toBe('private-two');
  for(const args of [['auth','status','-t'],['auth','status','--show-token=true'],['-R','org/repo','auth','status','-t']])await expect(exec('gh',args,{env:{...process.env,...first}})).rejects.toThrow();
- await expect(gh(denied)).rejects.toThrow();
+ await expect(gh(denied)).rejects.toThrow('No GitHub account is selected for this conversation');
  // Real Git credential interface must suppress a hostile ambient fallback helper.
  const gitConfig=join(root,'ambient-config');await writeFile(gitConfig,'[credential]\n helper = "!f() { echo username=wrong; echo password=ambient-secret; }; f"\n');
  const credential=(env:Record<string,string>)=>new Promise<string>((resolve,reject)=>{const p=execFile('git',['credential','fill'],{env:{...process.env,GIT_CONFIG_GLOBAL:gitConfig,...env}},(e,out)=>e?reject(e):resolve(out));p.stdin!.end('protocol=https\nhost=github.com\n\n');});

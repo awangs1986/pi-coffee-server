@@ -256,7 +256,7 @@ export class Workspaces {
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;
   }); }
-  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
+  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,taskGitHubAccounts:Boolean(this.githubAccounts),forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async lookupByCwd(cwd:string){await this.load();return this.state.conversations.find(c=>samePath(c.cwd,cwd));}
   async branches(projectId:string):Promise<string[]> {
@@ -317,6 +317,25 @@ export class Workspaces {
     const project:Project={id:`github-${repo.id}${this.githubAccounts?'-'+accountId:''}`,...(this.githubAccounts?{githubAccountId:accountId}:{}),name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'github'};
     this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
+  async validateTaskGitHubBinding(id:string,accountId:unknown) {
+    await this.load();
+    if(!this.githubAccounts)throw new Error('Account management unavailable');
+    const c=this.conversation(id),p=this.project(c.projectId);
+    if(c.workspaceKind!=='project'||p.forge==='github'||c.archived)throw new Error('Select an active Gitea Work task; GitHub projects retain their project account');
+    await this.checkDirectory(c);
+    if(c.runState==='running'||c.takeover?.status==='preparing'||c.forking?.status==='preparing'||c.fork?.status==='preparing')throw new Error('Finish running work before changing GitHub authorization');
+    if(accountId!==null){
+      if(typeof accountId!=='string'||!accountId)throw new Error('Select a connected GitHub account');
+      await (await this.githubAccounts.client(accountId)).identity();
+    }
+  }
+  async bindTaskGitHubAccount(id:string,accountId:unknown){return this.mutate(async()=>{
+    await this.validateTaskGitHubBinding(id,accountId);
+    const c=this.conversation(id),previous=c.githubAccountId;
+    if(accountId===null)delete c.githubAccountId;else c.githubAccountId=accountId as string;
+    try{await this.save();}catch(error){if(previous===undefined)delete c.githubAccountId;else c.githubAccountId=previous;throw error;}
+    return structuredClone(c);
+  },()=>this.conversationLock(id));}
   async bindGitHubProject(projectId:string,accountId:string){return this.mutate(async()=>{
     if(!this.githubAccounts)throw new Error('Account management unavailable');
     const p=this.project(projectId);if(p.forge!=='github'||p.githubAccountId)throw new Error('Only unbound GitHub projects can be bound');

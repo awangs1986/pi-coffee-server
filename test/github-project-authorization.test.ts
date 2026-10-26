@@ -18,6 +18,7 @@ it.each([false,true])('pins account identity and safely binds legacy Codex tasks
  const bound=await accounts.handle({action:'bind',token:'token-work'}) as {account:{id:string}};
  const legacy=new Workspaces(join(root,'projects'),{ownerId:'alice',github:new GitHubClient({apiUrl:`http://127.0.0.1:${a.port}`,token:'token-work'})});
  const oldProject=await legacy.registerGitHubProject('org/project');const oldTask=await legacy.createConversation(oldProject.id,'main','legacy-task','codex');
+ const giteaProject=await legacy.registerProject('gitea-project',remote);const giteaTask=await legacy.createConversation(giteaProject.id,'main','gitea-task','codex');
  const workspaces=new Workspaces(join(root,'projects'),{ownerId:'alice',githubAccounts:accounts});
  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No Agent expected');}};
  const envLog=join(root,'codex-env.json');const native=new NativeAgentFactory({pi:factory,workspaces,codex:{command:process.execPath,args:[resolve('test/fixtures/fake-codex.mjs')]},codexSessionFactory:(id,cwd,onBound,environment)=>new CodexSessionFactory({cwd,cliPath:process.execPath,commandArgs:[resolve('test/fixtures/fake-codex-app-server.mjs')],env:{FIXTURE_GITHUB_ENV_LOG:envLog,FAKE_CODEX_BACKGROUND_FILE:join(root,'background-active')},envForSession:environment,idleTimeoutMs:600000,onBound:async(_host,native)=>onBound(native)})});
@@ -28,13 +29,24 @@ it.each([false,true])('pins account identity and safely binds legacy Codex tasks
  const created=await call({action:'conversation',projectId:project.body.id,id:'task-auth',workspaceKind:'project',engine:'pi'});expect(created.status).toBe(200);expect(created.body.githubAccountId).toBe(bound.account.id);
  const reopened=new Workspaces(join(root,'projects'),{ownerId:'alice',githubAccounts:accounts});expect((await reopened.lookup('task-auth'))?.githubAccountId).toBe(bound.account.id);
  expect(seen.every(s=>s==='Bearer token-work')).toBe(true);
- const open=async()=>{
-  const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer transport','x-pi-coffee-user':'alice'}});const frames:any[]=[];socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:oldTask.id,nativeProtocol:1}));
+ const open=async(id=oldTask.id)=>{
+  const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer transport','x-pi-coffee-user':'alice'}});const frames:any[]=[];socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:id,nativeProtocol:1}));
   for(let i=0;i<150&&!frames.some(f=>f.type==='opened'||f.type==='error');i++)await new Promise(r=>setTimeout(r,20));expect(frames.some(f=>f.type==='opened'),JSON.stringify(frames)).toBe(true);return socket;
  };
- if(backgroundUnknown){await writeFile(join(root,'background-active'),'active');expect((await call({action:'github_bind',projectId:oldProject.id,accountId:bound.account.id})).status).toBe(409);return;}
+ if(backgroundUnknown){await writeFile(join(root,'background-active'),'active');expect((await call({action:'github_bind',projectId:oldProject.id,accountId:bound.account.id})).status).toBe(409);expect((await call({action:'github_task_bind',id:giteaTask.id,accountId:bound.account.id})).status).toBe(409);expect((await workspaces.lookup(giteaTask.id))?.githubAccountId).toBeUndefined();return;}
  const first=await open();expect(JSON.parse(await readFile(envLog,'utf8')).githubConfig).toContain('/tools/unbound/config');
  const boundProject=await call({action:'github_bind',projectId:oldProject.id,accountId:bound.account.id});expect(boundProject.status).toBe(200);first.close();
  const second=await open();expect(JSON.parse(await readFile(envLog,'utf8')).githubConfig).toBe(join(accounts.root,'tools',bound.account.id,'config'));second.close();
+ const third=await open(giteaTask.id);expect(JSON.parse(await readFile(envLog,'utf8')).githubConfig).toContain('/tools/unbound/config');
+ expect((await call({action:'github_task_bind',id:giteaTask.id,accountId:bound.account.id},'bob')).status).toBe(409);
+ expect((await call({action:'github_task_bind',id:giteaTask.id,accountId:'foreign-account'})).status).toBe(409);
+ const taskBound=await call({action:'github_task_bind',id:giteaTask.id,accountId:bound.account.id});
+ expect(taskBound.status).toBe(200);expect(taskBound.body.githubAccountId).toBe(bound.account.id);third.close();
+ expect((await new Workspaces(join(root,'projects'),{githubAccounts:accounts}).lookup(giteaTask.id))?.githubAccountId).toBe(bound.account.id);
+ const fourth=await open(giteaTask.id);expect(JSON.parse(await readFile(envLog,'utf8')).githubConfig).toBe(join(accounts.root,'tools',bound.account.id,'config'));fourth.close();
+ expect((await workspaces.list()).projects.find(p=>p.id===giteaProject.id)?.githubAccountId).toBeUndefined();
+ expect((await call({action:'github_task_bind',id:oldTask.id,accountId:null})).status).toBe(409);
+ expect((await call({action:'github_task_bind',id:giteaTask.id,accountId:null})).status).toBe(200);
+ const fifth=await open(giteaTask.id);expect(JSON.parse(await readFile(envLog,'utf8')).githubConfig).toContain('/tools/unbound/config');fifth.close();
  await accounts.handle({action:'delete',id:bound.account.id});expect((await call({action:'github_repos',accountId:bound.account.id})).status).toBe(409);
-});
+},20000);

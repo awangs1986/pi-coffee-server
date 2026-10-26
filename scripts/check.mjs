@@ -1,3 +1,4 @@
+import {existsSync} from 'node:fs';
 import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
@@ -17,7 +18,11 @@ const run=(args,program=process.execPath)=>new Promise((resolve,reject)=>{
 try {
  let code=await run(['node_modules/eslint/bin/eslint.js','public','scripts','eslint.config.mjs']);
  if(!code)code=await run(['run','build'],'npm');
- if(!code)code=await run(['node_modules/vitest/vitest.mjs','run']);
+ // /proc-based reclamation fixtures need their own process inventory. Other
+ // fixture/native processes in a shared VM legitimately make cleanup conservative.
+ const isolatedTemp=process.platform==='linux'&&existsSync('/usr/bin/unshare');
+ if(!code)code=await run(['node_modules/vitest/vitest.mjs','run',...(isolatedTemp?['--exclude','test/runtime-temp.test.ts']:[])]);
+ if(!code&&isolatedTemp)code=await run(['--user','--map-root-user','--pid','--fork','--mount-proc',process.execPath,'node_modules/vitest/vitest.mjs','run','test/runtime-temp.test.ts','--maxWorkers','1'],'/usr/bin/unshare');
  if(!code)code=await run(['scripts/check-browser.mjs']);
  process.exitCode=code;
 } finally {stop('SIGKILL');await rm(root,{recursive:true,force:true});}

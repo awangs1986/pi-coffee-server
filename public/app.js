@@ -3280,7 +3280,10 @@ mishuControls=initMishuControls({button:$('#mishu-toggle'),configureButton:$('#m
   request:mishuRequest,
   busyChanged:(busy,id)=>{if(busy)mishuChangingId=id;else if(mishuChangingId===id)mishuChangingId=null;refreshComposer();},
   changed:id=>{closeBrandMenu();if(activeId===id)connect();},toast:message=>toast(message)});
-const githubAccountManager=initGitHubAccounts({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},projects:()=>workspaceState?.projects??[],bind:async(projectId,accountId)=>{await workspaceApi({action:'github_bind',projectId,accountId});await loadWorkspace();}});
+const githubAccountManager=initGitHubAccounts({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();},projects:()=>workspaceState?.projects??[],task:()=>{
+  const task=currentTask(),project=workspaceState?.projects.find(p=>p.id===task?.projectId);
+  return workspaceState?.capabilities?.taskGitHubAccounts&&task?.workspaceKind==='project'&&!task.archived&&project&&projectForge(project)==='gitea'?{id:task.id,name:sessionTitle(sessions.find(s=>s.id===task.id)||{id:task.id}),githubAccountId:task.githubAccountId}:null;
+},bindTask:async(id,accountId)=>{if(activeId!==id)throw Error('当前对话已切换，请刷新后再操作');await workspaceApi({action:'github_task_bind',id,accountId});await loadWorkspace();},bind:async(projectId,accountId)=>{await workspaceApi({action:'github_bind',projectId,accountId});await loadWorkspace();}});
 initRunners({onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
 const sshmePanel=initSshme({
   onOpen:()=>{closeBrandMenu();closeAgentMenu();closeSidebarOnMobile();ui.slash.classList.add('hidden');},

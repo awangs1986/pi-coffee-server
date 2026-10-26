@@ -439,6 +439,26 @@ export class HostServer {
           json(res,202,target);return;
         }catch(error){slot.lifecycleLocks.delete(id);slot.lifecycleLocks.delete(targetId);throw error;}
       }
+      if(input.action==='github_task_bind'){
+        const id=input.id;
+        if(typeof id!=='string')throw new Error('Select a Work task');
+        if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
+        slot.lifecycleLocks.add(id);let stopped=false;
+        try {
+          await ws.validateTaskGitHubBinding(id,input.accountId);
+          const live=slot.registry.get(id)??(await slot.registry.open(id)).session;
+          const state=await live.readNativeState();
+          if(live.isBusy||state.isStreaming||state.isCompacting||live.pendingUiRequests.length)throw new Error('Finish running work, queued input and questions before changing GitHub authorization');
+          const background=await live.backgroundState();
+          if(!background.known||background.active)throw new Error('Background work is active or unknown');
+          if(live.isBusy||live.pendingUiRequests.length)throw new Error('Task resumed during authorization change');
+          await slot.registry.stopIdle(id);stopped=true;await slot.factory.resetTaskRuntime?.(id);
+          json(res,200,await ws.bindTaskGitHubAccount(id,input.accountId));
+        }finally{
+          slot.lifecycleLocks.delete(id);
+          if(stopped)for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
+        }return;
+      }
       if(input.action==='github_bind'){
         const ids=(await ws.list()).conversations.filter(c=>c.projectId===input.projectId).map(c=>c.id);
         if(ids.some(id=>slot.lifecycleLocks.has(id)))throw new Error('Project lifecycle operation in progress');
