@@ -1,3 +1,5 @@
+> Current-deployment clarification (2026-10-26): Physical Web/User-VM separation and mandatory central Relay below are historical. Host content ownership remains a logical boundary when services share one machine. See [current topology](../architecture/topology.md). Original decision text is retained as history.
+
 # Control Plane relays; User VM owns execution and content
 
 Status: accepted

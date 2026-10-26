@@ -2,6 +2,8 @@
 
 # 任务、Conversation 与 VM 本地工作目录
 
+> Current placement (2026-10-26): [Web, Host and native CLIs share one VM](../architecture/topology.md). “所属 VM” identifies the execution machine, not a dedicated VM per participant. Web/Host content ownership below is a logical process boundary on the shared machine; task directories and authenticated scopes distinguish users.
+
 > Current native-engine boundary (reviewed 2026-10-06): shared Workspace and file ownership apply to all five Work engines. Native bindings and lifecycle behavior are implemented behind Host Adapters; verified limits are in [native engines](native-agent-engines.md), [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md). The directory tree below describes the retained pre-bundle layout; [task storage](task-storage.md) governs configured new-task bundles.
 
 状态：owner 已确认（2026-09-22）；Agent/Server 已实现本合同，验收记录见 [联合证据](../reviews/conversation-workspaces-20260922.md)与 Agent #46 / Server #3。此规格定义行为，具体检查与部署结果以工单证据为准。

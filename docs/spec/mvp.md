@@ -1,3 +1,5 @@
+> Historical 2026-09 MVP snapshot. Its per-user VM, separate Web machine, mandatory Relay and single-engine requirements are superseded for current deployment by [the current topology](../architecture/topology.md). Keep this document as dated acceptance history; use current feature contracts for implementation.
+
 # PI Coffee MVP specification
 
 ## Goal

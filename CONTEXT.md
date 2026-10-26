@@ -1,12 +1,14 @@
 # PI Coffee domain model
 
-Last verified topology receipt: same-VM Web/Host v0.27 / `d835f00`; live release
-metadata owns current version identity. October 17 stability
-changes are tracked in docs/development/stability-20261017.md. Earlier review: 2026-10-13 against `789a0d1` / `e7f8ce5`. See the [weekly source/spec map](docs/reviews/spec-freshness-20261013.md)
-for source, installed-package and deployment distinctions. The earlier
-[project refocus](docs/reviews/spec-freshness-20261006.md) remains historical evidence. Start with
-[REPOSITORIES.md](REPOSITORIES.md) for source ownership; use the linked feature
-contracts for defaults, limits and acceptance. Picode/V5 is historical.
+Current topology baseline (reviewed 2026-10-26): Web, the primary workbench Host
+and native Agent CLIs share one Linux VM and OS account. Web and Host run as
+separate user services. [Current architecture](docs/architecture/topology.md)
+defines physical placement, scoped application data and the legacy-owner exception.
+The last observed running release is v0.56 / `1db8ab3`; future deployment identity
+must come from live `/api/release` and receipts, not this dated observation.
+See [the audit](docs/reviews/topology-freshness-20261026.md) and
+[REPOSITORIES.md](REPOSITORIES.md) for source ownership. Earlier dated audits are
+historical evidence, not competing topology requirements.
 
 ## Participants and ownership
 
@@ -28,7 +30,8 @@ native Agent execution, task files, input queues and the derived display index.
 Browser detachment does not stop a run. Host shutdown can interrupt execution;
 uncertain commands are not automatically replayed.
 
-**User VM**: the owner-managed Linux execution machine. The current deployment
+**User VM**: the owner-managed Linux execution machine; this name does not mean
+a dedicated VM for each Web user. The current deployment
 has one physical owner and one OS login, with separate Web identities and task
 directories. This is the operating interpretation in [ADR-0020](docs/adr/0020-unified-github-authority.md),
 not an OS sandbox between Agents. Independent Host routing remains supported;

@@ -1,5 +1,10 @@
 # Complete two-user workbench on a shared Host
 
+Current physical placement: Web, the primary Host and native CLIs run on the same
+VM under one OS account, as [documented in the current topology](../architecture/topology.md).
+Per-user application scopes and task directories implement the boundaries below;
+users are not required to provision separate VMs.
+
 Owner reaffirmation, 2026-10-13. [Server #125](https://github.com/awangs1986/pi-coffee-server/issues/125).
 This corrects v0.21 / #124's incomplete onboarding boundary.
 

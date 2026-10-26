@@ -1,3 +1,5 @@
+> Current-deployment clarification (2026-10-26): Shared execution remains accepted. The login-name cookie/allow-list mechanism and scheduling assumptions below describe the original decision; current route-file scopes use numeric IDs plus an explicit legacy-owner exception. Web now shares the execution VM. See [current topology](../architecture/topology.md). Original decision text is retained as history.
+
 # One shared User VM: Gitea identity on the Web Server, per-user folders in the Host
 
 Status: accepted (owner decision, 2026-09-27)
