@@ -82,8 +82,9 @@ OAuth authenticates routing; it does not replace the VM owner's forge credential
 
 Selecting a new entry resolves `owner/repo` against the configured Gitea instance,
 requires current push permission and a non-archived repository, and verifies the
-VM's Git access to the default branch before saving a Project. Empty repositories
-need an initial commit. Registration is idempotent by forge and repository ID;
+VM's Git access before saving a Project. Repositories with no remote refs are
+selectable without an initial commit; selection itself remains read-only. A
+non-empty repository must contain the requested branch. Registration is idempotent by forge and repository ID;
 legacy Gitea Projects retain their IDs and names. New IDs use `gitea-<repo-id>`.
 This operation does not create, migrate or clone a remote repository. Independent
 cloning still happens on task creation. The picker preserves unsent text, engine
@@ -93,3 +94,30 @@ selection and task binding; a delayed result must not replace a newer selection.
 Tokens stay on Host; Browser cannot supply an API origin. **Discover local
 projects** retains its separate local-import behavior. New Gitea project creation
 and the GitHub picker remain available.
+
+## Empty repository Work creation (2026-10-25)
+
+Gitea and GitHub Work tasks may start from an empty repository. On explicit task
+creation, Host initializes the repository default branch with a file-free
+`Initialize project` commit, then clones it into the normal independent task
+branch. No README, source file or framework is generated. This establishes a
+common baseline for diff, checkpoints, subsequent tasks and pull requests.
+
+Initialization uses the selected account's Git authorization and author identity.
+A missing branch in a populated repository, a tag-only repository, or failed
+authentication is not treated as an empty repository. Empty repositories must
+start from their configured default branch. The first push requires the target
+ref to remain absent; concurrent initialization never overwrites another commit.
+A losing task clones the branch confirmed on the remote. Temporary initialization
+clones are reclaimed on success or failure; the remote baseline is retained if
+later task creation fails, so an explicit retry can continue normally.
+
+## Create a Gitea repository from the picker (2026-10-25)
+
+The Gitea repository picker includes a visible **New repository** button beside
+its heading, including when the repository list is empty. It uses the existing
+private Gitea project creation operation and name validation. Successful creation
+selects that project in the current Work draft while preserving message text and
+Agent/model settings; it does not start an Agent or send the message. Canceling
+keeps the draft intact. A response arriving after navigation must not change the
+new selection. The GitHub picker continues to select existing repositories only.

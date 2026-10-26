@@ -30,6 +30,7 @@ async function setup({accounts=false,github=true,task=null,reposError,registrati
     const body=init?.body ? JSON.parse(init.body) : null;
     if(!body)return json({projects,conversations,sidebar:{assignments:{},collapsed:[]},vmId:'vm-1',capabilities:{chatWorkspaces:true,forges:{gitea:true,github,...(accounts?{githubAccounts:true}:{})}}});
     requests.push(body);
+    if(body.action==='project'){await registrationGate;const project={id:'new-gitea',name:body.name,branch:'main'};projects.push(project);return json(project);}
     if(body.action==='gitea_repos')return json([{id:'88',fullName:'awangs/ArenaModels',defaultBranch:'trunk',canPush:true}]);
     if(body.action==='gitea_project'){const project={id:'gitea-88',repoId:'88',name:body.repository,branch:'trunk',forge:'gitea'};projects.push(project);return json(project);}
     if(body.action==='github_repos')return reposError ? json({error:reposError},false) : json(REPOS.map(repo=>({...repo,...(projects.some(p=>p.repoId===repo.id) ? {projectId:'github-'+repo.id} : {})})));
@@ -215,4 +216,33 @@ it('preserves a branch typed while remote suggestions are loading',async()=>{
   release();await vi.advanceTimersByTimeAsync(20);
   expect(q<HTMLInputElement>('#start-branch').value).toBe('arena/feature');
   expect([...q<HTMLDataListElement>('#remote-branches').options].map(o=>o.value)).toEqual(['main','trunk','dev']);
+});
+
+it('creates a Gitea repository directly from the picker and selects it without losing the draft',async()=>{
+ const app=await setup();await chooseWork();await selectProject('p');
+ q<HTMLTextAreaElement>('#prompt').value='Build from zero';
+ const engine=q<HTMLSelectElement>('#task-engine').value;
+ await selectProject('__add_gitea__');
+ expect(q<HTMLButtonElement>('#repository-create-gitea')).not.toBeNull();
+ expect(hidden('#repository-create-gitea')).toBe(false);
+ q<HTMLButtonElement>('#repository-create-gitea').click();await vi.advanceTimersByTimeAsync(20);
+ expect(hidden('#github-modal')).toBe(true);
+ q<HTMLInputElement>('#modal-input').value='new-project';q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+ expect(app.requests.filter(r=>r.action==='project')).toEqual([{action:'project',name:'new-project'}]);
+ expect(q<HTMLSelectElement>('#project-select').value).toBe('new-gitea');
+ expect(q<HTMLTextAreaElement>('#prompt').value).toBe('Build from zero');
+ expect(q<HTMLSelectElement>('#task-engine').value).toBe(engine);
+ expect(app.requests.some(r=>r.action==='conversation')).toBe(false);
+ await selectProject('__add_github__');expect(hidden('#repository-create-gitea')).toBe(true);
+});
+
+it('does not select a newly created Gitea repository after the user starts another draft',async()=>{
+ let release!:()=>void;const registrationGate=new Promise<void>(resolve=>{release=resolve;});
+ const app=await setup({registrationGate});await chooseWork();await selectProject('p');
+ await selectProject('__add_gitea__');q<HTMLButtonElement>('#repository-create-gitea').click();await vi.advanceTimersByTimeAsync(20);
+ q<HTMLInputElement>('#modal-input').value='new-project';q<HTMLButtonElement>('#modal-ok').click();await vi.advanceTimersByTimeAsync(20);
+ q<HTMLButtonElement>('#new-task').click();await vi.advanceTimersByTimeAsync(20);await chooseWork();await selectProject('p');
+ release();await vi.advanceTimersByTimeAsync(20);
+ expect(app.projects.some(p=>p.id==='new-gitea')).toBe(true);
+ expect(q<HTMLSelectElement>('#project-select').value).toBe('p');
 });
