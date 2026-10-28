@@ -81,6 +81,8 @@ def prepare(profile_path, custody_root, executable, arguments):
             overrides = {'name': provider['provider'], 'base_url': 'http://127.0.0.1:' + str(provider['port']) + '/v1', 'env_key': 'PI_COFFEE_PROVIDER_PLACEHOLDER', 'requires_openai_auth': False, 'supports_websockets': False}
             for name, content in overrides.items():
                 overlay += ['-c', prefix + name + '=' + json.dumps(content)]
+        elif provider['engine'] == 'git':
+            pass  # Fixed Host Git command; no model credentials or provider overlay.
         else:
             raise ValueError('Unknown provider engine')
         executable, arguments = provider['node'], [str(runtime / 'provider-loopback.mjs'), '--socket', '/run/pi-coffee/provider.sock', '--port', str(provider['port']), '--', executable, *overlay]
