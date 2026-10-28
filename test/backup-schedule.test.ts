@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {mkdtemp,rm,mkdir,writeFile,rename} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -41,8 +41,8 @@ it('persists a Toronto daily attempt, retries at 15/60 minutes, and catches up o
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
-it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('stores old sealed points while busy, keeps stale alerts after failed fresh writes, and survives Web/Host offline honestly',async()=>{
- const root=await mkdtemp(join(tmpdir(),'coffee-schedule-real-'));let server:HostServer|undefined;
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('persists failure, stale, retry and recovery alerts without native launches or HTTP reminders',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-schedule-real-'));let server:HostServer|undefined;let fetchObserver:ReturnType<typeof vi.spyOn>|undefined;const requests:{url:string;method:string;action?:string;scope?:string}[]=[];let nativeLaunches=0;
  let time=Date.parse('2026-10-24T07:00:00Z');
  const stores=new Map<string,Workspaces>(),fence=new WriterAdmissionFence({writerClasses:['fixture'],uncoveredWriters:[],probe:async()=>({known:true})});
  try{
@@ -53,8 +53,10 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('stores old sealed points while bu
   await coordinator.capture('alice','task','pi');await coordinator.capture('bob','task','pi');
   await stores.get('alice')!.createChatConversation('new-task');await stores.get('alice')!.createChatConversation('deferred');
   // The actual Host inventory contains a newly created task even though no point exists for it.
-  const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Schedule must not launch a model');}};
+  const factory={list:async()=>[],delete:async()=>false,create:async()=>{nativeLaunches++;throw Error('Schedule must not launch a model');}};
   server=new HostServer({port:0,token:'private-schedule-test',requireUser:true,factory,backup:{coordinator,scopes:['alice','bob']},scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
+  const inventoryUrl=`http://127.0.0.1:${server.address().port}/api/backup`,originalFetch=globalThis.fetch;
+  fetchObserver=vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{const url=input instanceof Request?input.url:String(input),request:{url:string;method:string;action?:string;scope?:string}={url,method:init?.method??(input instanceof Request?input.method:'GET')};requests.push(request);if(typeof init?.body==='string'){try{const body=JSON.parse(init.body);request.action=body?.action;request.scope=body?.scope;}catch{/* Non-JSON attempts stay recorded and fail the final allowlist. */}}if(url!==inventoryUrl)throw Error('Synthetic fixture refuses unexpected outbound request');return originalFetch(input,init);});
   const credential=join(root,'host-token');await writeFile(credential,'private-schedule-test',{mode:0o600});
   const disk=join(root,'disk');await mkdir(disk,{mode:0o700});
   const repository=new BackupRepository({root:join(root,'repository'),coordinator,now:()=>time});await repository.configure({destination:disk,binary:process.env.PI_COFFEE_TEST_RESTIC!});await repository.verifyRecoveryPackage(await repository.exportRecoveryPackage());
@@ -84,7 +86,9 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('stores old sealed points while bu
   expect(status.alerts.filter(a=>a.kind==='inventory-unavailable'&&!a.resolvedAt)).toHaveLength(1);
   expect((await repository.jobs()).filter(j=>j.state==='succeeded')).toHaveLength(3);
   expect(JSON.stringify(await runner.status('bob'))).not.toContain('new-task');
- }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+  expect(nativeLaunches).toBe(0);expect(requests.length).toBeGreaterThan(0);expect(requests.filter(request=>request.url!==inventoryUrl||request.method!=='POST'||request.action!=='status'||!['alice','bob'].includes(request.scope??''))).toEqual([]);
+  const reopened=new BackupJobRunner({root:join(root,'schedule'),repository,coordinator,now:()=>time});const persisted=await reopened.status('alice');expect(persisted.alerts.filter(alert=>alert.kind==='point-stale')).toMatchObject([{resolvedAt:'2026-10-25T09:00:00.000Z'}]);expect(persisted.alerts.filter(alert=>alert.kind==='point-stale')).toHaveLength(1);
+ }finally{fetchObserver?.mockRestore();await server?.close();await rm(root,{recursive:true,force:true});}
 },180000);
 
 it('dispatches once at 04:00 across Toronto fall-back and spring-forward without replaying a new revision in the past',async()=>{
