@@ -2,7 +2,7 @@ export async function githubAccountRequest(input){
  const response=await fetch('/api/github-accounts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
  const result=await response.json();if(!response.ok)throw new Error(result.error||'GitHub 账号操作失败');return result;
 }
-export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>{}}={}){
+export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>{},task=()=>null,bindTask=async()=>{}}={}){
  const $=id=>document.getElementById(id),dialog=$('github-accounts-dialog');let busy=false,epoch=0;
  const status=text=>{$('github-accounts-status').textContent=text;};
  const action=async work=>{if(busy)return;busy=true;epoch++;$('github-accounts-refresh').disabled=true;try{await work();}catch(error){status(error.message);}finally{busy=false;$('github-accounts-refresh').disabled=false;}};
@@ -12,7 +12,18 @@ export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>
   try{
    const data=await githubAccountRequest({action:'list'});if(sequence!==epoch)return;
    $('github-connect').disabled=!data.oauthConfigured;
-   status(data.oauthConfigured?'每个项目使用明确选定的账号。解除绑定后，后续 GitHub 操作会停止。':'管理员尚未配置 GitHub OAuth App，暂时无法添加账号。');
+   status(data.oauthConfigured?'GitHub 项目使用项目账号；Gitea 对话可单独选择 GitHub 账号。解除绑定后，后续 GitHub 操作会停止。':'管理员尚未配置 GitHub OAuth App，暂时无法添加账号。');
+   const current=task(),taskRow=$('github-task-row'),clear=$('github-task-clear');
+   taskRow.hidden=!current;
+   if(current){
+    const login=data.accounts.find(a=>a.id===current.githubAccountId)?.login;
+    $('github-task-summary').textContent='当前对话：'+current.name+' · GitHub：'+(login||(current.githubAccountId?'账号已断开':'尚未选择'));
+    clear.hidden=!current.githubAccountId;
+    clear.onclick=()=>void action(async()=>{
+     if(task()?.id!==current.id)throw Error('当前对话已切换，请刷新后再操作');
+     status('正在取消当前对话的 GitHub 授权…');await bindTask(current.id,null);await load();status('已取消该对话的 GitHub 授权，账号连接仍保留。');
+    });
+   }
    const list=$('github-accounts-list');list.replaceChildren();
    if(!data.accounts.length){const p=document.createElement('p');p.textContent='尚未连接 GitHub 账号';list.append(p);}
    const legacy=$('github-legacy-project');legacy.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='选择尚未绑定的旧 GitHub 项目';legacy.append(empty);
@@ -21,6 +32,14 @@ export function initGitHubAccounts({onOpen=()=>{},projects=()=>[],bind=async()=>
    for(const account of data.accounts){
     const row=document.createElement('div');row.className='runner-row';const name=document.createElement('strong');name.textContent=account.login;row.append(name);
     const actions=document.createElement('div');actions.className='runner-actions';
+    if(current){
+     const button=document.createElement('button');button.type='button';button.className='btn small';
+     button.textContent=current.githubAccountId===account.id?'当前对话正在使用':'用于当前对话';button.disabled=current.githubAccountId===account.id;
+     button.addEventListener('click',()=>void action(async()=>{
+      if(task()?.id!==current.id)throw Error('当前对话已切换，请刷新后再操作');
+      status('正在为当前对话设置 '+account.login+'…');await bindTask(current.id,account.id);await load();status(current.name+' 已使用 '+account.login+'，可继续访问 GitHub。');
+     }));actions.append(button);
+    }
     for(const [key,label] of [['check','检查授权'],['bind','绑定旧项目'],['delete','解除绑定']]){
      if(key==='bind'&&legacy.options.length===1)continue;
      const button=document.createElement('button');button.type='button';button.className='btn small';button.textContent=label;if(key==='delete')button.dataset.accountDelete=account.id;

@@ -2,6 +2,12 @@
 
 # Unified release procedure
 
+The current installation uses one Linux VM and OS account with separate Web and
+primary Host user services; native CLIs execute there too. Start with
+[the current topology](../architecture/topology.md) and
+[single-VM templates](../../deploy/single-vm/README.md). Multi-machine instructions
+remain supported alternatives and historical migration/rollback procedures.
+
 For checked staging and compatible Browser-only activation, use [the repository-owned tools](../development/verification-and-release.md). CLI status and `/api/release` distinguish source, frontend and backend identities; staging never restarts Host/Web.
 
 Before publishing an update, apply the [formal version policy](versioning.md)
@@ -12,10 +18,10 @@ Browser/Web/Host version and SHA, including partial rollout.
 2. Run `npm ci && npm run check`. In minimal environments, ensure child login shells also have the Node binary directory in PATH.
 3. Start Web with `node dist/src/main.js web` (the compatible `dist/src/web/main.js` entrypoint also accepts existing route-file deployments). Start Host with `node dist/src/main.js host`. Host and Web use the same Git revision even when installed on different machines.
 4. Preserve private environment files, routes and task directories. Configure `PI_COFFEE_CODEX_COMMAND` and `PI_COFFEE_CLAUDE_COMMAND` to the installed native CLI or existing private wrapper. `PI_COFFEE_CODEX_BIN` remains compatible. Codex model/effort overrides are `PI_COFFEE_CODEX_MODEL` and `PI_COFFEE_CODEX_EFFORT`; native login remains on Host.
-5. Existing dedicated Host routes remain valid. Shared routing uses `PI_COFFEE_SHARED_HOST=1` on Web and `PI_COFFEE_REQUIRE_USER=1` on Host. Route-file authentication derives stable `gitea-<id>` ownership keys and forwards them on HTTP and WS. Earlier signed-cookie deployments preserve their existing login-name keys. Do not switch identity-key formats without an explicit data migration.
+5. Existing dedicated Host routes remain valid. Fresh fully scoped shared routing uses `PI_COFFEE_SHARED_HOST=1` on Web and `PI_COFFEE_REQUIRE_USER=1` on Host. Existing legacy-default owners must retain default-scope admission as described below until migrated. Route-file authentication derives stable `gitea-<id>` ownership keys and forwards them on HTTP and WS. Earlier signed-cookie deployments preserve their existing login-name keys. Do not switch identity-key formats without an explicit data migration.
 6. `PI_COFFEE_SKILL_OWNER` names the authenticated owner key allowed to manage machine-wide Skills. `PI_COFFEE_SKILL_MANAGERS` optionally lists additional authenticated Host identity keys (comma-separated) allowed to manage the same library. For the current awangs/fengge deployment, add `gitea-2` for fengge. Shared changes affect both users; project Skills remain task scoped. Do not copy native login credentials to Web.
 7. Web and Host support explicit project/chat/session root settings. Existing tasks are retained in place. Native terminal conversations from the configured user cwd remain discoverable; their histories do not become Gitea checkouts automatically.
-8. After starting or restarting Host, wait for its `/healthz` response before WebSocket checks or reopening ingress. `systemctl is-active` confirms process state, not listener readiness. Probe health, login, the three Work engines, Pi-only Chat, brand menu, search, Context Usage, task path expansion, branch review and native turn review. Test sidebar collapse and refresh. Use `node scripts/probe-workbench-release.mjs <Web URL> <release directory>` to compare served assets with the release.
+8. After starting or restarting Host, wait for its `/healthz` response before WebSocket checks or reopening ingress. `systemctl is-active` confirms process state, not listener readiness. Probe health, login, the configured available Work engines, supported Pi/Codex Chat, brand menu, search, Context Usage, task path expansion, branch review and native turn review. Test sidebar collapse and refresh. Use `node scripts/probe-workbench-release.mjs <Web URL> <release directory>` to compare served assets with the release.
 9. Push GitHub main, then Gitea main. Verify identical SHAs after fetching both. Install a release directory named by that SHA and record service paths plus the asset probe in the Issue. Retain the previous release and data for rollback.
 
 Signed-cookie authentication requires a new login after Web restart, even with a configured signing secret. This keeps logout revocation effective across restarts; task execution and native sessions continue on Host. Route-file authentication retains its existing session-store behavior.

@@ -1,3 +1,5 @@
+> Current-deployment clarification (2026-10-26): The current shared OS account does not isolate Web participants through separate VMs. Owner-managed native execution remains; per-user OS isolation is an optional deployment choice. See [current topology](../architecture/topology.md). Original decision text is retained as history.
+
 # VM isolation replaces an in-process command sandbox
 
 Status: accepted; deployment authority refined by [ADR-0012](./0012-owner-privileges-and-gitea-checkouts.md)

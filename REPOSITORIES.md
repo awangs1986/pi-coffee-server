@@ -3,6 +3,12 @@
 Start here when choosing source ownership, locating a plugin or updating a dependency.
 GitHub main is authoritative; Gitea mirrors the same commits and repository layout.
 
+Source ownership does not imply separate machines. The current Web, primary Host
+and native CLIs share one VM and OS account, with separate service units and
+user-scoped application data. Start with [current topology](docs/architecture/topology.md)
+for deployment and [the topology audit](docs/reviews/topology-freshness-20261026.md)
+for dated runtime evidence.
+
 | Change | Source | Mirror | Entry |
 | --- | --- | --- | --- |
 | Web UI, gateway, Host, Relay, native Pi/Codex/Claude/Cursor/Grok adapters | [pi-coffee-server](https://github.com/awangs1986/pi-coffee-server) | [awangs/pi-coffee-server](http://gitea:3000/awangs/pi-coffee-server) | This repository's AGENTS.md and docs/index.md |

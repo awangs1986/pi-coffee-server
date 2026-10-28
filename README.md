@@ -97,10 +97,12 @@ Gitea 仓库操作使用 Host 按账号绑定并核验的独立凭据和 Git 作
 两位用户都应能使用完整的 Gitea 开发流程，无须另建 VM；仅登录成功不算接入完成。
 详见[双用户工作台](docs/spec/multi-user-workbench.md)和 [GitHub 授权合同](docs/spec/github-accounts.md)。
 
-Web 与 Host 可以同机，也可以分机。支持两种路由：
+当前两人使用的正式部署是 **同一台 Linux VM、同一个系统账号**：Web、Host 和原生 Agent CLI 都在这台 VM 上，Web 与 Host 分别作为服务运行。Gitea 登录区分 Web 用户，Host 按用户作用域、任务目录及独立仓库 clone 管理资料。详见[当前架构](docs/architecture/topology.md)。
+
+分机部署和每用户独立 VM 仍是可选方案。路由支持：
 
 - **独立 Host/VM**：各 Gitea 用户配置不同的 Host 地址和令牌，适合需要系统级隔离的部署。
-- **共享 Host**：Web 设置 `PI_COFFEE_SHARED_HOST=1`，Host 设置 `PI_COFFEE_REQUIRE_USER=1`，按 `gitea-<用户数字 ID>` 划分平台数据。
+- **共享 Host（全新、完全按用户作用域配置）**：Web 设置 `PI_COFFEE_SHARED_HOST=1`，Host 设置 `PI_COFFEE_REQUIRE_USER=1`，按 `gitea-<用户数字 ID>` 划分平台数据。当前安装保留旧默认账号作用域；这类安装须遵循[兼容接入规则](docs/deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner)，不能直接启用 `REQUIRE_USER=1`。
 
 共享系统用户下的目录和 Web 授权属于应用层隔离，**不是 Agent 之间的操作系统沙箱**。
 Host 上的 Agent 使用该系统用户的执行权限；只应给受信任的使用者访问。
@@ -183,6 +185,8 @@ npm start
 `npm start` 使用 `all` 角色；没有配置 Relay 相关密钥时启动 Host、Web 和文件传输。
 
 ### 6. 长期部署步骤
+
+当前推荐同机部署，使用[单 VM 用户服务模板](deploy/single-vm/README.md)。下方通用配置示例中的 Web 和 Host 可安装在同一台机器；`HOST_PRIVATE_IP` 表示执行 VM 的地址，并不要求另建一台 Web 服务器。
 
 1. 在 Web 和 Host 机器上安装同一 Git 提交：`npm ci`，然后 `npm run check`。建议放到 `/opt/pi-coffee-server/releases/<commit>`，保留旧目录。
 2. 准备 Host 系统用户及其 HOME、项目空间和原生账号。在该用户下登录需要的 Agent，确认 CLI 版本和网络可用。
@@ -282,10 +286,17 @@ able to use the complete Gitea workflow without creating another VM. Login alone
 acceptance. See [the two-user contract](docs/spec/multi-user-workbench.md) and
 [GitHub authorization](docs/spec/github-accounts.md).
 
-Web and Host can run on separate machines or on the same machine. Dedicated
-Host/VM routing uses a distinct address and token per Gitea user. Shared routing
-requires `PI_COFFEE_SHARED_HOST=1` on Web and `PI_COFFEE_REQUIRE_USER=1` on Host;
-the forwarded scope is `gitea-<numeric-user-id>`.
+The current two-user deployment runs **Web, Host and native Agent CLIs on one
+Linux VM under one OS account**, with separate Web and Host service units. Gitea
+identifies Web participants; Host partitions task data and independent repository
+clones by authenticated scope. See [the current topology](docs/architecture/topology.md).
+
+Separate Web machines and dedicated Host/VM routing remain optional. A fresh
+fully scoped shared setup uses `PI_COFFEE_SHARED_HOST=1` on Web and
+`PI_COFFEE_REQUIRE_USER=1` on Host, forwarding `gitea-<numeric-user-id>`. The current
+installation retains a legacy default owner; preserve that scope using the
+[compatibility rules](docs/deployment/unified-release.md#shared-host-onboarding-with-a-legacy-owner)
+instead of enabling REQUIRE_USER on an unmigrated owner registry.
 
 A shared OS user provides application-level separation, **not an OS sandbox
 between agents**. Agents execute with that user's permissions. Use trusted users
@@ -372,6 +383,8 @@ an existing installation without reconciling those settings.
 
 <a id="deployment-configuration"></a>
 ## Deployment configuration / 部署配置
+
+For the current installation, start with the [single-VM user-service templates](deploy/single-vm/README.md). The examples below describe a fresh fully scoped installation and optional split deployments. Preserve legacy-owner routing and existing task paths during upgrades. / 当前安装优先使用单 VM 用户服务模板；以下示例适用于全新用户作用域配置及可选分机部署，不能直接覆盖现有默认账号路由和任务路径。
 
 The blocks below are shared by both language guides. Environment files use
 `KEY=value`, without `export`. Use absolute paths: systemd and Node env files do

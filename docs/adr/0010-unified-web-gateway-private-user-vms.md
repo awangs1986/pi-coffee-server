@@ -1,3 +1,5 @@
+> Current-deployment clarification (2026-10-26): The per-user VM and separate central Web placement below is superseded. The authenticated gateway and Host-owned durable-content boundaries remain applicable on the shared VM. See [current topology](../architecture/topology.md). Original decision text is retained as history.
+
 # ADR-0010：统一网页网关，用户 VM 仅提供私网执行与文件服务
 
 - 日期：2026-09-19

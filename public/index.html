@@ -363,6 +363,7 @@
         <div class="plugins-head">
           <h2 id="github-title">添加 GitHub 仓库</h2>
           <span class="plugins-sub" id="github-sub"></span>
+          <button type="button" class="btn small hidden" id="repository-create-gitea">＋ 新建仓库</button>
           <button type="button" class="icon-btn" id="github-close" aria-label="关闭">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -413,6 +414,7 @@
     <dialog id="github-accounts-dialog" class="runners-dialog" aria-labelledby="github-accounts-title">
       <div class="runner-heading"><h2 id="github-accounts-title">代码托管账号</h2><button id="github-accounts-close" class="icon-btn" type="button" aria-label="关闭账号管理">✕</button></div>
       <p class="runner-help">使用 Gitea 登录 PI Coffee，在这里连接个人或工作 GitHub 账号，授权仓库与 GitHub Actions 工作流操作。账号只供当前用户使用；已有账号请重新连接一次以补充工作流权限。</p>
+      <div id="github-task-row" class="runner-help" hidden><p id="github-task-summary"></p><button id="github-task-clear" class="btn small" type="button">取消当前对话的 GitHub 授权</button></div>
       <div id="github-accounts-list"></div>
       <label id="github-legacy-row" class="runner-help" hidden><select id="github-legacy-project" aria-label="尚未绑定的旧项目"></select>旧项目必须手动绑定；请先结束其正在运行的任务。</label>
       <p id="github-accounts-status" class="runner-help" role="status"></p>

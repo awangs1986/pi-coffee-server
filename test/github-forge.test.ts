@@ -148,7 +148,7 @@ describe("GitHub-backed Work Projects", () => {
     // Gitea repository IDs are a different number space: ID 101 on Gitea is not the GitHub Project.
     const gitea101 = await workspaces.registerProject("gitea-app", remote, "main", "101");
     expect(gitea101.id).toBe("101");
-    expect((await workspaces.list()).capabilities).toEqual({ chatWorkspaces: true, forges: { gitea: true, github: true } });
+    expect((await workspaces.list()).capabilities).toEqual({ chatWorkspaces: true, taskGitHubAccounts: false, forges: { gitea: true, github: true } });
     expect((await workspaces.githubRepositories()).map((repo) => [repo.fullName, repo.projectId])).toEqual([["acme/app", "github-101"], ["acme/readonly", undefined], ["acme/old", undefined]]);
 
     const task = await workspaces.createConversation(project.id, undefined, "task-1");

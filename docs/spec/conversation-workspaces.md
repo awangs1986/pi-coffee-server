@@ -2,6 +2,8 @@
 
 # 任务、Conversation 与 VM 本地工作目录
 
+> Current placement (2026-10-26): [Web, Host and native CLIs share one VM](../architecture/topology.md). “所属 VM” identifies the execution machine, not a dedicated VM per participant. Web/Host content ownership below is a logical process boundary on the shared machine; task directories and authenticated scopes distinguish users.
+
 > Current native-engine boundary (reviewed 2026-10-06): shared Workspace and file ownership apply to all five Work engines. Native bindings and lifecycle behavior are implemented behind Host Adapters; verified limits are in [native engines](native-agent-engines.md), [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md). The directory tree below describes the retained pre-bundle layout; [task storage](task-storage.md) governs configured new-task bundles.
 
 状态：owner 已确认（2026-09-22）；Agent/Server 已实现本合同，验收记录见 [联合证据](../reviews/conversation-workspaces-20260922.md)与 Agent #46 / Server #3。此规格定义行为，具体检查与部署结果以工单证据为准。
@@ -59,6 +61,11 @@ Chat 根目录是集中管理入口，不是所有 Chat 共用的 cwd。两个 C
 - **CW-08（稳定映射）**：Host 在 VM 持久记录 Conversation ID、所属 VM、Workspace 类型、完整 cwd 和创建状态；Project Workspace 另记录 Project/repository ID、起始分支/SHA、分配的任务分支及远端确认信息。任务名只作显示；重命名任务、项目改名、刷新、重连和模式切换均不改 ID/cwd。实际目录缺失时标“工作目录不可用”，禁止静默重建空目录、重新 clone 或回退到全局 cwd；恢复必须由用户明确选择。跨 VM 接续按 GW-10 创建新任务/新目录，不伪装成原任务已迁移。
 
 独立 clone 保证平台不共享本地文件和 Git 状态；同一 VM 的端口、外部数据库与其他服务仍可能共享。并行运行应用时按任务选不同端口、区分测试数据；首版不因此新增 VM、容器或端口编排服务。远端集成仍通过 Gitea PR，独立 clone 不消除合并冲突。
+
+For repositories without any remote refs, explicit Work creation first publishes
+a file-free initial commit on the configured default branch. The normal
+CW-07 branch/SHA/independent-clone contract then applies. Selection is read-only;
+see [empty repository behavior](gitea-workspaces.md#empty-repository-work-creation-2026-10-25).
 
 ## 2.2 前端必须展示的信息
 
