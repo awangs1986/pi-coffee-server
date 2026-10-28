@@ -1,5 +1,12 @@
 # Independent backup key broker candidate
 
+**2026-10-28 boundary correction:** a separate local service UID does not isolate
+keys from an executor retaining source-Host root access. Existing native
+permissions remain required; the candidate's mandatory namespace restriction is
+not an accepted prerequisite. Key-authority placement and capture qualification
+need redesign before activation. See the
+[permission reconciliation](../reviews/backup-native-permission-20261028.md).
+
 Server #132 supplements the encrypted repository with a local service that owns
 its keys. This document describes source and deployment prerequisites; it does
 not install principals, services, permissions, mounts, credentials or tasks.
@@ -10,7 +17,10 @@ and authority revision. It imports no key-root reader. `BackupKeyService` and
 `BackupRepository` run in the independent backup service. Host messages cannot
 choose an executable, argument vector, source path, password path or destination.
 
-## Current qualification
+## Existing experimental qualification
+
+The following describes the old managed candidate and its uncompleted tests,
+not selected prerequisites for the replacement design.
 
 The service verifies its real UID and kernel process protection. Both its Python
 transport and post-exec Node worker use non-dumpable mode and NoNewPrivs. The
@@ -24,8 +34,8 @@ There is no `supported=true` switch.
 The local trust base includes the kernel and human host-root administrator.
 Host-root-capable model sessions must naturally drain before local activation, or
 source/key authority must live outside their host-root domain. Existing tasks are
-not stopped. A different UID alone cannot defeat host root. Future model launches
-must use the actual managed namespace/writer gate, with no key/control socket,
+not stopped. A different UID alone cannot defeat host root. In this experiment, future model
+launches require the managed namespace/writer gate, with no key/control socket,
 host procfs, service bus, unrestricted network or privilege path exposed.
 
 Development evidence proves actual namespace denial of a synthetic secret,
@@ -33,8 +43,8 @@ control socket, host process root, service bus and nested user namespaces, with
 zero effective capabilities and NoNewPrivs. It also proves kernel peer checks and
 same-UID activation refusal. **Distinct host-UID installation is unverified** on
 this development account: no UID mapper or noninteractive administrative access
-is available. This is an explicit remaining deployment prerequisite, not a
-successful separate-principal test.
+is available. This is an unverified installation boundary of that candidate, not a
+successful separate-principal test or an agreed replacement-design prerequisite.
 
 ## Fixed local protocol
 
@@ -83,7 +93,10 @@ without racing active streams. Lock authority lives in the separate private
 Incomplete crash remnants remain private and count
 against the eight-export capacity until an operator reconciles them.
 
-## Installation templates and operator entry
+## Historical installation templates and operator entry
+
+These examples document the experimental implementation. They do not authorize
+activation or select the replacement design after the 2026-10-28 owner decision.
 
 [Service template](../../deploy/backup-key-broker/pi-coffee-backup-key.service),
 [configuration example](../../deploy/backup-key-broker/config.example.json) and

@@ -1,5 +1,10 @@
 # Managed native provider transport candidate
 
+This transport belongs to the experimental restricted execution profile. The
+owner selected existing native permissions on 2026-10-28; provider connectivity
+alone does not preserve native tool/permission workflows or qualify #130.
+See the [permission reconciliation](../reviews/backup-native-permission-20261028.md).
+
 The managed namespace has no Host network. Its provider transport is one enrolled
 provider per engine and endpoint, implemented by a fixed-route Unix HTTP broker
 and a loopback listener inside the namespace. This is source infrastructure; no
