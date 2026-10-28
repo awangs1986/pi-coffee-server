@@ -1,8 +1,15 @@
 # Managed source Host and independent model authentication
 
-This is optional software support for the managed architecture in #130. No service identities, permissions, credentials or production services are installed by a source checkout. The existing unprotected Host keeps its previous behavior. The protected profile trusts the kernel and human OS-root administrator; it does not claim protection from that administrator.
+**Historical candidate architecture, not the accepted deployment direction.**
+The owner chose to preserve native permissions on 2026-10-28. Mandatory
+confinement and retirement of unrestricted execution conflict with that choice.
+These instructions describe existing experimental code; they are not an
+activation path for a completed #130 feature. See the
+[permission reconciliation](../reviews/backup-native-permission-20261028.md).
 
-## Independent principals and startup
+This documents experimental managed-architecture software in draft #130. No service identities, permissions, credentials or production services are installed by a source checkout. The existing unprotected Host keeps its previous behavior. The protected profile trusts the kernel and human OS-root administrator; it does not claim protection from that administrator.
+
+## Experimental principals and startup
 
 Use a dedicated no-login/no-sudo executor UID with a canonical private 0700 source parent, a separate backup-key UID, and a separate model-auth UID. The executor has no supplementary groups. Model-auth workers may use the executor's primary group for their 0750 endpoint directories and 0660 sockets while keeping credential homes 0700. The namespace receives only the exact authenticated provider socket inode; sibling files, credentials, key sockets and Host controls are absent. Kernel SO_PEERCRED authenticates service identities before entering the user namespace. No host network, SSH, bus, sudo, CONNECT, Upgrade or generic URL proxy is exposed.
 
@@ -20,7 +27,7 @@ Use `scopeProviderTransports` keyed by canonical data scope for private account 
 
 All writable managed source paths live under `sourceParent/scopes/<scope>/`. Each account has its own public Pi configuration directory. Host runner credentials, GitHub account storage and Codex mapping bookkeeping stay under unmounted `sourceParent/authority/scopes/<scope>/`, outside native source grants. Legacy work/project/chat overrides cannot escape this layout. HOME, PI_CODING_AGENT_DIR, CODEX_HOME and CODEX_SQLITE_HOME must resolve within granted namespace destinations. Runtime mounts are read-only. The separate unfenced transfer listener is disabled in protected mode; authenticated Host task uploads retain the Host writer fence. SQL paths supplied by native configuration still require the native recovery adapter's explicit closure validation.
 
-## Supported authentication
+## Experimental authentication
 
 Pi1.1.0 uses its actual `ModelRuntime.create` and `getAuth` implementation with explicit private auth/models paths, network catalog refresh disabled, and a minimum OAuth validity deadline. Each request reloads current configuration and credentials; native credential storage serializes refresh and persists rotated refresh tokens. The supported transport APIs are `openai-completions`, `openai-responses`, and `openai-codex-responses`. A model or auth-derived base URL that differs from the fixed grant is refused. Other API families require an additional reviewed mapping.
 
