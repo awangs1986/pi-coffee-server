@@ -8,7 +8,8 @@ import {acquireLegacyColdCut} from './legacy-cold-cut.js';
 import {listenManagedControl,type ManagedSourceAuthority} from './managed-source-authority.js';
 import {BackupRepositoryClient,type BackupRepositoryClientConfig} from './backup-repository-client.js';
 import type {AccountRecoveryCoordinator} from './account-recovery.js';
-import {verifySealedCheckpoint} from './backup.js';
+import {verifySealedCheckpoint,type CheckpointManifest} from './backup.js';
+import type {RepositoryJob} from './backup-repository.js';
 import {privateDir,readJson,restoreFail} from './restore-files.js';
 
 interface EnrollmentControlProfile {schema:1;actor:string;root:string;exportDirectory?:string;capture?:{scopes:FrozenLegacyScope[]};legacy:{socket:string;uid:number};mappings:EnrollmentMemberMapping[];}
@@ -21,7 +22,7 @@ export async function startColdEnrollmentControl(options:{socket:string;profile:
  const controlRoot=join(options.authority.config.sourceParent,'authority');if(resolve(options.socket)!==options.socket||!options.socket.startsWith(controlRoot+'/'))throw restoreFail('enrollment_control_unsafe');await privateDir(controlRoot);await privateDir(dirname(options.socket));
  const configured=await profile(options.profile,options.authority.config.sourceParent),scopes=[...new Set(configured.mappings.map(mapping=>mapping.scope))];if(configured.actor!==options.broker.actor||configured.legacy.uid!==options.authority.config.legacyHostUid)throw restoreFail('enrollment_profile_scope_mismatch');const broker=new BackupRepositoryClient({...options.broker,actor:configured.actor,dataScope:scopes[0]});
  const coordinator=new ColdEnrollmentCoordinator({root:configured.root,accounts:options.accounts,authorize:async(actor,requested)=>actor===configured.actor&&requested.every(scope=>scopes.includes(scope)),archive:async(actor,point,operationId)=>options.authority.withEnrollmentPoint(point,async()=>{
-  const job=await broker.backup(point.manifest.members.map(member=>({scope:member.scope,taskId:member.taskId,expectedCheckpointId:point.manifest.checkpointId})),undefined,operationId),digest=createHash('sha256').update(JSON.stringify(point.manifest)).digest('hex');if(actor!==configured.actor||job.state!=='succeeded'||job.verification!=='repository-read'||!job.snapshotId||point.manifest.members.some(member=>!job.points.some(saved=>saved.scope===member.scope&&saved.taskId===member.taskId&&saved.checkpointId===point.manifest.checkpointId&&saved.manifestSha256===digest)))throw restoreFail('enrollment_archive_unverified');return {jobId:job.id,manifestSha256:digest,verification:'repository-read'};
+  const job=await broker.backup(point.manifest.members.map(member=>({scope:member.scope,taskId:member.taskId,expectedCheckpointId:point.manifest.checkpointId})),undefined,operationId);return validateColdEnrollmentArchive(actor,configured.actor,point.manifest,job);
  })});
  return listenManagedControl(options.socket,[options.authority.config.executorUid],async(input,socket)=>{let result:unknown;try{if(input.schema!==1||Object.keys(input).some(key=>!['schema','action','id','revision','digest'].includes(key))||!['plan','status','approve','publish'].includes(String(input.action)))throw restoreFail('invalid_enrollment_request');
   // Re-read exact trusted configuration before every action, including publish.
@@ -31,4 +32,12 @@ export async function startColdEnrollmentControl(options:{socket:string;profile:
   else{if(typeof input.id!=='string'||typeof input.digest!=='string'||!Number.isSafeInteger(input.revision))throw restoreFail('invalid_enrollment_request');result=await coordinator.operate(configured.actor,input.id,{action:input.action as 'approve'|'publish',revision:Number(input.revision),digest:input.digest});}
   socket.write(JSON.stringify({schema:1,ok:true,result})+'\n');
  }catch(error){socket.write(JSON.stringify({schema:1,ok:false,error:{code:error&&typeof error==='object'&&'code'in error?String(error.code):'enrollment_failed'}})+'\n');}});
+}
+
+/** Validate the repository result before cold enrollment creates account plans.
+ * This receipt is not an OS export qualification or source-custody proof. */
+export function validateColdEnrollmentArchive(actor:string,configuredActor:string,manifest:CheckpointManifest,job:RepositoryJob){
+ const digest=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+ if(actor!==configuredActor||job.state!=='succeeded'||job.verification!=='repository-read'||!job.snapshotId||manifest.members.some(member=>!job.points.some(saved=>saved.scope===member.scope&&saved.taskId===member.taskId&&saved.checkpointId===manifest.checkpointId&&saved.manifestSha256===digest)))throw restoreFail('enrollment_archive_unverified');
+ return {jobId:job.id,manifestSha256:digest,verification:'repository-read' as const};
 }
