@@ -6,27 +6,28 @@ import {type CheckpointManifest} from './backup.js';
 import type {Workspaces,Conversation,Project} from './workspaces.js';
 import type {NativeRestorePreparation,RestoreAction,NativeRestoreOptions} from './restore.js';
 import {durableFile,durableJson,exists,privateDir,restoreFail,sha,syncDir,treeDigest} from './restore-files.js';
+import {assertNativeHistoryCheckpoint,nativeHistorySources} from './native-binding-history.js';
 
 /** Pi's restore graph is interpreted here, behind the NativeRecovery boundary.
  * Native JSONL is preserved byte-for-byte at its original owned path. Settings,
  * secrets and execution authority are never installed as live configuration. */
 export async function preparePiRestore(options:{scope:string;workspaces:Workspaces;sessionDir:string},point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,restoreOptions?:NativeRestoreOptions):Promise<NativeRestorePreparation>{
- if(scope!==options.scope||point.manifest.adapterVersion!=='pi-1.1.0-jsonl-v3/coffee-checkpoint-v1')throw restoreFail('adapter_version_changed');
- const member=point.manifest.members.find(m=>m.scope===scope&&m.taskId===taskId&&m.engine==='pi');if(!member)throw restoreFail('native_binding_missing');
+ const history=restoreOptions?.nativeHistory;if(scope!==options.scope||point.manifest.adapterVersion!==(history?'pi-codex-history-v1':'pi-1.1.0-jsonl-v3/coffee-checkpoint-v1'))throw restoreFail('adapter_version_changed');
+ const member=point.manifest.members.find(m=>m.scope===scope&&m.taskId===taskId&&(history||m.engine==='pi'));if(!member)throw restoreFail('native_binding_missing');
  if(point.manifest.members.some(m=>m.scope!==scope))throw restoreFail('shared_scope_requires_group_restore');
- const sources=point.manifest.sources;if(new Set(sources.map(s=>s.recoveryKey)).size!==sources.length)throw restoreFail('duplicate_recovery_source');
+ const sources=history?nativeHistorySources(point.manifest.sources,'pi'):point.manifest.sources;if(new Set(sources.map(s=>s.recoveryKey)).size!==sources.length)throw restoreFail('duplicate_recovery_source');
  const source=(key:string)=>{const item=sources.find(s=>s.recoveryKey===key);if(!item||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.id))throw restoreFail('source_missing');return {item,path:join(point.directory,'objects',item.id)};};
  const registry=JSON.parse(await readFile(source('registry').path,'utf8'));if(registry.schemaVersion!==1||registry.scope!==scope||registry.conversation?.id!==taskId)throw restoreFail('registry_scope_mismatch');
- const original:Conversation=registry.conversation;if((original.engine??'pi')!=='pi'||original.takeoverSegments?.some(s=>s.from!=='pi'||s.to!=='pi'))throw restoreFail('unsupported_native_graph');
+ const original:Conversation=registry.conversation;if(history)assertNativeHistoryCheckpoint(original,history,point.manifest);else if((original.engine??'pi')!=='pi'||original.takeoverSegments?.some(s=>s.from!=='pi'||s.to!=='pi'))throw restoreFail('unsupported_native_graph');
  const paths=await options.workspaces.recoveryPaths(original),taskTarget=original.taskRoot??paths.workspace;
  const replace=restoreOptions?.mode==='replace';
  if(!replace&&await exists(taskTarget))throw restoreFail('target_exists_missing_only');
  const parent=await privateDir(dirname(taskTarget));const nativeRoot=resolve(options.sessionDir);await privateDir(nativeRoot);
- const nativeBinding=original.nativeBinding?.id??taskId,required=new Set([nativeBinding,...original.retainedNativeIds??[],...original.takeoverSegments?.flatMap(s=>s.nativeId?[s.nativeId]:[])??[]]);
- if([...required].some(id=>!member.nativeBindings.includes(id)))throw restoreFail('native_binding_missing');
- const nativeSources=sources.filter(s=>s.recoveryKey.startsWith('native-session/'));if(nativeSources.length!==member.nativeBindings.length)throw restoreFail('native_graph_incomplete');
+ const nativeBinding=original.nativeBinding?.id??taskId,bindings=history?.bindings.pi??member.nativeBindings,required=new Set(history?history.history.bindings.pi:[nativeBinding,...original.retainedNativeIds??[],...original.takeoverSegments?.flatMap(s=>s.nativeId?[s.nativeId]:[])??[]]);
+ if([...required].some(id=>!bindings.includes(id)))throw restoreFail('native_binding_missing');
+ const nativeSources=sources.filter(s=>s.recoveryKey.startsWith('native-session/'));if(nativeSources.length!==bindings.length)throw restoreFail('native_graph_incomplete');
  const graph=new Map<string,{source:string;target:string;cwd:string;parent?:string}>();
- for(const item of nativeSources){const id=item.recoveryKey.slice('native-session/'.length);if(!member.nativeBindings.includes(id)||!item.originalPath||dirname(item.originalPath)!==nativeRoot||!item.originalPath.endsWith('.jsonl'))throw restoreFail('native_target_conflict');const path=join(point.directory,'objects',item.id),raw=await readFile(path,'utf8');
+ for(const item of nativeSources){const id=item.recoveryKey.slice('native-session/'.length);if(!bindings.includes(id)||!item.originalPath||dirname(item.originalPath)!==nativeRoot||!item.originalPath.endsWith('.jsonl'))throw restoreFail('native_target_conflict');const path=join(point.directory,'objects',item.id),raw=await readFile(path,'utf8');
   const lines=raw.trimEnd().split('\n');if(!lines.length||lines.some(line=>{try{const entry=JSON.parse(line);return !entry||typeof entry!=='object'||typeof entry.type!=='string';}catch{return true;}}))throw restoreFail('unsupported_native_schema');
   const header=JSON.parse(lines[0]);if(header.type!=='session'||header.version!==3||header.id!==id||!await options.workspaces.recoveryOwnsNativeCwd(header.cwd)||header.parentSession!==undefined&&(typeof header.parentSession!=='string'||dirname(resolve(header.parentSession))!==nativeRoot))throw restoreFail('unsupported_native_schema');
   const native=SessionManager.open(path);if(native.getSessionId()!==id)throw restoreFail('native_binding_missing');
@@ -56,7 +57,7 @@ export async function preparePiRestore(options:{scope:string;workspaces:Workspac
  for(const item of sources.filter(s=>s.recoveryKey.startsWith('native-artifacts/'))){const id=item.recoveryKey.slice('native-artifacts/'.length);if(!graph.has(id)||item.originalPath!==join(nativeRoot,'artifacts',id)||!replace&&await exists(item.originalPath))throw restoreFail('native_artifact_conflict');await privateDir(join(nativeRoot,'artifacts'));const copy=join(output,'artifacts-'+id);await cp(join(point.directory,'objects',item.id),copy,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});await writableTree(copy);await add(copy,item.originalPath,'native');}
  // Explicit record projection: do not import historical run/lifecycle/idempotency
  // state or provider/forge account bindings as current execution authorization.
- const conversation:Conversation={id:taskId,engine:'pi',cwd:paths.workspace,...(original.taskRoot?{taskRoot:original.taskRoot}:{}),workspaceKind:original.workspaceKind??'project',branch:original.branch,archived:original.archived,createdAt:original.createdAt,nativeBinding:{state:'bound',id:nativeBinding,writers:'idle'},retainedNativeIds:original.retainedNativeIds,takeoverSegments:original.takeoverSegments,...(original.projectId?{projectId:original.projectId}:{}),runState:'interrupted',lastRunStatus:'interrupted',creationState:'ready',...(original.startSha?{startSha:original.startSha}:{}),...(original.fork?.status==='completed'?{fork:original.fork}:{})};
+ const conversation:Conversation={id:taskId,engine:original.engine??'pi',cwd:paths.workspace,...(original.taskRoot?{taskRoot:original.taskRoot}:{}),workspaceKind:original.workspaceKind??'project',branch:original.branch,archived:original.archived,createdAt:original.createdAt,nativeBinding:{state:'bound',id:nativeBinding,writers:'idle'},retainedNativeIds:original.retainedNativeIds,retainedNativeBindings:original.retainedNativeBindings,retiredOperationIds:original.retiredOperationIds,takeoverSegments:original.takeoverSegments,...(original.projectId?{projectId:original.projectId}:{}),runState:'interrupted',lastRunStatus:'interrupted',creationState:'ready',...(original.startSha?{startSha:original.startSha}:{}),...(original.fork?.status==='completed'?{fork:original.fork}:{})};
  let project:Project|undefined;if(original.projectId){const current=(await options.workspaces.list()).projects.find(p=>p.id===original.projectId);if(current)project=current;else if(registry.project?.id===original.projectId){const old:Project=registry.project;project={id:old.id,name:old.name,path:'',branch:old.branch,...(old.forge?{forge:old.forge}:{})};}else throw restoreFail('project_missing');}
  return {conversation,project,actions,nativeBindings:[...visited].sort(),warnings:[replace?'Explicit replacement preserves approved current targets in private recovery staging':'Missing original paths only; existing targets are never replaced','Reconfigure and authenticate providers before an explicit new prompt','Historical MISHU notes are inert; roles, execution grants, cookies and queued inputs are not restored','Pi JSONL history/read verified separately from provider continuation; no automatic replay']};
 }
