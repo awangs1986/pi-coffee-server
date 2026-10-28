@@ -70,7 +70,9 @@ Git and gh do not inherit this command endpoint or the Host's private wrappers.
 Native local Git still runs with ordinary user configuration under its mandatory
 namespace; direct native Git/gh forge network operations remain unavailable under
 the existing provider-only network policy. This change restores Host Workspaces
-actions and does not claim native terminal forge access.
+actions and does not claim native terminal forge access. That remaining restriction
+is an unresolved acceptance gap against Server #130 decision 38 (native features
+must not be disabled to establish a guarantee), not an approved scope exemption.
 
 Tests exercise genuine Git smart-HTTP clone and checkpoint push against synthetic
 local infrastructure, authenticated Host diffs/checkpoint, concurrent scoped
