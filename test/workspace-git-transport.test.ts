@@ -59,3 +59,14 @@ it('closing a Git command while credential renewal is pending prevents a later u
   await started;await relay.close();release();await attempt;await new Promise(resolve=>setTimeout(resolve,100));expect(calls).toBe(0);expect(connections).toBe(0);
  }finally{release();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 });
+
+it('long source authority paths retain bounded private socket names without granting the temporary parent',async()=>{
+ const {mkdir,stat}=await import('node:fs/promises'),{dirname}=await import('node:path');const root=await mkdtemp(join(tmpdir(),'git-long-authority-')),authority=join(root,'authority-'+ 'a'.repeat(100));await mkdir(authority,{mode:0o700});
+ const upstream=createServer((req,res)=>{req.resume();res.end('long-path-ok');});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+ const transport={repository:`http://127.0.0.1:${(upstream.address() as AddressInfo).port}/repo`,credentials:async()=>({authorization:'synthetic'})};let relay:Awaited<ReturnType<typeof workspaceGitTransport>>|undefined;
+ try{
+  await expect(workspaceGitTransport(join(authority,'group.lock'),transport,false,['/tmp'])).rejects.toThrow('outside source grants');
+  relay=await workspaceGitTransport(join(authority,'group.lock'),transport,false);expect(Buffer.byteLength(relay.socket)).toBeLessThan(104);expect((await stat(dirname(relay.socket))).mode&0o077).toBe(0);
+  const body=await new Promise<string>((resolve,reject)=>{const req=request({socketPath:relay!.socket,path:'/repository/info/refs?service=git-upload-pack'},res=>{let value='';res.on('data',chunk=>value+=chunk);res.on('end',()=>resolve(value));});req.on('error',reject);req.end();});expect(body).toBe('long-path-ok');const socket=relay.socket;await relay.close();relay=undefined;await expect(stat(dirname(socket))).rejects.toMatchObject({code:'ENOENT'});
+ }finally{await relay?.close();upstream.closeAllConnections();await new Promise<void>(resolve=>upstream.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+});

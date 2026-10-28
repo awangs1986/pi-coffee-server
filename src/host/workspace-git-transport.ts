@@ -1,7 +1,7 @@
 import {createServer,request as httpRequest,type Server} from 'node:http';
 import {request as httpsRequest} from 'node:https';
-import {mkdtemp,chmod,rm} from 'node:fs/promises';
-import {dirname,join} from 'node:path';
+import {mkdtemp,chmod,rm,lstat,realpath} from 'node:fs/promises';
+import {dirname,join,resolve,relative,isAbsolute} from 'node:path';
 import {once} from 'node:events';
 import type {Socket} from 'node:net';
 import {kernelPeerCredentials} from './linux-file-lease.js';
@@ -12,10 +12,19 @@ export interface WorkspaceGitTransport {
 }
 /** A command owns one socket and one repository. Git config never selects the
  * upstream, sees a credential, follows a redirect, or obtains a general proxy. */
-export async function workspaceGitTransport(lock:string,transport:WorkspaceGitTransport,write:boolean){
+export async function workspaceGitTransport(lock:string,transport:WorkspaceGitTransport,write:boolean,sourceGrants:readonly string[]=[]){
  const target=new URL(transport.repository);
  if(!['http:','https:'].includes(target.protocol)||target.username||target.password||target.search||target.hash)throw Error('Unsupported managed Git repository');
- const directory=await mkdtemp(join(dirname(lock),'git-')),socket=join(directory,'transport.sock');await chmod(directory,0o700);
+ // AF_UNIX pathnames are short even when a legitimate source root is long.
+ // Only this socket inode is mounted; the temporary parent is never granted.
+ const authorityPrefix=join(dirname(lock),'git-');
+ const prefix=Buffer.byteLength(authorityPrefix+'XXXXXX/transport.sock')<=100?authorityPrefix:join(await realpath('/tmp'),'pc-git-');
+ const inside=(root:string,path:string)=>{const rel=relative(resolve(root),path);return rel===''||!rel.startsWith('..')&&!isAbsolute(rel);};
+ if(sourceGrants.some(root=>inside(root,prefix)))throw Error('Managed Git endpoint must remain outside source grants');
+ const directory=await mkdtemp(prefix),socket=join(directory,'transport.sock'),identity=await lstat(directory);
+ const removeOwnedDirectory=async()=>{const current=await lstat(directory).catch(()=>undefined);if(current?.isDirectory()&&!current.isSymbolicLink()&&current.dev===identity.dev&&current.ino===identity.ino&&current.uid===process.getuid?.())await rm(directory,{recursive:true,force:true});};
+ if(Buffer.byteLength(socket)>100){await removeOwnedDirectory();throw Error('Managed Git endpoint path is too long');}
+ await chmod(directory,0o700);
  const service=write?'git-receive-pack':'git-upload-pack',base=target.href.replace(/\/$/,''),routes=new Map([
   ['GET /repository/info/refs?service='+service,base+'/info/refs?service='+service],['POST /repository/'+service,base+'/'+service],
  ]),connections=new Set<Socket>();let active=0,closed=false;
@@ -39,7 +48,7 @@ export async function workspaceGitTransport(lock:string,transport:WorkspaceGitTr
  })();});
  server.on('connection',connection=>{try{const fd=(connection as Socket&{_handle?:{fd?:number}})._handle?.fd;if(fd===undefined||kernelPeerCredentials(fd).uid!==process.getuid?.()||connections.size>=4)throw Error();connections.add(connection);connection.once('close',()=>connections.delete(connection));}catch{connection.destroy();}});
  server.on('connect',(_,connection)=>connection.destroy());server.on('upgrade',(_,connection)=>connection.destroy());server.on('clientError',(_,connection)=>connection.destroy());server.requestTimeout=120000;server.headersTimeout=10000;
- const close=async()=>{closed=true;for(const connection of connections)connection.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(directory,{recursive:true,force:true});};
+ const close=async()=>{closed=true;for(const connection of connections)connection.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));await removeOwnedDirectory();};
  try{server.listen(socket);await once(server,'listening');await chmod(socket,0o600);}catch(error){await close();throw error;}
  return {socket,port:18673,serviceUid:process.getuid!(),repository:transport.repository,close};
 }

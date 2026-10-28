@@ -88,7 +88,7 @@ os.execve('/usr/bin/git',command+request['args'],env)
 
 async function managed(custody:ManagedNativeCustody,options:GitOptions,request:Record<string,unknown>){
   const args=request.args as string[]|undefined;
-  const relay=options.transport?await workspaceGitTransport(custody.profile.lock,options.transport,args?workspaceGitCommand(args)==='push':false):undefined;
+  const relay=options.transport?await workspaceGitTransport(custody.profile.lock,options.transport,args?workspaceGitCommand(args)==='push':false,custody.profile.sources.map(source=>source.path)):undefined;
   try {
     const prepared=await custody.prepare({executable:'/usr/bin/python3',cwd:options.cwd,httpTransport:relay,args:['-c',managedProgram,JSON.stringify({...request,identity:options.identity,...(relay?{transport:{repository:relay.repository,port:relay.port}}:{}),sources:custody.profile.sources.map(source=>source.destination)})]});
     return await exec(process.execPath,[prepared.cliPath],{cwd:options.cwd,env:{PATH:'/usr/bin:/bin',...prepared.env},timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'});
