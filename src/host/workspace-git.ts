@@ -18,11 +18,12 @@ from pathlib import Path
 request=json.loads(sys.argv[1]); cwd=Path.cwd(); gitdir=cwd/'.git'
 def deny():
     sys.stderr.write('Managed workspace Git configuration or path is unsupported\n');sys.exit(78)
-def checked(path,directory=False,missing=False):
+def checked(path,directory=False,missing=False,max_bytes=None):
     try: info=path.lstat()
     except FileNotFoundError:
         if missing:return
         deny()
+    if max_bytes is not None and info.st_size>max_bytes:deny()
     if stat.S_ISLNK(info.st_mode) or path.resolve()!=path or (directory and not stat.S_ISDIR(info.st_mode)) or (not directory and (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1)):deny()
 if cwd.resolve()!=cwd:deny()
 env={'PATH':'/usr/bin:/bin','HOME':os.environ['HOME'],'LANG':'C.UTF-8','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_SYSTEM':'/dev/null','GIT_CONFIG_GLOBAL':'/dev/null','GIT_TERMINAL_PROMPT':'0','GIT_LITERAL_PATHSPECS':request.get('literal','1'),'GIT_CEILING_DIRECTORIES':str(cwd.parent),'GIT_ATTR_NOSYSTEM':'1'}
@@ -36,15 +37,18 @@ if identity:
 if gitdir.exists() or gitdir.is_symlink():
     checked(gitdir,True)
     for name in ['config','HEAD','index','packed-refs','shallow']:
-        checked(gitdir/name,missing=True)
+        checked(gitdir/name,missing=True,max_bytes=1048576 if name=='config' else None)
     for name in ['objects','objects/info','info','refs']:
         checked(gitdir/name,True,True)
     for name in ['commondir','gitdir','config.worktree','objects/info/alternates','objects/info/http-alternates']:
         if (gitdir/name).exists() or (gitdir/name).is_symlink():deny()
-    result=subprocess.run(command+['config','--local','--no-includes','--null','--list'],env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-    if result.returncode or len(result.stdout)>1048576:deny()
+    parser=subprocess.Popen(command+['config','--local','--no-includes','--null','--list'],env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    output=parser.stdout.read(1048577)
+    if len(output)>1048576:
+        parser.kill();parser.wait();deny()
+    if parser.wait():deny()
     safe=re.compile(r'^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|eol|quotepath|abbrev|bigfilethreshold|ignorestat|trustctime|checkstat)|remote\.[^.]+\.(url|pushurl|fetch)|branch\..+\.(remote|merge|rebase)|user\.(name|email)|init\.defaultbranch|extensions\.objectformat)$')
-    for row in result.stdout.split(b'\0'):
+    for row in output.split(b'\0'):
         if not row:continue
         key,_,value=row.partition(b'\n');key=key.decode('utf8').lower()
         if not safe.fullmatch(key) or key=='core.bare' and value.lower()!=b'false':deny()

@@ -56,6 +56,7 @@ it('authenticated managed changes reject executable config, transport helpers an
   const config=join(task.cwd,'.git','config'),original=await readFile(config),script=join(task.cwd,'attempt.mjs');
   await writeFile(script,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'outside');process.stdout.write('content\\n');`);
   const command=process.execPath+' '+script;
+  await writeFile(config,Buffer.concat([original,Buffer.from('\n#'+ 'x'.repeat(1024*1024)+'\n')]));const oversized=await request({action:'changes'});expect(oversized.status,'oversized commented config').toBe(409);expect(oversized.body.error).toContain('unsupported');await writeFile(config,original);
   const included=join(authority,'included-config');await writeFile(included,'[core]\n fsmonitor = '+command+'\n');
   const configCases:Array<[string,string]>=[
    ['core.fsmonitor',command],['filter.fixture.clean',command],['filter.fixture.process',command],['diff.fixture.textconv',command],['diff.external',command],

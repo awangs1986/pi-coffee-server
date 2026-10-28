@@ -53,7 +53,8 @@ mandatory native custody too. Repository configuration cannot execute a helper a
 the source Host. The managed executor refuses executable config, external Git
 metadata, shared Git directories and alternate object stores; source-grant and
 namespace enforcement also applies if a repository changes during validation.
-Missing custody fails closed instead of invoking privileged Git.
+Configuration input and parsed output are bounded at 1 MiB. Missing custody fails
+closed instead of invoking privileged Git.
 
 GitHub HTTPS and the account's configured Gitea HTTP(S) remote use a temporary
 Host-owned smart-HTTP endpoint for that command and exact repository. Read commands
