@@ -1,5 +1,8 @@
 import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
 import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
+import {ManagedWriterFence} from './managed-writer-fence.js';
+import type {ManagedNativeCustody} from './managed-native.js';
+import {executeWorkspaceGit,managedWorkspaceGitFiles,workspaceGitCommand} from './workspace-git.js';
 import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
 import {copyForkTree} from './fork-files.js';
 import type {GitHubAccounts} from './github-accounts.js';
@@ -37,7 +40,7 @@ export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
 export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface WorkspaceOptions { managedGitCustody?:ManagedNativeCustody; deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
 export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
@@ -203,14 +206,27 @@ export class Workspaces {
   }
   private conversationLock(id:string) { return 'conversation:'+id; }
   private async gitEnvironment(cwd:string,accountId?:string) {
+    if(this.options.managedGitCustody)return {GIT_LITERAL_PATHSPECS:'1'};
     if(!this.githubAccounts)return {...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'};
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
+  private async gitExec(cwd:string,args:string[],options:{maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={}){
+    let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
+    if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
+      const conversation=this.state.conversations.find(c=>samePath(c.cwd,cwd)),project=conversation?this.state.projects.find(p=>p.id===conversation.projectId):undefined;
+      const repository=args.find(arg=>/^https?:\/\//.test(arg))??project?.repoUrl;
+      if(repository&&/^https?:\/\//.test(repository)){
+        if(!this.githubAccounts)throw Error('Managed Git requires account-bound authorization');
+        transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
+      }
+    }
+    return executeWorkspaceGit(args,{cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
+  }
   private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
     const release=this.backupWriterFence?.beginWriter('platform');try {
-    const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
-    return raw||args.includes('-z')?r.stdout:r.stdout.trim();
+    const r=await this.gitExec(cwd,args,{maxBuffer,accountId});
+    return raw||args.includes('-z')?r.stdout.toString():r.stdout.toString().trim();
     }finally{release?.();}
   }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
@@ -219,7 +235,7 @@ export class Workspaces {
   }
   private async gitResult(cwd:string,args:string[],maxBuffer=2*1024*1024):Promise<{code:number;stdout:string;stderr:string}> {
     const release=this.backupWriterFence?.beginWriter('platform');try {try {
-      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
+      const r=await this.gitExec(cwd,args,{maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
       return {code:0,stdout:String(r.stdout),stderr:String(r.stderr)};
     } catch(error) {
       const e=error as NodeJS.ErrnoException & {stdout?:string;stderr?:string};
@@ -481,6 +497,8 @@ export class Workspaces {
       if(relative(await realpath(root),await realpath(path))!==dir)throw new Error('Workspace data directory is outside its registered path');
     }
     if(c.workspaceKind!=='chat') {
+      if(this.options.managedGitCustody){await managedWorkspaceGitFiles(this.options.managedGitCustody,c.cwd,{kind:'exclude'});return root;}
+      if(this.backupWriterFence instanceof ManagedWriterFence)throw Error('Managed workspace Git executor is unavailable');
       const exclude=resolve(c.cwd,await this.git(c.cwd,['rev-parse','--git-path','info/exclude']));
       await mkdir(dirname(exclude),{recursive:true});
       if(!(await readFile(exclude,'utf8').catch(()=>'' )).split('\n').includes('/.pi-coffee/'))await appendFile(exclude,'\n/.pi-coffee/\n');
@@ -737,14 +755,15 @@ export class Workspaces {
    * index, HEAD and refs are untouched. Runtime data under .pi-coffee is excluded.
    */
   private async workingTree(cwd:string):Promise<{tree:string;head?:string}> {
-    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+    const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
     // This internal command intentionally uses an exclusion pathspec; no user paths enter it.
     const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'0',GIT_INDEX_FILE:index};
-    const run=(args:string[])=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer:2*1024*1024,env}).then(r=>r.stdout.trim());
+    const run=(args:string[])=>this.gitExec(cwd,args,{timeout:TURN_SNAPSHOT_TIMEOUT_MS,env}).then(r=>r.stdout.toString().trim());
     try {
       // Reusing the real index's stat cache keeps large, mostly unchanged checkouts fast.
-      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'copy-index',index});
+      else await copyFile(await gitPath('index'),index).catch(()=>undefined);
       // Git rejects an exclude pathspec that names an ignored path, so exclude runtime
       // data explicitly only when info/exclude does not already hide it.
       const runtimeIgnored=(await this.gitResult(cwd,['check-ignore','-q','.pi-coffee/'])).code===0;
@@ -752,7 +771,7 @@ export class Workspaces {
       const tree=await run(['write-tree']);
       const head=await this.git(cwd,['rev-parse','--verify','--quiet','HEAD']).catch(()=>'');
       return {tree,...(head?{head}:{})};
-    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+    } finally {if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'remove-index',index});else{await rm(index,{force:true});await rm(index+'.lock',{force:true});}}
   }
   /** Read-only view of what the latest (or running) turn changed, from its start snapshot to now. */
   async turnChanges(id:string) {
@@ -1015,17 +1034,18 @@ export class Workspaces {
   }
   /** `git diff <tree> -- <path>` against the working tree (untracked included) via a throwaway index. */
   private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
-    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+    const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
     const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
-    const run=(args:string[],maxBuffer=2*1024*1024)=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
+    const run=(args:string[],maxBuffer=2*1024*1024)=>this.gitExec(cwd,args,{timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
     try {
-      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'copy-index',index});
+      else await copyFile(await gitPath('index'),index).catch(()=>undefined);
       // A path gone from both the index and the working tree has nothing to add; the diff still shows it deleted.
       await run(['add','-A','--',path]).catch(()=>undefined);
-      try {return (await run(['diff','--cached','--no-ext-diff','--no-textconv','--no-renames',tree,'--',path],FILE_PATCH_LIMIT)).stdout;}
+      try {return (await run(['diff','--cached','--no-ext-diff','--no-textconv','--no-renames',tree,'--',path],FILE_PATCH_LIMIT)).stdout.toString();}
       catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
-    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+    } finally {if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'remove-index',index});else{await rm(index,{force:true});await rm(index+'.lock',{force:true});}}
   }
   /** A side's text from a commit or tree; null when absent there, binary or over the limit. */
   private async blobText(cwd:string,treeish:string,path:string):Promise<SideText> {
@@ -1033,7 +1053,7 @@ export class Workspaces {
     const size=await this.gitResult(cwd,['cat-file','-s',spec]);
     if(size.code!==0)return {text:null};
     if(Number(size.stdout.trim())>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
-    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:await this.gitEnvironment(cwd)});
+    const {stdout}=await this.gitExec(cwd,['cat-file','blob',spec],{maxBuffer:FILE_CONTENTS_LIMIT+1024});
     return stdout.includes(0) ? {text:null,reason:'binary'} : {text:stdout.toString('utf8')};
   }
   /** The working-tree side as Git sees it (a symlink is its target text); null when deleted. */

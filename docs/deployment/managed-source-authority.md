@@ -45,3 +45,30 @@ Publication uses a distinct group lease. Once irreversible recovery publication 
 Synthetic tests cover actual socket pinning, namespace stream transport, secret/proc/bus denial, detached writers, source retirement, automatic busy-to-cold sealing, model allowlists, API-key rotation and native OAuth rotation/failed-refresh refusal. Actual Pi SDK traffic reaches only a local synthetic error fixture. Actual Codex0.159.1 read/resume and credential RPC are exercised without a production provider request. Dedicated service-UID installation and existing production source enrollment have not been performed.
 
 Existing unrestricted roots cannot be adopted using provenance markers or matching hashes. A supported cold enrollment must establish an actual OS-enforced read-only/exclusive old export after natural drain or a separately approved maintenance window, validate the Pi/Codex graph, and publish a reviewed import into the new private backing roots. The trusted maintenance implementation and its remaining installation/acceptance gates are described in [cold legacy enrollment](cold-legacy-enrollment.md). Its typed Pi/Codex relocation, concrete source/key IPC archive composition and durable account recovery do not by themselves prove that a production cold snapshot or service-principal installation has passed acceptance. Never restart, kill or migrate existing tasks merely to satisfy qualification.
+
+## Host Git operations in protected mode
+
+Workspace diff reads, snapshot/index writes, clone, fetch and checkpoint push use
+mandatory native custody too. Repository configuration cannot execute a helper as
+the source Host. The managed executor refuses executable config, external Git
+metadata, shared Git directories and alternate object stores; source-grant and
+namespace enforcement also applies if a repository changes during validation.
+Missing custody fails closed instead of invoking privileged Git.
+
+GitHub HTTPS and the account's configured Gitea HTTP(S) remote use a temporary
+Host-owned smart-HTTP endpoint for that command and exact repository. Read commands
+can use upload-pack; push alone can use receive-pack. The socket is mounted only
+into that command's namespace, never the account source grant. Selected GitHub
+authorization is rechecked for every upstream request; Gitea verifies the configured
+account identity. Credentials remain outside the workspace and native namespace.
+Caller authorization headers, arbitrary paths, other services and redirects are
+refused. The endpoint closes when the command finishes or fails. Local repositories
+inside source grants remain supported. SSH, external Git transports and executable
+repository helpers are outside this managed Host Git path; native Git still runs
+with ordinary user configuration under its own mandatory namespace.
+
+Tests exercise genuine Git smart-HTTP clone and checkpoint push against synthetic
+local infrastructure, authenticated Host diffs/checkpoint, concurrent scoped
+endpoints, live authorization removal, redirect refusal and absence of the endpoint
+in an ordinary concurrent native namespace. They do not contact GitHub/Gitea with
+production credentials or establish production network acceptance.
