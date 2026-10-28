@@ -10,7 +10,7 @@ import {verifySealedCheckpoint,type CheckpointManifest,type CaptureLease,type Re
 import type {Conversation,Project,Workspaces} from './workspaces.js';
 import {durableJson,exists,privateDir,readJson,restoreFail,restoreLock,restoreParent,sha,syncDir,treeDigest} from './restore-files.js';
 export interface RestoreAction {nativeContinuation?:{kind:string;resource:string};reuse?:{target:{dev:number;ino:number;digest:string};owners:{taskId:string;registryDigest:string}[];witnesses:{path:string;dev:number;ino:number;digest:string}[]};sharedNative?:{schemaVersion:1;accountOperationId:string;accountRevision:number;ownerOperationId:string;memberOperationIds:string[];checkpointId:string;manifestSha256:string};replace?:ReplacementPreimage;source:string;target:string;phase:'task'|'native';digest:string;dev:number;ino:number;parent:{dev:number;ino:number;uid:number;guardRoot?:string};}
-export interface NativeRestoreOptions {mode?:'missing-only'|'replace';selectedTaskIds?:string[];}
+export interface NativeRestoreOptions {mode?:'missing-only'|'replace';selectedTaskIds?:string[];/** Trusted engine adapter projection; never decoded from an HTTP request. */nativeHistory?:import('./native-binding-history.js').NativeHistoryCheckpoint;}
 export interface NativeMergeContext {operationId:string;digest:string;publicationFd?:number;assertValid:()=>void;}
 export interface NativeRestorePreparation {nativeMerge?:Record<string,unknown>;conversation:Conversation;project?:Project;actions:RestoreAction[];nativeBindings:string[];warnings:string[];}
 export interface NativeRestoreAdapter {

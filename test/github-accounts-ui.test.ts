@@ -43,3 +43,28 @@ it('keeps failed legacy binding visible and permits a retry',async()=>{
  expect(document.getElementById('github-legacy-row')!.hidden).toBe(false);
  button.click();await tick();expect(bind).toHaveBeenCalledTimes(2);
 });
+it('selects and clears a GitHub account for the current Gitea task without changing project authorization',async()=>{
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
+ const task={id:'gitea-task',name:'Build app',githubAccountId:undefined as string|undefined};
+ const bindTask=vi.fn(async(id:string,accountId:string|null)=>{expect(id).toBe(task.id);task.githubAccountId=accountId??undefined;});
+ vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({accounts:[{id:'one',login:'personal'}],oauthConfigured:true})})));
+ const manager=initGitHubAccounts({task:()=>task,bindTask});await manager.refresh();
+ expect(document.getElementById('github-task-row')).not.toBeNull();
+ expect(document.getElementById('github-task-summary')!.textContent).toContain('尚未选择');
+ const use=[...document.querySelectorAll<HTMLButtonElement>('#github-accounts-list button')].find(b=>b.textContent==='用于当前对话')!;
+ use.click();await tick();
+ expect(bindTask).toHaveBeenCalledWith('gitea-task','one');
+ expect(document.getElementById('github-task-summary')!.textContent).toContain('personal');
+ document.getElementById('github-task-clear')!.click();await tick();
+ expect(bindTask).toHaveBeenCalledWith('gitea-task',null);
+ expect(document.getElementById('github-task-summary')!.textContent).toContain('尚未选择');
+});
+it('rejects a stale task action when the user has switched conversations',async()=>{
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');
+ let current={id:'first',name:'First'};const bindTask=vi.fn();
+ vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({accounts:[{id:'one',login:'personal'}],oauthConfigured:true})})));
+ const manager=initGitHubAccounts({task:()=>current,bindTask});await manager.refresh();
+ const use=[...document.querySelectorAll<HTMLButtonElement>('#github-accounts-list button')].find(b=>b.textContent==='用于当前对话')!;
+ current={id:'second',name:'Second'};use.click();await tick();
+ expect(bindTask).not.toHaveBeenCalled();expect(document.getElementById('github-accounts-status')!.textContent).toContain('当前对话已切换');
+});

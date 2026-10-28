@@ -174,3 +174,34 @@ through authenticated Web HTTP while retaining browser/user-bound state, PKCE,
 one-use callback, cross-user rejection and no credential disclosure checks.
 Real workflow push acceptance remains pending the user's renewed consent; a
 successful identity check alone cannot prove workflow permission.
+
+## GitHub access for a Gitea Work conversation (2026-10-26)
+
+A Gitea Work conversation may explicitly select any connected GitHub account in
+its own authenticated user's account store. The Code hosting accounts menu shows
+the current conversation binding, offers Use for current conversation on each
+account, and can clear the conversation binding without disconnecting the account.
+This does not change the Gitea project, repository remote or Gitea credentials.
+GitHub-backed projects retain their existing project-bound account rule; Chat is
+outside this flow. No account is selected automatically.
+
+Host validates the scoped task and live GitHub identity before changing anything.
+Active runs, queued input, pending questions, compaction, background work or
+unknown background state refuse the operation. Under the task lifecycle lock,
+Host closes the idle native session, resets its cached native process, persists
+the task account ID, then closes that task's browser connections so the normal
+reconnection path recreates the environment. Existing native binding, model,
+history, workspace and other conversations remain intact. Failed persistence
+restores the previous in-memory binding. Refresh/restart, takeover and Fork retain
+the task account ID under the normal task metadata contract.
+
+An unbound Gitea task is distinct from an expired GitHub credential: connecting an
+account alone does not grant it to every task. The selected task uses the existing
+managed Git/gh environment and renewal broker. No VM-global credential fallback
+or account from another Gitea user is accepted. Delayed menu actions are rejected
+if the visible conversation changed before the action.
+
+Host advertises `taskGitHubAccounts` in workspace capabilities; older Hosts do
+not expose the per-task selection controls. Unbound native GitHub tools explain
+that the conversation needs an account selection rather than suggesting expired
+credentials.

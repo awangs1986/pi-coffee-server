@@ -117,4 +117,4 @@ try {
     const env={...process.env,GH_TOKEN:token,GITHUB_TOKEN:token,GH_HOST:'github.com'};
     const result=spawnSync(program,args,{env,stdio:'inherit'});process.exit(result.status??1);
   }else throw Error();
-}catch{process.stderr.write(mode==='gitea'?'Gitea authorization is unavailable or does not match this account; ask the administrator to check its binding.\n':'GitHub authorization is missing or disconnected. Connect/select an account in PI Coffee.\n');process.exit(1);}
+}catch{process.stderr.write(mode==='gitea'?'Gitea authorization is unavailable or does not match this account; ask the administrator to check its binding.\n':!id?'No GitHub account is selected for this conversation. Open Code hosting accounts in PI Coffee and choose Use for current conversation.\n':'GitHub authorization is missing or disconnected. Connect/select an account in PI Coffee.\n');process.exit(1);}

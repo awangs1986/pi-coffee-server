@@ -321,7 +321,7 @@ export class Workspaces {
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;
   }); }
-  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
+  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,taskGitHubAccounts:Boolean(this.githubAccounts),forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async lookupByCwd(cwd:string){await this.load();return this.state.conversations.find(c=>samePath(c.cwd,cwd));}
   async branches(projectId:string):Promise<string[]> {
@@ -346,7 +346,7 @@ export class Workspaces {
     if(!repo.canPush)throw new Error(`The Host Gitea token cannot push to ${repo.fullName}`);
     if(!repo.cloneUrl)throw new Error('Gitea did not return a clone URL');
     const repoUrl=await this.validateRepository(repo.cloneUrl,repo.defaultBranch).catch(()=>{
-      throw new Error(`VM Git cannot read ${repo.fullName} at ${repo.defaultBranch}. Check VM Git credentials and that the repository has an initial commit.`);
+      throw new Error(`VM Git cannot read ${repo.fullName} at ${repo.defaultBranch}. Check VM Git credentials and the selected branch.`);
     });
     const existing=this.state.projects.find(p=>(p.forge ?? 'gitea')==='gitea' && p.repoId===repo.id);
     if(existing){existing.repoUrl=repoUrl;existing.webUrl=repo.webUrl;existing.branch=repo.defaultBranch;await this.save();return structuredClone(existing);}
@@ -382,6 +382,25 @@ export class Workspaces {
     const project:Project={id:`github-${repo.id}${this.githubAccounts?'-'+accountId:''}`,...(this.githubAccounts?{githubAccountId:accountId}:{}),name:repo.fullName,path:'',branch:repo.defaultBranch,repoUrl,repoId:repo.id,webUrl:repo.webUrl,forge:'github'};
     this.state.projects.push(project);await this.save();return structuredClone(project);
   });}
+  async validateTaskGitHubBinding(id:string,accountId:unknown) {
+    await this.load();
+    if(!this.githubAccounts)throw new Error('Account management unavailable');
+    const c=this.conversation(id),p=this.project(c.projectId);
+    if(c.workspaceKind!=='project'||p.forge==='github'||c.archived)throw new Error('Select an active Gitea Work task; GitHub projects retain their project account');
+    await this.checkDirectory(c);
+    if(c.runState==='running'||c.takeover?.status==='preparing'||c.forking?.status==='preparing'||c.fork?.status==='preparing')throw new Error('Finish running work before changing GitHub authorization');
+    if(accountId!==null){
+      if(typeof accountId!=='string'||!accountId)throw new Error('Select a connected GitHub account');
+      await (await this.githubAccounts.client(accountId)).identity();
+    }
+  }
+  async bindTaskGitHubAccount(id:string,accountId:unknown){return this.mutate(async()=>{
+    await this.validateTaskGitHubBinding(id,accountId);
+    const c=this.conversation(id),previous=c.githubAccountId;
+    if(accountId===null)delete c.githubAccountId;else c.githubAccountId=accountId as string;
+    try{await this.save();}catch(error){if(previous===undefined)delete c.githubAccountId;else c.githubAccountId=previous;throw error;}
+    return structuredClone(c);
+  },()=>this.conversationLock(id));}
   async bindGitHubProject(projectId:string,accountId:string){return this.mutate(async()=>{
     if(!this.githubAccounts)throw new Error('Account management unavailable');
     const p=this.project(projectId);if(p.forge!=='github'||p.githubAccountId)throw new Error('Only unbound GitHub projects can be bound');
@@ -472,7 +491,35 @@ export class Workspaces {
     if(!repoUrl || /[\r\n\0]/.test(repoUrl))throw new Error('Repository URL is required');
     const normalized=/^(https?:\/\/|ssh:\/\/|git@[a-zA-Z0-9.-]+:)/.test(repoUrl) ? repoUrl : resolve(repoUrl);
     if(/^https?:/.test(normalized) && (new URL(normalized).username || new URL(normalized).password))throw new Error('Use VM Git credential storage, not URL credentials');
-    await this.git(this.root,['-c','protocol.file.allow=always','ls-remote','--exit-code','--heads',normalized,branch],2*1024*1024,accountId);return normalized;
+    await this.git(this.root,['check-ref-format','--branch',branch]);
+    const selected=await this.git(this.root,['-c','protocol.file.allow=always','ls-remote','--heads',normalized,`refs/heads/${branch}`],2*1024*1024,accountId);
+    if(selected)return normalized;
+    const refs=await this.git(this.root,['-c','protocol.file.allow=always','ls-remote','--refs',normalized],2*1024*1024,accountId);
+    if(refs)throw new Error('Selected remote branch does not exist');
+    return normalized;
+  }
+  /** Registration is read-only; initialize a genuinely empty remote only when a task is created. */
+  private async initializeEmptyRepository(p:Project,from:string,accountId?:string) {
+    const refs=await this.git(this.root,['ls-remote','--refs',p.repoUrl!],2*1024*1024,accountId);
+    if(refs)return refs.split('\n').some(row=>row.split('\t')[1]===`refs/heads/${from}`);
+    if(from!==p.branch)throw new Error(`Empty repository: choose its initial branch ${p.branch}`);
+    const temporary=join(this.root,'.coffee','initialize-'+randomUUID());
+    await mkdir(temporary,{mode:0o700});
+    try {
+      await this.git(temporary,['init','-b',from],undefined,accountId);
+      await this.git(temporary,['remote','add','origin',p.repoUrl!],undefined,accountId);
+      await this.git(temporary,['commit','--allow-empty','-m','Initialize project'],undefined,accountId);
+      // A concurrent task/user may initialize first. Never overwrite their commit.
+      try {
+        await this.git(temporary,['push',`--force-with-lease=refs/heads/${from}:`,'origin',`HEAD:refs/heads/${from}`],undefined,accountId);
+      } catch(error) {
+        const winner=await this.git(temporary,['ls-remote','--heads','origin',`refs/heads/${from}`],undefined,accountId);
+        if(!winner)throw error;
+      }
+      const published=await this.git(temporary,['ls-remote','--heads','origin',`refs/heads/${from}`],undefined,accountId);
+      if(!published)throw new Error('Remote did not confirm the initial branch');
+      return true;
+    } finally {await rm(temporary,{recursive:true,force:true});}
   }
   private assertId(id:string) {
     if(!/^[a-zA-Z0-9-]{1,100}$/.test(id))throw new Error('Invalid conversation ID');
@@ -671,7 +718,12 @@ export class Workspaces {
     c.creationState='creating';delete c.creationError;await this.save();
     try {
       if(!await lstat(cwd).then(()=>true,()=>false)) {
-        await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',from,'--',p.repoUrl,cwd],2*1024*1024,c.githubAccountId);
+        const clone=()=>this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',from,'--',p.repoUrl!,cwd],2*1024*1024,c.githubAccountId);
+        try {await clone();} catch(error) {
+          if(await lstat(cwd).then(()=>true,()=>false))throw error;
+          if(!await this.initializeEmptyRepository(p,from,c.githubAccountId))throw error;
+          await clone();
+        }
       } else {
         if((await lstat(cwd)).isSymbolicLink() || await this.git(cwd,['remote','get-url','origin'])!==p.repoUrl)throw new Error('Failed creation directory changed; inspect it before retrying');
         if(await this.git(cwd,['status','--porcelain']))throw new Error('Failed creation contains local changes; preserve them before retrying');

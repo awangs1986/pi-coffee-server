@@ -1,5 +1,9 @@
 # Same-VM Web migration
 
+> Migration/cutover record, not a pending move. The October 16 activation below
+> completed. Current architecture and later release observations are maintained
+> in [topology](../architecture/topology.md) and [the October 26 audit](../reviews/topology-freshness-20261026.md).
+
 ## Accepted topology
 
 For the current two-person deployment, Web, Host and native Agent CLIs share one
@@ -57,7 +61,7 @@ risking two active Web services. Restore public DNS to the source address when
 rolling back; the script does not administer LAN DNS. Service rollback alone does
 not prove clients can resolve the restored endpoint.
 
-## Verification and current staging evidence
+## Verification and historical pre-cutover staging evidence
 
 `test/web-migration.test.ts` exercises success/idempotence, source fencing failure,
 source observation failure, target verification failure and unconfirmed target

@@ -1,9 +1,15 @@
+- Per-conversation GitHub access for Gitea Work: [selection, runtime recreation and isolation](spec/github-accounts.md#github-access-for-a-gitea-work-conversation-2026-10-26).
+- Create a private Gitea repository directly in the Work repository picker: [creation flow](spec/gitea-workspaces.md#create-a-gitea-repository-from-the-picker-2026-10-25).
+- Empty Gitea/GitHub repository Work creation: [initialization and concurrency contract](spec/gitea-workspaces.md#empty-repository-work-creation-2026-10-25).
+
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
 - Backup retention candidate: [administrator preview, pins and crash reconciliation](deployment/backup-retention.md), Server #139. Source tests do not activate production cleanup.
 
 - Pi/Codex backup candidate: [checkpoint/source-custody contract and remaining gates](spec/task-backup.md), [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130). [Encrypted repository / offline recovery copy candidate](deployment/task-backup-repository.md); [Managed source authority and independent model authentication](deployment/managed-source-authority.md). Production qualification and integrated scheduling/restore acceptance remain pending.
+
+- Current physical and logical architecture: [one VM, separate Web/Host services, scoped users](architecture/topology.md). [2026-10-26 evidence and remaining cleanup](reviews/topology-freshness-20261026.md).
 
 - Latest scoped spec refresh (2026-10-23): [UI source baseline, evidence and unresolved gaps](reviews/spec-freshness-20261023-ui.md). Candidate v0.53 at `1bc2b27`; documentation-only refresh, not a deployment claim.
 
@@ -13,7 +19,8 @@
 
 - Bounded optional RAM scratch (16 GiB maximum, allocated on demand) and crash reclamation: [temporary storage](spec/conversation-switching.md#temporary-directories). Builds and durable task data remain on disk; activation requires the dedicated capped mount.
 
-Last verified deployment at the start of the October 17 close-out: v0.27 / `d835f00`.
+Current topology audit observed Web and primary Host at v0.56 / `1db8ab3` on 2026-10-26.
+Historical baseline at the start of the October 17 close-out: v0.27 / `d835f00`.
 Web and Host share one VM. Read live `/api/release` and deployment receipts for
 actual activation; source VERSION alone is not a running-service claim.
 The October 13 audit below is historical. The v0.28 stability work is tracked in
