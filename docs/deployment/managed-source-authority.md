@@ -64,8 +64,12 @@ account identity. Credentials remain outside the workspace and native namespace.
 Caller authorization headers, arbitrary paths, other services and redirects are
 refused. The endpoint closes when the command finishes or fails. Local repositories
 inside source grants remain supported. SSH, external Git transports and executable
-repository helpers are outside this managed Host Git path; native Git still runs
-with ordinary user configuration under its own mandatory namespace.
+repository helpers are outside this managed Host Git path. Native Pi/Codex direct
+Git and gh do not inherit this command endpoint or the Host's private wrappers.
+Native local Git still runs with ordinary user configuration under its mandatory
+namespace; direct native Git/gh forge network operations remain unavailable under
+the existing provider-only network policy. This change restores Host Workspaces
+actions and does not claim native terminal forge access.
 
 Tests exercise genuine Git smart-HTTP clone and checkpoint push against synthetic
 local infrastructure, authenticated Host diffs/checkpoint, concurrent scoped

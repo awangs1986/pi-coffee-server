@@ -107,6 +107,7 @@ export class Workspaces {
   private readonly github?:GitHubForge;
   private readonly githubAccounts?:GitHubAccounts;
   private readonly pendingAccounts=new Map<string,string>();
+  private readonly pendingRepositories=new Map<string,string>();
   private readonly taskRoot?:string;
   constructor(readonly root: string, private options:WorkspaceOptions={}) {
     this.root = resolve(root);
@@ -215,7 +216,7 @@ export class Workspaces {
     let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
     if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
       const conversation=this.state.conversations.find(c=>samePath(c.cwd,cwd)),project=conversation?this.state.projects.find(p=>p.id===conversation.projectId):undefined;
-      const repository=args.find(arg=>/^https?:\/\//.test(arg))??project?.repoUrl;
+      const repository=args.find(arg=>/^https?:\/\//.test(arg))??project?.repoUrl??this.pendingRepositories.get(cwd);
       if(repository&&/^https?:\/\//.test(repository)){
         if(!this.githubAccounts)throw Error('Managed Git requires account-bound authorization');
         transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
@@ -468,7 +469,7 @@ export class Workspaces {
     if(url && !this.forge)return this.registerProjectUnlocked(safe,url);
     if(!this.forge?.createRepository)throw new Error('Gitea project adapter is not configured');
     const registration=await this.forge.createRepository(safe);
-    const path=join(this.root,'.coffee','imports',randomUUID());await mkdir(path,{recursive:true});
+    const path=join(this.root,'.coffee','imports',randomUUID());await mkdir(path,{recursive:true});this.pendingRepositories.set(path,registration.repoUrl);
     try {
       if(archive)await exec(pythonCommand,[fileURLToPath(new URL('./import-zip.py',import.meta.url)),archive,path],{timeout:60000,maxBuffer:1024*1024});
       await this.git(path,['init','-b',registration.branch]);
@@ -477,7 +478,7 @@ export class Workspaces {
       await this.git(path,['remote','add','origin',registration.repoUrl]);await this.git(path,['push','-u','origin',registration.branch]);
       const p={id:registration.repoId,name:safe,path:'',branch:registration.branch,repoUrl:registration.repoUrl,repoId:registration.repoId,webUrl:registration.webUrl};this.state.projects.push(p);await this.save();return p;
     } catch(e) {throw new Error(`Project creation failed; the Gitea repository was retained for inspection. ${e instanceof Error ? e.message.slice(0,300) : ''}`);}
-    finally {await rm(path,{recursive:true,force:true});}
+    finally {this.pendingRepositories.delete(path);await rm(path,{recursive:true,force:true});}
   }); }
   private async registerProjectUnlocked(name:string,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {
     const normalized=await this.validateRepository(repoUrl,branch);
@@ -504,7 +505,7 @@ export class Workspaces {
     if(refs)return refs.split('\n').some(row=>row.split('\t')[1]===`refs/heads/${from}`);
     if(from!==p.branch)throw new Error(`Empty repository: choose its initial branch ${p.branch}`);
     const temporary=join(this.root,'.coffee','initialize-'+randomUUID());
-    await mkdir(temporary,{mode:0o700});
+    await mkdir(temporary,{mode:0o700});this.pendingRepositories.set(temporary,p.repoUrl!);
     try {
       await this.git(temporary,['init','-b',from],undefined,accountId);
       await this.git(temporary,['remote','add','origin',p.repoUrl!],undefined,accountId);
@@ -519,7 +520,7 @@ export class Workspaces {
       const published=await this.git(temporary,['ls-remote','--heads','origin',`refs/heads/${from}`],undefined,accountId);
       if(!published)throw new Error('Remote did not confirm the initial branch');
       return true;
-    } finally {await rm(temporary,{recursive:true,force:true});}
+    } finally {this.pendingRepositories.delete(temporary);await rm(temporary,{recursive:true,force:true});}
   }
   private assertId(id:string) {
     if(!/^[a-zA-Z0-9-]{1,100}$/.test(id))throw new Error('Invalid conversation ID');
@@ -954,7 +955,7 @@ export class Workspaces {
     const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
     const cwd=taskRoot ? join(taskRoot,'workspace') : join(this.root,'checkouts',id);await mkdir(dirname(cwd),{recursive:true});
     if(await stat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
-    if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);
+    if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);if(p.repoUrl)this.pendingRepositories.set(cwd,p.repoUrl);
     try {
       await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',sourceBranch,'--',p.repoUrl,cwd],2*1024*1024,p.githubAccountId);
       const head=await this.git(cwd,['rev-parse','HEAD']);
@@ -964,7 +965,7 @@ export class Workspaces {
       await this.git(cwd,['checkout','-b',branch]);
       await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`]);
       const c:Conversation={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
-    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);}
+    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);this.pendingRepositories.delete(cwd);}
   },()=>`conversation:${id}`);}
   /** Read-only change view against the last fetched target branch. */
   async changes(id:string) {

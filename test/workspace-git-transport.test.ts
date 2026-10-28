@@ -17,7 +17,7 @@ it('concurrent Git endpoints pin repository, verb and current account authority;
  try{
   const results=await Promise.all([call(alice.socket,'/repository/info/refs?service=git-upload-pack'),call(bob.socket,'/repository/info/refs?service=git-receive-pack')]);expect(results.map(r=>r.status)).toEqual([200,200]);
   expect(seen).toEqual(expect.arrayContaining([{url:'/alice/repo.git/info/refs?service=git-upload-pack',authorization:'alice-synthetic'},{url:'/bob/repo.git/info/refs?service=git-receive-pack',authorization:'bob-synthetic'}]));
-  for(const path of ['/repository/info/refs?service=git-receive-pack','/other/info/refs?service=git-upload-pack','/repository/../other/info/refs?service=git-upload-pack','/repository/info/refs?service=git-upload-pack&x=1',url+'/other','/repository/git-receive-pack'])expect((await call(alice.socket,path,path.endsWith('git-receive-pack')?'POST':'GET')).status).toBe(403);
+  for(const path of ['/repository/info/refs?service=git-receive-pack','/other/info/refs?service=git-upload-pack','/repository/../other/info/refs?service=git-upload-pack','/repository/info/refs?service=git-upload-pack&x=1',url+'/other','/repository/git-receive-pack'])expect((await call(alice.socket,path,path==='/repository/git-receive-pack'?'POST':'GET')).status).toBe(403);
   expect(seen).toHaveLength(2);redirect=true;expect((await call(alice.socket,'/repository/info/refs?service=git-upload-pack')).status).toBe(502);expect(seen).toHaveLength(3);
   revoked=true;expect((await call(alice.socket,'/repository/info/refs?service=git-upload-pack')).status).toBe(403);expect(seen).toHaveLength(3);
   await alice.close();await expect(call(alice.socket,'/repository/info/refs?service=git-upload-pack')).rejects.toThrow();
@@ -48,3 +48,14 @@ it('a concurrent ordinary native namespace cannot discover or connect to a Host 
   await expect.poll(async()=>(await custody.state()).state).toBe('quiescent');
  }finally{await relay.close();await rm(root,{recursive:true,force:true});}
 },15000);
+
+it('closing a Git command while credential renewal is pending prevents a later upstream request',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'git-closing-'));let calls=0,connections=0,release!:()=>void,entered!:()=>void;
+ const waiting=new Promise<void>(resolve=>release=resolve),started=new Promise<void>(resolve=>entered=resolve);
+ const server=createServer((req,res)=>{calls++;req.resume();res.end('fixture');});server.on('connection',()=>connections++);server.listen(0,'127.0.0.1');await once(server,'listening');
+ const relay=await workspaceGitTransport(join(root,'group.lock'),{repository:`http://127.0.0.1:${(server.address() as AddressInfo).port}/repo`,credentials:async()=>{entered();await waiting;return {authorization:'synthetic'};}},false);
+ try{
+  const attempt=new Promise<void>(resolve=>{const req=request({socketPath:relay.socket,path:'/repository/info/refs?service=git-upload-pack'},res=>{res.resume();res.once('end',resolve);});req.on('error',()=>resolve());req.end();});
+  await started;await relay.close();release();await attempt;await new Promise(resolve=>setTimeout(resolve,100));expect(calls).toBe(0);expect(connections).toBe(0);
+ }finally{release();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+});

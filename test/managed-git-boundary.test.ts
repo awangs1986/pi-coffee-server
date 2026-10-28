@@ -107,7 +107,7 @@ it('managed authenticated HTTP repositories can clone, inspect and publish check
  });
  server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address() as import('node:net').AddressInfo,url=`http://127.0.0.1:${address.port}`;
  const accounts=new GitHubAccounts(join(fixture.authority,'github'),{gitea:{url,owner:'alice',token:secret},gitIdentity:{name:'Alice fixture',email:'alice@example.invalid'}});
- const store=new Workspaces(join(fixture.source,'http-projects'),{managedGitCustody:fixture.custody,githubAccounts:accounts});store.setBackupWriterFence(new ManagedWriterFence({lock:fixture.custody.profile.lock,custody:fixture.custody}));
+ const store=new Workspaces(join(fixture.source,'http-projects'),{managedGitCustody:fixture.custody,githubAccounts:accounts,forge:{createRepository:async name=>{const remote=join(fixture.source,name+'.git');fixture.git(fixture.source,'init','--bare','--initial-branch=main',remote);fixture.git(remote,'config','http.receivepack','true');return {repoId:name,name,repoUrl:url+'/'+name+'.git',webUrl:url+'/'+name,branch:'main'};}}});store.setBackupWriterFence(new ManagedWriterFence({lock:fixture.custody.profile.lock,custody:fixture.custody}));
  try{
   fixture.git(fixture.upstream,'config','http.receivepack','true');fixture.git(fixture.upstream,'config','receive.denyCurrentBranch','updateInstead');
   const project=await store.registerProject('http-fixture',url+'/upstream'),task=await store.createConversation(project.id,undefined,'http-task','pi');
@@ -118,6 +118,11 @@ it('managed authenticated HTTP repositories can clone, inspect and publish check
    const saved=await request({action:'checkpoint',paths:['README.md'],message:'Managed remote checkpoint'});expect(saved.status,saved.body.error).toBe(200);expect(saved.body.state).toBe('synced');expect(fixture.git(fixture.upstream,'show',`refs/heads/${task.branch}:README.md`)).toBe('HTTP checkpoint\n');expect(fixture.git(task.cwd,'log','-1','--format=%ae').trim()).toBe('alice@example.invalid');
    expect(requests.some(value=>value==='POST /upstream/git-receive-pack')).toBe(true);
    expect(await readFile(join(task.cwd,'.git','config'),'utf8')).not.toContain(secret);
+   const empty=join(fixture.source,'empty.git');fixture.git(fixture.source,'init','--bare','--initial-branch=main',empty);fixture.git(empty,'config','http.receivepack','true');
+   const emptyProject=await store.registerProject('empty-http',url+'/empty.git'),emptyTask=await store.createConversation(emptyProject.id,'main','empty-task','pi');expect(emptyTask.creationState).toBe('ready');expect(fixture.git(empty,'rev-parse','main').trim()).toBe(emptyTask.startSha);
+   const continued=await store.continueFrom(project.id,task.branch,saved.body.localSha,'continued-http');expect(continued.startSha).toBe(saved.body.localSha);
+   const created=await store.createProject('new-http');expect(fixture.git(join(fixture.source,'new-http.git'),'rev-parse','main').trim()).toMatch(/^[a-f0-9]{40}$/);expect(created.repoUrl).toBe(url+'/new-http.git');
+
   }finally{await host.close();}
  }finally{await accounts.close();server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));await fixture.close();}
 },60000);
