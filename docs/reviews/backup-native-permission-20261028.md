@@ -106,8 +106,8 @@ runtime-temp and browser phases were not reached.
   root, the affected eight files / 25 tests passed. Preserve the original failure;
   this comparison is not a passed canonical run.
 - Three Codex refusal cases expected a persistent pending-publication marker,
-  while the implementation returned none. These assertions require reconciliation
-  with the side-effect-free preflight contract; they are not silently waived.
+  while the implementation returned none. The original failures are retained;
+  the subsequent assertion correction and stronger checks are recorded below.
 - Separate Git long-path followup `0e7e47f1ba739af6a60ab5179e5eab888e0c3b71`
   has two files / ten tests passing under the long-path reproduction and a passing
   typecheck. It was not part of the canonical commit above.
@@ -118,3 +118,22 @@ runtime-temp and browser phases were not reached.
 The 45-story / 40-ticket-criterion inventory must retain the permission conflict
 and these final gates. PR #142 remains a draft; no tickets are closed or
 acceptance boxes checked by this reconciliation.
+
+## Retained-component followup
+
+Independent normal integration at
+`f513d87125b2b5fc0c4f8970174768d1e75f2ab7` includes the Git long-path repair,
+permission-document correction and Codex assertion followup
+`fd8b5aa2cf6f58ff2250ba450a1e603d9ee353d8`. Build passed, followed by six complete
+test files / 19 tests passing with zero skips and explicit Restic/Codex runtimes.
+The scope was Git boundary/transport, Codex replacement/rejections, the durable
+publication gate and documentation. This was not another canonical or fresh-clone
+run, and it did not execute the browser phase.
+
+The three obsolete Codex assertions now check that preflight refusal preserves
+registry bytes, workspace/native trees and SQL rows, and admits a later healthy
+writer. The existing post-intent restart test still requires writer exclusion.
+An intentional early durable-intent mutation was rejected by the new test and
+restored. No production recovery code was weakened to obtain these passes.
+The permission-preserving source/key architecture remains absent; these results
+do not close that requirement.
