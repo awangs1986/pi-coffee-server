@@ -212,7 +212,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }
     const identity = (value: typeof task | undefined) => value ? JSON.stringify({ engine: value.engine ?? "pi", cwd: value.cwd, nativeId: value.nativeBinding?.id, segments: value.takeoverSegments ?? [], removed: value.workspaceRemoved, cleanup: value.cleanupStarted }) : "missing";
     const before = identity(task), segment = task.takeoverSegments?.at(-1), engine = task.engine ?? "pi";
-    const nativeId = engine === "pi" && !segment && !task.contextReset ? sessionId : task.nativeBinding?.id;
+    const nativeId = task.nativeBinding?.id ?? (engine === "pi" && !segment && !task.contextReset ? sessionId : undefined);
     const binding = `${engine}:${nativeId ?? "unbound"}:${segment?.id ?? task.contextReset?.id ?? "original"}`;
     if (!nativeId || task.cleanupStarted || task.workspaceRemoved) return unknownHistory(binding);
     try {
@@ -459,7 +459,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(task?.fork&&task.fork.status!=='completed')throw new Error(task.fork.error??'Fork preparation is not complete');
     if(!task && this.options.legacyCodex && (await this.legacyListings()).some(s=>s.id===sessionId))return this.options.legacyCodex.create({sessionId});
     if(!task && !(await this.readFactory(this.options.pi,()=>this.options.pi.list())).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
-    if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.takeoverSegments?.length||task?.contextReset?task.nativeBinding!.id!:sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length||task?.contextReset)});
+    if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.nativeBinding?.id??sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length||task?.contextReset||task?.recoveryReceipt)});
     const readiness=(await this.engines()).find(e=>e.id===task.engine);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
     const baseConfig=this.options[task.engine as "codex"|"claude"|"cursor"|"grok"];if(!baseConfig)throw new Error("Agent not configured");
     const config={...baseConfig,env:{...baseConfig.env,...await this.options.workspaces.runtimeEnvironment(sessionId)}};
@@ -489,9 +489,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private async listAdmitted() {
     const state=await this.options.workspaces.list();
     const piListings=await this.readFactory(this.options.pi,()=>this.options.pi.list()),metadata=this.options.legacyCodex instanceof BuiltinCodexFactory?this.options.legacyCodex:undefined;
-    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.contextReset||c.fork));
+    const native=state.conversations.filter(c=>c.engine && (c.engine!=="pi"||c.takeoverSegments?.length||c.contextReset||c.fork||c.nativeBinding?.id&&c.nativeBinding.id!==c.id));
     const ids=new Set(native.map(c=>c.id));
-    for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if((c.takeoverSegments?.length||c.contextReset)&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
+    for(const c of state.conversations){for(const nativeId of c.retainedNativeIds??[])ids.add(nativeId);if(c.takeover?.nativeId)ids.add(c.takeover.nativeId);for(const segment of c.takeoverSegments??[])if(segment.nativeId)ids.add(segment.nativeId);if((c.takeoverSegments?.length||c.contextReset||c.nativeBinding?.id!==c.id)&&c.nativeBinding?.id)ids.add(c.nativeBinding.id);}
     const summarize=async(c:typeof native[number])=>{
       const readable=!c.workspaceRemoved&&!c.cleanupStarted&&(!c.creationState||c.creationState==='ready');
       const known=!readable?undefined:c.engine==="codex" && c.nativeBinding?.id && this.options.codexSummary

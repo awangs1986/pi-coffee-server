@@ -76,7 +76,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('actual Pi lifecycle with local sy
   const restored=join(f.root,'restored');await f.client.extract(saved.body.id,restored);const point=join(restored,first.body.checkpointId),manifest=JSON.parse(await readFile(join(point,'manifest.json'),'utf8')),native=manifest.sources.find((source:any)=>source.recoveryKey.startsWith('native-session/'));
   const history=await readFile(join(point,'objects',native.id),'utf8');expect(history).toContain('first native metadata');expect(history).not.toContain('second native metadata');
   const request=await f.post('/api/backup',{action:'restore-request',taskId:'native-pi-task',jobId:saved.body.id});expect(request.status).toBe(200);
-  const plan=await f.post('/api/backup',{action:'restore-plan',id:request.body.id,revision:request.body.revision});expect(plan).toEqual({status:409,body:{error:'Native source custody unavailable'}});expect((await f.client.recoveryPins()).some(pin=>pin.jobId===saved.body.id)).toBe(true);
+  const plan=await f.post('/api/backup',{action:'restore-plan',id:request.body.id,revision:request.body.revision});expect(plan).toEqual({status:409,body:{error:'Trusted source ownership or writer coverage is unqualified'}});expect((await f.client.recoveryPins()).some(pin=>pin.jobId===saved.body.id)).toBe(true);
 
  }finally{socket?.terminate();await f.stop();}
 },90000);
@@ -123,7 +123,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
  const f=await fixture(false,true,false,'existing',true);let socket:WebSocket|undefined;try{
   await captureReady(f,'codex-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:20000}).toMatchObject({type:'opened'});
-  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'existing-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');
+  await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('The ordinary answer');
   const closed=once(socket,'close');socket.close();await closed;socket=undefined;
   let first:any;await expect.poll(async()=>{first=await f.post('/api/backup',{action:'capture',taskId:'codex-task'});return first.body.state;},{timeout:20000,interval:500}).toBe('protected');
   const state=JSON.parse(await readFile(join(f.control,'authority','enrollment','state.json'),'utf8'));expect(state.enrollment.handoffDigest).toMatch(/^[a-f0-9]{64}$/);
@@ -213,7 +213,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC).each([true,false])('ordinary main 
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'native-pi-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
-  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
+  await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('Cold synthetic Pi history');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(neighbor?2:1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
  }finally{socket?.terminate();await f.stop();}
 },90000);
@@ -238,7 +238,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'codex-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
-  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames)).toContain('The ordinary question');
+  await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames.find(frame=>frame.type==='history')?.entries)).toContain('The ordinary question');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);
  }finally{socket?.terminate();await f.stop();}
 },90000);
@@ -263,7 +263,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('ordinary main publishes a missing
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'native-pi-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
-  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
+  await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('Cold synthetic Pi history');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
  }catch(error){console.error('Synthetic Host diagnostics',f.output());throw error;}finally{socket?.terminate();await f.stop();}
 },90000);
@@ -284,7 +284,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('ordinary fixed scheduler automati
  }catch(error){console.error('Synthetic scheduler diagnostics',output,f.output());throw error;}finally{if(scheduler&&scheduler.exitCode===null&&scheduler.signalCode===null){const closed=once(scheduler,'close');scheduler.kill('SIGTERM');const timer=setTimeout(()=>scheduler!.kill('SIGKILL'),10000);try{await closed;}finally{clearTimeout(timer);}}await f.stop();}
 },90000);
 
-it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_ROOT)('ordinary main publishes a missing Codex task into an explicitly fresh empty source with original native history',async()=>{
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_ROOT)('ordinary main publishes a missing Codex task into an explicitly fresh empty source, then reopens original history after new provider configuration',async()=>{
  const f=await fixture(false,true,false,'existing',true);let socket:WebSocket|undefined;
  try{
   await captureReady(f,'codex-task');
@@ -302,8 +302,13 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'codex-task');
-  const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
-  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames)).toContain('The ordinary question');
+  expect(await stat(join(f.native!.home,'config.toml')).then(()=>true,()=>false)).toBe(false);
+  const denied:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>denied.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>denied.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'error',code:'operation_failed',message:'Native authentication required; configure this CLI on the User VM'});const closed=once(socket,'close');socket.close();await closed;socket=undefined;
+  // The operator provisions a NEW offline fixture provider after loss. No historical config or credential is restored.
+  await f.restart(async()=>{await writeFile(join(f.native!.home,'config.toml'),'model="gpt-6.1-sol"\nmodel_provider="fixture"\n[model_providers.fixture]\nname="new-offline-fixture"\nbase_url="http://127.0.0.1:9/v1"\nwire_api="responses"\nrequires_openai_auth=false\n[analytics]\nenabled=false\n[feedback]\nenabled=false\n',{mode:0o600});const profile=join(f.control,'ordinary.json'),value=JSON.parse(await readFile(profile,'utf8'));value.enrollment.mode='existing';await writeFile(profile,JSON.stringify(value));});
+  await captureReady(f,'codex-task');
+  const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'}).catch(error=>{console.error('Synthetic native open error',frames.filter(frame=>frame.type==='error'));throw error;});
+  await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames.find(frame=>frame.type==='history')?.entries)).toContain('The ordinary question');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);
  }catch(error){console.error('Synthetic Host diagnostics',f.output());throw error;}finally{socket?.terminate();await f.stop();}
 },90000);
