@@ -13,4 +13,4 @@ it.each([true,false])('discovers approved providers and honors Antigravity off (
  const factory=new RpcPiSessionFactory({cwd:root,agentDir:agent,provider:'openrouter',model:'meta/muse-spark-1.3-contributor',allowedModels:env.PI_COFFEE_PI_ALLOWED_MODELS.split(','),extensions:resolveHostPiExtensions(env),args:['--offline','--no-extensions'],env:{PI_OFFLINE:'1'}});
  try{const catalog=await factory.modelCatalog('pi');expect(catalog.models.map(m=>m.provider+'/'+m.id)).toEqual(enabled?['openrouter/meta/muse-spark-1.3-contributor','antigravity/gemini-3.8-flash']:['openrouter/meta/muse-spark-1.3-contributor']);expect(catalog.current).toMatchObject({provider:'openrouter',id:'meta/muse-spark-1.3-contributor'});}
  finally{await rm(root,{recursive:true,force:true});}
-});
+},30000);

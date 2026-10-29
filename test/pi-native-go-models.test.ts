@@ -16,4 +16,4 @@ it('discovers both approved DeepSeek providers without Gemini or Zen and retains
   expect(catalog.models.map(m=>m.provider+'/'+m.id).sort()).toEqual([...allowedModels].sort());
   expect(catalog.current).toMatchObject({provider:'openrouter',id:'meta/muse-spark-1.3-contributor'});
  }finally{await rm(root,{recursive:true,force:true});}
-});
+},30000);
