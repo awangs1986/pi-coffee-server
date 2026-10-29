@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { createRequire, findPackageJSON } from "node:module";
 import { dirname, delimiter } from "node:path";
 
 const require = createRequire(import.meta.url);
@@ -9,9 +9,10 @@ export function resolveHostPiExtensions(env: NodeJS.ProcessEnv = process.env): s
   const explicit=env.PI_COFFEE_EXTENSIONS?.trim();
   if(explicit)return disabled(explicit)?[]:[...new Set(explicit.split(delimiter).map(p=>p.trim()).filter(Boolean))];
   const packages:string[]=[];
+  if(!disabled(env.PI_COFFEE_XAI_OAUTH))packages.push(dirname(require.resolve('pi-xai-oauth/package.json')));
   const needsAntigravity=env.PI_COFFEE_PROVIDER?.trim()==='antigravity' || (env.PI_COFFEE_PI_ALLOWED_MODELS??'').split(',').some(id=>id.trim().startsWith('antigravity/'));
   if(needsAntigravity&&!disabled(env.PI_COFFEE_ANTIGRAVITY))packages.push(dirname(require.resolve('pi-antigravity/package.json')));
-  if(!disabled(env.PI_COFFEE_SUBAGENTS))packages.push(dirname(require.resolve('pi-subagents')));
+  if(!disabled(env.PI_COFFEE_SUBAGENTS))packages.push(dirname(findPackageJSON('pi-subagents', import.meta.url)!));
   if(!disabled(env.PI_COFFEE_WEB) && !disabled(env.PI_COFFEE_WEB_ACCESS))packages.push(dirname(require.resolve('pi-web-access/package.json')));
   packages.push(dirname(require.resolve('pi-coffee-harness/package.json')));
   if(!disabled(env.PI_COFFEE_LSP))packages.push(dirname(require.resolve('pi-coffee-lsp/package.json')));

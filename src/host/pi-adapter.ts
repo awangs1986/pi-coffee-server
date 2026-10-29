@@ -258,6 +258,17 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   async supportsDispatchCorrelation(_sessionId:string){return true;}
 
   async readRunEvidence(sessionId:string,runId?:string):Promise<import('./agent-adapter.js').AgentRunEvidence> {
+    let result=await this.readRunEvidenceSnapshot(sessionId,runId);
+    // Pi appends across several writes. Retry one inconclusive read after the
+    // writer can settle; never reuse a stale fact or replay native execution.
+    if(result.freshness==='unknown'){
+      await new Promise(resolve=>setTimeout(resolve,20));
+      result=await this.readRunEvidenceSnapshot(sessionId,runId);
+    }
+    return result;
+  }
+
+  private async readRunEvidenceSnapshot(sessionId:string,runId?:string):Promise<import('./agent-adapter.js').AgentRunEvidence> {
     const unknown={supported:true,freshness:'unknown' as const,state:'uncertain' as const,runId,reason:'Native run evidence unavailable; no execution replay'};
     try{
       const found=(await this.listWithPaths()).filter(s=>s.id===sessionId);if(found.length!==1)return unknown;

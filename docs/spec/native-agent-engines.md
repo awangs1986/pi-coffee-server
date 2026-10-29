@@ -266,3 +266,33 @@ a production release.
 ### Codex native command Web adaptation (2026-10-20)
 
 The [Codex command contract](codex-native-commands.md) adds an explicit native/Web command inventory alongside the Skill catalog. Native commands are dispatched as operations, never blindly forwarded as text; the contract lists supported routes and unavailable terminal/shared-setting operations.
+
+### Pi Chat provider selection (2026-10-29)
+
+The next maintenance release pins native Pi 1.4.0. The deployment's approved Pi
+model list retains `openrouter/meta/muse-spark-1.3-contributor` as the default,
+removes `antigravity/gemini-3.8-flash`, and adds:
+
+- `opencode-go/deepseek-v4.1-flash`
+- `openrouter/deepseek/deepseek-v4.1-flash`
+
+Use the native `opencode-go` provider, never Zen. Its credential belongs only in
+Pi's private `auth.json`, under `opencode-go`; preserve other provider entries.
+The Go OpenAI-compatible base URL is
+`https://opencode.ai/inference/go/openai/v1` (the native catalog's
+`https://opencode.ai/inference/go/v1` is also Go). The generic inference URL is
+not a substitute for the Go-specific route. Native Pi supplies the conversation
+routing header; do not use one shared session ID across tasks.
+
+The current Host allowlist is shared by Pi Chat and Pi Work; this deployment
+therefore updates both. Removing a model from selection does not delete its
+OAuth credentials or rewrite persisted conversation models. A conversation on a
+removed model must explicitly select an approved replacement before sending.
+Existing running turns are not interrupted. Codex and other engines are unchanged.
+Catalog verification proves discovery and filtering, not account entitlement,
+subscription privacy settings, availability, or successful paid generation.
+
+Source integration, private credential setup, staged release and activation are
+separate states. This change is scheduled for the next maintenance restart;
+no idle worker may activate it early. Keep the previous release/configuration
+for rollback, and verify health and the authenticated catalog after activation.

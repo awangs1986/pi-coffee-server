@@ -26,7 +26,7 @@ it('migrates Azure native configuration without losing credentials, model choice
   for(const [file,value] of Object.entries(originals))expect(await readFile(join(agent,file+'.before-pi104'),'utf8')).toBe(JSON.stringify(value)+'\n');
   run(agent);
   for(const [file,value] of Object.entries(originals))expect(await readFile(join(agent,file+'.before-pi104'),'utf8')).toBe(JSON.stringify(value)+'\n');
-  expect((await load('settings.json')).packages).toHaveLength(5);
+  expect((await load('settings.json')).packages).toHaveLength(6);
  }finally{await rm(agent,{recursive:true,force:true});}
 },65000);
 

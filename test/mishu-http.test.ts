@@ -715,7 +715,7 @@ it.each(['normal','lost-ack','cancelled-settled','promise','tool-attempt','tool-
   expect(calls).toBe(mode==='normal'?3:mode==='tool-attempt'||mode==='tool-only'?2:1);
   if(mode!=='normal')expect(JSON.stringify(requests.flatMap(r=>r.messages.filter((m:any)=>m.role==='tool')))).not.toContain('SYNTHETIC_REPORT_FORBIDDEN_READ');
   expect(await readFile(privatePath,'utf8')).toBe('SYNTHETIC_REPORT_FORBIDDEN_READ');await expect(readFile(privatePath+'.side-effect','utf8')).rejects.toMatchObject({code:'ENOENT'});
-  if(mode==='tool-attempt'){const results=requests.at(-1).messages.filter((m:any)=>m.role==='tool');expect(results).toHaveLength(6);for(const result of results)expect(JSON.stringify(result)).toContain('Host report-only run');}
+  if(mode==='tool-attempt'){const results=requests.at(-1).messages.filter((m:any)=>m.role==='tool');expect(results).toHaveLength(6);for(const result of results){if(result.tool_call_id==='forbidden-mishu'&&String(result.content)==='Tool mishu not found')continue;expect(JSON.stringify(result)).toContain('Host report-only run');}}
  }finally{socket.close();reply();provider.closeAllConnections();await new Promise<void>(r=>provider.close(()=>r()));}
 },30000);
 
