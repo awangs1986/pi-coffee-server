@@ -1,5 +1,7 @@
 import {realpath} from 'node:fs/promises';
 import {resolve} from 'node:path';
+import {trustedSourcePhysicalFence} from './trusted-source-authority.js';
+import {physicalFenceCoversCustody} from './physical-writer-fence.js';
 import {Workspaces} from './workspaces.js';
 import {PiNativeRecoveryAdapter} from './pi-recovery.js';
 import {CodexNativeRecoveryAdapter,codexStore} from './codex-recovery.js';
@@ -26,13 +28,13 @@ const fail=()=>new BackupError('closure_incomplete','The configured native sourc
  * with a successful callback or a caller-authored recovery-group object. */
 export async function materializeTrustedNativeSource(options:{
  groupId:string;scopes:readonly TrustedNativeSourceScope[];fence:WriterAdmissionFence;
- lease:CaptureLease;assertRoots:(paths:readonly string[])=>void;
+ lease:CaptureLease;maxBytes?:number;maxFiles?:number;assertRoots:(paths:readonly string[])=>void;
 }):Promise<{group:NativeRecoveryGroup;stores:TrustedNativeStore[]}> {
  if(!options.scopes.length||new Set(options.scopes.map(scope=>scope.scope)).size!==options.scopes.length)throw fail();
  const adapters=new Map<string,CombinedNativeRecoveryAdapter>(),paths=new Map<string,{pi?:string[];codex?:string[]}>();
  for(const scope of options.scopes){
   options.lease.assertValid();
-  if(scope.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(scope.scope)!==scope.scope||!(scope.workspaces instanceof Workspaces)||scope.workspaces.backupWriterFence!==options.fence)throw fail();
+  if(scope.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(scope.scope)!==scope.scope||!(scope.workspaces instanceof Workspaces)||scope.workspaces.backupWriterFence!==options.fence||!physicalFenceCoversCustody(trustedSourcePhysicalFence(options.fence),scope.workspaces.backupGitCustody))throw fail();
   const roots:{pi?:string[];codex?:string[]}={};
   if(scope.pi)roots.pi=[scope.pi.sessionDir,scope.pi.agentDir];
   if(scope.codex){const native=await codexStore<{nativeHome:string;sqliteHome:string}>({operation:'roots',home:scope.codex.home,sqliteHome:scope.codex.sqliteHome,environmentSqliteHome:scope.codex.environmentSqliteHome});roots.codex=[native.nativeHome,native.sqliteHome];}
@@ -53,7 +55,7 @@ export async function materializeTrustedNativeSource(options:{
   return members;
  };
  const members=await inventory();if(!members.length)throw fail();
- const grouped=new GroupedRecoveryAdapter({groupId:options.groupId,fence:options.fence,inventory,resolve:(scope,taskId)=>adapters.get(scope)!.resolve(scope,taskId)});
+ const grouped=new GroupedRecoveryAdapter({groupId:options.groupId,fence:options.fence,maxBytes:options.maxBytes,maxFiles:options.maxFiles,inventory,resolve:(scope,taskId)=>adapters.get(scope)!.resolve(scope,taskId)});
  const header=await grouped.resolve(members[0].scope,members[0].taskId);if(!header.materialize)throw fail();const group=await header.materialize(options.lease);options.lease.assertValid();
  const stores:TrustedNativeStore[]=[];
  for(const scope of options.scopes)for(const engine of ['pi','codex'] as const){

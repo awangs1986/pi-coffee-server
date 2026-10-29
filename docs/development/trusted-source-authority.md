@@ -145,11 +145,20 @@ permit omitting a shared/deferred dependency from the recovery adapter's graph.
 
 `createNativeCoordinator({producer,scopes,checkpointRoot})` constructs the actual
 Pi/Codex/combined/grouped recovery adapters on each cut, using the same bound
-fence as Workspaces and native factories. The scope descriptors are trusted main
+fence as Workspaces and native factories. Each Workspaces must also carry the
+actual Git command custody bound to that physical fence; matching only the
+logical writer fence is insufficient. The scope descriptors are trusted main
 configuration. The graph must include every configured scope, including an empty
 legacy default if main constructs it. Every configured root must cover an actual
 validated native/workspace source; every actual source must be under an enrolled
-canonical same-device root. Resolved separate SQLite roots and sibling Chat/task
+canonical same-device root. Optional `maxBytes`, `maxFiles` and
+`captureTimeoutMs` are validated positive safe-integer limits, preserved in both
+initial enrollment and later captures. Initial enrollment's deadline also covers
+native materialization/handoff, and grouped materialization uses the byte/file
+budgets. Existing complete points keep their original identity/capture time after
+a failed capture under lower limits; inventory has independent bounded metadata
+reads (32 MiB, one million objects), not the new-capture file limit.
+Resolved separate SQLite roots and sibling Chat/task
 roots must be included. Root inventory is still not user authorization.
 
 Normal Host initialization must finish `Workspaces.list()`/startup reconciliation
