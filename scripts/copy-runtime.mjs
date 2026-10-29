@@ -27,3 +27,5 @@ await cp(resolve(root, 'src/host/provider-loopback.mjs'), resolve(root, 'dist/sr
 await cp(resolve(root, 'src/host/managed-pi-provider.mjs'), resolve(root, 'dist/src/host/managed-pi-provider.mjs'));
 
 for(const name of ['codex-store.py','codex-schema-01591.json'])await cp(resolve(root,'src/host',name),resolve(root,'dist/src/host',name));
+
+await cp(resolve(root,'src/host/pi-native-audit.mjs'),resolve(root,'dist/src/host/pi-native-audit.mjs'));
