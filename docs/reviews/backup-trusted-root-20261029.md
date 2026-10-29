@@ -69,7 +69,7 @@ ownership marker, matching hashes or caller-provided Boolean is insufficient.
 First and later Pi/Codex cuts, source export, exact-point scheduler consumption,
 Restic round-trip and native recovery must be demonstrated with ordinary
 permissions. Permanently reporting unavailable is not Pi/Codex delivery. Shared
-stores and historical engine bindings retain their full dependency closure.
+stores and historical engine bindings retain their complete dependency closure.
 Actual deployment topology qualification remains distinct from synthetic fixtures.
 
 ## Baseline and remaining work
