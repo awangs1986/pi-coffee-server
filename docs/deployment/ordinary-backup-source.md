@@ -50,8 +50,10 @@ readable after lowering the limits for new captures.
 
 When existing-source mode has no sufficient completed lifecycle, the ordinary
 Host may request a bounded history audit from its actual registered native
-factory. This uses a separate backup-owned Pi/Codex read connection, no prompt or
-provider request, and closes only that connection. An existing live writer blocks
+factory. Pi uses an owned process running the pinned native SessionManager SDK reader;
+Codex uses an owned app-server `thread/read` connection. Neither sends a prompt
+or provider request, and only the owned reader is closed. The Pi audit is not
+a resumed CLI session and does not initialize or change model/thinking settings. An existing live writer blocks
 the audit; a new ordinary writer cancels it. The pass shares a deadline of at most
 30 seconds (or the configured shorter capture timeout), and failed attempts are
 rate limited. No browser opening ceremony is required for a cold existing source.
@@ -109,3 +111,15 @@ session is active, independent key listener/worker, Restic storage and extractio
 and a same-boot Host restart. These are isolated synthetic fixtures, not production
 enrollment, a whole-machine reboot or installation of a daily service. See the
 [composition evidence](../reviews/backup-ordinary-composition-20261029.md).
+
+The named source socket has its own private kernel lease and owner/inode receipt
+under `.<socket-name>.authority` beside the configured endpoint. Startup binds a
+random staging name in the same directory, durably records its inode and actual
+PID/UID/boot/birth, and hard-links that inode to the configured name without
+replacing an existing destination. Only then is the staging name removed. After
+a Host crash, a restart may reclaim an endpoint only when that exact receipt
+matches, the recorded owner is gone, and the socket refuses connections. A live,
+unknown or changed endpoint is retained and startup fails visibly. A recorded
+staging socket left before public linking can likewise be reclaimed; an unknown
+orphan stage is never swept. These facts prove endpoint ownership, not source
+writer consistency or backup readiness.

@@ -47,6 +47,25 @@ acceptance. The direct HTTP selection test uses a synthetic recovery adapter to
 isolate that route. The actual main tests exercise real ordinary authority,
 custody, native adapters and independent repository services.
 
+The final composition also establishes cold-store evidence automatically through
+an owned reader: the pinned Pi 1.1.0 SessionManager SDK, or Codex app-server
+`thread/read`. No viewer, prompt or provider request is needed. Pi SDK audit is
+not CLI continuation; actual Pi RPC continuation remains covered separately.
+An active ordinary writer prevents the audit, and new ordinary admission cancels
+only the audit. The native-audit owner's separate tests verify byte/settings
+preservation, cancellation, typed historical bindings and provenance.
+
+Added main cases cover initial cold Pi/Codex qualification, coherent simulated
+prior-boot custody ledgers followed by an actual current-boot audit, current-role
+downgrade across restart, the configured initial capture file budget, and an
+actual SIGKILL of the synthetic Host followed by source endpoint recovery.
+
+The source socket uses a private kernel lease and a durable real owner/inode
+receipt before its staged inode is linked into the public name. Five endpoint
+cases cover real SIGKILL, live/unknown refusal, crash before public linking,
+a refused socket with a still-live recorded owner, and a different unknown inode
+after the former owner dies. This does not qualify source writers.
+
 ## Scoped verification
 
 Candidate `8e75a08` (ordinary integration `67cd896` plus native boot followup
@@ -54,6 +73,15 @@ Candidate `8e75a08` (ordinary integration `67cd896` plus native boot followup
 Files: `ordinary-backup-composition`, `ordinary-codex-version` and
 `backup-http-exact-point`. The actual native binaries and real Restic were supplied
 explicitly; no hidden skipped integration was counted as green.
+
+Final source candidate `1989113` merges authority `4b4bf40` and owned native
+audit `50cff3b`. `ordinary-audit-build.log` passed. After adjusting asynchronous
+startup assertions and the simulated SDK-close fixture, `ordinary-main-final.log`
+passed **2 files / 18 tests, no skips**, in 140.84 seconds: all 13 actual-main cases
+and all 5 endpoint cases. The unchanged authorization/version/HTTP/exporter files
+have 19 passing cases in `ordinary-audit-all.log`. Thus 37 distinct scoped cases
+have passing evidence across these runs; this is not a claim that the earlier
+combined run passed. Its three initial main failures remain recorded below.
 
 Private evidence directory: `/home/awang/tmp/backup-implementation-130/`.
 Build: `ordinary-boot-build.log`. Complete scoped run: `ordinary-main-all1.log`.
@@ -87,7 +115,11 @@ authority-revision and scope-grant comparisons. Each failed with unauthorized
 `qualified` versus expected `unknown`; all were restored byte for byte. Their
 logs are `ordinary-auth-mutants.log`, `ordinary-authority-mutants.json` and
 `ordinary-mutant-current-source-*.log`. Total recorded targeted probes: seven,
-zero survivors.
+zero survivors. Two endpoint mutants then removed real-owner liveness and inode
+matching. Each incorrectly permitted startup and failed the refusal assertion;
+source bytes were restored. Evidence: `ordinary-endpoint-mutants.log`,
+`ordinary-endpoint-mutants.json`, `ordinary-mutant-source-{owner-liveness,owned-inode}.log`.
+Total targeted production mutants across this composition work: nine, zero survivors.
 
 ## Failures retained and limits
 
@@ -109,15 +141,41 @@ zero survivors.
   a direct test append, and reused durable request IDs. The successful fixture
   uses the normal local slash-command path and official `navigateTree` without a
   model request. Product idle/empty-history safeguards were not disabled.
-- Initial existing-source qualification still requires a real history lifecycle.
-  A bounded backup-owned native audit is being integrated so first enablement does
-  not require a user to manually open a cold conversation. This operational gap is
-  not covered by the eleven-test pass above.
-- Same-boot process restart is not a whole-machine reboot. Current-boot custody
-  reconciliation and unattended cold audit require their separate evidence.
+- Both no-viewer cold-start tests initially remained unavailable
+  (`ordinary-cold-red.log`), then passed after actual owned native audit integration.
+- The first combined new run (`ordinary-audit-all.log`) had three main assertions
+  that incorrectly required the first capture POST to be immediately protected;
+  it observed waiting or responses without a state field. Startup refresh can run
+  concurrently. Assertions now use bounded polling of the full HTTP result and
+  validate allowed transient envelopes rather than inflating timeouts. The
+  subsequent simulated-boot case exposed a test assumption that every observation
+  has a SIGTERM normal-close file: the SDK reader exits normally with status zero.
+  The simulator now preserves optional close metadata and requires status zero
+  when it is absent. No product source was changed to make these fixture failures
+  disappear. Logs: `ordinary-audit-startup-retry.log`,
+  `ordinary-boot-endpoint-green.log`, `ordinary-main-final.log`.
+- Abrupt source-endpoint recovery first failed against the old unconditional
+  existing-socket guard (`source-endpoint-red.log`). Durable staged ownership then
+  passed real SIGKILL and publication-boundary fault tests.
+- Same-boot process restart and coherent synthetic prior-boot receipts are not
+  a real whole-machine reboot or physical storage-loss test. The current-kernel
+  boot reader was not replaced, and old synthetic custody receipts remained
+  byte-identical after requalification.
 - Source coverage for arbitrary detached daemons, remote jobs or custom producers
   is not established by these tests. Current authorization, account scope and
   explicit producer coverage remain mandatory.
 
 Whole-feature canonical checks, browser verification, independent review, fresh
 clone acceptance and deployment are owned by the integrating workflow.
+
+## Focused security review
+
+No new finding in the five checked categories: no new dependencies or embedded
+secrets; the changed HTTP selection stays behind existing authenticated actor and
+scope checks, resolves the scoped task first, and binds an existing seal; source
+enrollment checks current private application grants rather than UID/name alone;
+source export rechecks the actual delegated producer, role, revision and every
+member scope; socket recovery requires an actual private lease, recorded owner
+and exact inode and refuses live/unknown endpoints. Synthetic credentials/history
+are test-local. This is a narrow review of these paths, not whole-feature security
+acceptance or proof against the explicitly trusted Host root.

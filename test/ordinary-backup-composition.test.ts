@@ -41,6 +41,13 @@ async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode
  const post=async(path:string,body:unknown)=>{const response=await fetch(base+path,{method:'POST',signal:AbortSignal.timeout(30000),headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs','content-type':'application/json'},body:JSON.stringify(body)});return {status:response.status,body:await response.json()};};
  return {root,data,control,sourceSocket,post,get base(){return base;},stop,restart,crashRestart,native,client:new BackupRepositoryClient({socket:keySocket,serviceUid:process.getuid!(),actor:'awangs',dataScope:LEGACY_BACKUP_SCOPE,authorityRevision:1}),output:()=>output};
 }
+async function captureReady(f:Awaited<ReturnType<typeof fixture>>,taskId:string){
+ const observations:{status:number;state?:string;error?:string}[]=[];
+ await expect.poll(async()=>{const response=await f.post('/api/backup',{action:'capture',taskId});observations.push({status:response.status,state:response.body.state,error:response.body.error});return response;},{timeout:15000,interval:500}).toMatchObject({status:200,body:{state:'protected'}});
+ const busy=['Capture already running for this task','Another low-priority capture is running'];
+ expect(observations.filter(row=>row.status===409?!busy.includes(row.error??''):row.status!==200||!['protected','capturing','waiting','unavailable'].includes(row.state??''))).toEqual([]);
+ console.info('Synthetic capture readiness',JSON.stringify(observations.map(row=>row.status+'/'+(row.state??'capture_busy'))));
+}
 async function seedNative(f:Awaited<ReturnType<typeof fixture>>,name:string){let socket:WebSocket|undefined;try{const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'name',name}));await expect.poll(()=>frames.find(frame=>frame.requestId==='name'),{timeout:10000}).toMatchObject({type:'ack'});socket.send(JSON.stringify({v:1,type:'get_commands'}));await expect.poll(()=>frames.find(frame=>frame.type==='commands'),{timeout:10000}).toBeDefined();expect(JSON.stringify(frames.find(frame=>frame.type==='commands'))).toContain('fixture-seed');const seedRequest='seed-'+name.replaceAll(' ','-');socket.send(JSON.stringify({v:1,type:'prompt',requestId:seedRequest,text:'/fixture-seed '+name}));await expect.poll(()=>frames.find(frame=>frame.requestId===seedRequest),{timeout:10000}).toMatchObject({type:'ack'});await expect.poll(async()=> (await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl')),{timeout:5000}).not.toEqual([]);const done=once(socket,'close');socket.close();await done;socket=undefined;}finally{socket?.terminate();}}
 it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('actual ordinary Host opens named source and configures independent backup while an unstarted native source stays unqualified',async()=>{
  const f=await fixture();try{
@@ -111,7 +118,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('explicit existing-source mode wai
 
 it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_ROOT)('actual ordinary main qualifies existing Codex history and requalifies a same-boot Host restart without a model turn',async()=>{
  const f=await fixture(false,true,false,'existing',true);let socket:WebSocket|undefined;try{
-  expect((await f.post('/api/backup',{action:'capture',taskId:'codex-task'})).body.state).toBe('protected');
+  await captureReady(f,'codex-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:20000}).toMatchObject({type:'opened'});
   socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'existing-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');
   const closed=once(socket,'close');socket.close();await closed;socket=undefined;
@@ -139,16 +146,16 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
 
 it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('SIMULATED prior-boot receipts: actual ordinary startup performs a new owned Pi audit and preserves old custody evidence',async()=>{
  const f=await fixture(false,true,false,'existing',false,true),preserved=new Map<string,string>();try{
-  expect((await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state).toBe('protected');
+  await captureReady(f,'native-pi-task');
   await f.restart(async()=>{
    const root=join(f.control,'authority','custody'),boot='11111111-1111-4111-8111-111111111111',hash=(value:string)=>createHash('sha256').update(value).digest('hex');
    for(const entry of (await readdir(root)).filter(name=>name!=='group-lock.json')){
     const dir=join(root,entry),command=JSON.parse(await readFile(join(dir,'command.json'),'utf8')),receipt=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));expect(command.schema).toBe(2);expect(receipt.state).toBe('quiescent');command.boot=boot;const commandText=JSON.stringify(command);receipt.boot=boot;receipt.commandDigest=hash(commandText);await writeFile(join(dir,'command.json'),commandText);
-    const observation=await readFile(join(dir,'history-observation.json'),'utf8').then(text=>JSON.parse(text),()=>undefined);if(observation){observation.boot=boot;observation.commandDigest=hash(commandText);const text=JSON.stringify(observation);receipt.observationDigest=hash(text);await writeFile(join(dir,'history-observation.json'),text);const close=JSON.parse(await readFile(join(dir,'normal-close.json'),'utf8'));close.boot=boot;close.observationDigest=hash(text);const closeText=JSON.stringify(close);receipt.closeDigest=hash(closeText);await writeFile(join(dir,'normal-close.json'),closeText);}
+    const observation=await readFile(join(dir,'history-observation.json'),'utf8').then(text=>JSON.parse(text),()=>undefined);if(observation){observation.boot=boot;observation.commandDigest=hash(commandText);const text=JSON.stringify(observation);receipt.observationDigest=hash(text);await writeFile(join(dir,'history-observation.json'),text);const close=await readFile(join(dir,'normal-close.json'),'utf8').then(JSON.parse,error=>{if(error.code==='ENOENT')return undefined;throw error;});if(close){close.boot=boot;close.observationDigest=hash(text);const closeText=JSON.stringify(close);receipt.closeDigest=hash(closeText);await writeFile(join(dir,'normal-close.json'),closeText);}else expect(receipt.nativeStatus).toBe(0);}
     const path=join(dir,'state.json'),text=JSON.stringify(receipt);await writeFile(path,text);preserved.set(path,text);
    }
   });
-  expect((await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state).toBe('protected');for(const [path,text]of preserved)expect(await readFile(path,'utf8')).toBe(text);
+  await captureReady(f,'native-pi-task');for(const [path,text]of preserved)expect(await readFile(path,'utf8')).toBe(text);
   const root=join(f.control,'authority','custody'),currentBoot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim();const receipts=await Promise.all((await readdir(root)).filter(name=>name!=='group-lock.json').map(name=>readFile(join(root,name,'state.json'),'utf8').then(JSON.parse)));expect(receipts.some(row=>row.boot===currentBoot&&row.state==='quiescent'&&row.observationDigest)).toBe(true);
  }finally{await f.stop();}
 },60000);
@@ -175,8 +182,8 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('ordinary main honors the configur
 
 it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('actual ordinary Host SIGKILL restart reclaims only its owned stale source socket and requalifies existing Pi data',async()=>{
  const f=await fixture(false,true,false,'existing',false,true);try{
-  expect((await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state).toBe('protected');const ownerFile=join(f.root,'.source.sock.authority','owner.json'),before=JSON.parse(await readFile(ownerFile,'utf8'));
+  await captureReady(f,'native-pi-task');const ownerFile=join(f.root,'.source.sock.authority','owner.json'),before=JSON.parse(await readFile(ownerFile,'utf8'));
   await f.crashRestart();const after=JSON.parse(await readFile(ownerFile,'utf8'));expect(after.owner.pid).not.toBe(before.owner.pid);expect((await stat(f.sourceSocket)).isSocket()).toBe(true);
-  expect((await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state).toBe('protected');expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
+  await captureReady(f,'native-pi-task');expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
  }finally{await f.stop();}
 },45000);
