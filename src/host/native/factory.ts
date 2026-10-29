@@ -1,9 +1,9 @@
 import type {NativeWriterCustody} from '../native-custody.js';
 import type {ManagedNativeCustody} from '../managed-native.js';
-import type {WriterAdmissionFence} from '../backup.js';
-import {physicalFenceCoversCustody} from '../physical-writer-fence.js';
+import {BackupError,type WriterAdmissionFence} from '../backup.js';
+import {PhysicalWriterFence,physicalFenceCoversCustody} from '../physical-writer-fence.js';
 import {trustedSourcePhysicalFence} from '../trusted-source-authority.js';
-import {piFactoryWriterBinding} from '../pi-adapter.js';
+import {RpcPiSessionFactory,piFactoryWriterBinding} from '../pi-adapter.js';
 import {CodexSessionFactory as BuiltinCodexFactory,codexFactoryWriterCustody,type CodexSessionFactoryOptions} from '../codex-adapter.js';
 import {CODEX_HANDOFF_VERSION,handoffSummaryPrompt,handoffSeedPrompt} from '../codex/handoff.js';
 import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js';
@@ -34,10 +34,40 @@ export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
+  private readonly audits=new Map<AbortController,Promise<void>>();
   private readonly preparations=new Map<AbortController,AgentSession>();
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){this.options={...options};}
+  /** Registry-owned ordinary metadata audit; no browser native ID or cwd input. */
+  async auditNativeHistory(taskId:string,input:{engine?:'pi'|'codex';signal:AbortSignal}):Promise<void>{
+    if(this.closing)throw new BackupError('native_audit_unavailable','Host is stopping');
+    const task=await this.options.workspaces.lookup(taskId),engine=input.engine??task?.engine??'pi';
+    if(!task||task.cleanupStarted||task.workspaceRemoved||!['pi','codex'].includes(engine)||!this.covered(engine))throw new BackupError('native_audit_unavailable','Registered native audit binding unavailable');
+    const physical=trustedSourcePhysicalFence(this.options.writerFence!)??this.options.writerFence;if(!(physical instanceof PhysicalWriterFence))throw new BackupError('native_audit_unavailable','Concrete native audit fence required');
+    const bindings:string[]=[];if((task.engine??'pi')===engine)bindings.push(task.nativeBinding?.id??task.id);
+    for(const item of task.retainedNativeBindings??[])if(item.engine===engine)bindings.push(item.nativeId);
+    for(const segment of task.takeoverSegments??[])if(segment.from===engine&&typeof segment.nativeId==='string')bindings.push(segment.nativeId);
+    if(!bindings.length)throw new BackupError('native_audit_unavailable','No registry-owned binding for audit engine');
+    if(this.closing)throw new BackupError('native_audit_unavailable','Host is stopping');
+    const controller=new AbortController(),audit=physical.runNativeAudit(AbortSignal.any([input.signal,controller.signal]),async signal=>{
+      const identity=JSON.stringify(task);signal.throwIfAborted();
+      let completed=false,lastError:unknown;
+      for(const nativeId of [...new Set(bindings)]){
+        signal.throwIfAborted();try{
+          if(engine==='pi'&&this.options.pi instanceof RpcPiSessionFactory)await this.options.pi.auditNativeHistory({nativeId,cwd:task.cwd,signal});
+          else if(engine==='codex'){
+            const owned=await this.buildCodexFactory(task.id,task.cwd,async()=>{throw new Error('Native audit cannot rebind a task');});
+            if(!(owned instanceof BuiltinCodexFactory)||!this.factoryCovered(owned))throw new BackupError('native_audit_unavailable','Concrete Codex audit factory required');
+            await this.withFactory(owned,()=>owned.auditNativeHistory({nativeId,cwd:task.cwd,signal}));
+          }else throw new BackupError('native_audit_unavailable','Native audit engine unavailable');
+          completed=true;break;
+        }catch(error){signal.throwIfAborted();if(!(error instanceof BackupError)||error.code!=='native_audit_unavailable')throw error;lastError=error;}
+      }
+      if(!completed)throw lastError??new BackupError('native_audit_unavailable','Native audit binding unavailable');
+      signal.throwIfAborted();if(JSON.stringify(await this.options.workspaces.lookup(taskId))!==identity)throw new BackupError('capture_revoked','Task changed during native audit');
+    });this.audits.set(controller,audit);try{await audit;}finally{this.audits.delete(controller);}
+  }
   private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine){
     const release=await this.admit((engine==='pi'||engine==='codex')&&physicalFenceCoversCustody(this.options.writerFence?(trustedSourcePhysicalFence(this.options.writerFence)??this.options.writerFence):undefined,this.options.commandCustody),'native');
     try{
@@ -143,7 +173,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   async resetTaskRuntime(id:string){
     for(const [key,factory] of this.codexFactories){if(key.startsWith(id+':')){await factory.close?.();this.codexFactories.delete(key);}}
   }
-  async cancelTakeovers(){this.closing=true;for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
+  async cancelTakeovers(){this.closing=true;for(const controller of this.audits.keys())controller.abort();await Promise.allSettled(this.audits.values());for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
   async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
   private async codexFactory(id:string,cwd:string){
     const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);

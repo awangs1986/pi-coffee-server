@@ -9,7 +9,7 @@ import type {CaptureLease} from './backup.js';
 
 /** Only adapter-private WeakMaps can supply these observations. This type is not
  * a capability; arbitrary objects never enter the persistent witness path. */
-export interface NativeHistoryObservation {launchDirectory:string;engine:'pi'|'codex';roots:string[];binding:string;sourceFile:string;normalCloseRequested?:true;}
+export interface NativeHistoryObservation {launchDirectory:string;engine:'pi'|'codex';roots:string[];binding:string;sourceFile:string;normalCloseRequested?:true;nativeAudit?:{implementation:'pi-session-manager';version:'1.1.0';entriesDigest:string;entryCount:number};}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 async function privateJson(path:string){const s=await lstat(path);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.uid!==process.getuid?.()||(s.mode&0o077)||s.size>65536)throw Error('Native handoff receipt unavailable');return readFile(path,'utf8');}
 async function directoryIdentity(path:string){const s=await lstat(path);if(!s.isDirectory()||s.isSymbolicLink()||resolve(path)!==path||await realpath(path)!==path||s.uid!==process.getuid?.())throw Error('Native handoff store changed');return {path,dev:s.dev,ino:s.ino,uid:s.uid};}
@@ -61,6 +61,7 @@ async function evidence(custody:NativeWriterCustody):Promise<Evidence&{candidate
   if(!priorBoot&&receipt.nativeStatus!==0&&(!normalClose||![-15,143].includes(receipt.nativeStatus)))throw Error('Native lifecycle did not close normally');
   if(!Array.isArray(observation.observations)||!observation.observations.length)throw Error('Native history not observed');
   for(const row of observation.observations){if(!['pi','codex'].includes(row.engine)||row.launchDirectory!==dir||!Array.isArray(row.roots)||row.roots.length!==2||typeof row.binding!=='string'||!row.binding)throw Error('Native observation invalid');
+   if(row.nativeAudit&&(row.nativeAudit.implementation!=='pi-session-manager'||row.nativeAudit.version!=='1.1.0'||!Number.isSafeInteger(row.nativeAudit.entryCount)||row.nativeAudit.entryCount<0||!/^[a-f0-9]{64}$/.test(row.nativeAudit.entriesDigest)))throw Error('Native audit observation invalid');
    if(!Array.isArray(row.rootIdentities)||row.rootIdentities.length!==2||row.rootIdentities.some((identity:any,index:number)=>identity?.path!==row.roots[index]||![identity.dev,identity.ino,identity.uid].every(Number.isSafeInteger)))throw Error('Native stored root identities invalid');if(priorBoot)continue;candidates.push(row);
    let group=observations.find(group=>group.engine===row.engine&&JSON.stringify(group.roots)===JSON.stringify(row.roots));if(!group){group={engine:row.engine,roots:row.roots,bindings:[]};observations.push(group);}if(!group.bindings.includes(row.binding))group.bindings.push(row.binding);
   }
