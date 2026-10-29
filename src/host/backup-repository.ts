@@ -13,7 +13,7 @@ import {BackupCoordinator,BackupError,verifySealedCheckpoint,type CheckpointMani
 export const RESTIC_PIN={version:'0.19.1',platform:'linux/amd64',source:'https://github.com/restic/restic/releases/tag/v0.19.1',archiveSha256:'f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c',sha256:'20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'} as const;
 interface DestinationIdentity {path:string;dev:number;ino:number;uid:number;mount:string;}
 interface RepositoryConfig {schema:1;binary:string;destination:DestinationIdentity;repository?:DestinationIdentity;repositoryId:string;keyId:string;enabled:boolean;exported:boolean;passwordName?:string;retiredKeys?:{id:string;passwordName:string}[];}
-export interface BackupSelection {scope:string;taskId:string;}
+export interface BackupSelection {scope:string;taskId:string;expectedCheckpointId?:string;}
 export interface RepositoryPoint extends BackupSelection {checkpointId:string;captureAt:string;engine:string;manifestSha256:string;}
 export interface RepositoryJob {schema:1;id:string;state:'running'|'succeeded'|'failed';startedAt:string;finishedAt?:string;selection:BackupSelection[];points:RepositoryPoint[];snapshotId?:string;dataBlobs?:number;verification:'none'|'repository-read';errorCode?:string;retiredAt?:string;retentionId?:string;}
 interface RecoveryPackage {schema:1;backend:typeof RESTIC_PIN;repositoryId:string;keyId:string;password:string;repository:{path:string;identity:DestinationIdentity};recoveryInstructions:string[];}
@@ -89,12 +89,12 @@ export class BackupRepository {
    const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');
    if(requestId&&!idPattern.test(requestId))throw fail('invalid_operation');
    if(requestId){const existing=(await this.jobs()).find(job=>job.id===requestId);if(existing){if(JSON.stringify(existing.selection)!==JSON.stringify(selection))throw fail('operation_conflict');if(existing.state==='succeeded')return existing;throw fail(existing.state==='running'?'operation_uncertain':existing.errorCode??'repository_failed');}}
-   const job:RepositoryJob={schema:1,id:requestId??randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId})=>({scope,taskId})),points:[],verification:'none'};
+   const job:RepositoryJob={schema:1,id:requestId??randomUUID(),state:'running',startedAt:this.time(),selection:selection.map(({scope,taskId,expectedCheckpointId})=>({scope,taskId,...(expectedCheckpointId===undefined?{}:{expectedCheckpointId})})),points:[],verification:'none'};
    await this.saveJob(job);
    try{
     await this.destination(config);if(!selection.length||selection.length>100000)throw fail('invalid_selection');
     const directories=new Map<string,string>(),manifests:CheckpointManifest[]=[];
-    for(const item of selection){signal?.throwIfAborted();const point=await this.options.coordinator.sealedCheckpoint(item.scope,item.taskId);if(!point)throw fail('checkpoint_unavailable');if(overlap(point.directory,config.destination.path)||overlap(point.directory,this.root))throw fail('invalid_configuration');if(!directories.has(point.manifest.checkpointId)){directories.set(point.manifest.checkpointId,point.directory);manifests.push(point.manifest);}}
+    for(const item of selection){signal?.throwIfAborted();const point=await this.options.coordinator.sealedCheckpoint(item.scope,item.taskId,item.expectedCheckpointId);if(!point||item.expectedCheckpointId!==undefined&&point.manifest.checkpointId!==item.expectedCheckpointId||!point.manifest.members.some(member=>member.scope===item.scope&&member.taskId===item.taskId))throw fail('checkpoint_unavailable');if(overlap(point.directory,config.destination.path)||overlap(point.directory,this.root))throw fail('invalid_configuration');if(!directories.has(point.manifest.checkpointId)){directories.set(point.manifest.checkpointId,point.directory);manifests.push(point.manifest);}}
     for(const manifest of manifests)for(const member of manifest.members){if(!job.points.some(p=>p.scope===member.scope&&p.taskId===member.taskId&&p.checkpointId===manifest.checkpointId))job.points.push({scope:member.scope,taskId:member.taskId,engine:member.engine,manifestSha256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),checkpointId:manifest.checkpointId,captureAt:manifest.captureAt});}
     await this.saveJob(job);await capacity(config.destination.path,manifests.reduce((total,manifest)=>total+manifest.totalBytes,0));
     const parents=new Set([...directories.values()].map(dirname));if(parents.size!==1)throw fail('invalid_checkpoint_store');
