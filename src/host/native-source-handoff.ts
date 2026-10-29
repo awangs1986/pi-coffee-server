@@ -44,25 +44,29 @@ export async function persistNativeNormalClose(subject:object){
 
 declare const nativeHandoffBrand:unique symbol;
 export type NativeSourceHandoff={readonly [nativeHandoffBrand]:true};
-type Evidence={schema:1;custodyRoot:string;groupLock:string;receiptDigest:string;observations:{engine:'pi'|'codex';roots:string[];bindings:string[]}[]};
+type Evidence={schema:1;kernelBoot:string;priorBootReceiptDigest:string;custodyRoot:string;groupLock:string;receiptDigest:string;observations:{engine:'pi'|'codex';roots:string[];bindings:string[]}[]};
+type ObservationRecord=NativeHistoryObservation&{rootIdentities:{path:string;dev:number;ino:number;uid:number}[]};
 const handoffs=new WeakMap<object,{custody:NativeWriterCustody;fence:PhysicalWriterFence;evidence:Evidence}>();
-async function evidence(custody:NativeWriterCustody):Promise<Evidence>{
+async function evidence(custody:NativeWriterCustody):Promise<Evidence&{candidates:ObservationRecord[]}>{
  if((await custody.state()).state!=='quiescent'||!custody.groupLock)throw Error('Native handoff custody incomplete');
- const rows:string[]=[],observations:Evidence['observations']=[];
+ const kernelBoot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),priorRows:string[]=[];
+ const rows:string[]=[],observations:Evidence['observations']=[],candidates:ObservationRecord[]=[];
  for(const id of (await readdir(custody.root)).filter(id=>id!=='group-lock.json').sort()){
-  const dir=join(custody.root,id),receiptText=await privateJson(join(dir,'state.json')),receipt=JSON.parse(receiptText),command=await privateJson(join(dir,'command.json'));rows.push(id,command,receiptText);
+  const dir=join(custody.root,id),receiptText=await privateJson(join(dir,'state.json')),receipt=JSON.parse(receiptText),command=await privateJson(join(dir,'command.json'));rows.push(id,command,receiptText);const priorBoot=receipt.boot!==kernelBoot;if(priorBoot)priorRows.push(id,command,receiptText);
   if(!receipt.observationDigest)continue;
   const observationText=await privateJson(join(dir,'history-observation.json'));if(hash(observationText)!==receipt.observationDigest||receipt.commandDigest!==hash(command))throw Error('Native handoff receipt changed');
   const observation=JSON.parse(observationText);if(observation.schema!==1||observation.id!==id||observation.boot!==receipt.boot||observation.commandDigest!==hash(command))throw Error('Native handoff identity changed');
-  if(receipt.nativeStatus!==0){const close=await privateJson(join(dir,'normal-close.json')),value=JSON.parse(close);if(![ -15,143 ].includes(receipt.nativeStatus)||receipt.closeDigest!==hash(close)||value.id!==id||value.boot!==receipt.boot||value.observationDigest!==receipt.observationDigest)throw Error('Native lifecycle did not close normally');}
+  let normalClose=false;
+  if(receipt.closeDigest){const close=await privateJson(join(dir,'normal-close.json')),value=JSON.parse(close);if(receipt.closeDigest!==hash(close)||value.schema!==1||value.id!==id||value.boot!==receipt.boot||value.observationDigest!==receipt.observationDigest)throw Error('Native lifecycle close receipt changed');normalClose=true;}
+  if(!priorBoot&&receipt.nativeStatus!==0&&(!normalClose||![-15,143].includes(receipt.nativeStatus)))throw Error('Native lifecycle did not close normally');
   if(!Array.isArray(observation.observations)||!observation.observations.length)throw Error('Native history not observed');
   for(const row of observation.observations){if(!['pi','codex'].includes(row.engine)||row.launchDirectory!==dir||!Array.isArray(row.roots)||row.roots.length!==2||typeof row.binding!=='string'||!row.binding)throw Error('Native observation invalid');
-   if(JSON.stringify(await Promise.all(row.roots.map(directoryIdentity)))!==JSON.stringify(row.rootIdentities))throw Error('Native store identity changed');await sourceIdentity(row);
+   if(!Array.isArray(row.rootIdentities)||row.rootIdentities.length!==2||row.rootIdentities.some((identity:any,index:number)=>identity?.path!==row.roots[index]||![identity.dev,identity.ino,identity.uid].every(Number.isSafeInteger)))throw Error('Native stored root identities invalid');if(priorBoot)continue;candidates.push(row);
    let group=observations.find(group=>group.engine===row.engine&&JSON.stringify(group.roots)===JSON.stringify(row.roots));if(!group){group={engine:row.engine,roots:row.roots,bindings:[]};observations.push(group);}if(!group.bindings.includes(row.binding))group.bindings.push(row.binding);
   }
  }
- if(!observations.length)throw Error('Native history lifecycle not observed');
- return {schema:1,custodyRoot:custody.root,groupLock:custody.groupLock,receiptDigest:hash(JSON.stringify(rows)),observations};
+ if(!observations.length)throw Error('Native history lifecycle not observed in current boot');
+ return {schema:1,kernelBoot,priorBootReceiptDigest:hash(JSON.stringify(priorRows)),custodyRoot:custody.root,groupLock:custody.groupLock,receiptDigest:hash(JSON.stringify([kernelBoot,rows])),observations,candidates};
 }
 export async function readNativeSourceHandoff(options:{custody:NativeWriterCustody;fence:PhysicalWriterFence}):Promise<NativeSourceHandoff>{
  if(!isNativeWriterCustody(options.custody)||!physicalFenceCoversCustody(options.fence,options.custody))throw Error('Native handoff fence mismatch');
@@ -72,6 +76,13 @@ export async function verifyNativeSourceHandoff(token:NativeSourceHandoff,option
  const held=handoffs.get(token);if(!held||held.fence!==options.fence)throw Error('Native handoff capability mismatch');assertPhysicalCaptureLease(options.fence,options.lease);
  const current=await evidence(held.custody);if(current.receiptDigest!==held.evidence.receiptDigest)throw Error('Native handoff changed');
  const groups=new Map<string,{engine:'pi'|'codex';roots:readonly string[];bindings:Set<string>}>();for(const store of options.stores){if(store.roots.length!==2||store.roots.some(root=>resolve(root)!==root))throw Error('Native store roots invalid');const key=store.engine+JSON.stringify([...store.roots].sort());let group=groups.get(key);if(!group){group={engine:store.engine,roots:store.roots,bindings:new Set()};groups.set(key,group);}for(const binding of store.bindings)group.bindings.add(binding);}
- for(const group of groups.values()){if(!group.bindings.size)continue;const observed=current.observations.find(row=>row.engine===group.engine&&JSON.stringify([...row.roots].sort())===JSON.stringify([...group.roots].sort()));if(!observed?.bindings.some(binding=>group.bindings.has(binding)))throw Error('Native store has no completed history lifecycle');}
- assertPhysicalCaptureLease(options.fence,options.lease);return structuredClone(current);
+ const selected:Evidence['observations']=[];
+ for(const group of groups.values()){
+  if(!group.bindings.size)continue;
+  const matching=current.candidates.filter(row=>row.engine===group.engine&&JSON.stringify([...row.roots].sort())===JSON.stringify([...group.roots].sort())&&group.bindings.has(row.binding));
+  let chosen:ObservationRecord|undefined;
+  for(const row of matching){try{if(JSON.stringify(await Promise.all(row.roots.map(directoryIdentity)))!==JSON.stringify(row.rootIdentities))continue;await sourceIdentity(row);chosen=row;break;}catch{/* Historical sources may have been legitimately deleted. */}}
+  if(!chosen)throw Error('Native store has no current completed history lifecycle');selected.push({engine:chosen.engine,roots:chosen.roots,bindings:[chosen.binding]});
+ }
+ assertPhysicalCaptureLease(options.fence,options.lease);const {candidates:_candidates,...proof}=current;return structuredClone({...proof,observations:selected});
 }

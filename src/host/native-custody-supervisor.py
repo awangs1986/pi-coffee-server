@@ -72,17 +72,19 @@ def main():
         raise ValueError('Invalid native command')
     command_bytes = command_path.read_bytes()
     command = json.loads(command_bytes)
-    if command['schema'] != 1 or command['id'] != identity or not isinstance(command['executable'], str) or not isinstance(command['args'], list) or not all(isinstance(x, str) for x in command['args']):
+    if command['schema'] != 2 or command['id'] != identity or not isinstance(command['executable'], str) or not isinstance(command['args'], list) or not all(isinstance(x, str) for x in command['args']):
         raise ValueError('Invalid native command')
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER, before spawning
         raise OSError(ctypes.get_errno(), 'Native subreaper unavailable')
     boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    if command.get('boot') != boot:
+        raise ValueError('Native launch belongs to another boot')
     own_stat = Path('/proc/self/stat').read_text()
     birth = own_stat[own_stat.rindex(')') + 2:].split()[19]
 
     def publish(state, extra=None):
-        value = {'schema': 1, 'id': identity, 'state': state, 'boot': boot, 'pid': os.getpid(), 'birth': birth, **(extra or {}), **({'groupLock': command['groupLock']} if 'groupLock' in command else {})}
+        value = {'schema': 2, 'id': identity, 'state': state, 'boot': boot, 'commandDigest': hashlib.sha256(command_bytes).hexdigest(), 'pid': os.getpid(), 'birth': birth, **(extra or {}), **({'groupLock': command['groupLock']} if 'groupLock' in command else {})}
         temp = root / (str(uuid.uuid4()) + '.tmp')
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'w') as output:
