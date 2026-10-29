@@ -54,7 +54,13 @@ export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:stri
  }finally{
   // A completed Git command may leave legitimate helpers. Never terminate their
   // custodian just to return a result or manufacture a backup window.
-  if(!completed&&child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
-  await rm(root,{recursive:true,force:true});
+  const cleanup=()=>rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50});
+  if(!completed&&child?.pid&&child.exitCode===null&&child.signalCode===null){
+   // The shim may still publish its result after a timeout. Retain its private
+   // channel until the actual publisher and adopted helpers have exited; a
+   // cleanup race must not replace the command's original failure.
+   child.once('close',()=>{void cleanup().catch(()=>{});});
+   child.kill('SIGTERM');
+  }else await cleanup();
  }
 }

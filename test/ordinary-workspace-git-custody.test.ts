@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -47,4 +47,32 @@ it('preserves ordinary Git network authentication, output budgets and command ti
   const start=Date.now();await expect(run('slow',200)).rejects.toMatchObject({code:'ETIMEDOUT'});expect(Date.now()-start).toBeLessThan(2000);expect((await custody.state()).state).toBe('active');const cut=acquireFileLease(lock,'exclusive');try{expect(cut).toBeUndefined();}finally{cut?.release();}for(const response of slowResponses){response.writeHead(503);response.end('fixture remote work ended');}await expect.poll(async()=>(await custody.state()).state,{timeout:5000}).toBe('quiescent');
   await expect(run('many',5000,64)).rejects.toMatchObject({code:'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'});await expect.poll(async()=>(await custody.state()).state).toBe('quiescent');
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+},20000);
+
+
+it('bounds an unresponsive Git timeout without deleting its private result channel before the publisher ends',async()=>{
+ const {executeWorkspaceGit}=await import('../src/host/workspace-git.js');
+ const root=await mkdtemp(join(tmpdir(),'ordinary-git-unresponsive-')),scratch=join(root,'scratch'),bin=join(root,'bin'),finish=join(root,'finish'),started=join(root,'started'),lock=join(root,'source.lock');
+ await mkdir(scratch,{mode:0o700});await mkdir(bin,{mode:0o700});
+ const custody=new NativeWriterCustody(join(root,'custody'),{lock}),fence=new PhysicalWriterFence({lock,custody});
+ await writeFile(join(bin,'git'),`#!${process.execPath}
+const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(started)},'started');process.on('SIGTERM',()=>{});setInterval(()=>{if(fs.existsSync(${JSON.stringify(finish)}))process.exit(0);},20);`,{mode:0o700});
+ const previous=process.env.TMPDIR;process.env.TMPDIR=scratch;
+ let job:Promise<unknown>|undefined;
+ try{
+  job=fence.runWriter('platform',()=>executeWorkspaceGit(['status'],{cwd:root,env:{...process.env,PATH:bin+':'+process.env.PATH},ordinaryCustody:custody,managedRequired:false,timeout:200,maxBuffer:4096}));
+  const outcome=job.then(()=>({code:'unexpected-success'}),error=>error);
+  await expect.poll(()=>readFile(started,'utf8').catch(()=>''),{timeout:3000}).toBe('started');
+  const channels=await readdir(scratch);expect(channels).toHaveLength(1);const channel=join(scratch,channels[0]!);
+  expect(await outcome).toMatchObject({code:'ETIMEDOUT'});expect((await custody.state()).state).toBe('active');
+  expect(await readFile(join(channel,'request.json'),'utf8'),'unfinished publisher retains its private input/result channel').toContain('status');
+  const cut=acquireFileLease(lock,'exclusive');try{expect(cut).toBeUndefined();}finally{cut?.release();}
+  await writeFile(finish,'natural fixture completion');
+  await expect.poll(async()=>(await custody.state()).state,{timeout:5000}).toBe('quiescent');
+  await expect.poll(()=>readdir(scratch),{timeout:3000}).toEqual([]);
+ }finally{
+  if(previous===undefined)delete process.env.TMPDIR;else process.env.TMPDIR=previous;
+  await writeFile(finish,'fixture cleanup');await job?.catch(()=>{});
+  await expect.poll(async()=>(await custody.state()).state,{timeout:5000}).toBe('quiescent');await rm(root,{recursive:true,force:true});
+ }
 },20000);
