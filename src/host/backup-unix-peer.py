@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import threading
+import uuid
 
 LIMIT = 1024 * 1024
 
@@ -67,8 +68,29 @@ def serve(config_path):
     if not all(isinstance(config[name], str) and Path(config[name]).is_absolute() for name in ('node', 'handler')):
         raise ValueError('fixed handler required')
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(str(target))  # Never replace a live or stale endpoint automatically.
-    os.chmod(target, 0o660)
+    startup_profile = os.environ.get('PI_COFFEE_ORDINARY_STARTUP_PROFILE')
+    if startup_profile:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('coffee_ordinary_startup', Path(__file__).with_name('ordinary-backup-start.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        # Publish the public name only after the actual bound inode has a
+        # durable owner receipt. link(2) refuses an existing unknown endpoint.
+        temporary = target.parent / ('.k' + uuid.uuid4().hex[:6])
+        listener.bind(str(temporary))
+        os.chmod(temporary, 0o660)
+        module.record_listener_socket(startup_profile, config_path, str(target), str(temporary))
+        os.link(temporary, target)
+        temporary.unlink()
+        descriptor = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        module.record_listener_socket(startup_profile, config_path, str(target))
+    else:
+        listener.bind(str(target))  # Historical operator mode never replaces an endpoint.
+        os.chmod(target, 0o660)
     identity = target.lstat()
     listener.listen(8)
     listener.settimeout(0.5)
