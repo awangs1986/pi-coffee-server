@@ -1,6 +1,6 @@
 import {lstatSync,readFileSync,realpathSync} from 'node:fs';
 import { mkdir, lstat, realpath, readFile, readdir, open, rename } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {sourceGroupLockIdentity,assertSourceGroupLock,type SourceGroupLockIdentity} from './source-group-lock.js';
@@ -26,7 +26,7 @@ export class NativeWriterCustody {
     if(!this.groupLock)throw Error('Destination custody requires its source lock');
     await mkdir(this.root,{mode:0o700});await this.checkedDirectory(this.root);await this.bindGroupLock();
     const info=await lstat(this.root),allocation={id:randomUUID(),path:this.root,dev:info.dev,ino:info.ino,uid:info.uid,lock:this.groupLock};
-    await this.atomicJson(this.root,'allocation.json',{schema:1,...allocation,used:false});return allocation;
+    await this.atomicJson(this.root,'allocation.json',{schema:1,...allocation,used:false});const parent=await open(dirname(this.root),'r');try{await parent.sync();}finally{await parent.close();}return allocation;
   }
   assertFreshAllocation(expected:FreshCustodyAllocation,pristine=true){
     const info=lstatSync(this.root),path=join(this.root,'allocation.json'),file=lstatSync(path);

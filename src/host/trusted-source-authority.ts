@@ -287,7 +287,7 @@ export class TrustedSourceAuthority {
  async destinationLease(context:DestinationContext,paths:readonly string[]):Promise<CaptureLease>{
   if(!context||!id(context.operationId)||!Number.isSafeInteger(context.revision)||context.revision<1||!['missing-only','replace'].includes(context.mode)||context.digest!==undefined&&!digestPattern.test(context.digest))throw invalid();
   if(!await this.options.authorize(context.actor))throw invalid();
-  const baseline=this.stateDigest,current=identity(process.pid);
+  const baseline=this.stateDigest,current=identity(process.pid);let resolutions:LocalResolution[]=[];
   const assert=()=>{
    this.assertOwner();if(this.stateDigest!==baseline||!same(identity(process.pid),current)||this.state.issues.some(issue=>issue!=='authority-reopened')||this.disabled&&!this.state.issues.includes('authority-reopened'))throw invalid();
    const enrollment=this.state.enrollment;if(!enrollment)throw invalid();
@@ -295,7 +295,7 @@ export class TrustedSourceAuthority {
    if(context.actor!==config.owner.administrator||enrollment.configurationDigest!==hash(configText)||enrollment.graphDigest!==hash(graphText)||config.producers.length!==1||config.producers[0].kind!=='host'||enrollment.producers.length!==1||enrollment.producers[0].id!==config.producers[0].id||enrollment.producers[0].kind!=='host'||!JSON.parse(graphText).roots.some((root:{scope:string})=>root.scope===context.scope))throw invalid();
    const former=enrollment.producers[0].identity;if(!same(former,current))deadLocalOwner(former);
    if(enrollment.freshCustody)this.options.fence.assertDestinationAllocation(enrollment.freshCustody);
-   this.validateReconciliation(enrollment);this.resolvePendingLocal(configText,graphText,config.producers[0].id);
+   this.validateReconciliation(enrollment);resolutions=this.resolvePendingLocal(configText,graphText,config.producers[0].id);
    for(const root of enrollment.roots){const {id:_,...expected}=root;if(!same(directory(root.path,true),expected))throw invalid();}
    if(!paths.length||paths.length>256)throw invalid();for(const path of paths){if(resolve(path)!==path)throw invalid();const root=enrollment.roots.find(root=>under(root.path,path));if(!root)throw invalid();let existing=path;for(;;){try{const info=lstatSync(existing);if(realpathSync(existing)!==existing||info.isSymbolicLink()||!info.isFile()&&!info.isDirectory()||info.dev!==root.dev)throw invalid();break;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||existing===root.path)throw error;existing=dirname(existing);}}}
   };
@@ -304,7 +304,7 @@ export class TrustedSourceAuthority {
   lease.assertValid=()=>{held();assert();};
   try{
    lease.assertValid();if(!await this.options.authorize(context.actor))throw invalid();lease.assertValid();
-   if(context.digest){const root=join(this.options.root,'destinations');mkdirSync(root,{recursive:true,mode:0o700});directory(root);const receipt={schema:1,...context,enrollmentId:this.state.enrollment!.id,journalDigest:baseline,owner:current,pending:this.state.operations,at:new Date().toISOString()},text=JSON.stringify(receipt);if(Buffer.byteLength(text)>1024*1024)throw invalid();const fd=openSync(join(root,randomUUID()+'.json'),'wx',0o600);try{writeFileSync(fd,text);fsyncSync(fd);}finally{closeSync(fd);}for(const parent of [root,this.options.root]){const fd=openSync(parent,'r');try{fsyncSync(fd);}finally{closeSync(fd);}}}
+   if(context.digest){const root=join(this.options.root,'destinations');mkdirSync(root,{recursive:true,mode:0o700});directory(root);const receipt={schema:1,...context,enrollmentId:this.state.enrollment!.id,journalDigest:baseline,owner:current,pending:this.state.operations,resolutions,at:new Date().toISOString()},text=JSON.stringify(receipt);if(Buffer.byteLength(text)>1024*1024)throw invalid();const fd=openSync(join(root,randomUUID()+'.json'),'wx',0o600);try{writeFileSync(fd,text);fsyncSync(fd);}finally{closeSync(fd);}for(const parent of [root,this.options.root]){const fd=openSync(parent,'r');try{fsyncSync(fd);}finally{closeSync(fd);}}}
    lease.assertValid();destinationLeases.set(lease,this);return lease;
   }catch(error){lease.release();throw error;}
  }

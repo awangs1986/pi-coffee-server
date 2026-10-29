@@ -21,7 +21,7 @@ existing-source enrollment/requalification. Existing enrollment verifies real
 completed history lifecycle evidence, the complete current source graph and a
 first sealed native checkpoint. All configured capture budgets apply to this
 initial materialization. The capture limits do not hide older valid seals. The composition also rereads
-the private source policy for the actual broker actor, administrator role, full
+the private source policy for the actual broker actor, administrator role, complete
 source scope grants and expected authority revision before initial enrollment or
 requalification. Matching an OS UID or configured administrator name is insufficient.
 
@@ -42,7 +42,7 @@ destination publication still requires its current physical/source/approval chec
 | An explicit old ID cannot silently select a newer point or another account's point. | Public Host HTTP with real Restic; missing/foreign IDs refused, compatibility ID persisted exactly. |
 | The Codex version probe preserves native environment and cannot release a surviving helper's writer custody at timeout. | Actual subprocess/environment receipt, five-second timeout, active custody and exclusive lease refusal, eventual actual exit. |
 
-These are business rules protected by the tests, not a claim of full product
+These are business rules protected by the tests, not a claim of complete product
 acceptance. The direct HTTP selection test uses a synthetic recovery adapter to
 isolate that route. The actual main tests exercise real ordinary authority,
 custody, native adapters and independent repository services.
@@ -161,7 +161,7 @@ to the 37 above. Total targeted production mutants: ten, zero survivors.
 - The first combined new run (`ordinary-audit-all.log`) had three main assertions
   that incorrectly required the first capture POST to be immediately protected;
   it observed waiting or responses without a state field. Startup refresh can run
-  concurrently. Assertions now use bounded polling of the full HTTP result and
+  concurrently. Assertions now use bounded polling of the complete HTTP result and
   validate allowed transient envelopes rather than inflating timeouts. The
   subsequent simulated-boot case exposed a test assumption that every observation
   has a SIGTERM normal-close file: the SDK reader exits normally with status zero.

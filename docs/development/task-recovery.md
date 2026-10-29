@@ -65,3 +65,23 @@ an approved reuse preserves the healthy neighbor's registry and ancestor inode.
 A Codex SQLite database first created by a restore has two approved logical images: its qualified empty schema and the exact merged tables, including migration and sequence rows. A crash after the SQL commit can resume on the original published inode only when the durable SQL journal names the same operation, approval digest and database in `started` or `done` state, and the complete live logical image equals the approved postimage. Existing stores keep their selected-row rules. A receipt marker, equal file bytes, unknown rows, a changed schema or a replacement inode cannot authorize this continuation. `test/codex-created-database-crash.test.ts` executes this window with Restic and SIGKILL and verifies the refusal boundaries before completing the original recovery.
 
 When the original Codex SQL target is entirely missing, restore planning uses a dedicated target-inspection operation. It resolves the current trusted home/configuration/options, compares them with the sealed checkpoint's original mapping, and creates only owned canonical private target roots. Missing `state_5.sqlite` is allowed for this target inspection; ordinary capture still requires the qualified source state database. Existing unknown databases, unsupported schemas and conflicting native index entries remain errors. Native authentication/configuration is explicitly reconfigured after recovery; it is not restored from the archive. The isolated missing-store test performs an actual Restic recovery and native Codex read/resume after this fixture reconfiguration, without a provider turn.
+
+
+## Ordinary destination after source loss
+
+Ordinary Pi/Codex restore uses [separate destination qualification](restore-destination-authority.md).
+A missing last task/history after Host restart no longer has to produce a source
+checkpoint before its approved restoration. The destination retains actual
+producer/root ownership, physical EX, current actor/scope checks, exact approved
+preimages and the existing publication gate. Unresolved tagged dead-local records
+are retained; incomplete source history stays unqualified until an actual native
+audit and new complete cut. This is not an exception for opaque delegation,
+unknown writers, changed roots or unapproved replacement.
+
+When all source roots are gone, an operator may explicitly configure a new fresh
+authority and genuinely absent roots at the original paths, preserving old
+control evidence. The first destination EX uses the durable unused custody
+allocation, without a fabricated task or native subprocess. Restored native
+configuration remains inert; configure current providers/credentials separately.
+No arbitrary relocation or old-journal reset is implied. Synthetic stopped-Host
+loss tests are not real physical disk-failure or provider-continuation evidence.
