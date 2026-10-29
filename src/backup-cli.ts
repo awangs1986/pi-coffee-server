@@ -40,8 +40,8 @@ try{
   }
   case 'verify':{const file=required('recovery');const info=await lstat(file);if(!info.isFile()||info.isSymbolicLink()||(info.mode&0o077)!==0||info.size>8192)throw Error('Recovery copy must be a private regular file');await repository.verifyRecoveryPackage(await readFile(file,'utf8'));console.log(JSON.stringify({enabled:true}));break;}
   case 'run':{
-   const selection=options.has('--selection')?JSON.parse(await readFile(required('selection'),'utf8')):[{scope:required('scope'),taskId:required('task')}];
-   if(!Array.isArray(selection)||selection.some(item=>typeof item?.scope!=='string'||typeof item?.taskId!=='string'))throw Error('Invalid selection');
+   const selection=options.has('--selection')?JSON.parse(await readFile(required('selection'),'utf8')):[{scope:required('scope'),taskId:required('task'),...options.has('--checkpoint-id')?{expectedCheckpointId:required('checkpoint-id')}:{} }];
+   if(!Array.isArray(selection)||selection.some(item=>typeof item?.scope!=='string'||typeof item?.taskId!=='string'||item.expectedCheckpointId!==undefined&&(typeof item.expectedCheckpointId!=='string'||!/^[a-f0-9]{8}-[a-f0-9-]{27}$/.test(item.expectedCheckpointId))||broker&&!item.expectedCheckpointId))throw Error('Invalid selection');
    console.log(JSON.stringify(await repository.backup(selection,controller.signal)));break;
   }
   case 'rotate':await repository.rotateRecoveryKey();console.log(JSON.stringify({rotationPending:true}));break;

@@ -88,3 +88,59 @@ source-offline extraction/pins, raw same-UID peer refusal, forged-worker-stdin
 refusal and live enrollment/actor revocation. Synthetic sealed-source fixtures
 prove transport and repository behavior only. They do not prove production
 Pi/Codex capture, install the service, or establish complete backup coverage.
+
+## Named sealed-checkpoint source
+
+`TrustedSealedCheckpointSource` is the private source endpoint for the trusted-root
+worker. Its coordinator only looks up an existing named seal. It never initiates
+capture, substitutes the latest checkpoint, scans live source files, changes native
+permissions, or treats repository readiness as a source-consistency proof.
+
+The source uses its own private policy, including current administrator, actor
+scopes and authority revision. In addition to the application policy, an operator
+explicitly supplies `sourceProducers`:
+
+```ts
+{
+  listener: { pid, uid, boot, birth },
+  workerCommand: [absoluteNodePath, absoluteFixedKeyWorkerPath, absolutePrivateConfigPath]
+}
+```
+
+This delegates to a transient worker only when its actual kernel socket peer has
+that listener as its **immediate parent**, with matching live UID, boot and process
+birth, and the worker's exact command matches all three configured arguments.
+The operator must ensure the listener only starts that fixed hardened worker and
+never caller-selected commands. This is a trusted-service topology assumption;
+it is not generic ancestry authorization or protection against same-UID/root
+process tampering. The source does not require reading `/proc/worker/exe`, which
+Linux denies for the hardened, non-dumpable key worker. UID alone, a supplied
+actor, another direct parent, PID reuse or an unregistered listener fails closed.
+Listener restart requires explicit enrollment replacement.
+
+The worker connects directly from Node, preserving its real kernel peer identity.
+Every request names scope, task and exact checkpoint ID. The source checks the
+selected membership, full sealed manifest and object hashes, all member scopes,
+and the current process/application policy before each frame. It verifies sealed
+material again before the footer. Observed revocation, parent death or endpoint
+closure aborts transfer; the receiver cannot publish an incomplete point. An
+already exported immutable point remains usable while live writers are busy or
+a newer checkpoint exists. The producer's complete Pi/Codex dependency group is
+included; selecting one task never silently drops another member.
+
+Resource bounds include a 16 KiB request, at most four simultaneous streams
+(default two), a bounded deadline (default five minutes), a configured point-size
+limit (at most 1 GiB), frame/encoded-byte limits, and destruction of active sockets
+on close. The private optional audit callback contains request/actor/scope/point
+IDs, byte counts and refusal codes only, never source contents or repository keys.
+
+`backup-cli run --broker-profile ... --scope ... --task ... --checkpoint-id ...`
+submits an explicitly selected checkpoint. A `--selection` file must supply
+`expectedCheckpointId` on every broker selection. There is no implicit latest
+lookup or automatic CLI enrollment; an operator must authorize the actual CLI
+process identity or route the operation through an enrolled backend. Local direct
+repository mode retains its existing optional-latest behavior.
+
+This endpoint and CLI are source candidates, not installed services. Host startup,
+policy ownership and lifecycle enrollment, production writer qualification and
+full scheduled Pi/Codex restore acceptance remain separate integration work.
