@@ -3,8 +3,7 @@
 This bounded source component follows the 2026-10-29 decision to preserve native
 permissions and trust the source Host administrator. It does not defend against
 hostile root. It does not install a service, change permissions, migrate existing
-tasks, or enable production backup. Main/native/source-export/key-service wiring
-and actual deployment qualification remain separate work.
+tasks, or enable production backup. Ordinary main/native/source-export wiring has a separate [composition record](../reviews/backup-ordinary-composition-20261029.md); final integrated acceptance and deployment qualification remain separate work.
 
 `TrustedSourceAuthority` composes an actual `PhysicalWriterFence`, a private
 durable admission ledger, and typed enrollment. It adds no namespace, no-sudo
@@ -40,8 +39,7 @@ native lifecycle handoff, complete native closure materialization, and a newly
 sealed checkpoint under the exact held physical cut before the enrollment is
 committed. See [native lifecycle evidence](native-source-handoff.md).
 
-Normal native activity supplies the receipt; backup never launches, resumes or
-stops sessions to obtain one. Each nonempty Pi/Codex store needs an observed
+Normal native activity can supply the receipt. For cold stores, the actual native factory can instead run a bounded, independently owned history reader; it never resumes or stops a user session to obtain evidence. See [owned audit](native-source-handoff.md#unattended-owned-native-audit). Each nonempty Pi/Codex store needs an observed
 binding in its complete current inventory, not a forced reopen of every archived
 task. Extra producer authorities remain unknown until their own actual handoff
 adapters exist. Source directories retain their permissions (including owned
@@ -242,8 +240,8 @@ operations and new writes during enrollment. No provider/model round is submitte
 
 These synthetic supported-topology observations do not prove production producer
 inventory, actual machine-reboot acceptance, remote runner lifecycle, all native
-feature parity, Restic recovery or installed daily scheduling. Main/service/key
-integration and full acceptance remain required before #130/#131/#141 can close.
+feature parity, Restic recovery or installed daily scheduling. Final composed service/key
+acceptance remains required before #130/#131/#141 can close.
 
 `test/trusted-local-reconciliation.test.ts` uses real child Host processes that
 exit while their actual local admission is pending, then verifies a new complete

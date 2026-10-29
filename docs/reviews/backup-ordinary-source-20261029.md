@@ -9,8 +9,8 @@ Neither production account was read or backed up by these tests.
 
 ## Integrated components
 
-Baseline `5a935c5b31a5193b8695250437962040377fd81d` contains these normally
-integrated components. It is not the remote main or a deployment identity.
+Composition baseline `de1e857254f357fc225ccac2dbd8d64131db8841` contains these normally
+integrated components; fixed-role launcher integration is recorded separately. It is not the remote main or a deployment identity.
 
 | Component | Evidence and boundary |
 | --- | --- |
@@ -19,6 +19,10 @@ integrated components. It is not the remote main or a deployment identity.
 | Exact checkpoint consumption | Explicit historical checkpoint selection survives newer points and scheduler restart; source export verifies the entire selected seal and retains its capture time. |
 | Native factory provenance | Only actual built-in instances bound to the same custody/fence attest coverage. Arbitrary factories/callbacks remain executable but unknown. |
 | Pi/Codex completed lifecycle | Actual history observation, normal close and terminal receipts bind native identity, roots and physical lease. A no-op launch or object construction cannot issue proof. |
+| Existing-root and interrupted-local recovery | `4b4bf40` requires exact dead local owner, current native graph/cut and durable receipt before state commit; rejected authorization or persistence failure retains pending work. |
+| Boot and deleted historical sessions | `78060d4` retains schema2 boot-bound receipts; removed old bindings cannot witness a current store or poison an unrelated valid current witness. Prior-boot tests are simulated. |
+| Owned native audit | `50cff3b` uses Pi SessionManager SDK and independent Codex history readers, preserving source/settings; new user work cancels only the reader. |
+| Ordinary main/source endpoint | `98164b3` supplies actual grouped coordinator, current source authorization, no-viewer cold enrollment, exact-point Restic extraction and durable endpoint ownership across actual Host SIGKILL. |
 | Ordinary Host Git | HTTP Git can finish while a detached helper retains its lock. Real HTTP Git authentication, output budgets, timeout and deferred private result cleanup are covered. See [Git evidence](backup-ordinary-git-20261029.md). |
 
 Native factory/lifecycle source evidence lives in
@@ -41,7 +45,20 @@ validation and public main composition.
   tests and timeouts under TasksMax256 it passed all 15 tests, with zero new
   task-limit events and no OOM. This is a test-resource diagnosis, not a product
   or production configuration fix.
-- The latest `5a935c5` combined checks await the subsequent main/source batch.
+- Existing/local authority candidate `4b4bf40`: build and 11 files / 95 tests
+  passed, no skips; seven targeted mutants killed and restored.
+- Boot/deletion candidate `78060d4`: build and 7 files / 36 tests passed;
+  two targeted mutants killed and restored.
+- Owned audit candidate `50cff3b`: build and 10 files / 79 tests passed;
+  two targeted mutants killed and restored.
+- Main/source candidate `98164b3`: final build and endpoint 6/6 passed;
+  main plus prior endpoint suite passed 18/18, and four other files passed 19
+  cases. These are 38 distinct scoped cases across recorded runs, not a combined
+  38-case run. Ten targeted production mutants were killed and restored.
+  [Composition evidence](backup-ordinary-composition-20261029.md) preserves
+  transient capture envelopes, fixture corrections and an unexplained earlier
+  Codex timeout. It does not relabel historical failures as passes.
+- The exact merged candidate still requires final affected and canonical checks.
 
 Private evidence is retained under the task's `backup-implementation-130`
 directory. The native/Git merge handoff records the exact commands, commits,
@@ -50,15 +67,14 @@ restore, restart, security configuration or real disk operation was performed.
 
 ## Open integrated gates
 
-Existing-root enrollment and same-boot Host restart have separate actual
-Pi/Codex candidate evidence, including two synthetic scopes. Main composition,
-resource-limit followups and coherent service startup are still being integrated.
-A machine reboot is distinct from a Host process restart: old-boot receipts
-currently refuse qualification. Reconciliation must retain prior evidence,
-require current native/graph proof and preserve unresolved delegated operations.
-A legitimately deleted historical session must not silently turn into proof for
-remaining tasks or permanently poison all future qualification. Those lifecycle
-reconciliation cases are implementation work, not accepted exclusions.
+Existing-root enrollment, no-viewer cold Pi/Codex qualification and same-boot
+Host restart now have actual subprocess evidence with synthetic stores. Tagged
+local crash reconciliation, simulated prior-boot custody and legitimately deleted
+historical sessions also have executed evidence; live/unknown/delegated cases
+remain refused. None of this proves a real machine reboot or arbitrary remote
+producer completion. The fixed-role service launcher has its own
+[startup record](backup-ordinary-startup-20261029.md); it is not a service install.
+Receipt verification still scans O(total receipts); no archive pruning was added.
 
 Final ordinary-permission capture → repository → native restore, canonical
 `npm run check`, Browser acceptance, test audit, independent review and fresh

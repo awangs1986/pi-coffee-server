@@ -102,8 +102,7 @@ CLI and resumed schedules likewise retain explicit immutable checkpoint selectio
 
 Startup enrollment of the source authority does not enroll the Host with the key
 service, enroll a scheduler, or register the fixed key listener with the source
-export policy. Those private live process identities remain explicit operator
-configuration and must be refreshed through the approved lifecycle.
+export policy. The [fixed-role startup launcher](ordinary-backup-startup.md) refreshes these private live process identities under a permanent role lock and current application policy. Source enrollment and service-process registration remain separate: neither creates application grants. Installation and profile approval remain explicit operator configuration.
 
 The actual Host subprocess tests exercise Pi and Codex without provider requests:
 real native history, completed lifecycle, exact old seal selection while another
