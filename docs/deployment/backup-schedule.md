@@ -7,9 +7,12 @@ separate key service and final integration acceptance remain required.
 
 ## Identities and configuration
 
-Run the scheduler as the trusted source service identity, separated from model
-executors and the key service. It reads checkpoint seals and a private broker
-client profile; it must not have access to the key service's private root.
+Run the scheduler as an explicitly enrolled trusted service process. Under the
+[accepted Host-root trust boundary](../reviews/backup-trusted-root-20261029.md),
+a distinct UID or root-proof external authority is not required. Its normal
+code reads checkpoint seals and a private broker client profile, never the key
+service's private root. Process enrollment and current application actor/scope
+permissions are separate checks; a same-UID caller cannot self-register.
 `--broker-profile` is the production connection. The older local repository CLI
 mode is for explicitly trusted operators and isolated fixtures, never a Host
 fallback when a broker is absent or unavailable.
@@ -133,3 +136,21 @@ unprotected/waiting/failed coverage; it cannot publish an incomplete checkpoint.
 These are operator settings, not Browser request parameters. No direct repository
 key-root fallback is constructed by normal Host startup; without a scoped broker
 connection repository actions stay unavailable.
+
+## Exact checkpoint dispatch
+
+Before the repository transport is called, each new scheduler attempt durably
+records its selected scope/task/checkpoint-ID vector. A lost transport response
+or scheduler restart retains that vector and operation ID even if newer source
+points appear. The repository resolves named historical sealed points, verifies
+scope membership and integrity, and never substitutes the newest point for an
+absent or damaged selected one. Reading a historical point does not roll back
+current source status. Original capture times remain unchanged.
+
+An older in-flight journal without the versioned selection guarantee must first
+reconcile a known repository job; absent that evidence it stays uncertain rather
+than resubmitting an unknown selection. A new-version attempt interrupted before
+selection persistence has not called the transport and may choose its first
+vector on restart. Failed attempts retain the existing bounded retry policy; a
+new attempt may select newer points. Private multi-account selection vectors are
+not returned in ordinary per-account schedule status.

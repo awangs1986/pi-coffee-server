@@ -147,7 +147,15 @@ export class BackupCoordinator {
   return this.status(scope,taskId,engine);
  }
  /** A controlled local job boundary. It returns source paths only to trusted Host code. */
- async sealedCheckpoint(scope:string,taskId:string):Promise<SealedCheckpoint|undefined>{const point=await this.findCheckpoint(scope,taskId,true);this.metadata.set(this.key(scope,taskId),Promise.resolve(point));return point;}
+ async sealedCheckpoint(scope:string,taskId:string,expectedCheckpointId?:string):Promise<SealedCheckpoint|undefined>{
+  this.key(scope,taskId);
+  if(expectedCheckpointId!==undefined){
+   if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(expectedCheckpointId))return undefined;
+   await this.initialize();const directory=join(this.root,'sealed',expectedCheckpointId);
+   try{await checkedDirectory(directory);const manifest=await verifySealedCheckpoint(directory);if(manifest.checkpointId!==expectedCheckpointId||!manifest.members.some(member=>member.scope===scope&&member.taskId===taskId))return undefined;return {directory,manifest};}catch{return undefined;}
+  }
+  const point=await this.findCheckpoint(scope,taskId,true);this.metadata.set(this.key(scope,taskId),Promise.resolve(point));return point;
+ }
  private async findCheckpoint(scope:string,taskId:string,verify:boolean):Promise<SealedCheckpoint|undefined>{
   this.key(scope,taskId);await this.initialize();
   const points=verify?await this.readInventory(true):await(this.inventory??=this.readInventory(false));
