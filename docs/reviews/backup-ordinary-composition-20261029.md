@@ -82,6 +82,12 @@ and all 5 endpoint cases. The unchanged authorization/version/HTTP/exporter file
 have 19 passing cases in `ordinary-audit-all.log`. Thus 37 distinct scoped cases
 have passing evidence across these runs; this is not a claim that the earlier
 combined run passed. Its three initial main failures remain recorded below.
+The final readiness-envelope assertions were additionally run for the three
+affected startup/restart cases: 3 passed, 10 filtered skips, in 49.55 seconds
+(`ordinary-startup-response-evidence.log`). Five actual response sequences were
+`409/capture_busy` followed by `200/protected`; the tests reject unexpected error
+or authorization responses even if a later attempt succeeds. Final build evidence
+is `ordinary-final-build.log`.
 
 Private evidence directory: `/home/awang/tmp/backup-implementation-130/`.
 Build: `ordinary-boot-build.log`. Complete scoped run: `ordinary-main-all1.log`.

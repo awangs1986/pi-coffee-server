@@ -26,7 +26,7 @@ async function removeOwned(path:string,identity:SocketIdentity){const info=await
 export class TrustedSourceEndpoint {
  readonly temporary:string;private socket?:SocketIdentity;private released=false;
  private constructor(readonly path:string,private directory:string,private lease:FileLease){
-  const parent=dirname(path),size=Math.min(32,107-Buffer.byteLength(parent+'/'));if(size<8)throw fail();this.temporary=join(parent,randomUUID().replaceAll('-','').slice(0,size));
+  const parent=dirname(path),size=Math.min(32,107-Buffer.byteLength(parent+'/'));if(size<8)throw fail();let name=randomUUID().replaceAll('-','').slice(0,size);if(name===basename(path))name=(name[0]==='0'?'1':'0')+name.slice(1);this.temporary=join(parent,name);
  }
  static async acquire(path:string):Promise<TrustedSourceEndpoint>{
   if(resolve(path)!==path)throw fail();const directory=join(dirname(path),'.'+basename(path)+'.authority');await mkdir(directory,{mode:0o700,recursive:true});
