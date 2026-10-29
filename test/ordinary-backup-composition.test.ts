@@ -210,6 +210,8 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC).each([true,false])('ordinary main 
   expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
   const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  // Recovery must regain a real cold source cut before a viewer opens native history.
+  await captureReady(f,'native-pi-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
   const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(neighbor?2:1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
@@ -233,6 +235,8 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
   const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  // Recovery must regain a real cold source cut before a viewer opens native history.
+  await captureReady(f,'codex-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames)).toContain('The ordinary question');
   const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);
@@ -256,6 +260,8 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('ordinary main publishes a missing
   expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
   const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  // Recovery must regain a real cold source cut before a viewer opens native history.
+  await captureReady(f,'native-pi-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
   const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
@@ -294,6 +300,8 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
   const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  // Recovery must regain a real cold source cut before a viewer opens native history.
+  await captureReady(f,'codex-task');
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames)).toContain('The ordinary question');
   const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);
