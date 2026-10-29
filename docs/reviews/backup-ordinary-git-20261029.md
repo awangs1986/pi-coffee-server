@@ -49,3 +49,16 @@ failed-process exit notification, and delay timeout. The omission probe failed
 through mutated fallback cleanup; the delay probe separately failed the explicit
 latency assertion (3443 ms versus a 2000 ms bound). These are focused checks,
 not exhaustive mutation coverage.
+
+
+## Timeout cleanup followup
+
+Independent merge review identified a reachable fallback cleanup race: a Git
+process ignoring SIGTERM could outlive the outer deadline, and its result
+publisher could race removal of the private channel. The new real executable
+fixture first failed because `request.json` was already deleted while the
+publisher still ran. Cleanup now waits for actual custodian closure on this
+unfinished path; the original timeout returns while the physical lock remains.
+The fixture then ends its own work and observes both quiescence and cleanup.
+Typecheck and all three ordinary Git tests passed after this repair. This
+preserves the earlier failure/mutation records rather than reclassifying them.
