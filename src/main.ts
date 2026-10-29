@@ -1,3 +1,4 @@
+import {authorizeRecoveryRequest} from './host/backup-request-identity.js';
 import {getAgentDir} from '@earendil-works/pi-coding-agent';
 import {OrdinaryBackupComposition,loadOrdinaryBackupProfile} from './host/ordinary-backup-composition.js';
 import {startColdEnrollmentControl} from './host/cold-enrollment-control.js';
@@ -170,7 +171,7 @@ async function run(selectedRole: Role): Promise<void> {
   // independent scheduler CLI owns its privileged worker profile separately.
   const scheduleForActor=brokerConfig&&backupRoot&&backupCoordinator?(actor:string|undefined,dataScope:string)=>actor?new BackupJobRunner({root:join(backupRoot,'schedule'),coordinator:backupCoordinator,repository:new BackupRepositoryClient({...brokerConfig,actor,dataScope})}):undefined:undefined;
   const scheduleConnection=backupRoot?trustedBackupInventoryConnection():undefined;
-  const authorizeRecovery=async(actor:string,scope:string,manage:boolean)=>{const managed=scope===LEGACY_BACKUP_SCOPE||envList('PI_COFFEE_BACKUP_USERS').includes(scope)||scope===actor;return managed&&(actor==='awangs'||!manage&&actor===scope);};
+  const authorizeRecovery=async(actor:string,scope:string,manage:boolean)=>authorizeRecoveryRequest(actor,scope,manage,envList('PI_COFFEE_BACKUP_USERS'));
   const restoreScope=async(scope:string):Promise<RestoreScope>=>{if(!restoreScopes.has(scope))await host?.prepareRestoreScope(scope===LEGACY_BACKUP_SCOPE?undefined:scope);const workspaces=restoreScopes.get(scope);if(!workspaces)throw new BackupError('unknown_scope','Restore scope unavailable');return {workspaces,adapter:recoveryAdapters.get(scope),withPublication:async(id,run,operationId,preparation)=>host!.withRestorePublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,id,async()=>{if(publicationGate)return publicationGate.withApprovedPublication(operationId,run,preparation);await preparation.preflight();await preparation.commitIntent();return run();},operationId,{deferMetadata:true}),beforePublication:context=>host!.prepareRecoveryPublication(scope===LEGACY_BACKUP_SCOPE?undefined:scope,context)};};
   const restoreRepository=async(actor:string,scope:string)=>{if(!brokerConfig)throw new BackupError('restore_material_broker_unavailable','An authorized scoped material broker is required');return new BackupRepositoryClient({...brokerConfig,actor,dataScope:scope});};
   const restoreCoordinator=backupRoot?new RestoreCoordinator({root:join(backupRoot,'restore-runtime'),materialSource:context=>restoreRepository(context.actor,context.scope),authorize:authorizeRecovery,scope:restoreScope,

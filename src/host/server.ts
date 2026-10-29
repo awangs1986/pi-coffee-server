@@ -1,3 +1,4 @@
+import {withBackupRequestIdentity} from './backup-request-identity.js';
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE,type RecoveryPublication} from './backup.js';
 import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
@@ -264,7 +265,7 @@ export class HostServer {
       // The user name was validated during the upgrade; a connection without
       // one belongs to the identity-less (single-user) slot.
       const user = normalizeUsername(request.headers[USER_HEADER]);
-      const actor=normalizeUsername(request.headers[ACTOR_HEADER])??user;
+      const actor=normalizeUsername(request.headers[ACTOR_HEADER]);
       const slot = this.slotFor(user).then(slot=>({...slot,authenticatedActor:actor,...(this.options.backup?.repositoryForActor?{repository:repositoryClientOrUnavailable(()=>this.options.backup!.repositoryForActor!(actor,user??LEGACY_BACKUP_SCOPE))}:{}),...(this.options.backup?.scheduleForActor?{schedule:scopedSchedule(()=>this.options.backup!.scheduleForActor!(actor,user??LEGACY_BACKUP_SCOPE))}:{})}));
       const hostSocket = new HostSocket(socket, slot, this.transfer, (scope, sessionId) => {
         this.transferTargets.set(scope, { slot, sessionId });
@@ -290,7 +291,7 @@ export class HostServer {
     if(this.options.runtimeStatus?.().mode==='emergency')return undefined;
     try{return dirname(createRequire(import.meta.url).resolve('pi-coffee-mishu/package.json'));}catch{return undefined;}
   }
-  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse,admitted=false):Promise<void> {
+  private async handleApi(req: IncomingMessage, res: import("node:http").ServerResponse,admitted=false,identified=false):Promise<void> {
     if(req.url==='/api/mishu/runtime'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       const token=req.headers.authorization?.replace(/^Bearer /,'')??'';
@@ -301,9 +302,10 @@ export class HostServer {
     }
     if(!this.token || req.headers.authorization !== `Bearer ${this.token}`) {json(res,401,{error:"Unauthorized"});return;}
     const rawUser=req.headers[USER_HEADER], user=normalizeUsername(rawUser);
-    const rawActor=req.headers[ACTOR_HEADER],actor=rawActor===undefined?user:normalizeUsername(rawActor);
+    const rawActor=req.headers[ACTOR_HEADER],actor=normalizeUsername(rawActor);
     if(rawActor!==undefined&&!actor){json(res,400,{error:'Valid actor identity required'});return;}
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
+    if(req.url==='/api/backup'&&!identified)return withBackupRequestIdentity(actor,user??LEGACY_BACKUP_SCOPE,()=>this.handleApi(req,res,admitted,true));
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
     if(req.method==='POST'&&req.url!=='/api/backup'&&slot.workspaces?.backupWriterFence&&!admitted){
@@ -1225,7 +1227,7 @@ class HostSocket implements SessionSink {
           await this.open(frame);
           break;
         case "get_backup_status": {
-          const slot=await this.slot,repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.authenticatedActor&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE)))}:{}),...(slot.authenticatedActor===slot.backupAdministrator?{retention:JSON.parse(JSON.stringify(await retentionStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE)??null))}:{}),tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await scheduleStatus(slot.schedule,this.user??LEGACY_BACKUP_SCOPE)))}:{})});break;
+          const slot=await this.slot;await withBackupRequestIdentity(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE,async()=>{const repository=await repositoryStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE,slot.repositoryActivationUnavailable);this.send({v:1,type:'backup_status',scope:this.user??LEGACY_BACKUP_SCOPE,...(slot.authenticatedActor&&slot.restore?{restores:JSON.parse(JSON.stringify(await slot.restore.status(slot.authenticatedActor,this.user??LEGACY_BACKUP_SCOPE)))}:{}),...(slot.authenticatedActor===slot.backupAdministrator?{retention:JSON.parse(JSON.stringify(await retentionStatus(()=>slot.repository,this.user??LEGACY_BACKUP_SCOPE)??null))}:{}),tasks:await backupStatuses(slot),...(repository?{repository:JSON.parse(JSON.stringify(repository))}:{}),...(slot.schedule?{schedule:JSON.parse(JSON.stringify(await scheduleStatus(slot.schedule,this.user??LEGACY_BACKUP_SCOPE)))}:{})});});break;
 
         }
         case "list_sessions":

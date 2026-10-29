@@ -39,7 +39,7 @@ it('preserves authenticated administrator authority independently of routed and 
  const root=await mkdtemp(join(tmpdir(),'coffee-backup-ws-principal-'));let server:HostServer|undefined;const sockets:WebSocket[]=[];
  try{
   const store=new Workspaces(join(root,'projects'));await store.list();
-  const restore=new RestoreCoordinator({root:join(root,'restore'),scope:async()=>({workspaces:store}),authorize:async(actor,scope,manage)=>manage?actor==='awangs':actor===scope});
+  const restore=new RestoreCoordinator({root:join(root,'restore'),scope:async()=>({workspaces:store}),authorize:async(actor,scope,manage)=>actor==='awangs'||!manage&&actor===scope});
   const scoped=await restore.request('awangs','alice',{taskId:'scoped',jobId:'12345678-1234-4234-8234-123456789abc'}),legacy=await restore.request('awangs',LEGACY_BACKUP_SCOPE,{taskId:'legacy',jobId:'12345678-1234-4234-8234-123456789abc'});
   const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No model');}};
   server=new HostServer({port:0,token:'private',factory,workspaces:store,backup:{coordinator:new BackupCoordinator({root:join(root,'checkpoints')}),restore},scopeForUser:()=>({factory,workspaces:store})});await server.start();

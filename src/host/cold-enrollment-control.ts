@@ -1,3 +1,4 @@
+import {withBackupRequestIdentity} from './backup-request-identity.js';
 import {lstat,realpath} from 'node:fs/promises';
 import {join,resolve,dirname} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -24,14 +25,14 @@ export async function startColdEnrollmentControl(options:{socket:string;profile:
  const coordinator=new ColdEnrollmentCoordinator({root:configured.root,accounts:options.accounts,authorize:async(actor,requested)=>actor===configured.actor&&requested.every(scope=>scopes.includes(scope)),archive:async(actor,point,operationId)=>options.authority.withEnrollmentPoint(point,async()=>{
   const job=await broker.backup(point.manifest.members.map(member=>({scope:member.scope,taskId:member.taskId,expectedCheckpointId:point.manifest.checkpointId})),undefined,operationId);return validateColdEnrollmentArchive(actor,configured.actor,point.manifest,job);
  })});
- return listenManagedControl(options.socket,[options.authority.config.executorUid],async(input,socket)=>{let result:unknown;try{if(input.schema!==1||Object.keys(input).some(key=>!['schema','action','id','revision','digest'].includes(key))||!['plan','status','approve','publish'].includes(String(input.action)))throw restoreFail('invalid_enrollment_request');
+ return listenManagedControl(options.socket,[options.authority.config.executorUid],async(input,socket)=>withBackupRequestIdentity(configured.actor,scopes[0],async()=>{let result:unknown;try{if(input.schema!==1||Object.keys(input).some(key=>!['schema','action','id','revision','digest'].includes(key))||!['plan','status','approve','publish'].includes(String(input.action)))throw restoreFail('invalid_enrollment_request');
   // Re-read exact trusted configuration before every action, including publish.
   if(JSON.stringify(await profile(options.profile,options.authority.config.sourceParent))!==JSON.stringify(configured))throw restoreFail('enrollment_profile_changed');for(const scope of scopes)if(!(await options.authority.sourceProof(scope)).known)throw restoreFail('writers_unknown');
   if(input.action==='plan'){if(Object.keys(input).some(key=>!['schema','action'].includes(key)))throw restoreFail('invalid_enrollment_request');const lease=await acquireLegacyColdCut(configured.legacy.socket,configured.legacy.uid);try{if(configured.capture){result=await withCapturedReadonlyLegacyExport({root:join(configured.root,'frozen-capture-'+randomUUID()),scopes:configured.capture.scopes,lease,run:source=>coordinator.plan(configured.actor,source,configured.mappings)});}else{const directory=configured.exportDirectory!,manifest=await verifySealedCheckpoint(directory);result=await withReadonlyLegacyExport({point:{directory,manifest},lease,assertRetired:async()=>lease.assertValid(),run:source=>coordinator.plan(configured.actor,source,configured.mappings)});}}finally{lease.release();}}
   else if(input.action==='status'){if(typeof input.id!=='string')throw restoreFail('invalid_enrollment_request');result=await coordinator.status(configured.actor,input.id);}
   else{if(typeof input.id!=='string'||typeof input.digest!=='string'||!Number.isSafeInteger(input.revision))throw restoreFail('invalid_enrollment_request');result=await coordinator.operate(configured.actor,input.id,{action:input.action as 'approve'|'publish',revision:Number(input.revision),digest:input.digest});}
   socket.write(JSON.stringify({schema:1,ok:true,result})+'\n');
- }catch(error){socket.write(JSON.stringify({schema:1,ok:false,error:{code:error&&typeof error==='object'&&'code'in error?String(error.code):'enrollment_failed'}})+'\n');}});
+ }catch(error){socket.write(JSON.stringify({schema:1,ok:false,error:{code:error&&typeof error==='object'&&'code'in error?String(error.code):'enrollment_failed'}})+'\n');}}));
 }
 
 /** Validate the repository result before cold enrollment creates account plans.

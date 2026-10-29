@@ -113,3 +113,14 @@ consistency group's shared dependency roles/keys before the approval button.
 Values come from the approved-plan preview and render as plain text. Cross-scope
 shared dependency keys remain masked by the server; the Browser does not derive
 private paths or hidden account bindings.
+
+
+## Authenticated requester and routed data scope
+
+Reader status, recovery requests and cancellation authorize the authenticated
+login against the current trusted request's own routed scope, not string equality
+between login and directory name. Administrator planning/revision/approval and
+publication remain separate privileges, with managed-scope admission and current
+broker/destination checks. HTTP and WebSocket both carry the actual authenticated
+actor; a route named after the administrator does not grant its role. See the
+[actor/scope repair evidence](../reviews/backup-actor-scope-20261029.md).
