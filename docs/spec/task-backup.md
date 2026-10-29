@@ -28,7 +28,7 @@ complete members, hashes, current actor/scope authority and original capture age
 remain required. Restore publication independently requires an approved plan and
 destination writer exclusion.
 
-A missing source history is not a prerequisite for restoring that history.
+Complete live source history is not required to restore missing history.
 Ordinary Pi/Codex planning and publication now use a separate
 [restore destination capability](../development/restore-destination-authority.md):
 current application authority, exact configured scope/root/producer identities,
