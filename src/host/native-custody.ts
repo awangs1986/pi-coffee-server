@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import {sourceGroupLockIdentity,assertSourceGroupLock,type SourceGroupLockIdentity} from './source-group-lock.js';
 
 export type NativeCustodyState = { state: 'quiescent' } | { state: 'active' | 'unknown'; reason: string };
+const custodyInstances=new WeakSet<object>();
+export const isNativeWriterCustody=(value:unknown):value is NativeWriterCustody=>typeof value==='object'&&value!==null&&custodyInstances.has(value);
 const idPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 /** Custody of launched descendants only. This does NOT prove exclusive ownership
@@ -14,7 +16,7 @@ const idPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0
 export class NativeWriterCustody {
   readonly root: string;
   readonly groupLock?:string;
-  constructor(root: string, options?:{lock:string}) { this.root = resolve(root);if(options){if(resolve(options.lock)!==options.lock)throw Error('Source group lock must be canonical');this.groupLock=options.lock;} }
+  constructor(root: string, options?:{lock:string}) { this.root = resolve(root);custodyInstances.add(this);if(options){if(resolve(options.lock)!==options.lock)throw Error('Source group lock must be canonical');this.groupLock=options.lock;} }
 
   async prepare(command: { executable: string; args?: string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex' }): Promise<{ cliPath: string; env: Record<string,string> }> {
     if (process.platform !== 'linux') throw Error('Native writer custody requires Linux');

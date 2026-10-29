@@ -1,20 +1,24 @@
 import {WriterAdmissionFence,BackupError,type CaptureLease,type RecoveryPublication} from './backup.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
-import type {NativeCustodyState} from './native-custody.js';
+import {isNativeWriterCustody,type NativeCustodyState,type NativeWriterCustody} from './native-custody.js';
 import {sourceGroupLockIdentity,assertSourceGroupLock,type SourceGroupLockIdentity} from './source-group-lock.js';
 import type {ManagedPublicationGate} from './managed-publication-gate.js';
 
 export interface PhysicalWriterCustody {readonly groupLock?:string;state():Promise<NativeCustodyState>;}
+const fenceCustody=new WeakMap<object,{custody:PhysicalWriterCustody;lock:string}>();
+/** Local launch binding only, never whole-source enrollment proof. */
+export function physicalFenceCoversCustody(fence:unknown,custody:unknown):custody is NativeWriterCustody {if(typeof fence!=='object'||fence===null||!isNativeWriterCustody(custody))return false;const bound=fenceCustody.get(fence);return Boolean(bound&&bound.custody===custody&&bound.lock===custody.groupLock);}
 const physicalPublicationLeases=new WeakSet<CaptureLease>();
 export const isPhysicalPublicationLease=(lease:CaptureLease)=>physicalPublicationLeases.has(lease);
 
 /** Kernel arbitration complements the synchronous Host admission epoch. The
  * source enrollment and unrelated producer coverage remain the authority's job. */
 export class PhysicalWriterFence extends WriterAdmissionFence {
+ private readonly physical:{lock:string;custody:PhysicalWriterCustody;publicationGate?:ManagedPublicationGate};
  private readonly lockIdentity:SourceGroupLockIdentity;
  private readonly kernelCuts=new Set<FileLease>();private revision=0;private publications=0;
  get changeRevision(){return this.revision;}
- constructor(private physical:{lock:string;custody:PhysicalWriterCustody;publicationGate?:ManagedPublicationGate}){super({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await physical.custody.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}});if(physical.lock!==physical.custody.groupLock)throw Error('Source group lock mismatch');this.lockIdentity=sourceGroupLockIdentity(physical.lock,true);}
+ constructor(options:{lock:string;custody:PhysicalWriterCustody;publicationGate?:ManagedPublicationGate}){const physical={...options};super({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await physical.custody.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}});if(physical.lock!==physical.custody.groupLock)throw Error('Source group lock mismatch');this.physical=physical;this.lockIdentity=sourceGroupLockIdentity(physical.lock,true);fenceCustody.set(this,{custody:physical.custody,lock:physical.lock});}
  private acquire(mode:'shared'|'exclusive'){assertSourceGroupLock(this.lockIdentity);const lease=acquireFileLease(this.physical.lock,mode);try{assertSourceGroupLock(this.lockIdentity);return lease;}catch(error){lease?.release();throw error;}}
  override invalidate(reason?:string){
   this.revision++;
