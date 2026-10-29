@@ -1,3 +1,4 @@
+import type {FreshCustodyAllocation} from './native-custody.js';
 import {constants,openSync,closeSync,fstatSync,readFileSync,lstatSync,realpathSync,writeFileSync,fsyncSync,renameSync,mkdirSync} from 'node:fs';
 import {mkdir} from 'node:fs/promises';
 import {dirname,join,resolve,relative,isAbsolute} from 'node:path';
@@ -9,6 +10,16 @@ import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {PhysicalWriterFence} from './physical-writer-fence.js';
 import {materializeTrustedNativeSource,type TrustedNativeSourceScope} from './trusted-native-source-closure.js';
 import {verifyNativeSourceHandoff,type NativeSourceHandoff} from './native-source-handoff.js';
+
+export interface DestinationContext {actor:string;scope:string;operationId:string;revision:number;mode:'missing-only'|'replace';digest?:string;}
+export interface RestoreDestination {lease(context:DestinationContext):Promise<CaptureLease>;assertLease(lease:CaptureLease):void;}
+const destinationLeases=new WeakMap<CaptureLease,TrustedSourceAuthority>();
+declare const freshDestinationBrand:unique symbol;
+export type FreshDestinationToken={readonly [freshDestinationBrand]:true};
+const freshDestinations=new WeakMap<object,{fence:PhysicalWriterFence;allocation:FreshCustodyAllocation;assert:()=>void}>();
+export function assertFreshDestinationToken(token:FreshDestinationToken,fence:PhysicalWriterFence){const proof=freshDestinations.get(token);if(!proof||proof.fence!==fence)throw invalid();proof.assert();return proof.allocation;}
+
+
 
 interface DirectoryIdentity {path:string;dev:number;ino:number;uid:number;}
 interface ProcessIdentity {pid:number;uid:number;boot:string;birth:string;}
@@ -22,7 +33,7 @@ interface Enrollment {
  schema:1;id:string;groupId:string;configurationDigest:string;graphDigest:string;
  roots:(DirectoryIdentity&{id:string})[];producers:Producer[];administrator:string;
  assumptions:readonly ['trusted-source-root','all-source-producers-use-admission-v1'];
- initialCheckpoint?:string;handoffDigest?:string;handoffKernelBoot?:string;priorBootReceiptDigest?:string;reconciliation?:{id:string;digest:string};
+ freshCustody?:FreshCustodyAllocation;initialCheckpoint?:string;handoffDigest?:string;handoffKernelBoot?:string;priorBootReceiptDigest?:string;reconciliation?:{id:string;digest:string};
 }
 interface LocalOwner {origin:'qualified-host'|'configured-host-startup';enrollmentId:string|null;configurationDigest:string;graphDigest:string;identity:ProcessIdentity;checksum:string;}
 interface Operation {id:string;producer:string;kind:'local'|'delegation';localOwner?:LocalOwner;}
@@ -149,10 +160,11 @@ export class TrustedSourceAuthority {
    if(actor!==config.owner.administrator||producers.length!==config.producers.length||new Set(producers.map(producer=>producer.id)).size!==producers.length)throw invalid();
    const observed=config.producers.map(producer=>{const supplied=producers.find(value=>value.id===producer.id);if(!supplied)throw invalid();return {...producer,identity:identity(supplied.pid)};});
    for(const root of config.roots){directory(dirname(root.path));if(under(root.path,this.options.root)||under(this.options.root,root.path)||under(root.path,this.options.configuration)||under(root.path,this.options.graph)||config.roots.some(other=>other!==root&&(under(root.path,other.path)||under(other.path,root.path))))throw invalid();try{lstatSync(root.path);throw invalid();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
+   const freshCustody=await this.options.fence.allocateFreshDestination();
    const roots=[];for(const root of config.roots){await mkdir(root.path,{mode:0o700});roots.push({...directory(root.path),id:root.id});}
    if(!await this.options.authorize(actor))throw invalid();this.assertOwner();if(this.disabled||this.state.revision!==revision||hash(privateText(this.options.configuration,65536))!==hash(configText)||hash(privateText(this.options.graph,65536))!==hash(graphText))throw invalid();
    for(const root of roots){const {id:_,...expected}=root;if(!same(directory(root.path),expected))throw invalid();}if(observed.some(producer=>!producerCurrent(producer)))throw invalid();
-   const previousState=this.state;this.state={...previousState,enrollment:{schema:1,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:observed,administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']},revision:previousState.revision+1};
+   const previousState=this.state;this.state={...previousState,enrollment:{schema:1,freshCustody,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:observed,administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']},revision:previousState.revision+1};
    try{this.save();}catch{this.state=previousState;this.poison('enrollment-journal-unavailable');throw invalid();}
   }finally{this.enrolling=false;}
  }
@@ -247,6 +259,7 @@ export class TrustedSourceAuthority {
   if(!enrollment||enrollment.schema!==1)throw invalid();
   if(hash(privateText(this.options.configuration,65536))!==enrollment.configurationDigest||hash(privateText(this.options.graph,65536))!==enrollment.graphDigest)throw invalid();
   for(const root of enrollment.roots){const {id:_,...expected}=root;if(!same(directory(root.path,true),expected))throw invalid();}
+  if(enrollment.freshCustody)this.options.fence.assertDestinationAllocation(enrollment.freshCustody);
   this.validateReconciliation(enrollment);
   for(const producer of enrollment.producers)if(!producerCurrent(producer))throw invalid();
   return {schema:1,enrollmentId:enrollment.id,groupId:enrollment.groupId,revision:this.state.revision,assumptions:[...enrollment.assumptions],configurationDigest:enrollment.configurationDigest,graphDigest:enrollment.graphDigest};
@@ -267,6 +280,33 @@ export class TrustedSourceAuthority {
    }
    return evidence;
   }catch{throw invalid();}
+ }
+ destination(paths:()=>Promise<readonly string[]>):RestoreDestination {return Object.freeze({lease:async(context:DestinationContext)=>this.destinationLease(context,await paths()),assertLease:(lease:CaptureLease)=>{if(destinationLeases.get(lease)!==this)throw invalid();lease.assertValid();}});}
+ /** Destination ownership is deliberately independent of source history closure.
+  * Keep original operations/enrollment untouched until an actual source cut. */
+ async destinationLease(context:DestinationContext,paths:readonly string[]):Promise<CaptureLease>{
+  if(!context||!id(context.operationId)||!Number.isSafeInteger(context.revision)||context.revision<1||!['missing-only','replace'].includes(context.mode)||context.digest!==undefined&&!digestPattern.test(context.digest))throw invalid();
+  if(!await this.options.authorize(context.actor))throw invalid();
+  const baseline=this.stateDigest,current=identity(process.pid);
+  const assert=()=>{
+   this.assertOwner();if(this.stateDigest!==baseline||!same(identity(process.pid),current)||this.state.issues.some(issue=>issue!=='authority-reopened')||this.disabled&&!this.state.issues.includes('authority-reopened'))throw invalid();
+   const enrollment=this.state.enrollment;if(!enrollment)throw invalid();
+   const configText=privateText(this.options.configuration,65536),config=configuration(configText),graphText=privateText(this.options.graph,65536);graph(graphText,config);
+   if(context.actor!==config.owner.administrator||enrollment.configurationDigest!==hash(configText)||enrollment.graphDigest!==hash(graphText)||config.producers.length!==1||config.producers[0].kind!=='host'||enrollment.producers.length!==1||enrollment.producers[0].id!==config.producers[0].id||enrollment.producers[0].kind!=='host'||!JSON.parse(graphText).roots.some((root:{scope:string})=>root.scope===context.scope))throw invalid();
+   const former=enrollment.producers[0].identity;if(!same(former,current))deadLocalOwner(former);
+   if(enrollment.freshCustody)this.options.fence.assertDestinationAllocation(enrollment.freshCustody);
+   this.validateReconciliation(enrollment);this.resolvePendingLocal(configText,graphText,config.producers[0].id);
+   for(const root of enrollment.roots){const {id:_,...expected}=root;if(!same(directory(root.path,true),expected))throw invalid();}
+   if(!paths.length||paths.length>256)throw invalid();for(const path of paths){if(resolve(path)!==path)throw invalid();const root=enrollment.roots.find(root=>under(root.path,path));if(!root)throw invalid();let existing=path;for(;;){try{const info=lstatSync(existing);if(realpathSync(existing)!==existing||info.isSymbolicLink()||!info.isFile()&&!info.isDirectory()||info.dev!==root.dev)throw invalid();break;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||existing===root.path)throw error;existing=dirname(existing);}}}
+  };
+  assert();let token:FreshDestinationToken|undefined;const allocation=this.state.enrollment?.freshCustody;if(allocation){token=Object.freeze({}) as FreshDestinationToken;freshDestinations.set(token,{fence:this.options.fence,allocation,assert});}
+  const lease=await this.options.fence.destinationLease(token,Boolean(context.digest)),held=lease.assertValid.bind(lease);
+  lease.assertValid=()=>{held();assert();};
+  try{
+   lease.assertValid();if(!await this.options.authorize(context.actor))throw invalid();lease.assertValid();
+   if(context.digest){const root=join(this.options.root,'destinations');mkdirSync(root,{recursive:true,mode:0o700});directory(root);const receipt={schema:1,...context,enrollmentId:this.state.enrollment!.id,journalDigest:baseline,owner:current,pending:this.state.operations,at:new Date().toISOString()},text=JSON.stringify(receipt);if(Buffer.byteLength(text)>1024*1024)throw invalid();const fd=openSync(join(root,randomUUID()+'.json'),'wx',0o600);try{writeFileSync(fd,text);fsyncSync(fd);}finally{closeSync(fd);}for(const parent of [root,this.options.root]){const fd=openSync(parent,'r');try{fsyncSync(fd);}finally{closeSync(fd);}}}
+   lease.assertValid();destinationLeases.set(lease,this);return lease;
+  }catch(error){lease.release();throw error;}
  }
  async capture():Promise<{lease:CaptureLease;evidence:TrustedSourceEvidence}>{return this.cut(false);}
  private async cut(publication:boolean):Promise<{lease:CaptureLease;evidence:TrustedSourceEvidence}>{

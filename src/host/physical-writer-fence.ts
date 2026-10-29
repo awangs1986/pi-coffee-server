@@ -1,3 +1,4 @@
+import type {FreshDestinationToken} from './trusted-source-authority.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {lstat,readdir,readFile,realpath} from 'node:fs/promises';
 import {dirname,join} from 'node:path';
@@ -22,12 +23,13 @@ export const isPhysicalPublicationLease=(lease:CaptureLease)=>physicalPublicatio
 export class PhysicalWriterFence extends WriterAdmissionFence {
  private readonly physical:{lock:string;custody:PhysicalWriterCustody;publicationGate?:ManagedPublicationGate};
  private readonly lockIdentity:SourceGroupLockIdentity;
- private readonly kernelCuts=new Set<FileLease>();private revision=0;private publications=0;private activeAdmissions=0;private audit?:AbortController;private uncoveredAdmission=false;
+ private readonly kernelCuts=new Set<FileLease>();private revision=0;private publications=0;private activeAdmissions=0;private audit?:AbortController;private destinationCuts=new Set<AbortController>();private uncoveredAdmission=false;
  get changeRevision(){return this.revision;}
  constructor(options:{lock:string;custody:PhysicalWriterCustody;publicationGate?:ManagedPublicationGate}){const physical={...options};super({writerClasses:['platform','native'],uncoveredWriters:[],probe:async()=>{const state=await physical.custody.state();return {known:state.state==='quiescent',active:state.state==='active',...(state.state!=='quiescent'?{reason:state.reason}:{})};}});if(physical.lock!==physical.custody.groupLock)throw Error('Source group lock mismatch');this.physical=physical;this.lockIdentity=sourceGroupLockIdentity(physical.lock,true);fenceCustody.set(this,{custody:physical.custody,lock:physical.lock});}
  private acquire(mode:'shared'|'exclusive'){assertSourceGroupLock(this.lockIdentity);const lease=acquireFileLease(this.physical.lock,mode);try{assertSourceGroupLock(this.lockIdentity);return lease;}catch(error){lease?.release();throw error;}}
  override invalidate(reason?:string){
   if(this.audit&&auditContext.getStore()!==this.audit)this.audit.abort(new BackupError('capture_revoked','New source activity takes priority over native audit'));
+  for(const controller of this.destinationCuts)controller.abort(new BackupError('capture_revoked','Destination cut revoked'));this.destinationCuts.clear();
   this.revision++;
   // Drop EX synchronously before any platform/native side effect is admitted.
   if(!this.publications){for(const cut of this.kernelCuts)cut.release();this.kernelCuts.clear();}super.invalidate(reason);
@@ -57,7 +59,7 @@ export class PhysicalWriterFence extends WriterAdmissionFence {
  }
  private async pristineCustody(custody:NativeWriterCustody):Promise<boolean>{
   try{const info=await lstat(custody.root);if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==process.getuid?.()||(info.mode&0o077)||await realpath(custody.root)!==custody.root)return false;
-   const entries=await readdir(custody.root);if(!entries.length)return true;if(entries.length!==1||entries[0]!=='group-lock.json')return false;
+   const entries=await readdir(custody.root);if(!entries.length)return true;if(entries.includes('allocation.json')){if(entries.length!==2||!entries.includes('group-lock.json'))return false;const {schema:_,used:__,...allocation}=JSON.parse(await readFile(join(custody.root,'allocation.json'),'utf8'));custody.assertFreshAllocation(allocation);entries.splice(entries.indexOf('allocation.json'),1);}if(entries.length!==1||entries[0]!=='group-lock.json')return false;
    const path=join(custody.root,'group-lock.json'),file=await lstat(path);if(!file.isFile()||file.isSymbolicLink()||file.uid!==process.getuid?.()||(file.mode&0o077)||file.size>65536)return false;
    return JSON.stringify(JSON.parse(await readFile(path,'utf8')))===JSON.stringify(this.lockIdentity);
   }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')return false;
@@ -65,6 +67,19 @@ export class PhysicalWriterFence extends WriterAdmissionFence {
    try{await lstat(custody.root);return false;}catch(missing){if((missing as NodeJS.ErrnoException).code!=='ENOENT')return false;}
    try{const parent=dirname(custody.root),info=await lstat(parent);return info.isDirectory()&&!info.isSymbolicLink()&&info.uid===process.getuid?.()&&!(info.mode&0o077)&&await realpath(parent)===parent;}catch{return false;}
   }
+ }
+ assertDestinationAllocation(allocation:import('./native-custody.js').FreshCustodyAllocation){if(!isNativeWriterCustody(this.physical.custody))throw new BackupError('writers_unknown','Destination custody unbound');this.physical.custody.assertFreshAllocation(allocation,false);}
+ async allocateFreshDestination(){if(!isNativeWriterCustody(this.physical.custody)||this.activeAdmissions||this.publications)throw new BackupError('writers_unknown','Fresh destination custody unavailable');return this.physical.custody.allocateFreshDestination();}
+ async destinationLease(token:FreshDestinationToken|undefined,publication:boolean):Promise<CaptureLease>{
+  if((await this.physical.custody.state()).state==='quiescent')return publication?this.publicationLease():this.lease();
+  if(!token||!isNativeWriterCustody(this.physical.custody)||this.activeAdmissions||this.publications||this.uncoveredAdmission)throw new BackupError('writers_unknown','Destination custody unavailable');
+  const {assertFreshDestinationToken}=await import('./trusted-source-authority.js');
+  const allocation=assertFreshDestinationToken(token,this),custody=this.physical.custody;custody.assertFreshAllocation(allocation);
+  const entries=await readdir(custody.root);if(entries.some(name=>!['allocation.json','group-lock.json'].includes(name)))throw new BackupError('writers_unknown','Destination custody has unresolved launches');
+  this.physical.publicationGate?.[publication?'assertPublication':'assertAdmission']();
+  const epoch=this.revision,controller=new AbortController(),kernel=this.acquire('exclusive');if(!kernel)throw new BackupError('writers_active','Destination writers remain active');
+  let released=false;const lease:CaptureLease={epoch,signal:controller.signal,...(publication?{publicationFd:kernel.fd}:{}),assertValid:()=>{if(released||this.revision!==epoch||this.activeAdmissions)throw new BackupError('capture_revoked','Destination changed');assertFreshDestinationToken(token,this);custody.assertFreshAllocation(allocation);kernel.assertHeld();assertSourceGroupLock(this.lockIdentity);},release:()=>{if(released)return;released=true;this.destinationCuts.delete(controller);this.kernelCuts.delete(kernel);physicalPublicationLeases.delete(lease);if(publication)this.publications--;kernel.release();}};
+  try{lease.assertValid();this.kernelCuts.add(kernel);this.destinationCuts.add(controller);if(publication){this.publications++;physicalPublicationLeases.add(lease);}return lease;}catch(error){kernel.release();throw error;}
  }
  override async publicationLease():Promise<CaptureLease>{
   const lease=await this.cutLease(true);try{lease.assertValid();this.publications++;}catch(error){lease.release();throw error;}let released=false;

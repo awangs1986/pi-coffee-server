@@ -1,9 +1,11 @@
+import {lstatSync,readFileSync,realpathSync} from 'node:fs';
 import { mkdir, lstat, realpath, readFile, readdir, open, rename } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {sourceGroupLockIdentity,assertSourceGroupLock,type SourceGroupLockIdentity} from './source-group-lock.js';
 
+export interface FreshCustodyAllocation {id:string;path:string;dev:number;ino:number;uid:number;lock:string;}
 export type NativeCustodyState = { state: 'quiescent' } | { state: 'active' | 'unknown'; reason: string };
 const custodyInstances=new WeakSet<object>();
 export const isNativeWriterCustody=(value:unknown):value is NativeWriterCustody=>typeof value==='object'&&value!==null&&custodyInstances.has(value);
@@ -20,12 +22,25 @@ export class NativeWriterCustody {
   readonly groupLock?:string;
   constructor(root: string, options?:{lock:string}) { this.root = resolve(root);custodyInstances.add(this);if(options){if(resolve(options.lock)!==options.lock)throw Error('Source group lock must be canonical');this.groupLock=options.lock;} }
 
+  async allocateFreshDestination():Promise<FreshCustodyAllocation>{
+    if(!this.groupLock)throw Error('Destination custody requires its source lock');
+    await mkdir(this.root,{mode:0o700});await this.checkedDirectory(this.root);await this.bindGroupLock();
+    const info=await lstat(this.root),allocation={id:randomUUID(),path:this.root,dev:info.dev,ino:info.ino,uid:info.uid,lock:this.groupLock};
+    await this.atomicJson(this.root,'allocation.json',{schema:1,...allocation,used:false});return allocation;
+  }
+  assertFreshAllocation(expected:FreshCustodyAllocation,pristine=true){
+    const info=lstatSync(this.root),path=join(this.root,'allocation.json'),file=lstatSync(path);
+    if(!info.isDirectory()||info.isSymbolicLink()||realpathSync(this.root)!==this.root||info.dev!==expected.dev||info.ino!==expected.ino||info.uid!==expected.uid||(info.mode&0o077)||expected.path!==this.root||expected.lock!==this.groupLock||!file.isFile()||file.isSymbolicLink()||file.nlink!==1||file.uid!==info.uid||(file.mode&0o077)||file.size>65536)throw Error('Fresh destination custody changed');
+    const value=JSON.parse(readFileSync(path,'utf8'));if(typeof value.used!=='boolean'||pristine&&value.used||JSON.stringify(value)!==JSON.stringify({schema:1,...expected,used:value.used}))throw Error('Fresh destination custody already used');
+    assertSourceGroupLock(sourceGroupLockIdentity(this.groupLock!,false));
+  }
   async prepare(command: { executable: string; args?: string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex' }): Promise<{ cliPath: string; env: Record<string,string> }> {
     if (process.platform !== 'linux') throw Error('Native writer custody requires Linux');
     if (!command.executable || !Array.isArray(command.args ?? [])) throw Error('Invalid native command');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     await this.checkedDirectory(this.root);
     const groupLock=this.groupLock?await this.bindGroupLock():undefined;
+    try{const allocation=await this.readJson(join(this.root,'allocation.json'));if(allocation.schema!==1||typeof allocation.used!=='boolean')throw Error('Invalid custody allocation');if(!allocation.used)await this.atomicJson(this.root,'allocation.json',{...allocation,used:true});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
     const id = randomUUID(), dir = join(this.root, id);
     await mkdir(dir, { mode: 0o700 });
     const boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim();if(!bootPattern.test(boot))throw Error('Kernel boot identity unavailable');
@@ -43,7 +58,7 @@ export class NativeWriterCustody {
     try {
       await this.checkedDirectory(this.root);
       const groupLock=this.groupLock?await this.readGroupLock():undefined;
-      const ids = (await readdir(this.root)).filter(name=>!groupLock||name!=='group-lock.json');
+      const ids = (await readdir(this.root)).filter(name=>name!=='allocation.json'&&(!groupLock||name!=='group-lock.json'));
       if (!ids.length) return { state: 'unknown', reason: 'native-custody-unestablished' };
       const boot = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();if(!bootPattern.test(boot))throw Error('Kernel boot identity unavailable');
       let active = false;

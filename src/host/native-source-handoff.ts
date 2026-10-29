@@ -51,7 +51,7 @@ async function evidence(custody:NativeWriterCustody):Promise<Evidence&{candidate
  if((await custody.state()).state!=='quiescent'||!custody.groupLock)throw Error('Native handoff custody incomplete');
  const kernelBoot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),priorRows:string[]=[];
  const rows:string[]=[],observations:Evidence['observations']=[],candidates:ObservationRecord[]=[];
- for(const id of (await readdir(custody.root)).filter(id=>id!=='group-lock.json').sort()){
+ for(const id of (await readdir(custody.root)).filter(id=>id!=='group-lock.json'&&id!=='allocation.json').sort()){
   const dir=join(custody.root,id),receiptText=await privateJson(join(dir,'state.json')),receipt=JSON.parse(receiptText),command=await privateJson(join(dir,'command.json'));rows.push(id,command,receiptText);const priorBoot=receipt.boot!==kernelBoot;if(priorBoot)priorRows.push(id,command,receiptText);
   if(!receipt.observationDigest)continue;
   const observationText=await privateJson(join(dir,'history-observation.json'));if(hash(observationText)!==receipt.observationDigest||receipt.commandDigest!==hash(command))throw Error('Native handoff receipt changed');

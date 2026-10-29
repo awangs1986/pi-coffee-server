@@ -64,12 +64,15 @@ export class OrdinaryBackupComposition {
  /** Existing witnesses are reused first. A missing lifecycle may be established
   * only by the actual factory's bounded, owned native audit connection. */
  async ensureQualified():Promise<void>{
-  if(this.closing.signal.aborted||this.profile.enrollment.mode!=='existing'||!this.coordinator||!this.checkpointRoot||(await this.authority.qualification()).state!=='unknown')return;
+  if(this.closing.signal.aborted||this.profile.enrollment.mode==='none'||!this.coordinator||!this.checkpointRoot)return;
+  const qualification=await this.authority.qualification(),needsEnrollment=qualification.state==='unknown';
+  if(!needsEnrollment){if(qualification.state!=='qualified')return;try{await readNativeSourceHandoff({custody:this.custody,fence:this.physical});return;}catch{/* A fresh restored store still needs an actual history observation. */}}
+  if(needsEnrollment&&this.profile.enrollment.mode!=='existing')return;
   if(this.qualifying)return this.qualifying;
   const actor=this.profile.enrollment.actor;if(!await this.authorized(actor))return;
   const enroll=async()=>{this.closing.signal.throwIfAborted();const handoff=await readNativeSourceHandoff({custody:this.custody,fence:this.physical});await this.authority.qualifyExisting(actor,{producer:'host',handoff,scopes:this.scopes,checkpointRoot:this.checkpointRoot!,...this.limits});this.coordinator!.refreshStatusInventory();};
   this.qualifying=(async()=>{
-   try{await enroll();return;}catch{/* A missing witness can require a cold audit. */}
+   if(needsEnrollment)try{await enroll();return;}catch{/* A missing witness can require a cold audit. */}
    if(this.closing.signal.aborted||Date.now()<this.nextAudit)return;this.nextAudit=Date.now()+5000;
    const timeout=new AbortController(),timer=setTimeout(()=>timeout.abort(),Math.min(this.limits.captureTimeoutMs??30000,30000)),signal=AbortSignal.any([timeout.signal,this.closing.signal]);
    try{
@@ -86,7 +89,7 @@ export class OrdinaryBackupComposition {
       }
      }
     }
-    signal.throwIfAborted();if(await this.authorized(actor))await enroll();
+    signal.throwIfAborted();if(needsEnrollment&&await this.authorized(actor))await enroll();
    }catch{/* Unresolved coverage never prevents ordinary work or old-point reads. */}
    finally{clearTimeout(timer);}
   })();
