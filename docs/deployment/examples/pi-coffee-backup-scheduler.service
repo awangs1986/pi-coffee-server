@@ -7,7 +7,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/ABSOLUTE/IMMUTABLE/RELEASE
-ExecStart=/ABSOLUTE/NODE dist/src/backup-cli.js schedule-daemon --root /PRIVATE/SOURCE/BACKUP_ROOT --broker-profile /PRIVATE/SOURCE/broker-client.json
+ExecStart=/ABSOLUTE/CANONICAL/PYTHON /ABSOLUTE/IMMUTABLE/RELEASE/dist/src/host/ordinary-backup-start.py /PRIVATE/startup.json scheduler
 Restart=on-failure
 RestartSec=30
 UMask=0077

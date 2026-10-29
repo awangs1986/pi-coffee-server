@@ -1,0 +1,22 @@
+# Candidate template only; installation requires separate operator authorization.
+# The Host must not Require/BindTo/PartOf this backup unit.
+[Unit]
+Description=PI Coffee independent backup key service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/IMMUTABLE/RELEASE
+ExecStart=/ABSOLUTE/CANONICAL/PYTHON /ABSOLUTE/IMMUTABLE/RELEASE/dist/src/host/ordinary-backup-start.py /PRIVATE/startup.json key
+Restart=on-failure
+RestartSec=5
+UMask=0077
+Nice=15
+CPUQuota=100%
+MemoryMax=1G
+MemorySwapMax=0
+TasksMax=128
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

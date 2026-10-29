@@ -5,6 +5,9 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
+- Ordinary backup candidate: [source composition](deployment/ordinary-backup-source.md), [fixed-role startup](deployment/ordinary-backup-startup.md), and [current evidence / remaining acceptance gates](reviews/backup-ordinary-source-20261029.md). No production service activation is implied.
+
+
 - Backup ordinary-permission candidate: [integrated components, actual failures and pending lifecycle/startup acceptance](reviews/backup-ordinary-source-20261029.md). Source work remains in draft PR #142.
 
 - Backup accepted trust boundary: [trust Host root, preserve permissions, separate repository readiness from source consistency](reviews/backup-trusted-root-20261029.md). Implementation and final acceptance remain open.
