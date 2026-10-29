@@ -1,8 +1,8 @@
 import type {RecoveryPointQuery,RecoveryPointPage} from './recovery-point-catalog.js';
-import {once} from 'node:events';
+import {backupPeerFrames} from './backup-peer-client.js';
 import type {RecoveryPin,RecoveryPinLease,RepositoryRetentionPlan} from './backup-retention.js';
 import {BackupCheckpointReceiver} from './backup-checkpoint-transfer.js';import {verifySealedCheckpoint} from './backup.js';
-import {spawn} from 'node:child_process';import {open,realpath,mkdir,lstat,readdir,rename,rm} from 'node:fs/promises';import {constants} from 'node:fs';import {isAbsolute,resolve,dirname,join} from 'node:path';import {randomUUID} from 'node:crypto';
+import {open,realpath,mkdir,lstat,readdir,rename,rm} from 'node:fs/promises';import {constants} from 'node:fs';import {isAbsolute,resolve,dirname,join} from 'node:path';import {randomUUID} from 'node:crypto';
 import {BackupBrokerError,type BackupBrokerRequest,type BackupBrokerContext,type BackupBrokerOperation,type BackupBrokerQualification,type BackupExtractionDescriptor} from './backup-key-protocol.js';
 import type {RepositoryJob} from './backup-repository.js';
 export interface BackupRepositoryClientOptions extends BackupBrokerContext {socket:string;serviceUid:number;timeoutMs?:number;}
@@ -39,16 +39,23 @@ export class BackupRepositoryClient {
  async withRecoveryPins<T>(pinIds:string[],run:(lease:RecoveryPinLease)=>Promise<T>):Promise<T>{
   if(!Array.isArray(pinIds)||!pinIds.length||pinIds.length>1000||new Set(pinIds).size!==pinIds.length||pinIds.some(id=>typeof id!=='string'||!/^[0-9a-f-]{36}$/.test(id)))throw new BackupBrokerError('invalid_recovery_pin');
   const request:BackupBrokerRequest={schema:1,id:randomUUID(),operation:'hold-recovery-pins',pinIds,context:{actor:this.options.actor,dataScope:this.options.dataScope,authorityRevision:this.options.authorityRevision}};
-  const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname,child=spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.serviceUid),String(1024*1024)],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});
-  let failure:BackupBrokerError|undefined,lastHeartbeat=0,buffer='',bytes=0,granted=false;
+  const controller=new AbortController();let failure:BackupBrokerError|undefined,lastHeartbeat=0,granted=false,closing=false;
   let acknowledge!:(value:void)=>void,deny!:(error:Error)=>void;const ready=new Promise<void>((resolve,reject)=>{acknowledge=resolve;deny=reject;});
-  const fail=(code:string)=>{failure??=new BackupBrokerError(code);deny(failure);if(child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');};
-  const deadline=Date.now()+Math.min(this.options.timeoutMs??30*60000,30*60000),grantTimer=setTimeout(()=>fail('broker_timeout'),Math.min(this.options.timeoutMs??5000,5000)),leaseTimer=setTimeout(()=>fail('recovery_pin_lease_expired'),Math.max(1,deadline-Date.now()));
-  child.stdin.on('error',()=>{});child.on('error',()=>fail('transport_unavailable'));child.on('close',()=>{failure??=new BackupBrokerError('recovery_pin_lease_lost');deny(failure);});
-  child.stdout.on('data',chunk=>{bytes+=chunk.length;buffer+=chunk.toString('utf8');if(bytes>1024*1024||buffer.length>65536)return fail('response_limit');for(;;){const end=buffer.indexOf('\n');if(end<0)break;const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{const frame=JSON.parse(line);if(frame.schema!==1||frame.id!==request.id)return fail('invalid_response');if(frame.ok===false)return fail(typeof frame.error?.code==='string'&&/^[a-z_]{1,64}$/.test(frame.error.code)?frame.error.code:'broker_failed');if(!granted){if(frame.ok!==true||frame.result?.lease!==true||JSON.stringify(frame.result.pinIds)!==JSON.stringify(pinIds))return fail('invalid_response');granted=true;lastHeartbeat=Date.now();clearTimeout(grantTimer);acknowledge();}else if(frame.kind==='pin-heartbeat')lastHeartbeat=Date.now();else return fail('invalid_response');}catch{return fail('invalid_response');}}});
-  child.stdin.end(JSON.stringify(request)+'\n');
-  const lease:RecoveryPinLease={assertHeld:()=>{if(failure)throw failure;if(!granted||Date.now()>=deadline||Date.now()-lastHeartbeat>5000||child.exitCode!==null||child.signalCode!==null)throw new BackupBrokerError('recovery_pin_lease_lost');}};
-  try{await ready;lease.assertHeld();const result=await run(lease);lease.assertHeld();return result;}finally{clearTimeout(grantTimer);clearTimeout(leaseTimer);if(child.exitCode===null&&child.signalCode===null){const closed=once(child,'close');child.kill('SIGTERM');await closed;}}
+  const fail=(code:string)=>{failure??=new BackupBrokerError(code);deny(failure);controller.abort();};
+  const timeout=Math.min(this.options.timeoutMs??30*60000,30*60000),deadline=Date.now()+timeout,grantTimer=setTimeout(()=>fail('broker_timeout'),Math.min(this.options.timeoutMs??5000,5000));
+  const reading=(async()=>{try{
+   for await(const frame of backupPeerFrames({socket:this.options.socket,serviceUid:this.options.serviceUid,request,timeoutMs:timeout,signal:controller.signal})){
+    if(frame.schema!==1||frame.id!==request.id)throw new BackupBrokerError('invalid_response');
+    if(frame.ok===false)throw new BackupBrokerError(typeof frame.error?.code==='string'&&/^[a-z_]{1,64}$/.test(frame.error.code)?frame.error.code:'broker_failed');
+    if(!granted){if(frame.ok!==true||frame.result?.lease!==true||JSON.stringify(frame.result.pinIds)!==JSON.stringify(pinIds))throw new BackupBrokerError('invalid_response');granted=true;lastHeartbeat=Date.now();clearTimeout(grantTimer);acknowledge();}
+    else if(frame.kind==='pin-heartbeat')lastHeartbeat=Date.now();else throw new BackupBrokerError('invalid_response');
+   }
+   if(!closing)fail('recovery_pin_lease_lost');
+  }catch(error){if(!closing)fail(error instanceof BackupBrokerError?error.code:'recovery_pin_lease_lost');}})();
+  const lease:RecoveryPinLease={assertHeld:()=>{if(failure)throw failure;if(!granted||Date.now()>=deadline||Date.now()-lastHeartbeat>5000)throw new BackupBrokerError('recovery_pin_lease_lost');}};
+  try{await ready;lease.assertHeld();const result=await run(lease);lease.assertHeld();return result;}
+  finally{closing=true;clearTimeout(grantTimer);controller.abort();await reading;}
+
  }
  /** Restore material arrives only through authenticated named streams. The local
   * destination is never included in an IPC message or exposed to the key owner. */
@@ -61,7 +68,7 @@ export class BackupRepositoryClient {
    if(!descriptor||!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(descriptor.extractionId)||descriptor.jobId!==jobId||!Number.isFinite(Date.parse(descriptor.expiresAt))||Date.parse(descriptor.expiresAt)<=Date.now()||!Array.isArray(descriptor.scopes)||descriptor.scopes.some(scope=>typeof scope!=='string')||!Array.isArray(descriptor.checkpoints)||descriptor.checkpoints.length<1||descriptor.checkpoints.length>1000||descriptor.checkpoints.some(point=>!point||!/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(point.checkpointId)||!/^[0-9a-f]{64}$/.test(point.manifestSha256)||!descriptor!.scopes.includes(point.scope)||typeof point.taskId!=='string'))throw new BackupBrokerError('invalid_response');
    for(const point of descriptor.checkpoints){
     const request:BackupBrokerRequest={schema:1,id:randomUUID(),operation:'restore-checkpoint',context:{actor:this.options.actor,dataScope:this.options.dataScope,authorityRevision:this.options.authorityRevision},extractionId:descriptor.extractionId,checkpointId:point.checkpointId};
-    const receiver=new BackupCheckpointReceiver({root:destination,socket:this.options.socket,sourceUid:this.options.serviceUid,allowedScopes:descriptor.scopes,request,signal});const material=await receiver.receive(point.scope,point.taskId,point.checkpointId);await verifySealedCheckpoint(material.directory,point.manifestSha256);
+    const receiver=new BackupCheckpointReceiver({root:destination,socket:this.options.socket,sourceUid:this.options.serviceUid,allowedScopes:descriptor.scopes,request,signal,directPeer:true});const material=await receiver.receive(point.scope,point.taskId,point.checkpointId);await verifySealedCheckpoint(material.directory,point.manifestSha256);
    }
    for(const name of await readdir(join(destination,'sealed')))await rename(join(destination,'sealed',name),join(destination,name));await rm(join(destination,'sealed'),{recursive:true});complete=true;
   }finally{
@@ -73,9 +80,8 @@ export class BackupRepositoryClient {
 }
 /** Fixed helper supplies SO_PEERCRED in both directions. */
 export async function requestUnixPeer(socket:string,serviceUid:number,request:unknown,timeoutMs=30*60*1000):Promise<any>{
- const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname;
- const output=await new Promise<string>((resolve,reject)=>{const child=spawn('/usr/bin/python3',[helper,'client',socket,String(serviceUid)],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});let data='',bytes=0;const timer=setTimeout(()=>{child.kill('SIGKILL');reject(new BackupBrokerError('broker_timeout'));},timeoutMs);child.stdin.on('error',()=>undefined);child.stdout.on('data',chunk=>{bytes+=chunk.length;if(bytes>1024*1024){child.kill('SIGKILL');reject(new BackupBrokerError('response_limit'));}else data+=chunk;});child.on('error',()=>{clearTimeout(timer);reject(new BackupBrokerError('transport_unavailable'));});child.on('close',()=>{clearTimeout(timer);resolve(data);});child.stdin.end(JSON.stringify(request)+'\n');});
- try{return JSON.parse(output);}catch{throw new BackupBrokerError('invalid_response');}
+ for await(const frame of backupPeerFrames({socket,serviceUid,request,timeoutMs}))return frame;
+ throw new BackupBrokerError('invalid_response');
 }
 
 /** Host-owned metadata only. This file must contain no repository/key-root paths. */

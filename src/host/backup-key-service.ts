@@ -15,15 +15,18 @@ export class BackupKeyService {
  private readonly repository:BackupRepository;private points=new Map<string,import('./backup.js').SealedCheckpoint>();
  private constructor(private config:BackupKeyServiceConfig){this.repository=new BackupRepository({root:join(config.privateRoot,'repository-runtime'),coordinator:{sealedCheckpoint:async(scope,taskId)=>this.points.get(scope+'/'+taskId)}});}
  static async load(path:string){const protection=hardenCurrentProcess();if(protection.dumpable!==0||protection.noNewPrivs!==1)throw new BackupBrokerError('service_boundary_unavailable');const config=await ownedJson(path) as BackupKeyServiceConfig;
-  if(config.schema!==1||config.serviceUid!==process.getuid?.()||![config.serviceUid,config.hostUid,config.sourceUid].every(uid=>Number.isSafeInteger(uid)&&uid>=0)||!['socket','privateRoot','authorityFile','sourceSocket','binary','destination','node','handler'].every(key=>typeof config[key as keyof BackupKeyServiceConfig]==='string'&&isAbsolute(config[key as keyof BackupKeyServiceConfig] as string)))throw new BackupBrokerError('service_configuration_invalid');
+  if(config.responseLimit!==undefined&&(!Number.isSafeInteger(config.responseLimit)||config.responseLimit<1024||config.responseLimit>2*1024**3)||config.trustModel!==undefined&&!['host-root','managed'].includes(config.trustModel)||config.schema!==1||config.serviceUid!==process.getuid?.()||![config.serviceUid,config.hostUid,config.sourceUid].every(uid=>Number.isSafeInteger(uid)&&uid>=0)||!['socket','privateRoot','authorityFile','sourceSocket','binary','destination','node','handler'].every(key=>typeof config[key as keyof BackupKeyServiceConfig]==='string'&&isAbsolute(config[key as keyof BackupKeyServiceConfig] as string)))throw new BackupBrokerError('service_configuration_invalid');
   const info=await lstat(config.privateRoot);if(!info.isDirectory()||info.isSymbolicLink()||info.uid!==config.serviceUid||(info.mode&0o077)||await realpath(config.privateRoot)!==resolve(config.privateRoot))throw new BackupBrokerError('service_configuration_invalid');
   return new BackupKeyService(config);
  }
+ requiresSocketPeer(){return this.config.trustModel==='host-root';}
+ responseLimit(){return this.config.responseLimit??1024*1024;}
  private async authorize(request:PeerRequest){
   if(!request||request.schema!==1||typeof request.id!=='string'||!uuid.test(request.id)||!request._peer||request._peer.uid!==this.config.hostUid||!Number.isSafeInteger(request._peer.pid)||request._peer.pid<1)throw new BackupBrokerError('peer_identity_mismatch');
   if(Object.keys(request).some(key=>!['schema','id','context','operation','scope','query','selection','recoveryPackage','jobId','extractionId','checkpointId','operationId','revision','ttlMs','pinId','pinIds','scopes','timeZone','retentionId','digest','_peer'].includes(key)))throw new BackupBrokerError('invalid_request');
   const policy=await ownedJson(this.config.authorityFile) as BackupBrokerPolicy,context=request.context;
   if(policy.schema!==1||!Number.isSafeInteger(policy.revision)||!scopeValid(policy.administrator)||!Array.isArray(policy.scopes)||policy.scopes.some(scope=>!scopeValid(scope))||!policy.actors||typeof policy.actors!=='object')throw new BackupBrokerError('authority_unavailable');
+  if(this.config.trustModel==='host-root')await this.authorizeHostProcess(request,policy);
   if(!context||Object.keys(context).some(key=>!['actor','dataScope','authorityRevision'].includes(key))||!scopeValid(context.actor)||!scopeValid(context.dataScope)||!Number.isSafeInteger(context.authorityRevision))throw new BackupBrokerError('invalid_request');
   if(context.authorityRevision!==policy.revision)throw new BackupBrokerError('authority_stale');
   const actor=Object.hasOwn(policy.actors,context.actor)?policy.actors[context.actor]:undefined;
@@ -35,9 +38,21 @@ export class BackupKeyService {
   if(!administrator&&scope!==context.dataScope)throw new BackupBrokerError('scope_denied');
   return {policy,actor,scope,administrator};
  }
+ /** Operator-controlled enrollment, independent of an application actor. Same
+  * UID, ancestry or a claimed body PID never grants permission to assert actors. */
+ private async authorizeHostProcess(request:PeerRequest,policy:BackupBrokerPolicy){
+  const clients=policy.hostClients;
+  if(!Array.isArray(clients)||!clients.length||clients.length>32||clients.some(client=>!client||Object.keys(client).some(key=>!['pid','uid','boot','birth'].includes(key))||!Number.isSafeInteger(client.pid)||client.pid<1||!Number.isSafeInteger(client.uid)||client.uid<0||typeof client.boot!=='string'||!/^[a-f0-9-]{36}$/.test(client.boot)||typeof client.birth!=='string'||!/^\d+$/.test(client.birth)))throw new BackupBrokerError('host_enrollment_unavailable');
+  const client=clients.find(client=>client.pid===request._peer.pid&&client.uid===request._peer.uid);if(!client)throw new BackupBrokerError('host_process_not_enrolled');
+  try{
+   const status=await readFile('/proc/'+client.pid+'/status','utf8'),raw=await readFile('/proc/'+client.pid+'/stat','utf8'),boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),fields=raw.slice(raw.lastIndexOf(')')+2).split(' '),uids=status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+   if(!uids||uids.slice(1).some(uid=>Number(uid)!==client.uid)||['Z','X'].includes(fields[0])||fields[19]!==client.birth||boot!==client.boot)throw Error();
+  }catch{throw new BackupBrokerError('host_process_not_enrolled');}
+ }
  async qualification():Promise<BackupBrokerQualification>{
   const protection=processProtection(),base={serviceUid:this.config.serviceUid,sourceUid:this.config.sourceUid,hostUid:this.config.hostUid,processProtection:protection};
   if(protection.dumpable!==0||protection.noNewPrivs!==1)return {...base,state:'unavailable',reason:'service_process_unprotected'};
+  if(this.config.trustModel==='host-root')return {...base,state:'qualified',trustModel:'host-root',sourceConsistency:'per-checkpoint'};
   if(this.config.serviceUid===this.config.hostUid||this.config.serviceUid===this.config.sourceUid)return {...base,state:'unavailable',reason:'service_identity_not_separate'};
   // A fresh authenticated source-owner RPC supplies mechanical admission state,
   // not a configured Boolean or persisted signature-only qualification.
@@ -120,13 +135,14 @@ export class BackupKeyService {
    }
    case 'backup':{
     if(!Array.isArray(request.selection)||request.selection.length<1||request.selection.length>1000||request.selection.some(item=>!item||Object.keys(item).some(key=>!['scope','taskId','expectedCheckpointId'].includes(key))||!scopeValid(item.scope)||!['string'].includes(typeof item.taskId)||!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(item.taskId)||item.expectedCheckpointId!==undefined&&!uuid.test(item.expectedCheckpointId)))throw new BackupBrokerError('invalid_selection');
+    if(this.config.trustModel==='host-root'&&request.selection.some(item=>!item.expectedCheckpointId))throw new BackupBrokerError('invalid_selection');
     const policy=(await this.authorize(request)).policy;const grants=policy.actors[request.context.actor].scopes;
     for(const item of request.selection)if(!policy.scopes.includes(item.scope)||!grants.includes(item.scope))throw new BackupBrokerError('scope_denied');
     const previous=(await this.repository.jobs()).find(job=>job.id===request.id);if(previous){for(const item of request.selection)if(item.expectedCheckpointId&&!previous.points.some(point=>point.scope===item.scope&&point.taskId===item.taskId&&point.checkpointId===item.expectedCheckpointId))throw new BackupBrokerError('operation_conflict');return this.repository.backup(request.selection.map(({scope,taskId})=>({scope,taskId})),undefined,request.id);}
     const ingestRoot=join(this.config.privateRoot,'ingest',request.id);let remaining=1024**3;
     try{
      for(const item of request.selection){const cached=this.points.get(item.scope+'/'+item.taskId);if(cached){if(item.expectedCheckpointId&&cached.manifest.checkpointId!==item.expectedCheckpointId)throw new BackupBrokerError('checkpoint_identity_conflict');continue;}const receiver=new BackupCheckpointReceiver({root:ingestRoot,socket:this.config.sourceSocket,sourceUid:this.config.sourceUid,allowedScopes:grants.filter(grant=>policy.scopes.includes(grant)),maxBytes:remaining});const point=await receiver.receive(item.scope,item.taskId,item.expectedCheckpointId);remaining-=point.manifest.totalBytes;if(remaining<0)throw new BackupBrokerError('source_transfer_limit');for(const member of point.manifest.members)this.points.set(member.scope+'/'+member.taskId,point);}
-     await this.authorize(request);const current=await this.qualification();if(current.state!=='qualified'||current.sourceRevision!==qualification.sourceRevision)throw new BackupBrokerError('activation_unqualified');
+     await this.authorize(request);const current=await this.qualification();if(current.state!=='qualified'||this.config.trustModel!=='host-root'&&current.sourceRevision!==qualification.sourceRevision)throw new BackupBrokerError('activation_unqualified');
      return await this.repository.backup(request.selection.map(({scope,taskId})=>({scope,taskId})),undefined,request.id);
     }finally{await rm(ingestRoot,{recursive:true,force:true});this.points.clear();}
    }

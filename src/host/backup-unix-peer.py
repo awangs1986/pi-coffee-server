@@ -87,6 +87,15 @@ def serve(config_path):
             if credentials['uid'] not in config.get('allowedUids', [config['hostUid']]):
                 connection.sendall(fail('peer_identity_mismatch'))
                 return
+            if config.get('trustModel') == 'host-root':
+                # The worker reads the actual accepted socket. No caller or
+                # stdin envelope can manufacture kernel peer identity.
+                environment = {key: value for key, value in os.environ.items() if key in ('PATH', 'LANG', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')}
+                environment['HOME'] = config['privateRoot']
+                environment['PI_COFFEE_BACKUP_PEER_FD'] = str(connection.fileno())
+                child = subprocess.Popen([config['node'], config['handler'], config_path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment, pass_fds=(connection.fileno(),), start_new_session=True)
+                child.wait()
+                return
             connection.settimeout(5)
             source = connection.makefile('rb')
             request = json.loads(read_line(source), object_pairs_hook=unique)

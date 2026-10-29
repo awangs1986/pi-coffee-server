@@ -1,14 +1,22 @@
+import {backupPeerFrames} from './backup-peer-client.js';
 import {spawn} from 'node:child_process';import {createInterface} from 'node:readline';import {randomUUID,randomBytes,createHash} from 'node:crypto';import {mkdir,open,rename,rm,lstat,realpath,symlink,type FileHandle} from 'node:fs/promises';import {join,resolve,dirname,isAbsolute} from 'node:path';
 import {verifySealedCheckpoint,type SealedCheckpoint,type CheckpointManifest,type CheckpointObject} from './backup.js';import {BackupBrokerError} from './backup-key-protocol.js';
 const identifier=/^[0-9a-f]{8}-[0-9a-f-]{27}$/;
 /** Incoming paths are manifest-relative objects, never Host-selected source paths.
  * This root belongs to the key service and is never exposed to Host callers. */
 export class BackupCheckpointReceiver {
- constructor(private options:{root:string;socket:string;sourceUid:number;allowedScopes?:string[];maxBytes?:number;maxFiles?:number;timeoutMs?:number;request?:unknown;signal?:AbortSignal}){}
+ constructor(private options:{directPeer?:boolean;root:string;socket:string;sourceUid:number;allowedScopes?:string[];maxBytes?:number;maxFiles?:number;timeoutMs?:number;request?:unknown;signal?:AbortSignal}){}
  async receive(scope:string,taskId:string,expectedCheckpointId?:string):Promise<SealedCheckpoint>{
   this.options.signal?.throwIfAborted();const root=resolve(this.options.root);await mkdir(root,{recursive:true,mode:0o700});await privateDirectory(root);const staging=join(root,'transfer-'+randomUUID());await mkdir(staging,{mode:0o700});
   const helper=new URL(import.meta.url.endsWith('.ts')?'../../src/host/backup-unix-peer.py':'./backup-unix-peer.py',import.meta.url).pathname;
-  const child=spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.sourceUid),String(Math.floor(Math.min(2*1024**3,(this.options.maxBytes??1024**3)*1.4+64*1024**2)))],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});const timer=setTimeout(()=>child.kill('SIGKILL'),this.options.timeoutMs??5*60*1000);let processError=false;const exited=new Promise<number|null>(resolveExit=>{child.on('error',()=>{processError=true;resolveExit(1);});child.on('close',resolveExit);});child.stdin.on('error',()=>undefined);const abort=()=>child.kill('SIGKILL');this.options.signal?.addEventListener('abort',abort,{once:true});child.stdin.end(JSON.stringify(this.options.request??{schema:1,id:randomUUID(),operation:'export-checkpoint',challenge:randomBytes(32).toString('hex'),scope,taskId,...expectedCheckpointId?{expectedCheckpointId}:{}})+'\n');
+  const maximum=Math.floor(Math.min(2*1024**3,(this.options.maxBytes??1024**3)*1.4+64*1024**2));
+  const request=this.options.request??{schema:1,id:randomUUID(),operation:'export-checkpoint',challenge:randomBytes(32).toString('hex'),scope,taskId,...expectedCheckpointId?{expectedCheckpointId}:{}};
+  const child=this.options.directPeer?undefined:spawn('/usr/bin/python3',[helper,'client-stream',this.options.socket,String(this.options.sourceUid),String(maximum)],{stdio:['pipe','pipe','ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'}});
+  const timer=child?setTimeout(()=>child.kill('SIGKILL'),this.options.timeoutMs??5*60*1000):undefined;let processError=false;
+  const exited=child?new Promise<number|null>(resolveExit=>{child.on('error',()=>{processError=true;resolveExit(1);});child.on('close',resolveExit);}):Promise.resolve(0);
+  child?.stdin.on('error',()=>undefined);const abort=()=>child?.kill('SIGKILL');this.options.signal?.addEventListener('abort',abort,{once:true});child?.stdin.end(JSON.stringify(request)+'\n');
+  const options=this.options;
+  const lines=child?createInterface({input:child.stdout,crlfDelay:Infinity}):(async function*(){for await(const frame of backupPeerFrames({socket:options.socket,serviceUid:options.sourceUid,request,maxBytes:maximum,timeoutMs:options.timeoutMs??5*60*1000,signal:options.signal}))yield JSON.stringify(frame);})();
   let file:FileHandle|undefined;
   try{
    let checkpointId='',manifestBytes=0,manifestChunks:Buffer[]=[],manifestSize=0,manifest:CheckpointManifest|undefined,index=0,current:CheckpointObject|undefined,fileBytes=0,totalBytes=0,ended=false;
@@ -20,7 +28,7 @@ export class BackupCheckpointReceiver {
     if(!Number.isSafeInteger(manifest.totalBytes)||manifest.totalBytes!==declaredBytes||declaredBytes>(this.options.maxBytes??1024**3))throw new BackupBrokerError('source_transfer_limit');
     await writeNew(join(staging,'manifest.json'),bytes);await writeNew(join(staging,'seal'),Buffer.from(createHash('sha256').update(bytes).digest('hex')+'\n'));await mkdir(join(staging,'objects'),{mode:0o700});
    };
-   for await(const line of createInterface({input:child.stdout,crlfDelay:Infinity})){
+   for await(const line of lines){
     if(Buffer.byteLength(line)>1024*1024||ended)throw new BackupBrokerError('source_transfer_invalid');const frame=JSON.parse(line);if(frame.schema!==undefined&&frame.schema!==1)throw new BackupBrokerError('source_transfer_invalid');
     switch(frame.type){
      case 'header':if(checkpointId||!identifier.test(frame.checkpointId)||expectedCheckpointId&&frame.checkpointId!==expectedCheckpointId||!Number.isSafeInteger(frame.manifestBytes)||frame.manifestBytes<2||frame.manifestBytes>32*1024*1024)throw new BackupBrokerError('source_transfer_invalid');checkpointId=frame.checkpointId;manifestBytes=frame.manifestBytes;break;
@@ -39,7 +47,7 @@ export class BackupCheckpointReceiver {
    const verified=await verifySealedCheckpoint(staging);await syncDirectory(staging);await mkdir(join(root,'sealed'),{recursive:true,mode:0o700});await privateDirectory(join(root,'sealed'));const destination=join(root,'sealed',verified.checkpointId);
    try{await rename(staging,destination);}catch(error){if(!['EEXIST','ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code??''))throw error;const old=await verifySealedCheckpoint(destination);if(JSON.stringify(old)!==JSON.stringify(verified))throw new BackupBrokerError('checkpoint_identity_conflict');await rm(staging,{recursive:true});}
    await syncDirectory(join(root,'sealed'));return {directory:destination,manifest:verified};
-  }catch(error){child.kill('SIGKILL');await exited;throw error instanceof BackupBrokerError?error:new BackupBrokerError('source_transfer_failed');}
+  }catch(error){child?.kill('SIGKILL');await exited;throw error instanceof BackupBrokerError?error:new BackupBrokerError('source_transfer_failed');}
   finally{this.options.signal?.removeEventListener('abort',abort);clearTimeout(timer);await file?.close();await rm(staging,{recursive:true,force:true});}
  }
 }
