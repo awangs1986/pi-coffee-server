@@ -1,3 +1,6 @@
+import {spawn} from 'node:child_process';
+import {ownedNativeAuditClose} from './native-audit-process.js';
+import {BackupError} from './backup.js';
 import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
 import type {WriterAdmissionFence} from './backup.js';
 import type {NativeWriterCustody} from './native-custody.js';
@@ -6,7 +9,7 @@ import {runPiMemoryExtraction} from './pi-memory-runner.js';
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSourceLines, readStableSource, sourceHash, unknownHistory } from "./native/history-source.js";
 import { nativeHistoryJob, nativeHistoryNeedsWorker } from "./native/history-pool.js";
@@ -122,6 +125,27 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       const stop=client.stop.bind(client);client.stop=async()=>{try{for(const row of piHistoryObservations.get(client)??[])row.normalCloseRequested=true;await persistNativeNormalClose(client).catch(()=>undefined);await stop();}finally{release?.();}};
       return client;
     }catch(error){release?.();throw error;}
+  }
+
+  /** Owned pinned native SDK read; does not initialize an Agent/provider or
+   * resume a user RPC session, which can normalize native model settings. */
+  async auditNativeHistory(input:{nativeId:string;cwd:string;signal:AbortSignal}):Promise<void>{
+    const binding=piWriterProvenance.get(this);if(!binding?.custody.groupLock||!this.options.sessionDir||!this.options.agentDir)throw new BackupError('native_audit_unavailable','Pi audit requires concrete source custody');
+    input.signal.throwIfAborted();
+    const release=this.options.writerFence?.beginWriter('native');let child:ReturnType<typeof spawn>|undefined,close:(()=>Promise<void>)|undefined;
+    try{
+      input.signal.throwIfAborted();const launch=await binding.custody.prepare({engine:'pi',executable:process.execPath,args:[fileURLToPath(new URL('./pi-native-audit.mjs',import.meta.url)),this.options.sessionDir,input.nativeId,input.cwd]});
+      child=spawn(process.execPath,[launch.cliPath],{cwd:dirname(binding.custody.root),env:{...process.env,...buildHostChildEnv({...this.options.env,...launch.env})},stdio:['pipe','pipe','pipe']});
+      const owned=child;owned.stdin!.on('error',()=>undefined);let exited=false;let observationWrite:Promise<void>|undefined;const completion=new Promise<number|null>((ok,fail)=>{owned.once('error',fail);owned.once('exit',code=>{exited=true;ok(code);});});completion.catch(()=>undefined);
+      close=ownedNativeAuditClose(launch.env.PI_COFFEE_CUSTODY_DIR,async()=>{await observationWrite?.catch(()=>undefined);if(!exited){owned.stdin!.end('cancel\n');const term=setTimeout(()=>owned.kill('SIGTERM'),1000),kill=setTimeout(()=>owned.kill('SIGKILL'),2000);try{await completion;}finally{clearTimeout(term);clearTimeout(kill);}}});
+      const cancel=()=>{void close!().catch(()=>undefined);};input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
+      try{
+        const result=await new Promise<any>((ok,fail)=>{let text='',settled=false;owned.stdout!.on('data',chunk=>{if(settled)return;text+=String(chunk);if(text.length>65536){settled=true;fail(Error('Native audit response exceeded limit'));return;}const end=text.indexOf('\n');if(end>=0){settled=true;try{ok(JSON.parse(text.slice(0,end)));}catch{fail(Error('Invalid native audit response'));}}});completion.then(()=>fail(new BackupError('native_audit_unavailable','Native Pi SDK audit did not return history')),fail);});
+        input.signal.throwIfAborted();if(result.schema!==1||result.sdkVersion!=='1.1.0'||result.sessionId!==input.nativeId||typeof result.sourceFile!=='string'||resolve(result.cwd)!==resolve(input.cwd)||!Number.isSafeInteger(result.entryCount)||result.entryCount<0||!/^[a-f0-9]{64}$/.test(result.entriesDigest))throw new BackupError('native_audit_unavailable','Native Pi SDK audit identity changed');
+        const subject={};piHistoryObservations.set(subject,[{launchDirectory:launch.env.PI_COFFEE_CUSTODY_DIR,engine:'pi',roots:[this.options.sessionDir,this.options.env?.PI_CODING_AGENT_DIR??this.options.agentDir],binding:result.sessionId,sourceFile:result.sourceFile,nativeAudit:{implementation:'pi-session-manager',version:'1.1.0',entriesDigest:result.entriesDigest,entryCount:result.entryCount}}]);observationWrite=persistNativeHistoryObservation(subject);await observationWrite;input.signal.throwIfAborted();owned.stdin!.end('observed\n');
+        if(await completion!==0)throw new BackupError('native_audit_unavailable','Native Pi SDK audit did not complete');input.signal.throwIfAborted();
+      }finally{input.signal.removeEventListener('abort',cancel);await close();}
+    }finally{await close?.();release?.();}
   }
 
   async extractMemory(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){

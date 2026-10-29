@@ -1,3 +1,5 @@
+import {ownedNativeAuditClose} from './native-audit-process.js';
+import {BackupError} from './backup.js';
 import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
 import {codexStore} from './codex-recovery.js';
 import {homedir} from 'node:os';
@@ -165,6 +167,23 @@ export class CodexSessionFactory implements PiSessionFactory {
     const server=new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
     codexLaunches.set(server,{directory:launch.env.PI_COFFEE_CUSTODY_DIR,home:options.env?.CODEX_HOME??process.env.CODEX_HOME??join(options.env?.HOME??homedir(),'.codex'),sqliteHome:options.env?.CODEX_SQLITE_HOME??process.env.CODEX_SQLITE_HOME});
     const stop=server.stop.bind(server);server.stop=async()=>{for(const row of codexHistoryObservations.get(server)??[])row.normalCloseRequested=true;await persistNativeNormalClose(server).catch(()=>undefined);await stop();};return server;
+  }
+
+  /** Owned metadata-only app-server. Never resumes/rebinds a thread or stops
+   * this factory's user connection. Its native configuration is unchanged. */
+  async auditNativeHistory(input:{nativeId:string;cwd:string;signal:AbortSignal}):Promise<void>{
+    const custody=codexWriterProvenance.get(this);if(!custody?.groupLock)throw new BackupError('native_audit_unavailable','Codex audit requires concrete source custody');
+    input.signal.throwIfAborted();const env={...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})};
+    const server=await this.nativeServer({cliPath:this.options.cliPath??'codex',args:[...(this.options.commandArgs??[]),'app-server',...(this.options.args??[])],cwd:dirname(custody.root),env:Object.fromEntries(Object.entries(env).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
+    let observationWrite:Promise<void>|undefined;const launch=codexLaunches.get(server)!,close=ownedNativeAuditClose(launch.directory,async()=>{await observationWrite?.catch(()=>undefined);await server.stop();}),cancel=()=>{void close().catch(()=>undefined);};
+    const started=server.start('pi_coffee_backup_audit','1');input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
+    try{
+      await started;input.signal.throwIfAborted();
+      let result:Obj;try{result=await server.request('thread/read',{threadId:input.nativeId,includeTurns:true},10000) as Obj;}catch(error){input.signal.throwIfAborted();throw new BackupError('native_audit_unavailable','Codex audit history unavailable');}
+      const thread=result.thread as Obj;if(thread?.id!==input.nativeId||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(input.cwd)||typeof thread.path!=='string'||!Array.isArray(thread.turns))throw new BackupError('native_audit_unavailable','Codex audit history identity changed');
+      const roots=await codexStore({operation:'roots',home:resolve(launch.home),environmentSqliteHome:launch.sqliteHome});input.signal.throwIfAborted();
+      codexHistoryObservations.set(server,[{launchDirectory:launch.directory,engine:'codex',roots:[roots.nativeHome,roots.sqliteHome],binding:input.nativeId,sourceFile:thread.path}]);observationWrite=persistNativeHistoryObservation(server);await observationWrite;input.signal.throwIfAborted();
+    }finally{input.signal.removeEventListener('abort',cancel);await close();}
   }
 
   private async startConnection(): Promise<CodexAppServer> {

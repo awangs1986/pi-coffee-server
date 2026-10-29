@@ -27,7 +27,8 @@ before releasing SH. Natural exit 0 is accepted. SIGTERM termination (-15) and
 the pinned Pi RPC's explicit SIGTERM shutdown exit 143 require the sealed normal
 close intent. Current-boot SIGKILL, unrequested SIGTERM, a missing custodian, a mismatched boot field,
 changed root identity and changed receipts cannot establish a witness. Backup
-never starts or stops a session to obtain evidence. Native credentials, HOME,
+never stops a user session to obtain evidence. The separately authorized owned
+audit below may start and close its own metadata reader. Native credentials, HOME,
 permissions, namespace and network policy remain unchanged.
 
 Each nonempty `engine + roots set` group needs an observed binding in its merged
@@ -112,3 +113,48 @@ A future index requires a separately reviewed, crash-tested protocol:
 
 That protocol is a proposal, not an implemented scalability guarantee. No
 historical records are silently dropped by the boot-boundary correction.
+
+## Unattended owned native audit
+
+`NativeAgentFactory.auditNativeHistory(taskId, {engine?, signal})` resolves only
+this factory's Workspaces task, current binding and typed retained/takeover
+bindings. It rejects arbitrary factory-shaped objects and legacy custom Codex
+factory callbacks; untyped retained IDs alone are not promoted into a typed
+source witness. It returns no transcript or known-source flag. The caller still
+must consume the durable handoff and complete source-authority qualification.
+
+The physical audit guard distinguishes an actually absent/private empty custody
+root from malformed or unresolved records. A short actual EX availability check
+rules out existing custodied writers; the check releases EX before launching
+an owned reader. Existing logical/native writers win. New outside admissions
+abort the audit synchronously and proceed; the audit's own admissions are marked
+by private async context. Caller cancellation, a 15-second audit deadline and
+factory close also cancel only the owned process. Preparation/startup cleanup
+waits for the owned supervisor so normal cancellation does not strand an
+unlaunched prepared record. Observation publication completes before owned close
+seals its receipt; none of this reclassifies an unknown user lifecycle.
+
+Pi's normal RPC session startup can append a thinking-level normalization even
+without a provider turn. The audit therefore runs the pinned original Pi1.1.0
+SessionManager SDK in a fresh custodied helper. It validates the scoped tree
+before native listing, rejects symlinks and legacy formats requiring migration,
+reads actual native identity/header/entries, and reports only count/digest plus
+identity. The Host privately binds that response, SDK version and source file
+to the launch; the helper waits for persistence acknowledgment and exits normally.
+This proves native SDK parsing/history validation, not RPC resume or provider
+continuation. Existing RPC restore/resume verification remains a separate claim.
+
+Codex uses a fresh owned app-server and `thread/read(includeTurns:true)`, checks
+native ID/cwd/path, and closes only that connection. It does not call thread
+resume/start, rebind a task, alter native configuration or submit a turn. Both
+readers use the same custody/source fence and unchanged native HOME/permissions;
+their process cwd is the stable private control directory while stored task cwd
+is independently checked. No existing user runtime is obtained or stopped.
+
+Tests preserve Pi source bytes including model/thinking settings, Codex rollout
+and configuration bytes, and task bindings. They cover no-viewer bootstrap,
+existing and newly admitted users, caller/factory cancellation followed by a
+successful retry, malformed custody, concrete provenance, typed historical
+engine selection, and cancellation during delayed observation publication.
+Main/HTTP scheduling authorization, service activation and end-to-end accepted
+backup remain separate integration gates.
