@@ -18,7 +18,7 @@ const environmentKeys=new Set(['HOME','PATH','LANG','LC_ALL','TERM','NO_COLOR','
  * a mandatory fresh kernel namespace. No unrestricted fallback is possible. */
 export class ManagedNativeCustody extends NativeWriterCustody {
  readonly profile:ManagedNativeProfile;
- constructor(root:string,profile:ManagedNativeProfile,private gates?:{publication?:ManagedPublicationGate}){super(root);this.profile=structuredClone(profile);for(const source of this.profile.sources)Object.freeze(source);Object.freeze(this.profile.sources);Object.freeze(this.profile.runtimeRoots);Object.freeze(this.profile.environment);if(this.profile.providerTransports){for(const value of Object.values(this.profile.providerTransports)){Object.freeze(value.models);Object.freeze(value);}Object.freeze(this.profile.providerTransports);}Object.freeze(this.profile);}
+ constructor(root:string,profile:ManagedNativeProfile,private gates?:{publication?:ManagedPublicationGate}){super(root,{lock:profile.lock});this.profile=structuredClone(profile);for(const source of this.profile.sources)Object.freeze(source);Object.freeze(this.profile.sources);Object.freeze(this.profile.runtimeRoots);Object.freeze(this.profile.environment);if(this.profile.providerTransports){for(const value of Object.values(this.profile.providerTransports)){Object.freeze(value.models);Object.freeze(value);}Object.freeze(this.profile.providerTransports);}Object.freeze(this.profile);}
  override async prepare(command:{executable:string;args?:string[];cwd?:string;env?:Record<string,string|undefined>;engine?:'pi'|'codex';httpTransport?:ManagedCommandTransport}){
   return this.prepareCommand(command,false);
  }

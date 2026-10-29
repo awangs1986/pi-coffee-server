@@ -1,5 +1,10 @@
 # Managed source Host and independent model authentication
 
+**Current decision (2026-10-29):** [trust Host root and preserve native permissions](../reviews/backup-trusted-root-20261029.md).
+This managed profile remains experimental history; its namespace, identity and
+provider-transport installation are not prerequisites for ordinary backup.
+Source consistency and current account authorization still require evidence.
+
 **Historical candidate architecture, not the accepted deployment direction.**
 The owner chose to preserve native permissions on 2026-10-28. Mandatory
 confinement and retirement of unrestricted execution conflict with that choice.

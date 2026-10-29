@@ -1,5 +1,10 @@
 # Managed backup execution profile (candidate)
 
+**Current decision (2026-10-29):** [trust Host root and preserve native permissions](../reviews/backup-trusted-root-20261029.md).
+This managed profile remains experimental history; its namespace, identity and
+provider-transport installation are not prerequisites for ordinary backup.
+Source consistency and current account authorization still require evidence.
+
 The protected profile is an experimental implementation in draft #130. On
 2026-10-28 the owner selected preservation of existing native permissions; this
 mandatory confinement is not an accepted prerequisite for backup. See the

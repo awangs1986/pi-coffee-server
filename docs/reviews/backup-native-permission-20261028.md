@@ -1,6 +1,12 @@
 # Backup permission reconciliation — 2026-10-28
 
-Status: **implementation draft; permission-boundary redesign required**.
+Status at 2026-10-28: **implementation draft; permission-boundary redesign required**.
+
+**Superseded trust-boundary interpretation:** the [2026-10-29 owner decision](backup-trusted-root-20261029.md)
+trusts existing Host root. The external root-proof authority requirement and
+non-interface secrecy interpretation below are historical, not current gates.
+Native permission preservation, application authorization, consistent-cut
+requirements and recorded test failures continue to apply.
 Parent: [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130).
 Candidate reviewed: `3bbf0e6a79dec4f08594c4d69f67f65078ae8297`.
 GitHub and Gitea main were fetched as

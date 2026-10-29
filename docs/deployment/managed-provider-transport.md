@@ -1,5 +1,10 @@
 # Managed native provider transport candidate
 
+**Current decision (2026-10-29):** [trust Host root and preserve native permissions](../reviews/backup-trusted-root-20261029.md).
+This managed profile remains experimental history; its namespace, identity and
+provider-transport installation are not prerequisites for ordinary backup.
+Source consistency and current account authorization still require evidence.
+
 This transport belongs to the experimental restricted execution profile. The
 owner selected existing native permissions on 2026-10-28; provider connectivity
 alone does not preserve native tool/permission workflows or qualify #130.
