@@ -50,16 +50,22 @@ configuration/journal/checkpoint controls remain private, with no chmod/migratio
 
 A reopened journal remains unknown until requalification. Only the explicit
 `authority-reopened` issue may be cleared, after exact config/graph/root continuity
-and the new complete cut. Pending local/delegated operations, journal failures,
-unregistered producers and unknown delegation cannot be blanket cleared by a
-native receipt. A never-enrolled but otherwise clean Host may also restart and
+and the new complete cut. Pending delegated/legacy/unowned operations, journal failures, unregistered
+producers and unknown delegation cannot be cleared by a native receipt. Newly
+tagged local operations have the explicit dead-producer protocol below; no
+operation is replayed or blanket cleared. A never-enrolled but otherwise clean Host may also restart and
 later enroll. No capture or root proof is visible outside the private asynchronous
 provisional context while enrollment is in progress.
 
-This protocol is currently **same-boot Host restart only**. Native custody rejects
-old-boot receipts, even after a new normal lifecycle. Machine reboot/custody history
-reconciliation, crash-history recovery and additional producer handoffs remain
-unimplemented; old receipts must not be erased to manufacture qualification.
+Schema2 native custody additionally binds launch/receipt to the actual kernel
+boot and command digest. Intact prior-boot local processes cannot survive into
+the current kernel, but old observations alone never qualify a source: current
+native lifecycle proof and complete source validation remain required. Old
+receipts are preserved and hashed; there is no public boot override. Legacy
+unbound prior-boot custody and current-boot uncertain/lost custody remain unknown.
+The tests simulate persisted prior-boot records explicitly; no production or real
+machine reboot is claimed. See the native lifecycle evidence document for the
+separate bounded receipt-archive performance gap.
 
 ## Public integration contract
 
@@ -169,6 +175,57 @@ The provisional bound lease borrows the already held physical cut; it never
 reacquires EX or permits recovery publication. A newly admitted writer revokes
 this cut before any source effect, and no enrollment is committed afterward.
 
+## Interrupted local Host operation reconciliation
+
+New local admission records carry the exact actual kernel process identity,
+configuration/graph digests, source enrollment generation (or null), origin and a
+checksum over the complete operation/tag. The checksum detects accidental
+corruption; it is not authentication against trusted source root. Ordinary
+application authorization and private authority ownership are still required.
+`qualified-host` tags require the actual enrolled Host identity. A
+`configured-host-startup` tag may be issued only by code-owned admission for the
+single explicitly configured Host with valid private configuration/graph; this
+covers first startup and repeated crashes before requalification. Unknown or
+multiple producers receive no such recovery tag. Old records are never retrofitted.
+
+Requalification may provisionally consider only the unchanged exact set of tagged
+local operations whose configuration/graph/generation/checksum still agree.
+Their previous owner must be demonstrably gone: actual kernel boot differs, its
+PID no longer exists, or the real kernel PID has a different birth identity.
+Read denial, unreadable identity or UID ambiguity remains unknown. A live exact
+owner remains unknown even if it no longer appears busy. Native custody, the
+actual physical EX lease and complete current Pi/Codex source graph must still
+qualify; producer death is not source closure or remote completion proof.
+
+The provisional context permits these exact pending entries only internally. Any
+new admission/revision change revokes the cut. A complete new native checkpoint
+must seal before a private fsynced reconciliation receipt records every operation,
+its owner/death proof, prior/new enrollment, current native handoff and preserved
+prior-boot ledger digest, and checkpoint identity. Only then does the atomic
+journal update clear those exact IDs and link the receipt. The new journal state
+is a candidate value: a failed rename restores the prior in-memory state before
+poisoning backup coverage, so later ordinary writes cannot persist an uncommitted
+clear/enrollment. Fresh enrollment uses the same publication failure rule.
+Failures preserve the
+pending records, including across later ordinary work. The original callback is
+never replayed. An unlinked receipt after an interrupted commit is retained; a
+retry must obtain fresh current proof/cut. A linked receipt's contents/integrity
+are checked on normal evidence and before later requalification; losing it cannot
+be bypassed by restarting again.
+
+Delegated operations, legacy or unowned local records, negative writer coverage
+and unsupported producer topologies remain unavailable. They need explicit
+separate completion/recovery protocols, not a timeout, root flag or guessed scan.
+The source authority exposes no clear-pending or supplied-death Boolean.
+
+Initial authorization is rechecked immediately before committing enrollment.
+Existing-source enrollment revalidates its exact held cut and journal after this
+asynchronous policy check; fresh allocation revalidates config/graph digests,
+source roots and producer identities. Policy withdrawal prevents enrollment,
+reconciliation receipt and source grant. A checkpoint already sealed while the
+initial policy permitted the read remains private local material; export still
+requires current policy and valid source authority. No rollback deletes user data.
+
 ## Evidence scope
 
 Focused tests exercise the public authority/admission/capture interface with real
@@ -184,6 +241,14 @@ forged handoffs, missing stores/scopes, extra producers, graph drift, interrupte
 operations and new writes during enrollment. No provider/model round is submitted.
 
 These synthetic supported-topology observations do not prove production producer
-inventory, machine-reboot reconciliation, remote runner lifecycle, all native
+inventory, actual machine-reboot acceptance, remote runner lifecycle, all native
 feature parity, Restic recovery or installed daily scheduling. Main/service/key
 integration and full acceptance remain required before #130/#131/#141 can close.
+
+`test/trusted-local-reconciliation.test.ts` uses real child Host processes that
+exit while their actual local admission is pending, then verifies a new complete
+point and linked durable reconciliation. It covers qualified/first/repeated
+startup ownership, damaged/legacy/delegated refusal, incomplete native closure,
+resource/receipt failures, lost receipt on later restart, concurrent admission,
+actual Workspaces/native deletion and explicitly simulated prior-boot records
+with a real current native lifecycle. Fixture sources are synthetic only.

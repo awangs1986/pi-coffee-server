@@ -1,4 +1,4 @@
-import {constants,openSync,closeSync,fstatSync,readFileSync,lstatSync,realpathSync,writeFileSync,fsyncSync,renameSync} from 'node:fs';
+import {constants,openSync,closeSync,fstatSync,readFileSync,lstatSync,realpathSync,writeFileSync,fsyncSync,renameSync,mkdirSync} from 'node:fs';
 import {mkdir} from 'node:fs/promises';
 import {dirname,join,resolve,relative,isAbsolute} from 'node:path';
 import {AsyncLocalStorage} from 'node:async_hooks';
@@ -22,9 +22,11 @@ interface Enrollment {
  schema:1;id:string;groupId:string;configurationDigest:string;graphDigest:string;
  roots:(DirectoryIdentity&{id:string})[];producers:Producer[];administrator:string;
  assumptions:readonly ['trusted-source-root','all-source-producers-use-admission-v1'];
- initialCheckpoint?:string;handoffDigest?:string;
+ initialCheckpoint?:string;handoffDigest?:string;handoffKernelBoot?:string;priorBootReceiptDigest?:string;reconciliation?:{id:string;digest:string};
 }
-interface Operation {id:string;producer:string;kind:'local'|'delegation';}
+interface LocalOwner {origin:'qualified-host'|'configured-host-startup';enrollmentId:string|null;configurationDigest:string;graphDigest:string;identity:ProcessIdentity;checksum:string;}
+interface Operation {id:string;producer:string;kind:'local'|'delegation';localOwner?:LocalOwner;}
+interface LocalResolution {id:string;producer:string;owner:LocalOwner;death:{kind:'boot-changed'|'process-exited'|'process-replaced';kernelBoot:string;previousBoot?:string;currentBirth?:string};}
 interface State {schema:1;revision:number;enrollment?:Enrollment;operations:Operation[];issues:string[];}
 export interface TrustedSourceOptions {
  root:string;configuration:string;graph:string;fence:PhysicalWriterFence;
@@ -71,6 +73,21 @@ function identity(pid:number):ProcessIdentity{
  const uids=status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);if(!uids||new Set(uids.slice(1)).size!==1||['Z','X'].includes(fields[0]))throw invalid();
  return {pid,uid:Number(uids[1]),boot:readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),birth:fields[19]};
 }
+
+const digestPattern=/^[a-f0-9]{64}$/;
+const bootPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+function localChecksum(operation:Pick<Operation,'id'|'producer'|'kind'>,owner:Omit<LocalOwner,'checksum'>){return hash(JSON.stringify([operation.id,operation.producer,operation.kind,owner.origin,owner.enrollmentId,owner.configurationDigest,owner.graphDigest,owner.identity.pid,owner.identity.uid,owner.identity.boot,owner.identity.birth]));}
+/** Kernel process identity is a death proof only for this exact previously
+ * recorded local owner. UID ambiguity/read failures never mean completion. */
+function deadLocalOwner(owner:ProcessIdentity):LocalResolution['death']{
+ const kernelBoot=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();if(!bootPattern.test(kernelBoot)||!bootPattern.test(owner.boot)||owner.uid!==process.getuid?.())throw invalid();
+ if(owner.boot!==kernelBoot)return {kind:'boot-changed',kernelBoot,previousBoot:owner.boot};
+ let stat:string,status:string;try{stat=readFileSync('/proc/'+owner.pid+'/stat','utf8');status=readFileSync('/proc/'+owner.pid+'/status','utf8');}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return {kind:'process-exited',kernelBoot};throw invalid();}
+ const fields=stat.slice(stat.lastIndexOf(')')+2).split(' '),uids=status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);if(!uids||new Set(uids.slice(1)).size!==1||Number(uids[1])!==owner.uid||!/^\d+$/.test(fields[19]))throw invalid();
+ if(fields[19]!==owner.birth)return {kind:'process-replaced',kernelBoot,currentBirth:fields[19]};
+ if(['Z','X'].includes(fields[0]))return {kind:'process-exited',kernelBoot};throw invalid();
+}
+
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 function producerCurrent(producer:Producer|undefined){try{return Boolean(producer&&same(identity(producer.identity.pid),producer.identity));}catch{return false;}}
 const under=(parent:string,path:string)=>path===parent||(!relative(parent,path).startsWith('..')&&!isAbsolute(relative(parent,path)));
@@ -96,7 +113,7 @@ function graph(text:string,config:Configuration){
  * native adapter's version-specific closure validation at every cut. */
 export class TrustedSourceAuthority {
  private state:State={schema:1,revision:0,operations:[],issues:[]};private stateDigest='';
- private readonly provisional=new AsyncLocalStorage<{enrollment:Enrollment;revision:number;lease:CaptureLease}>();
+ private readonly provisional=new AsyncLocalStorage<{enrollment:Enrollment;revision:number;lease:CaptureLease;pending:Operation[]}>();
  private closed=false;private disabled=false;private enrolling=false;private active=new Set<string>();private fences=new Map<string,WriterAdmissionFence>();
  private constructor(private options:TrustedSourceOptions,private owner:FileLease,private rootIdentity:DirectoryIdentity){}
  static async open(options:TrustedSourceOptions){
@@ -105,7 +122,7 @@ export class TrustedSourceAuthority {
   const authority=new TrustedSourceAuthority(options,owner,root);
   try{
    let text:string;try{text=privateText(join(options.root,'state.json'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;authority.save();return authority;}
-   const state:State=JSON.parse(text);if(state.schema!==1||!Number.isSafeInteger(state.revision)||state.revision<0||!Array.isArray(state.operations)||!Array.isArray(state.issues)||state.issues.some(issue=>!id(issue))||state.operations.some(operation=>!operation||!id(operation.id)||!id(operation.producer)||!['local','delegation'].includes(operation.kind)))throw invalid();
+   const state:State=JSON.parse(text);if(state.schema!==1||!Number.isSafeInteger(state.revision)||state.revision<0||!Array.isArray(state.operations)||!Array.isArray(state.issues)||new Set(state.operations.map(operation=>operation?.id)).size!==state.operations.length||state.issues.some(issue=>!id(issue))||state.operations.some(operation=>!operation||!id(operation.id)||!id(operation.producer)||!['local','delegation'].includes(operation.kind)))throw invalid();
    authority.state=state;authority.stateDigest=hash(text);
    // A restart never revives coverage automatically. Only a real native handoff
    // and a complete new sealed cut may requalify an otherwise intact journal.
@@ -133,7 +150,10 @@ export class TrustedSourceAuthority {
    const observed=config.producers.map(producer=>{const supplied=producers.find(value=>value.id===producer.id);if(!supplied)throw invalid();return {...producer,identity:identity(supplied.pid)};});
    for(const root of config.roots){directory(dirname(root.path));if(under(root.path,this.options.root)||under(this.options.root,root.path)||under(root.path,this.options.configuration)||under(root.path,this.options.graph)||config.roots.some(other=>other!==root&&(under(root.path,other.path)||under(other.path,root.path))))throw invalid();try{lstatSync(root.path);throw invalid();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
    const roots=[];for(const root of config.roots){await mkdir(root.path,{mode:0o700});roots.push({...directory(root.path),id:root.id});}
-   this.assertOwner();if(this.disabled||this.state.revision!==revision)throw invalid();this.state.enrollment={schema:1,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:observed,administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']};this.state.revision++;this.save();
+   if(!await this.options.authorize(actor))throw invalid();this.assertOwner();if(this.disabled||this.state.revision!==revision||hash(privateText(this.options.configuration,65536))!==hash(configText)||hash(privateText(this.options.graph,65536))!==hash(graphText))throw invalid();
+   for(const root of roots){const {id:_,...expected}=root;if(!same(directory(root.path),expected))throw invalid();}if(observed.some(producer=>!producerCurrent(producer)))throw invalid();
+   const previousState=this.state;this.state={...previousState,enrollment:{schema:1,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:observed,administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']},revision:previousState.revision+1};
+   try{this.save();}catch{this.state=previousState;this.poison('enrollment-journal-unavailable');throw invalid();}
   }finally{this.enrolling=false;}
  }
  async enrollExisting(actor:string,options:ExistingSourceEnrollment){return this.enrollCold(actor,options,false);}
@@ -144,17 +164,18 @@ export class TrustedSourceAuthority {
   const limits=captureLimits(options);if(this.enrolling)throw invalid();this.enrolling=true;let lease:CaptureLease|undefined;const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(new BackupError('capture_timeout','Source enrollment deadline exceeded')),limits.captureTimeoutMs);
   try{
    if(!await this.options.authorize(actor))throw invalid();this.assertOwner();
-   if(this.state.operations.length||this.state.issues.some(issue=>issue!=='authority-reopened')||Boolean(this.state.enrollment)!==restart||restart&&!this.state.issues.includes('authority-reopened')||this.disabled&&!this.state.issues.includes('authority-reopened'))throw invalid();
+   if(this.state.issues.some(issue=>issue!=='authority-reopened')||Boolean(this.state.enrollment)!==restart||restart&&!this.state.issues.includes('authority-reopened')||this.disabled&&!this.state.issues.includes('authority-reopened'))throw invalid();
    const revision=this.state.revision,configText=privateText(this.options.configuration,65536),config=configuration(configText),graphText=privateText(this.options.graph,65536);graph(graphText,config);
    // Initial supported topology is one cooperating Host. A daemon or remote
    // authority needs its own real handoff adapter, never a guessed process list.
    if(actor!==config.owner.administrator||config.producers.length!==1||config.producers[0].kind!=='host'||config.producers[0].id!==options.producer)throw invalid();
+   const resolutions=this.resolvePendingLocal(configText,graphText,options.producer),pending=structuredClone(this.state.operations);
    const roots=config.roots.map(root=>({...directory(root.path,true),id:root.id}));
    for(const root of roots)if(under(root.path,this.options.root)||under(this.options.root,root.path)||under(root.path,this.options.configuration)||under(root.path,this.options.graph)||under(root.path,options.checkpointRoot)||under(options.checkpointRoot,root.path)||roots.some(other=>other!==root&&(under(root.path,other.path)||under(other.path,root.path))))throw invalid();
-   if(restart){const old=this.state.enrollment!;if(old.configurationDigest!==hash(configText)||old.graphDigest!==hash(graphText)||!same(old.roots,roots))throw invalid();}
+   if(restart){const old=this.state.enrollment!;this.validateReconciliation(old);if(old.configurationDigest!==hash(configText)||old.graphDigest!==hash(graphText)||!same(old.roots,roots))throw invalid();}
    const enrollment:Enrollment={schema:1,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:[{...config.producers[0],identity:identity(process.pid)}],administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']};
    lease=await this.options.fence.lease();const held=lease,assert=held.assertValid.bind(held);held.assertValid=()=>{deadline.signal.throwIfAborted();assert();};
-   return await beforeDeadline(this.provisional.run({enrollment,revision,lease:held},async()=>{
+   return await beforeDeadline(this.provisional.run({enrollment,revision,lease:held,pending},async()=>{
     this.evidence();this.assertScopeInventory(options.scopes);
     const fence=this.writerFence(options.producer),observedPaths=new Set<string>(),native=await materializeTrustedNativeSource({groupId:config.groupId,scopes:options.scopes,fence,lease:held,maxBytes:limits.maxBytes,maxFiles:limits.maxFiles,assertRoots:paths=>{this.verifyRoots(paths);for(const path of paths)observedPaths.add(path);}});
     this.assertEnrolledRootsUsed([...observedPaths]);
@@ -163,14 +184,48 @@ export class TrustedSourceAuthority {
     const coordinator=new BackupCoordinator({root:options.checkpointRoot,...limits,adapter:{version:'trusted-native-source-v1',resolve:async()=>native.group}});
     const status=await coordinator.capture(member.scope,member.taskId,member.engine);if(status.state!=='protected'||!status.checkpointId)throw invalid();
     const checkpoint=await coordinator.sealedCheckpoint(member.scope,member.taskId,status.checkpointId);if(!checkpoint)throw invalid();
-    this.evidence();held.assertValid();enrollment.initialCheckpoint=checkpoint.manifest.checkpointId;enrollment.handoffDigest=handoff.receiptDigest;
-    this.state.enrollment=enrollment;this.state.issues=[];this.state.revision++;this.disabled=false;
-    try{this.save();}catch{this.poison('enrollment-journal-unavailable');throw invalid();}
+    if(!await this.options.authorize(actor))throw invalid();this.evidence();held.assertValid();enrollment.initialCheckpoint=checkpoint.manifest.checkpointId;enrollment.handoffDigest=handoff.receiptDigest;enrollment.handoffKernelBoot=handoff.kernelBoot;enrollment.priorBootReceiptDigest=handoff.priorBootReceiptDigest;
+    if(resolutions.length)enrollment.reconciliation=this.recordLocalReconciliation(enrollment,resolutions);
+    this.evidence();held.assertValid();const previousState=this.state,resolvedIds=new Set(resolutions.map(operation=>operation.id));
+    this.state={...previousState,operations:previousState.operations.filter(operation=>!resolvedIds.has(operation.id)),enrollment,issues:[],revision:previousState.revision+1};this.disabled=false;
+    // A failed rename must not leave a cleared in-memory journal which a later
+    // ordinary write could persist. The receipt remains retained for audit.
+    try{this.save();}catch{this.state=previousState;this.poison('enrollment-journal-unavailable');throw invalid();}
     const evidence:TrustedSourceEvidence={schema:1,enrollmentId:enrollment.id,groupId:enrollment.groupId,revision:this.state.revision,assumptions:[...enrollment.assumptions],configurationDigest:enrollment.configurationDigest,graphDigest:enrollment.graphDigest};
     return {checkpoint,evidence};
    }),deadline.signal);
   }finally{clearTimeout(timer);lease?.release();this.enrolling=false;}
  }
+
+ private localOwner(operation:Operation):LocalOwner|undefined{
+  const configText=privateText(this.options.configuration,65536),config=configuration(configText),graphText=privateText(this.options.graph,65536);graph(graphText,config);
+  if(config.producers.length!==1||config.producers[0].kind!=='host'||config.producers[0].id!==operation.producer)return undefined;
+  const current=identity(process.pid),enrolled=this.state.enrollment?.producers.find(producer=>producer.id===operation.producer),qualified=!this.disabled&&!this.state.issues.length&&enrolled?.kind==='host'&&same(enrolled.identity,current);
+  const owner:Omit<LocalOwner,'checksum'>={origin:qualified?'qualified-host':'configured-host-startup',enrollmentId:this.state.enrollment?.id??null,configurationDigest:hash(configText),graphDigest:hash(graphText),identity:current};
+  return {...owner,checksum:localChecksum(operation,owner)};
+ }
+ private resolvePendingLocal(configText:string,graphText:string,producer:string):LocalResolution[]{
+  const enrollment=this.state.enrollment,resolutions:LocalResolution[]=[];
+  for(const operation of this.state.operations){
+   const owner=operation.localOwner;
+   if(operation.kind!=='local'||operation.producer!==producer||!owner||!record(owner)||!keys(owner,['origin','enrollmentId','configurationDigest','graphDigest','identity','checksum'])||!['qualified-host','configured-host-startup'].includes(owner.origin)||owner.enrollmentId!==(enrollment?.id??null)||owner.configurationDigest!==hash(configText)||owner.graphDigest!==hash(graphText)||!record(owner.identity)||!keys(owner.identity,['pid','uid','boot','birth'])||!Number.isSafeInteger(owner.identity.pid)||owner.identity.pid<1||!Number.isSafeInteger(owner.identity.uid)||owner.identity.uid<0||typeof owner.identity.boot!=='string'||!bootPattern.test(owner.identity.boot)||typeof owner.identity.birth!=='string'||!/^\d+$/.test(owner.identity.birth)||owner.checksum!==localChecksum(operation,owner))throw invalid();
+   if(owner.origin==='qualified-host'&&!enrollment?.producers.some(value=>value.id===producer&&value.kind==='host'&&same(value.identity,owner.identity)))throw invalid();
+   resolutions.push({id:operation.id,producer:operation.producer,owner,death:deadLocalOwner(owner.identity)});
+  }
+  return resolutions;
+ }
+ private validateReconciliation(enrollment:Enrollment){
+  if(!enrollment.reconciliation)return;const reference=enrollment.reconciliation;if(!id(reference.id)||!digestPattern.test(reference.digest))throw invalid();
+  directory(join(this.options.root,'reconciliations'));const raw=privateText(join(this.options.root,'reconciliations',reference.id+'.json')),receipt=JSON.parse(raw);
+  if(hash(raw)!==reference.digest||receipt.enrollmentId!==enrollment.id||receipt.checkpointId!==enrollment.initialCheckpoint||receipt.handoffDigest!==enrollment.handoffDigest||receipt.handoffKernelBoot!==enrollment.handoffKernelBoot||receipt.priorBootReceiptDigest!==enrollment.priorBootReceiptDigest||receipt.configurationDigest!==enrollment.configurationDigest||receipt.graphDigest!==enrollment.graphDigest)throw invalid();
+ }
+ private recordLocalReconciliation(enrollment:Enrollment,operations:LocalResolution[]){
+  this.evidence();const root=join(this.options.root,'reconciliations');mkdirSync(root,{recursive:true,mode:0o700});directory(root);
+  const receipt={schema:1,id:randomUUID(),enrollmentId:enrollment.id,previousEnrollmentId:this.state.enrollment?.id??null,configurationDigest:enrollment.configurationDigest,graphDigest:enrollment.graphDigest,kernelBoot:readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),handoffDigest:enrollment.handoffDigest,handoffKernelBoot:enrollment.handoffKernelBoot,priorBootReceiptDigest:enrollment.priorBootReceiptDigest,checkpointId:enrollment.initialCheckpoint,operations,at:new Date().toISOString()};
+  const text=JSON.stringify(receipt);if(Buffer.byteLength(text)>1024*1024)throw invalid();const file=openSync(join(root,receipt.id+'.json'),'wx',0o600);try{writeFileSync(file,text);fsyncSync(file);}finally{closeSync(file);}const parent=openSync(root,'r');try{fsyncSync(parent);}finally{closeSync(parent);}
+  return {id:receipt.id,digest:hash(text)};
+ }
+
  private assertScopeInventory(scopes:readonly TrustedNativeSourceScope[]){
   const config=configuration(privateText(this.options.configuration,65536)),value=JSON.parse(privateText(this.options.graph,65536));graph(JSON.stringify(value),config);
   if(!scopes.length||new Set(scopes.map(scope=>scope.scope)).size!==scopes.length||value.roots.some((root:{scope:string})=>!scopes.some(scope=>scope.scope===root.scope))||scopes.some(scope=>!value.roots.some((root:{scope:string})=>root.scope===scope.scope)))throw invalid();
@@ -187,11 +242,12 @@ export class TrustedSourceAuthority {
  }
  private evidence():TrustedSourceEvidence{
   this.assertOwner();const provisional=this.provisional.getStore(),enrollment=provisional?.enrollment??this.state.enrollment;
-  if(provisional){provisional.lease.assertValid();if(this.state.revision!==provisional.revision||this.state.operations.length||this.state.issues.some(issue=>issue!=='authority-reopened'))throw invalid();}
+  if(provisional){provisional.lease.assertValid();if(this.state.revision!==provisional.revision||!same(this.state.operations,provisional.pending)||this.state.issues.some(issue=>issue!=='authority-reopened'))throw invalid();}
   else if(this.disabled||this.state.issues.length)throw invalid();
   if(!enrollment||enrollment.schema!==1)throw invalid();
   if(hash(privateText(this.options.configuration,65536))!==enrollment.configurationDigest||hash(privateText(this.options.graph,65536))!==enrollment.graphDigest)throw invalid();
   for(const root of enrollment.roots){const {id:_,...expected}=root;if(!same(directory(root.path,true),expected))throw invalid();}
+  this.validateReconciliation(enrollment);
   for(const producer of enrollment.producers)if(!producerCurrent(producer))throw invalid();
   return {schema:1,enrollmentId:enrollment.id,groupId:enrollment.groupId,revision:this.state.revision,assumptions:[...enrollment.assumptions],configurationDigest:enrollment.configurationDigest,graphDigest:enrollment.graphDigest};
  }
@@ -215,8 +271,8 @@ export class TrustedSourceAuthority {
  async capture():Promise<{lease:CaptureLease;evidence:TrustedSourceEvidence}>{return this.cut(false);}
  private async cut(publication:boolean):Promise<{lease:CaptureLease;evidence:TrustedSourceEvidence}>{
   let evidence:TrustedSourceEvidence;try{evidence=this.evidence();}catch{throw invalid();}
-  if(this.state.operations.length)throw this.state.operations.every(operation=>this.active.has(operation.id))?new BackupError('writers_active','Tracked source writers are active'):invalid();
   const provisional=this.provisional.getStore();
+  if(!provisional&&this.state.operations.length)throw this.state.operations.every(operation=>this.active.has(operation.id))?new BackupError('writers_active','Tracked source writers are active'):invalid();
   if(provisional){if(publication)throw invalid();const held=provisional.lease;held.assertValid();return {evidence,lease:{epoch:held.epoch,signal:held.signal,assertValid:()=>{held.assertValid();if(!same(evidence,this.evidence()))throw invalid();},release:()=>{}}};}
   const lease=await (publication?this.options.fence.publicationLease():this.options.fence.lease());
   const assert=lease.assertValid.bind(lease);lease.assertValid=()=>{assert();try{if(this.state.operations.length||!same(evidence,this.evidence()))throw invalid();}catch{throw invalid();}};
@@ -245,7 +301,8 @@ export class TrustedSourceAuthority {
     this.assertOwner();const enrolled=this.state.enrollment?.producers.find(item=>item.id===producer);
     const prequalifiedHost=kind==='local'&&(!this.state.enrollment||this.state.issues.includes('authority-reopened'))&&configuration(privateText(this.options.configuration,65536)).producers.some(item=>item.id===producer&&item.kind==='host');
     if(!producerCurrent(enrolled)&&!prequalifiedHost||kind==='delegation'&&enrolled?.kind!=='delegation-broker'||!['platform','native'].includes(writerClass)){if(!this.state.issues.includes('unregistered-producer'))this.state.issues.push('unregistered-producer');}
-    this.state.operations.push({id:operation,producer,kind});this.state.revision++;this.save();this.active.add(operation);recorded=true;
+    const admitted:Operation={id:operation,producer,kind};if(kind==='local')admitted.localOwner=this.localOwner(admitted);
+    this.state.operations.push(admitted);this.state.revision++;this.save();this.active.add(operation);recorded=true;
    }catch{this.poison('admission-journal-unavailable');}
   }catch(error){release();throw error;}
   return (settled:boolean)=>{if(ended)return;ended=true;try{
