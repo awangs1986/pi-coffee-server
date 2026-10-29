@@ -51,6 +51,11 @@ async function captureReady(f:Awaited<ReturnType<typeof fixture>>,taskId:string)
  expect(observations.filter(row=>row.status===409?!busy.includes(row.error??''):row.status!==200||!['protected','capturing','waiting','unavailable'].includes(row.state??''))).toEqual([]);
  console.info('Synthetic capture readiness',JSON.stringify(observations.map(row=>row.status+'/'+(row.state??'capture_busy'))));
 }
+async function codexNeighborSnapshot(f:Awaited<ReturnType<typeof fixture>>){
+ const native=f.native!,task=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-neighbor'))!;
+ const row=JSON.parse(execFileSync('/usr/bin/python3',['-c',"import sqlite3,json,sys;c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True);c.row_factory=sqlite3.Row;print(json.dumps(dict(c.execute('SELECT id,rollout_path,cwd,title,model_provider,cli_version,history_mode FROM threads WHERE id=?',(sys.argv[2],)).fetchone())));c.close()",join(native.sql,'state_5.sqlite'),task.nativeBinding!.id!],{encoding:'utf8'}));
+ return {row,history:await readFile(row.rollout_path,'utf8')};
+}
 async function seedNative(f:Awaited<ReturnType<typeof fixture>>,name:string){let socket:WebSocket|undefined;try{const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});socket.send(JSON.stringify({v:1,type:'rename_session',requestId:'name',name}));await expect.poll(()=>frames.find(frame=>frame.requestId==='name'),{timeout:10000}).toMatchObject({type:'ack'});socket.send(JSON.stringify({v:1,type:'get_commands'}));await expect.poll(()=>frames.find(frame=>frame.type==='commands'),{timeout:10000}).toBeDefined();expect(JSON.stringify(frames.find(frame=>frame.type==='commands'))).toContain('fixture-seed');const seedRequest='seed-'+name.replaceAll(' ','-');socket.send(JSON.stringify({v:1,type:'prompt',requestId:seedRequest,text:'/fixture-seed '+name}));await expect.poll(()=>frames.find(frame=>frame.requestId===seedRequest),{timeout:10000}).toMatchObject({type:'ack'});await expect.poll(async()=> (await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl')),{timeout:5000}).not.toEqual([]);const done=once(socket,'close');socket.close();await done;socket=undefined;}finally{socket?.terminate();}}
 it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('actual ordinary Host opens named source and configures independent backup while an unstarted native source stays unqualified',async()=>{
  const f=await fixture();try{
@@ -201,6 +206,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC).each([true,false])('ordinary main 
   const saved=await f.post('/api/backup',{action:'repository-backup',taskId:'native-pi-task'});expect(saved).toMatchObject({status:200,body:{state:'succeeded'}});
   const files=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(files).toHaveLength(neighbor?2:1);
   const original=(await new Workspaces(join(f.data,'work','projects')).lookup('native-pi-task'))!.nativeBinding!.id!;const lostFile=files.find(name=>SessionManager.open(join(f.data,'sessions',name)).getSessionId()===original)!;
+  const neighborFile=neighbor?files.find(name=>name!==lostFile):undefined,neighborBytes=neighborFile?await readFile(join(f.data,'sessions',neighborFile)):undefined;
   await f.restart(async()=>{const store=new Workspaces(join(f.data,'work','projects'));await store.archive('native-pi-task',true);await store.deleteWorkspace('native-pi-task','native-pi-task',()=>rm(join(f.data,'sessions',lostFile)),true);});
   if(neighbor)await captureReady(f,'native-pi-neighbor');
   const requested=await f.post('/api/backup',{action:'restore-request',taskId:'native-pi-task',jobId:saved.body.id});expect(requested.status).toBe(200);
@@ -212,6 +218,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC).each([true,false])('ordinary main 
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'native-pi-task');
+  if(neighborFile)expect(await readFile(join(f.data,'sessions',neighborFile))).toEqual(neighborBytes);
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('Cold synthetic Pi history');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(neighbor?2:1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
@@ -225,7 +232,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   expect((await f.post('/api/backup',{action:'repository-configure'})).status).toBe(200);
   const exported=await f.post('/api/backup',{action:'repository-export'});expect((await f.post('/api/backup',{action:'repository-verify',recoveryPackage:exported.body.recoveryPackage})).status).toBe(200);
   const saved=await f.post('/api/backup',{action:'repository-backup',taskId:'codex-task'});expect(saved).toMatchObject({status:200,body:{state:'succeeded'}});
-  const original=f.native!.id;
+  const original=f.native!.id,neighborBefore=neighbor?await codexNeighborSnapshot(f):undefined;
   await f.restart(async()=>{const store=new Workspaces(join(f.data,'alice','projects'));await store.archive('codex-task',true);await store.deleteWorkspace('codex-task','codex-task',()=>rm(f.native!.rollout),true);execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('DELETE FROM threads WHERE id=?',(sys.argv[2],));c.commit();c.close()",join(f.native!.sql,'state_5.sqlite'),original]);});
   if(neighbor)await captureReady(f,'codex-neighbor');
   const requested=await f.post('/api/backup',{action:'restore-request',taskId:'codex-task',jobId:saved.body.id});expect(requested.status).toBe(200);
@@ -237,6 +244,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
   // Recovery must regain a real cold source cut before a viewer opens native history.
   await captureReady(f,'codex-task');
+  if(neighbor)expect(await codexNeighborSnapshot(f)).toEqual(neighborBefore);
   const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
   await expect.poll(()=>JSON.stringify(frames.find(frame=>frame.type==='history')?.entries),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames.find(frame=>frame.type==='history')?.entries)).toContain('The ordinary question');expect(frames.filter(frame=>frame.type==='error')).toEqual([]);
   const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);

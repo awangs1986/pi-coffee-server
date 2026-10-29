@@ -519,6 +519,6 @@ export class NativeAgentFactory implements AgentSessionFactory {
     const task=await this.options.workspaces.lookup(id);
     if(task?.takeoverSegments?.length||task?.contextReset)throw new Error("Retained native history exists; archive this Task instead");
     if(task?.engine && task.engine!=="pi")throw new Error("Native history is retained; complete native cleanup is not supported");
-    return this.withFactory(this.options.pi,()=>this.options.pi.delete(id));
+    return this.withFactory(this.options.pi,()=>this.options.pi.delete(task?.nativeBinding?.id??id));
   }
 }
