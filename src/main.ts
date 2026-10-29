@@ -69,6 +69,14 @@ async function run(selectedRole: Role): Promise<void> {
   if(wantHost&&process.env.PI_COFFEE_COLD_ENROLLMENT_PROFILE&&!process.env.PI_COFFEE_MANAGED_PROFILE_FILE)throw new Error('Cold enrollment requires a managed source profile');
   if(wantHost&&process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE&&process.env.PI_COFFEE_MANAGED_PROFILE_FILE)throw new Error('Select one backup source profile');
   const captureLimits=wantHost&&(process.env.PI_COFFEE_BACKUP_ROOT||process.env.PI_COFFEE_MANAGED_PROFILE_FILE||process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE)?{maxBytes:positiveBackupBound('PI_COFFEE_BACKUP_MAX_BYTES',1024*1024*1024),maxFiles:positiveBackupBound('PI_COFFEE_BACKUP_MAX_FILES',100000),captureTimeoutMs:positiveBackupBound('PI_COFFEE_BACKUP_CAPTURE_TIMEOUT_MS',30000,1800000)}:undefined;
+  const managedConfig=wantHost&&process.env.PI_COFFEE_MANAGED_PROFILE_FILE?await loadManagedSourceConfig(process.env.PI_COFFEE_MANAGED_PROFILE_FILE):undefined;
+  const managedAuthority=managedConfig?new ManagedSourceAuthority(managedConfig):undefined,legacyPolicy=new ManagedLaunchPolicy();
+  const backupRoot=wantHost?(managedConfig?join(managedConfig.sourceParent,'backup'):process.env.PI_COFFEE_BACKUP_ROOT?.trim()):undefined;
+  const brokerConfig=wantHost&&process.env.PI_COFFEE_BACKUP_BROKER_CLIENT?await readBackupRepositoryClientConfig(process.env.PI_COFFEE_BACKUP_BROKER_CLIENT):undefined;
+  const ordinaryProfile=wantHost&&process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE?await loadOrdinaryBackupProfile(process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE):undefined;
+  if(ordinaryProfile&&(!backupRoot||!brokerConfig))throw new Error('Ordinary backup requires a backup root and independent broker profile');
+  const ordinary=ordinaryProfile?await OrdinaryBackupComposition.open(ordinaryProfile,backupRoot!):undefined;
+  if(managedConfig&&!brokerConfig)throw new Error('Managed backup requires independent key service configuration');
   // The Relay is the only process that may hold upstream credentials. `all`
   // starts it when either the LLM key or the Serper key is configured; the
   // generic LLM routes remain unavailable when only search is enabled.
@@ -92,8 +100,6 @@ async function run(selectedRole: Role): Promise<void> {
   });
   if (relay) await relay.start();
 
-  const managedConfig=wantHost&&process.env.PI_COFFEE_MANAGED_PROFILE_FILE?await loadManagedSourceConfig(process.env.PI_COFFEE_MANAGED_PROFILE_FILE):undefined;
-  const managedAuthority=managedConfig?new ManagedSourceAuthority(managedConfig):undefined,legacyPolicy=new ManagedLaunchPolicy();
   const workdir = managedConfig?join(managedConfig.sourceParent,'scopes',LEGACY_BACKUP_SCOPE,'work'):process.env.PI_COFFEE_WORKDIR ?? process.cwd();
   let runtimeTemp:Awaited<ReturnType<typeof createRuntimeTemp>>|undefined;
   if(wantHost){
@@ -152,12 +158,6 @@ async function run(selectedRole: Role): Promise<void> {
   const idleTimeoutMs = envNumber("PI_COFFEE_IDLE_TIMEOUT_MS", 10 * 60 * 1000);
   const taskAccounts=JSON.parse(process.env.PI_COFFEE_TASK_USER_MAP ?? '{}');
   if(!taskAccounts || typeof taskAccounts!=='object' || Array.isArray(taskAccounts))throw new Error('Invalid task storage user map');
-  const backupRoot=wantHost?(managedConfig?join(managedConfig.sourceParent,'backup'):process.env.PI_COFFEE_BACKUP_ROOT?.trim()):undefined;
-  const brokerConfig=wantHost&&process.env.PI_COFFEE_BACKUP_BROKER_CLIENT?await readBackupRepositoryClientConfig(process.env.PI_COFFEE_BACKUP_BROKER_CLIENT):undefined;
-  const ordinaryProfile=wantHost&&process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE?await loadOrdinaryBackupProfile(process.env.PI_COFFEE_ORDINARY_SOURCE_PROFILE):undefined;
-  if(ordinaryProfile&&(!backupRoot||!brokerConfig))throw new Error('Ordinary backup requires a backup root and independent broker profile');
-  const ordinary=ordinaryProfile?await OrdinaryBackupComposition.open(ordinaryProfile,backupRoot!):undefined;
-  if(managedConfig&&!brokerConfig)throw new Error('Managed backup requires independent key service configuration');
   if(managedConfig)await mkdir(join(managedConfig.sourceParent,'authority'),{recursive:true,mode:0o700});
   const recoveryAdapters=new Map<string,NativeRecoveryAdapter&NativeRestoreAdapter>();
   const restoreScopes=new Map<string,Workspaces>();
@@ -208,8 +208,8 @@ async function run(selectedRole: Role): Promise<void> {
     const scopeFence=managedFence??writerFence,nativeCustody=scopeCustody??custody;
     // Provenance and descendant custody do not fence writers launched through existing
     // daemons or unrestricted same-UID tools. No production enforcement provider is qualified.
-    const sourceProof=async()=>{if(ordinary){try{const paths=[cwd,nativeSessionDir,scopeAgentDir!,projectSource,chatSource,...accountProjects?[accountProjects]:[]].map(path=>resolve(path));if(codexCommand){const roots=await codexStore<{nativeHome:string;sqliteHome:string}>({operation:'roots',home:resolve(codexOptions.codexHome??process.env.CODEX_HOME??join(homedir(),'.codex')),environmentSqliteHome:codexOptions.env.CODEX_SQLITE_HOME??process.env.CODEX_SQLITE_HOME});paths.push(roots.nativeHome,roots.sqliteHome);}return ordinary.sourceProof(paths);}catch{return {known:false,reason:'Ordinary source paths are not qualified'};}}if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!scopeAgentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,scopeAgentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
-    const workspaces=new Workspaces(projectSource,{managedGitCustody:scopeCustody,deferStartupReconciliation:()=>publicationGate?.hasPending()??false,taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
+    const sourceProof=async()=>{if(ordinary){try{if((workspaces as Workspaces&{readonly backupGitCustody?:typeof ordinary.custody}).backupGitCustody!==ordinary.custody)return {known:false,reason:'Host Git writer custody is unbound'};const paths=[cwd,nativeSessionDir,scopeAgentDir!,projectSource,chatSource,...accountProjects?[accountProjects]:[]].map(path=>resolve(path));if(codexCommand){const roots=await codexStore<{nativeHome:string;sqliteHome:string}>({operation:'roots',home:resolve(codexOptions.codexHome??process.env.CODEX_HOME??join(homedir(),'.codex')),environmentSqliteHome:codexOptions.env.CODEX_SQLITE_HOME??process.env.CODEX_SQLITE_HOME});paths.push(roots.nativeHome,roots.sqliteHome);}return ordinary.sourceProof(paths);}catch{return {known:false,reason:'Ordinary source paths are not qualified'};}}if(managedAuthority)return managedAuthority.sourceProof(scopeId);if(backupRoot&&await lstat(join(backupRoot,'unmanaged-writer-seen')).then(()=>true,()=>false))return {known:false,reason:'An unmanaged native writer requires source requalification'};if(!sourceCustody||!scopeAgentDir)return {known:false,reason:'Explicit private native configuration custody is required'};for(const path of [cwd,nativeSessionDir,scopeAgentDir,projectSource,chatSource,...(accountProjects?[accountProjects]:[])])if((await sourceCustody.owns(path)).state!=='owned')return {known:false,reason:'Legacy or unmanaged native source has no ownership receipt'};return {known:false,reason:'writer-enforcement-unqualified'};};
+    const workspaces=new Workspaces(projectSource,{...(ordinary?{gitCommandCustody:ordinary.custody}:{}),managedGitCustody:scopeCustody,deferStartupReconciliation:()=>publicationGate?.hasPending()??false,taskRoot:accountProjects,chatRoot:chatSource,ownerId:user ?? process.env.PI_COFFEE_VM_ID,forge,githubAccounts});
     if(scopeFence)workspaces.setBackupWriterFence(scopeFence);
     await workspaces.list();restoreScopes.set(scopeId,workspaces);if(managedConfig||ordinary)managedStores.set(scopeId,workspaces);
 
@@ -228,10 +228,8 @@ async function run(selectedRole: Role): Promise<void> {
         envForSession:async id=>{const task=await workspaces.lookup(id),env=task?await workspaces.runtimeEnvironment(id):deniedGitHub;return {...env,...(task?.workspaceKind==='project'?{PI_COFFEE_ACCOUNT_GUIDANCE:accountGuidance}:{}),...(await host?.mishuRuntime(user,id))?.env,PATH:env.PATH+':'+piRuntime!.path(),COFFEE_MANAGED_PATH:env.PATH+':'+piRuntime!.path()};},
       }),
       ...(codexCommand ? {codex:{command:codexCommand,...(process.env.PI_COFFEE_CODEX_HOME ? {env:{CODEX_HOME:process.env.PI_COFFEE_CODEX_HOME}} : {})},
-        codexSessionFactory:(id:string,taskCwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>new CodexSessionFactory({...codexOptions,preparation,mishuContext:preparation?undefined:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?host?.mishuSourceContext(user,task.id):undefined;},allowEmptyRecovery:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?.workspaceKind==='chat'&&task.engine==='codex'&&task.nativeContextEmpty===true;},instructions:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return instructions(task?.id);},envForSession:environment,cwd:taskCwd,mappingFile:join(bookkeeping,"codex",id+".json"),onBound:async(_hostId,nativeId)=>onBound(nativeId)}),
+        codexSessionOptions:(id:string,taskCwd:string,_onBound:(nativeId:string)=>Promise<void>,_environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>({...codexOptions,mishuContext:preparation?undefined:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?host?.mishuSourceContext(user,task.id):undefined;},allowEmptyRecovery:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return task?.workspaceKind==='chat'&&task.engine==='codex'&&task.nativeContextEmpty===true;},instructions:async()=>{const task=await workspaces.lookupByCwd(taskCwd);return instructions(task?.id);},mappingFile:join(bookkeeping,"codex",id+".json")}),
         legacyCodex,
-        codexSummary:(taskCwd:string,id:string)=>legacyCodex!.summaryForCwd(taskCwd,id),
-        codexListings:(taskCwd:string)=>legacyCodex!.listForCwd(taskCwd),
       } : {}),
       ...(process.env.PI_COFFEE_CLAUDE_COMMAND ? {claude:{command:process.env.PI_COFFEE_CLAUDE_COMMAND,env:deniedGitHub}} : {}),
       ...(process.env.PI_COFFEE_GROK_COMMAND ? {grok:{command:process.env.PI_COFFEE_GROK_COMMAND,env:deniedGitHub}} : {}),

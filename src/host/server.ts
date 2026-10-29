@@ -421,7 +421,12 @@ export class HostServer {
               if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}
               const tasks=(await target.workspaces.list()).conversations.filter(task=>['pi','codex'].includes(task.engine??'pi'));
               if(typeof input.taskId==='string'&&!tasks.some(task=>task.id===input.taskId)){json(res,404,{error:'Unknown task'});return;}
-              const selection=tasks.filter(task=>input.taskId===undefined||task.id===input.taskId).map(task=>({scope:target.user??LEGACY_BACKUP_SCOPE,taskId:task.id}));
+              if(input.checkpointId!==undefined&&(typeof input.taskId!=='string'||typeof input.checkpointId!=='string'||!/^[a-f0-9]{8}-[a-f0-9-]{27}$/.test(input.checkpointId))){json(res,400,{error:'Choose a task and valid checkpoint identity'});return;}
+              const selection=[];for(const task of tasks.filter(task=>input.taskId===undefined||task.id===input.taskId)){
+                const scope=target.user??LEGACY_BACKUP_SCOPE,point=await this.options.backup?.coordinator?.sealedCheckpoint(scope,task.id,input.checkpointId as string|undefined);
+                if(!point){json(res,409,{error:'The selected sealed checkpoint is unavailable'});return;}
+                selection.push({scope,taskId:task.id,expectedCheckpointId:point.manifest.checkpointId});
+              }
               json(res,200,await repository.backup(selection));return;
             }
             case 'repository-rotate':await repository.rotateRecoveryKey();break;
