@@ -80,12 +80,15 @@ credential, snapshot or transcript output is committed here.
 | `ordinary-restore-pi-neighbor-1.log`, `ordinary-restore-codex-neighbor-1.log` | Early neighbor checks passed, but matched all WebSocket frames and sent an invalid public `get_messages` frame. They are **not** accepted as proof of reopened native history. |
 | `ordinary-daily-scheduler-1.log` | Fixture listener used a noncanonical Python argv and failed the strict startup identity check; fixture corrected, no product guard relaxed. |
 | `ordinary-daily-scheduler-2.log` | Daily scheduler case passed in 19.50 s; the same run retained fresh Codex's initial unavailable-custody RED. |
-| `ordinary-restore-full-1.log` | 20 cases: 15 passed, 5 failed, no skips, 386.69 s. All six restore publications and cold recaptures succeeded. Three Pi viewer cases failed on wrong identity; fresh Codex hit the expected authentication/configuration gate; one old negative case still refused active native work with a new exact authority error message. |
+| `ordinary-restore-composition-initial.log` | 20 cases: 15 passed, 5 failed, no skips, 386.69 s. All six restore publications and cold recaptures succeeded. Three Pi viewer cases failed on wrong identity; fresh Codex hit the expected authentication/configuration gate; one old negative case still refused active native work with a new exact authority error message. |
 | `ordinary-fresh-codex-open-red.log` | Confirms exact `Native authentication required; configure this CLI on the User VM` response after successful recovery/recapture. |
 | `restored-pi-binding-red.log`, `restored-pi-delete-red.log` | Two identity cases and the targeted deletion case respectively failed before their source fixes. |
 | `restored-pi-binding-final.log` | All 14 native-history cases passed, no skips, 3.09 s. |
 | `ordinary-reopen-green-1.log` | All five selected previous failures passed, 15 unrelated cases excluded by filter, 157.18 s. Actual `history.entries` assertions and explicit fresh Codex configuration replace the weaker checks. |
 
-Final frozen-source ordinary composition run: **pending**. The integrating agent
-must record the result of `ordinary-restore-full-final.log` (20 cases, both pinned
-native tools enabled) before claiming that the entire composition suite passes.
+Final frozen-source ordinary composition run at `dac2e37`: **20 cases passed,
+zero skips, 350.29 seconds**, with both pinned native tools enabled and build
+passing (`ordinary-restore-composition-final.log`). The two composition log names
+above are byte-identical private aliases; the original logs remain preserved.
+Later account-identity and approval-UI review repairs require their own affected
+checks and final integrated acceptance; this result does not cover those changes.

@@ -107,3 +107,9 @@ allocation, without a fabricated task or native subprocess. Restored native
 configuration remains inert; configure current providers/credentials separately.
 No arbitrary relocation or old-journal reset is implied. Synthetic stopped-Host
 loss tests are not real physical disk-failure or provider-continuation evidence.
+
+The account approval panel shows each task's native session IDs and each
+consistency group's shared dependency roles/keys before the approval button.
+Values come from the approved-plan preview and render as plain text. Cross-scope
+shared dependency keys remain masked by the server; the Browser does not derive
+private paths or hidden account bindings.

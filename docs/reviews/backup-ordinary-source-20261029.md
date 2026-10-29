@@ -124,4 +124,4 @@ Fresh Codex's open error was the expected missing-live-configuration gate;
 explicit new offline fixture configuration then allowed the original native
 history to reopen. Earlier broad-frame neighbor checks are not accepted native
 reopen evidence. The [restore/daily-worker report](backup-ordinary-restore-20261029.md)
-retains the full 15-pass/5-fail run, all corrections and the final 20-case run gate.
+retains the complete 15-pass/5-fail run, all corrections and the final 20-case run gate.
