@@ -58,7 +58,7 @@ the audit; a new ordinary writer cancels it. The pass shares a deadline of at mo
 30 seconds (or the configured shorter capture timeout), and failed attempts are
 rate limited. No browser opening ceremony is required for a cold existing source.
 A closed audit still does not qualify the source by itself: actual native closure,
-physical exclusion, full scope inventory and initial sealed capture remain required.
+physical exclusion, complete scope inventory and initial sealed capture remain required.
 
 Paths continue to come from existing Host settings and native configuration:
 workspace, task data, Pi sessions and effective agent directory, Codex home and its
@@ -122,3 +122,23 @@ unknown or changed endpoint is retained and startup fails visibly. A recorded
 staging socket left before public linking can likewise be reclaimed; an unknown
 orphan stage is never swept. These facts prove endpoint ownership, not source
 writer consistency or backup readiness.
+
+
+## Restore destination prerequisites
+
+For loss of the last task/history with original root identities intact, keep the
+existing source authority and evidence. An authorized missing-only restore can
+qualify the destination independently of source completeness; it does not clear
+old operations or declare the source protected. Current graph/configuration,
+scoped administrator policy, actual producer lifetime and physical exclusion must
+still validate. Replacement additionally requires its fresh source safety point.
+
+For complete source-root loss, explicitly configure a new fresh authority and
+absent roots at the same original owned paths; retain the old authority tree as
+historical evidence. Fresh allocation must happen before ordinary Host scope
+initialization. A used/missing/corrupt custody allocation is not fresh. The native
+adapters still require the checkpoint's original mapping, and runtime credentials
+are reconfigured independently. After approved publication the Host performs an
+owned read audit and captures a real complete point without opening a viewer.
+See [destination authority](../development/restore-destination-authority.md).
+Installation and live recovery remain separately authorized operator actions.

@@ -108,7 +108,7 @@ A future index requires a separately reviewed, crash-tested protocol:
    an inconsistent or missing index fails closed, rather than forgetting writers.
 4. Migrate an existing ledger through an explicit complete audit, keeping original
    files. Define and test archive-integrity revalidation and cache invalidation
-   before claiming reduced steady-state cost; startup/full-audit cost may remain
+   before claiming reduced steady-state cost; startup/complete-audit cost may remain
    linear. An index or checksum summary alone is not a new known-source issuer.
 
 That protocol is a proposal, not an implemented scalability guarantee. No
