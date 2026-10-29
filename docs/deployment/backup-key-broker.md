@@ -1,11 +1,12 @@
 # Independent backup key broker candidate
 
-**2026-10-28 boundary correction:** a separate local service UID does not isolate
-keys from an executor retaining source-Host root access. Existing native
-permissions remain required; the candidate's mandatory namespace restriction is
-not an accepted prerequisite. Key-authority placement and capture qualification
-need redesign before activation. See the
-[permission reconciliation](../reviews/backup-native-permission-20261028.md).
+**Current decision (2026-10-29):** [trust existing Host root and preserve native permissions](../reviews/backup-trusted-root-20261029.md).
+Independent key custody remains, but a separate VM/root-proof authority or managed
+namespace is not required. Normal interfaces/logs must not expose keys; current
+application administrator and scope authorization remain mandatory. Repository
+readiness and existing-point extraction must be separate from source capture
+qualification. The sections marked experimental retain the prior implementation
+and tests, not current activation prerequisites.
 
 Server #132 supplements the encrypted repository with a local service that owns
 its keys. This document describes source and deployment prerequisites; it does

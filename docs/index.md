@@ -5,7 +5,9 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
-- Backup design correction: [preserve native permissions; rejected prerequisite,
+- Backup accepted trust boundary: [trust Host root, preserve permissions, separate repository readiness from source consistency](reviews/backup-trusted-root-20261029.md). Implementation and final acceptance remain open.
+
+- Historical backup design correction: [preserve native permissions; rejected prerequisite,
   retained requirements and failed canonical evidence](reviews/backup-native-permission-20261028.md).
 
 - Backup retention candidate: [administrator preview, pins and crash reconciliation](deployment/backup-retention.md), Server #139. Source tests do not activate production cleanup.

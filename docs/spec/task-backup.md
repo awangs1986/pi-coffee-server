@@ -1,11 +1,14 @@
 # Task backup and recovery
 
-**2026-10-28 owner decision:** preserve existing native permissions. The
-candidate's mandatory managed execution profile conflicts with that requirement
-and must not be used as the feature's required source-protection architecture.
-The backup trust/capture boundary needs redesign; the feature remains a draft.
-See [requirements, source evidence and actual failed canonical check](../reviews/backup-native-permission-20261028.md).
-Storage, scheduling and recovery component passes do not waive this gap.
+**2026-10-29 owner decision:** preserve existing native permissions and trust
+existing Host root. Version one covers accidental deletion, corruption and
+source-disk loss; it does not defend against Host-root execution. No mandatory
+namespace/no-sudo/no-network profile or external root-proof key authority is
+required. Normal interfaces must not disclose keys; application administrator,
+account authorization and complete source consistency remain mandatory.
+See the [accepted trust boundary and remaining implementation gates](../reviews/backup-trusted-root-20261029.md)
+and [historical permission review / actual failed canonical check](../reviews/backup-native-permission-20261028.md).
+Storage, scheduling and recovery component passes do not close source integration.
 
 The accepted complete product contract is [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130), with implementation slices #131–#134 and #138–#141. The candidate implementation covers source checkpoints, the encrypted repository, Pi/Codex recovery, scheduling, retention and account plans. The reviewed work is on `feat/backup-pi-codex-130` and its normally merged implementation branches, initially based on `33306539b6f5d86ae67178f4361f7c82bd6d5a9a`, with current GitHub/Gitea main `21f856b60c99b1c06bb312743ba69a4a9f69868c` normally merged into reviewed candidate `3bbf0e6`. Source behavior and isolated acceptance do not establish installed daily protection or complete production coverage. Final integrated acceptance remains #141.
 
@@ -14,6 +17,21 @@ The accepted complete product contract is [Server #130](https://github.com/awang
 A source checkpoint is immutable task material captured at a verified consistency-group cut. A repository backup job later saves this material. Job completion does not change `captureAt`. Host and active Agent tasks keep running; new writers revoke capture before side effects. Busy groups retain their previous sealed point. No point means unprotected, and point age over 24 hours is stale.
 
 Host owns `BackupCoordinator`; native source layout is encapsulated by versioned `NativeRecoveryAdapter`. Trusted local jobs consume `sealedCheckpoint`, which validates the seal and streams object hashes. Browser status reads cached bounded metadata, without starting native processes or hashing the whole repository on every refresh. A seal is source-capture evidence; it does not claim repository integrity or a completed restore drill.
+
+## Accepted ordinary-permission architecture (implementation pending)
+
+Repository readiness and access to existing sealed points are independent of
+live source qualification. Exact selected checkpoint IDs, immutable manifests,
+complete members, hashes, current actor/scope authority and original capture ages
+remain required. Restore publication independently requires an approved plan and
+destination writer exclusion.
+
+Source qualification requires actual writer admission and descendant lifetime
+leases plus an explicit, verified producer/delegation topology. Root trust does
+not prove a cut; an empty FD scan, matching hashes or a Boolean cannot certify
+coverage. Unknown source writers remain visible without restricting their native
+execution. First and later Pi/Codex points and restoration must pass with existing
+permissions before this feature is complete. See the [decision](../reviews/backup-trusted-root-20261029.md).
 
 ## Existing experimental source-capture boundary
 
@@ -43,7 +61,7 @@ The existing experimental configuration requires an explicit owned private Pi ag
 - Publication first acquires the task lifecycle lane and an actual physical exclusive group lease. Registry, every staged/target preimage and native merge conflicts are checked without changing live sources. Only then are the durable group gate and publication intent recorded; MISHU authority retirement and display/index invalidation run under that same exact operation/digest/lease capability before native and registry writes. A rejected untouched plan can be revised or cancelled without freezing healthy neighboring writers. Once intent or side effects exist, the gate remains durable after process/kernel-lease death until the same approved job rolls forward. Pending startup reads preserve authoritative registry preimages; generic writers cannot impersonate that capability.
 - Pi tasks sharing a native parent bind shared material to one approved publisher. A selected missing task may retain a healthy registered neighbor's parent only with exact current registry/native-chain ownership and inode/content witnesses, rechecked at publication. An unknown file with identical bytes is still a conflict.
 - Old-source cold enrollment and its concrete private maintenance wiring implement verified frozen-source capture, typed relocation, repository-read verification and approved account publication. An operator may supply an existing immutable sealed export or a fixed Pi/Codex source profile in a real read-only legacy namespace view; the software does not create snapshots or retire active production execution itself. Unknown roots remain unavailable. A marker, hash or caller-supplied Boolean cannot establish exclusive writer control. Real read-only block-backed and distinct-identity installation acceptance remains unverified. See [cold enrollment](../deployment/cold-legacy-enrollment.md).
-- #141 must reconcile all 45 stories and ticket criteria, canonical checks, actual Browser/Host paths, test audit, independent review and fresh checkout evidence. Real distinct-UID installation, real read-only snapshot/device qualification and provider continuation are separately unverified; isolated synthetic evidence is never promoted to those claims. Production activation/recovery requires separate authorization.
+- #141 must reconcile all 45 stories and ticket criteria, canonical checks, actual Browser/Host paths, test audit, independent review and fresh checkout evidence. Distinct-UID installation and read-only snapshot/device qualification remain unverified historical managed-profile tests, not prerequisites of the accepted trusted-root design. Ordinary-permission source qualification and provider continuation are separately unverified; isolated synthetic evidence is never promoted to those claims. Production activation/recovery requires separate authorization.
 
 Claude, Cursor and Grok remain explicitly deferred/excluded. Their current execution implementations remain available; their writers/dependencies cannot be ignored when they affect an in-scope source.
 
