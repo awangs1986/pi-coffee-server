@@ -74,3 +74,19 @@ try{process.send({done:await runner.tick()});}catch(error){process.send({failed:
   const own=JSON.stringify(await runner.status('alice'));expect(own).not.toContain('bob-task');expect(own).not.toContain(oldBob.checkpointId!);expect((await runner.status('alice')).runs[0].attempts).toHaveLength(1);
  }finally{for(const child of children)if(child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');await once(child,'exit');}await rm(root,{recursive:true,force:true});}
 },120000);
+
+it('keeps an older ambiguous in-flight attempt uncertain when no repository job can reconcile its original selection',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'legacy-dispatch-'));
+ try{
+  const time=Date.parse('2026-10-29T08:00:00Z');
+  const coordinator=new BackupCoordinator({root:join(root,'points'),now:()=>time,adapter:{version:'legacy-dispatch-fixture-v1',resolve:async(scope,taskId)=>({groupId:'fixture',fence:new WriterAdmissionFence({writerClasses:['fixture'],uncoveredWriters:[],probe:async()=>({known:true})}),members:[{scope,taskId,engine:'pi',nativeBindings:[taskId]}],sources:(['workspace','native','registry','task-data'] as const).map(role=>({id:role,recoveryKey:role,role,data:Buffer.from('available newer material')})),validate:async()=>{}})}});
+  await coordinator.capture('alice','task','pi');
+  const repository=new BackupRepository({root:join(root,'repository'),coordinator,now:()=>time}),runner=new BackupJobRunner({root:join(root,'schedule'),repository,coordinator,now:()=>time});
+  await runner.configure({revision:'legacy-v1',scopes:['alice']});await runner.updateInventory('alice',[{taskId:'task',engine:'pi'}]);
+  // Version-1 on-disk input produced before durable checkpoint selections existed.
+  // Its absence of a selection cannot prove a prior transport call did not run.
+  await writeFile(join(root,'schedule','state.json'),JSON.stringify({schema:1,runs:[{id:'legacy-v1:2026-10-29',date:'2026-10-29',revision:'legacy-v1',scopes:['alice'],startedAt:new Date(time).toISOString(),state:'uncertain',attempts:[{number:1,id:randomUUID(),startedAt:new Date(time).toISOString(),state:'uncertain'}]}],alerts:[]}),{mode:0o600});
+  expect(await runner.tick()).toMatchObject({dispatched:false,run:{state:'uncertain',attempts:[{number:1,errorCode:'operation_uncertain'}]}});
+  expect((await runner.status('alice')).runs[0].attempts).toHaveLength(1);expect(await repository.jobs()).toEqual([]);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
