@@ -6,11 +6,14 @@ import {WebSocket} from 'ws';
 import {BackupRepositoryClient} from '../src/host/backup-repository-client.js';
 import {randomUUID} from 'node:crypto';
 import {codexFixture} from './codex-recovery-fixture.js';
+import {Workspaces} from '../src/host/workspaces.js';
+import {SessionManager} from '@earendil-works/pi-coding-agent';
 async function identity(pid:number){const raw=await readFile('/proc/'+pid+'/stat','utf8');return {pid,uid:process.getuid!(),boot:(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]};}
-async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode:'fresh'|'existing'='fresh',codex=false){
+async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode:'fresh'|'existing'='fresh',codex=false,coldPi=false){
  const native=codex?await codexFixture():undefined;
  const root=await mkdtemp('/tmp/ordinary-main-'),data=native?.root??join(root,'data'),control=join(root,'control'),disk=join(root,'disk'),keys=join(root,'keys');for(const dir of [control,disk,keys])await mkdir(dir,{mode:0o700});
  if(existing){await mkdir(data,{mode:0o700,recursive:true});await writeFile(join(data,'preserve'),'existing synthetic source');}
+ if(coldPi){const store=new Workspaces(join(data,'work','projects'));const task=await store.createChatConversation('native-pi-task','pi'),session=SessionManager.create(task.cwd,join(data,'sessions'));session.appendMessage({role:'user',content:'Cold synthetic Pi history',timestamp:1});await store.setNativeBinding(task.id,{state:'bound',id:session.getSessionId()});}
  const keySocket=join(root,'key.sock'),sourceSocket=join(root,'source.sock'),keyConfig=join(control,'key.json'),keyPolicy=join(control,'key-policy.json'),sourcePolicy=join(control,'source-policy.json'),profile=join(control,'ordinary.json'),client=join(control,'client.json'),gate=join(control,'start'),preload=join(control,'gate.mjs');
  const policy={schema:1,revision:1,administrator:'awangs',scopes:[LEGACY_BACKUP_SCOPE],actors:{awangs:{role:'administrator',scopes:[LEGACY_BACKUP_SCOPE]}},hostClients:[] as Awaited<ReturnType<typeof identity>>[]};
  await writeFile(keyPolicy,JSON.stringify(policy),{mode:0o600});const command=[process.execPath,resolve('dist/src/backup-key-worker.js'),keyConfig];
@@ -119,3 +122,16 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_
   const restored=join(f.root,'codex-restored');await f.client.extract(saved.body.id,restored);const point=join(restored,first.body.checkpointId),manifest=JSON.parse(await readFile(join(point,'manifest.json'),'utf8'));const history=await Promise.all(manifest.sources.filter((source:any)=>source.recoveryKey.startsWith('codex/rollout/')).map((source:any)=>readFile(join(point,'objects',source.id)).then(data=>data.toString('utf8'))));expect(history.some(text=>text.includes('The ordinary question')&&text.includes('The ordinary answer'))).toBe(true);
  }finally{socket?.terminate();await f.stop();}
 },90000);
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('a cold existing Pi source obtains its first checkpoint without any viewer, prompt or manual native open',async()=>{
+ const f=await fixture(false,true,false,'existing',false,true);try{
+  await expect.poll(async()=> (await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state,{timeout:20000,interval:1000}).toBe('protected');
+  const state=JSON.parse(await readFile(join(f.control,'authority','enrollment','state.json'),'utf8'));expect(state.enrollment.handoffDigest).toMatch(/^[a-f0-9]{64}$/);expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
+ }finally{await f.stop();}
+},45000);
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_ROOT)('a cold existing Codex source obtains its first checkpoint without any viewer, prompt or manual native open',async()=>{
+ const f=await fixture(false,true,false,'existing',true);try{
+  await expect.poll(async()=> (await f.post('/api/backup',{action:'capture',taskId:'codex-task'})).body.state,{timeout:20000,interval:1000}).toBe('protected');
+  const state=JSON.parse(await readFile(join(f.control,'authority','enrollment','state.json'),'utf8'));expect(state.enrollment.handoffDigest).toMatch(/^[a-f0-9]{64}$/);expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
+ }finally{await f.stop();}
+},45000);
