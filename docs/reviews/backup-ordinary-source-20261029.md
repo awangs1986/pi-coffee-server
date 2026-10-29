@@ -81,3 +81,37 @@ Final ordinary-permission capture → repository → native restore, canonical
 checkout remain required. All active tickets remain open and PR #142 remains
 draft. Component success never becomes an assertion that daily protection is
 installed or that deployment has completed.
+
+## Final-quality findings and repair evidence
+
+The first final-quality actual-main tracer found a real circular prerequisite:
+after the last task/history was lost and the synthetic Host restarted, restore
+planning required current source history. A genuinely fresh empty Pi destination
+could plan and approve but failed publication with unestablished custody. Earlier
+busy-destination refusal and repository extraction did not cover these cases.
+The dedicated destination repair is `d493cf2`; its
+[contract and focused evidence](../development/restore-destination-authority.md)
+preserve source proof and pending operations independently. Build and the focused
+35-test regression passed; expanded eight boundary tests and three killed/restored
+mutants are separately recorded. These counts are not one combined run.
+
+The subsequent actual-main 20-case run reported 15 passes and five failures.
+All six neighbor/last-task/fresh-destination Pi/Codex cases reached publication
+and a cold source capture before opening a viewer. Subsequent Pi reopening
+exposed an original/native-ID selection problem, and fresh Codex reopening
+remained under diagnosis. One refusal-message assertion also needed reconciliation.
+The native reopen failures remain acceptance blockers until corrected and rerun;
+file restoration and cold capture alone are not complete native acceptance.
+
+A fixed-role scheduler now has an actual successful dispatch tracer: authenticated
+ordinary Host inventory and exact sealed point, delegated key worker, real Restic
+repository-read verification and extracted history. Earlier launcher heartbeat
+proof alone was insufficient. Its initial passing log also contains a separate
+intentional fresh-Codex RED; it is not a passing whole-suite log.
+
+The standalone real Chromium/Web/Host/Restic walk at `2c1c48c` passed explicit
+approval/publication, preserved neighboring data, retention and continued the
+same running job after the entire Chromium process exited. Source qualification
+in that Browser fixture remains synthetic. The original checkpoint/history bytes
+were read back, and console errors/native starts were absent. The final native
+main, canonical, fresh clone and independent review gates remain open.

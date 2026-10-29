@@ -28,6 +28,18 @@ complete members, hashes, current actor/scope authority and original capture age
 remain required. Restore publication independently requires an approved plan and
 destination writer exclusion.
 
+A missing source history is not a prerequisite for restoring that history.
+Ordinary Pi/Codex planning and publication now use a separate
+[restore destination capability](../development/restore-destination-authority.md):
+current application authority, exact configured scope/root/producer identities,
+unchanged journal and real physical exclusion remain mandatory. Tagged dead-local
+operations remain recorded, not cleared by recovery. Fresh destination allocation
+can prove a never-launched custody directory without fabricating a native
+observation. Replacement still needs a fresh source safety point. Original path
+mapping, approved revision/digest, conflict preimages and the durable publication
+gate remain required. Restoration then returns to actual native auditing and
+source capture; destination qualification never serves as a source-cut claim.
+
 Source qualification requires actual writer admission and descendant lifetime
 leases plus an explicit, verified producer/delegation topology. Root trust does
 not prove a cut; an empty FD scan, matching hashes or a Boolean cannot certify
