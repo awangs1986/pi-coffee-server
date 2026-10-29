@@ -97,6 +97,9 @@ const LIST_PAGE_SIZE = 100;
 /** Safety stop for a server that keeps handing out cursors (10k threads). */
 const MAX_LIST_PAGES = 100;
 
+const codexWriterProvenance=new WeakMap<object,NativeWriterCustody>();
+export function codexFactoryWriterCustody(factory:unknown){return typeof factory==='object'&&factory!==null?codexWriterProvenance.get(factory):undefined;}
+
 export class CodexSessionFactory implements PiSessionFactory {
   private readonly options: CodexSessionFactoryOptions;
   private server?: CodexAppServer;
@@ -117,7 +120,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   private unsubscribeAccount?: () => void;
 
   constructor(options: CodexSessionFactoryOptions) {
-    this.options = options.preparation?{...options,sandbox:'read-only',approvalPolicy:'never'}:options;
+    this.options = options.preparation?{...options,sandbox:'read-only',approvalPolicy:'never'}:{...options};if(new.target===CodexSessionFactory&&options.nativeCustody)codexWriterProvenance.set(this,options.nativeCustody);
     this.mappingFile = options.mappingFile ?? join(options.cwd, ".pi-coffee", "codex-threads.json");
   }
 

@@ -30,6 +30,9 @@ import type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing, AgentModels as PiModels, AgentSession as PiSession, AgentSessionFactory as PiSessionFactory } from "./agent-adapter.js";
 
 
+const piWriterProvenance=new WeakMap<object,{custody:NativeWriterCustody;fence?:WriterAdmissionFence}>();
+export function piFactoryWriterBinding(factory:unknown){return typeof factory==='object'&&factory!==null?piWriterProvenance.get(factory):undefined;}
+
 export interface RpcPiSessionFactoryOptions {
   writerFence?:WriterAdmissionFence;
   nativeCustody?:NativeWriterCustody;
@@ -101,7 +104,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
 
   constructor(options: RpcPiSessionFactoryOptions = {}) {
     if(options.allowedModels && (options.allowedModels.length===0 || options.allowedModels.some(id=>!/^([^\s/]+)\/(\S+)$/.test(id))))throw new Error("Pi allowedModels must contain exact provider/model IDs");
-    this.options = options;
+    this.options = {...options};if(new.target===RpcPiSessionFactory&&options.nativeCustody)piWriterProvenance.set(this,Object.freeze({custody:options.nativeCustody,fence:options.writerFence}));
   }
 
   private async managedClient(options:ConstructorParameters<typeof RpcClient>[0]):Promise<RpcClient>{
