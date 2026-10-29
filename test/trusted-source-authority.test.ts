@@ -18,7 +18,7 @@ async function fixture(){
  const open=()=>TrustedSourceAuthority.open({root:join(control,'enrollment'),configuration:config,graph,fence,authorize:async actor=>actor==='awangs'});
  const authority=await open();
  const native=async()=>{const launch=await custody.prepare({executable:process.execPath,args:['-e','process.exit(0)']});const child=spawn(process.execPath,[launch.cliPath],{env:{...process.env,...launch.env},stdio:'ignore'});expect((await once(child,'exit'))[0]).toBe(0);};
- return {root,source,config,graph,authority,open,native,fence,cleanup:async()=>{await authority.close();await rm(root,{recursive:true,force:true});}};
+ return {root,source,config,graph,authority,open,native,fence,custody,cleanup:async()=>{await authority.close();await rm(root,{recursive:true,force:true});}};
 }
 
 test('fresh enrolled ordinary writers produce an initial and later cold cut without restricting execution',async()=>{
@@ -45,7 +45,7 @@ test('a delegated delayed writer stays admitted through its callback and an inte
    const worker=spawn(process.execPath,['-e',`const fs=require('node:fs');process.stdout.write('ready');const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){fs.writeFileSync(${JSON.stringify(join(f.source,'remote-result'))},'complete');clearInterval(t);}},10);setTimeout(()=>process.exit(1),5000).unref();`],{stdio:['ignore','pipe','ignore']});
    const done=once(worker,'exit');await once(worker.stdout!,'data');const launcher=spawn(process.execPath,['-e','process.exit(0)'],{stdio:'ignore'});expect((await once(launcher,'exit'))[0]).toBe(0);started();expect((await done)[0]).toBe(0);
   });
-  await ready;expect((await f.authority.qualification()).state).toBe('active');await expect(f.authority.capture()).rejects.toThrow();await writeFile(release,'finish');await delegated;
+  await ready;expect((await f.authority.qualification()).state).toBe('active');await expect(f.authority.capture()).rejects.toMatchObject({code:'writers_active'});await writeFile(release,'finish');await delegated;
   const first=await f.authority.capture();expect(await readFile(join(f.source,'remote-result'),'utf8')).toBe('complete');first.lease.release();
   let secondStarted!:()=>void,resume!:()=>void;const secondReady=new Promise<void>(resolve=>secondStarted=resolve),late=new Promise<void>(resolve=>resume=resolve);
   const interrupted=f.authority.runDelegated('runner','interrupted-callback',async()=>{secondStarted();await late;await writeFile(join(f.source,'remote-result'),'late');}).catch(error=>error);
@@ -82,13 +82,28 @@ test('enrollment refuses existing roots, unauthorized actors and caller-supplied
  }finally{await f.cleanup();}
 });
 
-test('a competing authority cannot claim the same enrollment and an unfinished local operation is not forgotten',async()=>{
+test('a competing authority cannot claim the same enrollment and an uncertain delegated operation is not forgotten',async()=>{
  const f=await fixture();let reopened:TrustedSourceAuthority|undefined;try{
   await f.authority.enrollFresh('awangs',[{id:'host',pid:process.pid},{id:'runner',pid:process.pid}]);await f.authority.runWriter('host','bootstrap',f.native);await expect(f.open()).rejects.toThrow();
-  await expect(f.authority.runWriter('host','uncertain-write',async()=>{await writeFile(join(f.source,'note'),'partial');throw Error('operation completion uncertain');})).rejects.toThrow('completion uncertain');
+  await expect(f.authority.runDelegated('runner','uncertain-write',async()=>{await writeFile(join(f.source,'note'),'partial');throw Error('operation completion uncertain');})).rejects.toThrow('completion uncertain');
   expect((await f.authority.qualification()).state).toBe('unknown');await expect(f.authority.capture()).rejects.toThrow();await f.authority.close();reopened=await f.open();await expect(reopened.capture()).rejects.toThrow();expect(await readFile(join(f.source,'note'),'utf8')).toBe('partial');
  }finally{await reopened?.close();await f.cleanup();}
 });
+
+test('a settled local request error releases logical admission while actual custody descendants continue to block capture',async()=>{
+ const f=await fixture(),release=join(f.root,'release-child');let child:ReturnType<typeof spawn>|undefined,exited:Promise<unknown>|undefined;
+ try{
+  await f.authority.enrollFresh('awangs',[{id:'host',pid:process.pid},{id:'runner',pid:process.pid}]);await f.authority.runWriter('host','bootstrap',f.native);
+  await expect(f.authority.runWriter('host','ordinary-error',async()=>{throw Error('preflight refused');})).rejects.toThrow('preflight refused');
+  const idle=await f.authority.capture();idle.lease.assertValid();idle.lease.release();
+  await expect(f.authority.runWriter('host','failed-request-with-child',async()=>{
+   const launch=await f.custody.prepare({executable:process.execPath,args:['-e',`const fs=require('node:fs');process.stdout.write('ready');const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){fs.writeFileSync(${JSON.stringify(join(f.source,'late'))},'done');clearInterval(t);}},10);setTimeout(()=>process.exit(1),5000).unref();`]});
+   child=spawn(process.execPath,[launch.cliPath],{env:{...process.env,...launch.env},stdio:['ignore','pipe','ignore']});exited=once(child,'exit');await once(child.stdout!,'data');throw Error('local request failed');
+  })).rejects.toThrow('local request failed');
+  await expect(f.authority.capture()).rejects.toMatchObject({code:'writers_active'});await writeFile(release,'finish');await exited;
+  const settled=await f.authority.capture();expect(await readFile(join(f.source,'late'),'utf8')).toBe('done');settled.lease.release();
+ }finally{await writeFile(release,'finish');await exited;await f.cleanup();}
+},15000);
 
 test('an external writer observation invalidates before persistence and cannot be cleared by restart or a clean scan',async()=>{
  const f=await fixture();let reopened:TrustedSourceAuthority|undefined;try{

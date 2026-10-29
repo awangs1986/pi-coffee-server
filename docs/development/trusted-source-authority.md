@@ -31,16 +31,35 @@ An empty process/FD scan, an ownership marker or a caller's `known:true` cannot
 establish coverage. Deployment with an unaccounted source-writing daemon, shared
 mount or remote callback remains unqualified.
 
-The initial slice supports **fresh allocation only**. `enrollFresh` authenticates
-the administrator, requires every target root to be absent, then creates and
-records those directories. Existing roots, including empty ones or directories
-with old provenance markers, are rejected and preserved. A partial allocation
-failure retains files and does not create a qualified enrollment. There is no
-adopt-existing, clear-unknown, operator-Boolean or fake cold-export shortcut.
-Verified legacy cold enrollment and producer requalification remain unimplemented.
-Every reopening of a persisted enrollment is unqualified in this slice, including
-a clean restart. This prevents revival of prior coverage after journal failures;
-it is an explicit unfinished operation, not an acceptable final backup lifecycle.
+`enrollFresh` still creates only absent roots and preserves any existing source.
+Existing data uses `enrollExisting`, and persisted enrollment uses `requalify`.
+`qualifyExisting` chooses between these two from the private journal. These are
+real cold-enrollment operations, not ownership markers or operator exemptions.
+They require one explicitly configured cooperating Host, the actual ordinary
+native lifecycle handoff, complete native closure materialization, and a newly
+sealed checkpoint under the exact held physical cut before the enrollment is
+committed. See [native lifecycle evidence](native-source-handoff.md).
+
+Normal native activity supplies the receipt; backup never launches, resumes or
+stops sessions to obtain one. Each nonempty Pi/Codex store needs an observed
+binding in its complete current inventory, not a forced reopen of every archived
+task. Extra producer authorities remain unknown until their own actual handoff
+adapters exist. Source directories retain their permissions (including owned
+0755 directories); group/world writable source roots are refused. Private
+configuration/journal/checkpoint controls remain private, with no chmod/migration.
+
+A reopened journal remains unknown until requalification. Only the explicit
+`authority-reopened` issue may be cleared, after exact config/graph/root continuity
+and the new complete cut. Pending local/delegated operations, journal failures,
+unregistered producers and unknown delegation cannot be blanket cleared by a
+native receipt. A never-enrolled but otherwise clean Host may also restart and
+later enroll. No capture or root proof is visible outside the private asynchronous
+provisional context while enrollment is in progress.
+
+This protocol is currently **same-boot Host restart only**. Native custody rejects
+old-boot receipts, even after a new normal lifecycle. Machine reboot/custody history
+reconciliation, crash-history recovery and additional producer handoffs remain
+unimplemented; old receipts must not be erased to manufacture qualification.
 
 ## Public integration contract
 
@@ -80,8 +99,10 @@ begin when the journal is healthy. `runDelegated` requires a registered
 delegation-broker integration whose returned promise covers the actual remote or
 daemon job through its completion callback, not merely command acceptance, SSH
 exit or queue submission. Native subreaper custody remains independently required
-for local native descendants. A failed callback leaves a durable unresolved
-operation; timeout, authority restart or missing completion does not clear it.
+for local native descendants. A failed delegated callback leaves a durable
+unresolved operation; timeout, authority restart or missing completion does not
+clear it. A settled local request error ends its logical admission, while actual
+native descendants independently continue blocking capture through custody.
 This slice offers no remote job reconciliation or SSH execution implementation.
 
 Unregistered or identity-lost producers still run through the admission API, but
@@ -97,7 +118,9 @@ that treats a later empty scan as proof.
 
 `qualification()` reports enrollment/admission state, not proof of a cold native
 runtime. `capture()` additionally acquires the real physical cut and returns
-`{lease,evidence}`. An empty or unknown custody directory still refuses capture.
+`{lease,evidence}`. Tracked active journal operations report `writers_active` (waiting); saved or
+unowned pending operations report `writers_unknown`. An empty or unknown custody
+directory still refuses capture.
 Use `lease.assertValid()` throughout source materialization and immediately before
 atomic seal publication; always release it. Evidence contains the enrollment ID,
 coverage revision, graph/configuration digests and named operating assumptions,
@@ -120,6 +143,23 @@ canonical existing paths, same-device descendants and symlink rejection. It does
 not authorize account access, infer task ownership, validate native layouts or
 permit omitting a shared/deferred dependency from the recovery adapter's graph.
 
+`createNativeCoordinator({producer,scopes,checkpointRoot})` constructs the actual
+Pi/Codex/combined/grouped recovery adapters on each cut, using the same bound
+fence as Workspaces and native factories. The scope descriptors are trusted main
+configuration. The graph must include every configured scope, including an empty
+legacy default if main constructs it. Every configured root must cover an actual
+validated native/workspace source; every actual source must be under an enrolled
+canonical same-device root. Resolved separate SQLite roots and sibling Chat/task
+roots must be included. Root inventory is still not user authorization.
+
+Normal Host initialization must finish `Workspaces.list()`/startup reconciliation
+before requesting enrollment. That reconciliation is a real fenced writer, and
+running it inside a cut correctly revokes the cut. Enrollment does not bypass the
+fence or silently run the normal initialization under a fake read-only callback.
+The provisional bound lease borrows the already held physical cut; it never
+reacquires EX or permits recovery publication. A newly admitted writer revokes
+this cut before any source effect, and no enrollment is committed afterward.
+
 ## Evidence scope
 
 Focused tests exercise the public authority/admission/capture interface with real
@@ -127,8 +167,14 @@ kernel leases, an ordinary native custodian and a separate delayed writer proces
 They cover initial/later coordinator-sealed checkpoints, synchronous invalidation, detached delegated
 completion, pending operations across reopen, producer loss, root/config/graph
 drift, unregistered producers, concurrent authority refusal and invalid enrollment.
-These are synthetic supported-topology observations. They do not prove actual
-production producer inventory, a remote runner lifecycle, native feature parity,
-actual native checkpoint materialization, Restic recovery or installed daily scheduling.
-The ordinary Pi/Codex custody tests belong to the separate physical-custody slice;
-end-to-end authority composition remains required before #131 or #141 can close.
+`test/trusted-existing-enrollment.test.ts` additionally runs real offline Pi and
+pinned Codex native history/resume/normal-close lifecycles, actual complete
+checkpoint materialization, later ordinary writes/cuts, passive same-boot Host
+restart, and a joint Pi/Codex cut across two synthetic scopes. It rejects no-op or
+forged handoffs, missing stores/scopes, extra producers, graph drift, interrupted
+operations and new writes during enrollment. No provider/model round is submitted.
+
+These synthetic supported-topology observations do not prove production producer
+inventory, machine-reboot reconciliation, remote runner lifecycle, all native
+feature parity, Restic recovery or installed daily scheduling. Main/service/key
+integration and full acceptance remain required before #130/#131/#141 can close.
