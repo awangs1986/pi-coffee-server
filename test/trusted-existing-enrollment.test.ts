@@ -16,12 +16,12 @@ import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 
 async function existingPi(){
  const source=await mkdtemp(join(tmpdir(),'existing-pi-source-')),control=await mkdtemp(join(tmpdir(),'existing-pi-control-')),sessions=join(source,'sessions'),agent=join(source,'agent');
- await mkdir(sessions,{mode:0o700});await mkdir(agent,{mode:0o700});const workspaces=new Workspaces(join(source,'projects'));const task=await workspaces.createChatConversation('original-task');
+ const lock=join(control,'group.lock'),custody=new NativeWriterCustody(join(control,'custody'),{lock}),physical=new PhysicalWriterFence({lock,custody});
+ await mkdir(sessions,{mode:0o700});await mkdir(agent,{mode:0o700});const workspaces=new Workspaces(join(source,'projects'),{gitCommandCustody:custody});const task=await workspaces.createChatConversation('original-task');
  const stored=SessionManager.create(task.cwd,sessions,{id:task.id});stored.appendMessage({role:'user',content:'Existing native context',timestamp:1});await writeFile(join(task.cwd,'note'),'first');
  const configuration=join(control,'configuration.json'),graph=join(control,'graph.json');
  await writeFile(configuration,JSON.stringify({schema:1,groupId:'native-group',owner:{administrator:'awangs',operatingAssumption:'all-source-producers-use-admission-v1'},roots:[{id:'source',path:source}],producers:[{id:'host',kind:'host'}]}),{mode:0o600});
  await writeFile(graph,JSON.stringify({schema:1,groupId:'native-group',roots:[{id:'source',scope:'awangs',engine:'pi'}]}),{mode:0o600});
- const lock=join(control,'group.lock'),custody=new NativeWriterCustody(join(control,'custody'),{lock}),physical=new PhysicalWriterFence({lock,custody});
  const open=(selected=physical)=>TrustedSourceAuthority.open({root:join(control,'authority'),configuration,graph,fence:selected,authorize:async actor=>actor==='awangs'});
  const authority=await open(),fence=authority.writerFence('host');workspaces.setBackupWriterFence(fence);
  const factory=new RpcPiSessionFactory({cwd:task.cwd,sessionDir:sessions,agentDir:agent,nativeCustody:custody,writerFence:fence,env:{PI_OFFLINE:'1'},args:['--no-extensions','--no-skills','--no-prompt-templates','--no-themes']});
@@ -49,7 +49,7 @@ test('existing Pi is enrolled from its normal native lifecycle, produces later c
   const coordinator=f.authority.createNativeCoordinator({producer:'host',scopes:f.scopes,checkpointRoot:f.checkpointRoot});
   await f.authority.runWriter('host','normal-edit',()=>writeFile(join(f.task.cwd,'note'),'second'));
   expect((await coordinator.capture('awangs',f.task.id,'pi')).state).toBe('protected');const later=(await coordinator.sealedCheckpoint('awangs',f.task.id))!;expect(later.manifest.checkpointId).not.toBe(enrolled.checkpoint.manifest.checkpointId);
-  await f.authority.close();const custody=new NativeWriterCustody(f.custody.root,{lock:f.lock}),physical=new PhysicalWriterFence({lock:f.lock,custody});reopened=await f.open(physical);const workspaces=new Workspaces(f.workspaces.root);workspaces.setBackupWriterFence(reopened.writerFence('host'));await workspaces.list();expect((await reopened.qualification()).state).toBe('unknown');
+  await f.authority.close();const custody=new NativeWriterCustody(f.custody.root,{lock:f.lock}),physical=new PhysicalWriterFence({lock:f.lock,custody});reopened=await f.open(physical);const workspaces=new Workspaces(f.workspaces.root,{gitCommandCustody:custody});workspaces.setBackupWriterFence(reopened.writerFence('host'));await workspaces.list();expect((await reopened.qualification()).state).toBe('unknown');
   const restarted=await reopened.requalify('awangs',{producer:'host',handoff:await readNativeSourceHandoff({custody,fence:physical}),scopes:[{...f.scopes[0],workspaces}],checkpointRoot:f.checkpointRoot});
   expect(restarted.evidence.enrollmentId).not.toBe(enrolled.evidence.enrollmentId);expect((await reopened.qualification()).state).toBe('qualified');expect(await readFile(join(f.task.cwd,'note'),'utf8')).toBe('second');expect((await readdir(custody.root)).length).toBe(receiptCount);expect((await stat(f.source)).mode&0o777).toBe(0o755);
  }finally{await session?.stop();await reopened?.close();await f.cleanup();}
@@ -61,7 +61,7 @@ test.skipIf(!process.env.PI_COFFEE_TEST_CODEX_ROOT)('existing pinned Codex with 
  const roots=[{id:'projects',path:dirname(f.store.root)},{id:'native',path:f.home},{id:'sqlite',path:f.sql}],configuration=join(control,'configuration.json'),graph=join(control,'graph.json');
  await writeFile(configuration,JSON.stringify({schema:1,groupId:'codex-group',owner:{administrator:'awangs',operatingAssumption:'all-source-producers-use-admission-v1'},roots,producers:[{id:'host',kind:'host'}]}),{mode:0o600});
  await writeFile(graph,JSON.stringify({schema:1,groupId:'codex-group',roots:roots.map(root=>({id:root.id,scope:'awangs',engine:'codex'}))}),{mode:0o600});
- const open=()=>TrustedSourceAuthority.open({root:join(control,'authority'),configuration,graph,fence:physical,authorize:async actor=>actor==='awangs'}),authority=await open(),fence=authority.writerFence('host');f.store.setBackupWriterFence(fence);
+ const open=()=>TrustedSourceAuthority.open({root:join(control,'authority'),configuration,graph,fence:physical,authorize:async actor=>actor==='awangs'}),authority=await open(),fence=authority.writerFence('host');f.store=new Workspaces(f.store.root,{gitCommandCustody:custody});f.store.setBackupWriterFence(fence);await f.store.list();
  const cliPath=await realpath(join(process.env.PI_COFFEE_TEST_CODEX_ROOT!,'node_modules','.bin','codex')),factory=new CodexSessionFactory({cwd:f.task.cwd,cliPath,codexHome:f.home,nativeCustody:custody,env:{HOME:f.root},sandbox:'danger-full-access'}),before=await readFile(join(f.home,'config.toml'));
  const scopes=[{scope:'awangs',workspaces:f.store,codex:{home:f.home,sqliteHome:f.sql,version:'0.159.1'}}],checkpointRoot=join(control,'checkpoints');let session:Awaited<ReturnType<typeof factory.create>>|undefined,reopened:TrustedSourceAuthority|undefined;
  try{
@@ -129,7 +129,7 @@ test.skipIf(!process.env.PI_COFFEE_TEST_CODEX_ROOT)('two synthetic scopes join P
  const p=await existingPi(),c=await codexFixture();let session:Awaited<ReturnType<CodexSessionFactory['create']>>|undefined,factory:CodexSessionFactory|undefined;
  try{
   const config=JSON.parse(await readFile(p.configuration,'utf8'));config.roots.push({id:'codex-source',path:c.root});await writeFile(p.configuration,JSON.stringify(config));
-  const graph=JSON.parse(await readFile(p.graph,'utf8'));graph.roots.push({id:'codex-source',scope:'synthetic-two',engine:'codex'});await writeFile(p.graph,JSON.stringify(graph));c.store.setBackupWriterFence(p.fence);
+  const graph=JSON.parse(await readFile(p.graph,'utf8'));graph.roots.push({id:'codex-source',scope:'synthetic-two',engine:'codex'});await writeFile(p.graph,JSON.stringify(graph));c.store=new Workspaces(c.store.root,{gitCommandCustody:p.custody});c.store.setBackupWriterFence(p.fence);await c.store.list();
   const scopes=[...p.scopes,{scope:'synthetic-two',workspaces:c.store,codex:{home:c.home,sqliteHome:c.sql,version:'0.159.1'}}],piOnly=await normalPiHandoff(p);
   await expect(p.authority.enrollExisting('awangs',{producer:'host',handoff:piOnly,scopes,checkpointRoot:p.checkpointRoot})).rejects.toMatchObject({code:'writers_unknown'});
   const cliPath=await realpath(join(process.env.PI_COFFEE_TEST_CODEX_ROOT!,'node_modules','.bin','codex'));factory=new CodexSessionFactory({cwd:c.task.cwd,cliPath,codexHome:c.home,nativeCustody:p.custody,env:{HOME:c.root},sandbox:'danger-full-access'});const native=factory;
@@ -138,3 +138,26 @@ test.skipIf(!process.env.PI_COFFEE_TEST_CODEX_ROOT)('two synthetic scopes join P
   expect(result.checkpoint.manifest.members.map(member=>[member.scope,member.engine]).sort()).toEqual([['awangs','pi'],['synthetic-two','codex']]);expect((await p.authority.qualification()).state).toBe('qualified');
  }finally{await session?.stop();await factory?.close();await p.cleanup();await rm(c.root,{recursive:true,force:true});}
 },50000);
+
+
+test.each(['missing','different'] as const)('native enrollment refuses %s Git descendant custody even with the right writer fence',async kind=>{
+ const f=await existingPi();try{
+  const handoff=await normalPiHandoff(f),workspaces=new Workspaces(f.workspaces.root,kind==='missing'?{}:{gitCommandCustody:new NativeWriterCustody(join(f.control,'other-custody'),{lock:f.lock})});workspaces.setBackupWriterFence(f.fence);await workspaces.list();
+  await expect(f.authority.enrollExisting('awangs',{producer:'host',handoff,scopes:[{...f.scopes[0],workspaces}],checkpointRoot:f.checkpointRoot})).rejects.toThrow();expect((await f.authority.qualification()).state).toBe('unknown');
+ }finally{await f.cleanup();}
+},30000);
+
+test.each(['maxBytes','maxFiles','captureTimeoutMs'] as const)('existing enrollment respects the configured %s resource limit',async limit=>{
+ const f=await existingPi();try{
+  const handoff=await normalPiHandoff(f),options={producer:'host',handoff,scopes:f.scopes,checkpointRoot:f.checkpointRoot,[limit]:1};
+  await expect(f.authority.enrollExisting('awangs',options)).rejects.toMatchObject({code:limit==='captureTimeoutMs'?'capture_timeout':'resource_limit'});expect((await f.authority.qualification()).state).toBe('unknown');
+ }finally{await f.cleanup();}
+},30000);
+
+
+test.each(['maxBytes','maxFiles','captureTimeoutMs'] as const)('later actual native captures retain configured %s and the preceding safe point',async limit=>{
+ const f=await existingPi();try{
+  const handoff=await normalPiHandoff(f),options={producer:'host',handoff,scopes:f.scopes,checkpointRoot:f.checkpointRoot},first=await f.authority.enrollExisting('awangs',options),coordinator=f.authority.createNativeCoordinator({...options,[limit]:1});
+  const result=await coordinator.capture('awangs',f.task.id,'pi');expect(result.state).toBe('failed');expect(result.checkpointId).toBe(first.checkpoint.manifest.checkpointId);expect(result.captureAt).toBe(first.checkpoint.manifest.captureAt);expect((await coordinator.sealedCheckpoint('awangs',f.task.id))?.manifest.checkpointId).toBe(first.checkpoint.manifest.checkpointId);
+ }finally{await f.cleanup();}
+},30000);

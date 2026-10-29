@@ -172,7 +172,10 @@ export class BackupCoordinator {
     await checkedDirectory(directory);const raw=await boundedText(join(directory,'manifest.json'),32*1024*1024),seal=(await boundedText(join(directory,'seal'),128)).trim();
     if(digest(raw)!==seal)continue;const manifest:CheckpointManifest=JSON.parse(raw);
     if(manifest.schemaVersion!==1||manifest.checkpointId!==name||manifest.coverage!=='complete'||!Number.isFinite(Date.parse(manifest.captureAt))||!Array.isArray(manifest.members)||manifest.members.some(m=>!validScope(m.scope)||!safeId(m.taskId)))continue;
-    if(!Array.isArray(manifest.objects)||manifest.objects.length>(this.options.maxFiles??100000))continue;
+    // Inventory has a hard read budget independent of future capture policy.
+    // Lowering maxFiles must not hide an earlier fully sealed recovery point.
+    // The manifest is additionally bounded to 32 MiB above.
+    if(!Array.isArray(manifest.objects)||manifest.objects.length>1000000)continue;
     points.push({directory,manifest:keepObjects?manifest:{...manifest,objects:[],sources:[]}});
    }catch{/* Staging or damaged metadata cannot be a protected source checkpoint. */}
   }

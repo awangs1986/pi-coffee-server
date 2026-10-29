@@ -37,6 +37,7 @@ export interface TrustedSourceEvidence {
 }
 export interface ExistingSourceEnrollment {
  producer:string;handoff:NativeSourceHandoff;scopes:readonly TrustedNativeSourceScope[];checkpointRoot:string;
+ maxBytes?:number;maxFiles?:number;captureTimeoutMs?:number;
 }
 const boundFences=new WeakMap<WriterAdmissionFence,PhysicalWriterFence>();
 /** Exact construction provenance for native launch attestation, not a Boolean. */
@@ -44,6 +45,13 @@ export function trustedSourcePhysicalFence(fence:WriterAdmissionFence){return bo
 const invalid=()=>new BackupError('writers_unknown','Trusted source ownership or writer coverage is unqualified');
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const id=(value:unknown):value is string=>typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value);
+function captureLimits(options:Pick<ExistingSourceEnrollment,'maxBytes'|'maxFiles'|'captureTimeoutMs'>){
+ const limits={maxBytes:options.maxBytes??1024**3,maxFiles:options.maxFiles??100000,captureTimeoutMs:options.captureTimeoutMs??30000};
+ if(Object.values(limits).some(value=>!Number.isSafeInteger(value)||value<1)||limits.captureTimeoutMs>2147483647)throw new BackupError('resource_limit','Invalid capture resource limits');return limits;
+}
+async function beforeDeadline<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
+ return new Promise<T>((resolve,reject)=>{const abort=()=>reject(signal.reason);signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();void work.then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));});
+}
 const record=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 const keys=(value:Record<string,unknown>,names:string[])=>Object.keys(value).length===names.length&&Object.keys(value).every(key=>names.includes(key));
 function directory(path:string,source=false):DirectoryIdentity{
@@ -133,7 +141,7 @@ export class TrustedSourceAuthority {
  /** Trusted main may use this after passive handoff collection at startup. */
  async qualifyExisting(actor:string,options:ExistingSourceEnrollment){return this.enrollCold(actor,options,Boolean(this.state.enrollment));}
  private async enrollCold(actor:string,options:ExistingSourceEnrollment,restart:boolean):Promise<{checkpoint:SealedCheckpoint;evidence:TrustedSourceEvidence}>{
-  if(this.enrolling)throw invalid();this.enrolling=true;let lease:CaptureLease|undefined;
+  const limits=captureLimits(options);if(this.enrolling)throw invalid();this.enrolling=true;let lease:CaptureLease|undefined;const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(new BackupError('capture_timeout','Source enrollment deadline exceeded')),limits.captureTimeoutMs);
   try{
    if(!await this.options.authorize(actor))throw invalid();this.assertOwner();
    if(this.state.operations.length||this.state.issues.some(issue=>issue!=='authority-reopened')||Boolean(this.state.enrollment)!==restart||restart&&!this.state.issues.includes('authority-reopened')||this.disabled&&!this.state.issues.includes('authority-reopened'))throw invalid();
@@ -145,14 +153,14 @@ export class TrustedSourceAuthority {
    for(const root of roots)if(under(root.path,this.options.root)||under(this.options.root,root.path)||under(root.path,this.options.configuration)||under(root.path,this.options.graph)||under(root.path,options.checkpointRoot)||under(options.checkpointRoot,root.path)||roots.some(other=>other!==root&&(under(root.path,other.path)||under(other.path,root.path))))throw invalid();
    if(restart){const old=this.state.enrollment!;if(old.configurationDigest!==hash(configText)||old.graphDigest!==hash(graphText)||!same(old.roots,roots))throw invalid();}
    const enrollment:Enrollment={schema:1,id:randomUUID(),groupId:config.groupId,configurationDigest:hash(configText),graphDigest:hash(graphText),roots,producers:[{...config.producers[0],identity:identity(process.pid)}],administrator:actor,assumptions:['trusted-source-root','all-source-producers-use-admission-v1']};
-   lease=await this.options.fence.lease();const held=lease;
-   return await this.provisional.run({enrollment,revision,lease:held},async()=>{
+   lease=await this.options.fence.lease();const held=lease,assert=held.assertValid.bind(held);held.assertValid=()=>{deadline.signal.throwIfAborted();assert();};
+   return await beforeDeadline(this.provisional.run({enrollment,revision,lease:held},async()=>{
     this.evidence();this.assertScopeInventory(options.scopes);
-    const fence=this.writerFence(options.producer),observedPaths=new Set<string>(),native=await materializeTrustedNativeSource({groupId:config.groupId,scopes:options.scopes,fence,lease:held,assertRoots:paths=>{this.verifyRoots(paths);for(const path of paths)observedPaths.add(path);}});
+    const fence=this.writerFence(options.producer),observedPaths=new Set<string>(),native=await materializeTrustedNativeSource({groupId:config.groupId,scopes:options.scopes,fence,lease:held,maxBytes:limits.maxBytes,maxFiles:limits.maxFiles,assertRoots:paths=>{this.verifyRoots(paths);for(const path of paths)observedPaths.add(path);}});
     this.assertEnrolledRootsUsed([...observedPaths]);
     let handoff;try{handoff=await verifyNativeSourceHandoff(options.handoff,{fence:this.options.fence,lease:held,stores:native.stores});}catch{throw invalid();}
     this.evidence();const member=native.group.members[0];
-    const coordinator=new BackupCoordinator({root:options.checkpointRoot,adapter:{version:'trusted-native-source-v1',resolve:async()=>native.group}});
+    const coordinator=new BackupCoordinator({root:options.checkpointRoot,...limits,adapter:{version:'trusted-native-source-v1',resolve:async()=>native.group}});
     const status=await coordinator.capture(member.scope,member.taskId,member.engine);if(status.state!=='protected'||!status.checkpointId)throw invalid();
     const checkpoint=await coordinator.sealedCheckpoint(member.scope,member.taskId,status.checkpointId);if(!checkpoint)throw invalid();
     this.evidence();held.assertValid();enrollment.initialCheckpoint=checkpoint.manifest.checkpointId;enrollment.handoffDigest=handoff.receiptDigest;
@@ -160,8 +168,8 @@ export class TrustedSourceAuthority {
     try{this.save();}catch{this.poison('enrollment-journal-unavailable');throw invalid();}
     const evidence:TrustedSourceEvidence={schema:1,enrollmentId:enrollment.id,groupId:enrollment.groupId,revision:this.state.revision,assumptions:[...enrollment.assumptions],configurationDigest:enrollment.configurationDigest,graphDigest:enrollment.graphDigest};
     return {checkpoint,evidence};
-   });
-  }finally{lease?.release();this.enrolling=false;}
+   }),deadline.signal);
+  }finally{clearTimeout(timer);lease?.release();this.enrolling=false;}
  }
  private assertScopeInventory(scopes:readonly TrustedNativeSourceScope[]){
   const config=configuration(privateText(this.options.configuration,65536)),value=JSON.parse(privateText(this.options.graph,65536));graph(JSON.stringify(value),config);
@@ -171,10 +179,10 @@ export class TrustedSourceAuthority {
   const enrollment=this.provisional.getStore()?.enrollment??this.state.enrollment;if(!enrollment||enrollment.roots.some(root=>!paths.some(path=>under(root.path,path))))throw invalid();
  }
  createNativeCoordinator(options:Omit<ExistingSourceEnrollment,'handoff'>):BackupCoordinator{
-  const fence=this.writerFence(options.producer),authority=this;
-  return new BackupCoordinator({root:options.checkpointRoot,adapter:{version:'trusted-native-source-v1',resolve:async()=>{
+  const limits=captureLimits(options),fence=this.writerFence(options.producer),authority=this;
+  return new BackupCoordinator({root:options.checkpointRoot,...limits,adapter:{version:'trusted-native-source-v1',resolve:async()=>{
    const evidence=authority.evidence();authority.assertScopeInventory(options.scopes);
-   return {groupId:evidence.groupId,fence,members:[],sources:[],validate:async()=>{throw invalid();},materialize:async lease=>{const observedPaths=new Set<string>(),native=await materializeTrustedNativeSource({groupId:evidence.groupId,scopes:options.scopes,fence,lease,assertRoots:paths=>{authority.verifyRoots(paths);for(const path of paths)observedPaths.add(path);}});authority.assertEnrolledRootsUsed([...observedPaths]);return native.group;}};
+   return {groupId:evidence.groupId,fence,members:[],sources:[],validate:async()=>{throw invalid();},materialize:async lease=>{const observedPaths=new Set<string>(),native=await materializeTrustedNativeSource({groupId:evidence.groupId,scopes:options.scopes,fence,lease,maxBytes:limits.maxBytes,maxFiles:limits.maxFiles,assertRoots:paths=>{authority.verifyRoots(paths);for(const path of paths)observedPaths.add(path);}});authority.assertEnrolledRootsUsed([...observedPaths]);return native.group;}};
   }}});
  }
  private evidence():TrustedSourceEvidence{
