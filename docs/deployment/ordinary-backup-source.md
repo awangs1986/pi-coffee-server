@@ -29,7 +29,12 @@ fresh bootstrap supports one actual `host` producer and allocates the declared
 nonexistent source roots before ordinary scope construction. `mode: "none"` only
 opens the authority; it never asserts that preexisting data has been enrolled.
 `mode: "existing"` with an explicit administrator enables existing-data enrollment
-and restart requalification. It requires an actual completed native history
+and restart requalification. The actor must match the private broker context and
+current source policy's administrator, administrator role, scope grants and
+expected authority revision. An OS UID or the configuration's administrator name
+alone cannot authorize this enrollment. Revocation/downgrade does not disable
+ordinary work or independent repository readiness. Enrollment also requires an
+actual completed native history
 lifecycle under the same custody and physical fence, checks every configured
 scope and source root with the pinned Pi/Codex adapters, and seals an initial
 complete checkpoint before committing enrollment. The coordinator is constructed
@@ -42,6 +47,16 @@ writer operation remains unknown. Failing to enroll does not disable ordinary
 work or independent repository extraction. A marker, empty process scan, stub
 command or successful restart is insufficient. Earlier sealed points remain
 readable after lowering the limits for new captures.
+
+When existing-source mode has no sufficient completed lifecycle, the ordinary
+Host may request a bounded history audit from its actual registered native
+factory. This uses a separate backup-owned Pi/Codex read connection, no prompt or
+provider request, and closes only that connection. An existing live writer blocks
+the audit; a new ordinary writer cancels it. The pass shares a deadline of at most
+30 seconds (or the configured shorter capture timeout), and failed attempts are
+rate limited. No browser opening ceremony is required for a cold existing source.
+A closed audit still does not qualify the source by itself: actual native closure,
+physical exclusion, full scope inventory and initial sealed capture remain required.
 
 Paths continue to come from existing Host settings and native configuration:
 workspace, task data, Pi sessions and effective agent directory, Codex home and its
