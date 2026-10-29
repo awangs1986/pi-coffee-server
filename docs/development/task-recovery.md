@@ -67,6 +67,28 @@ A Codex SQLite database first created by a restore has two approved logical imag
 When the original Codex SQL target is entirely missing, restore planning uses a dedicated target-inspection operation. It resolves the current trusted home/configuration/options, compares them with the sealed checkpoint's original mapping, and creates only owned canonical private target roots. Missing `state_5.sqlite` is allowed for this target inspection; ordinary capture still requires the qualified source state database. Existing unknown databases, unsupported schemas and conflicting native index entries remain errors. Native authentication/configuration is explicitly reconfigured after recovery; it is not restored from the archive. The isolated missing-store test performs an actual Restic recovery and native Codex read/resume after this fixture reconfiguration, without a provider turn.
 
 
+## Reopening the recovered native identity
+
+A Task's public ID and its durable native session ID may differ. Pi passive
+history reads and native reopen use `nativeBinding.id` when present, while
+workspace/environment lookup retains the public Task ID. Listings coalesce that
+native history under the registered Task rather than exposing a second orphan
+conversation. A Task with a recovery receipt requires its original Pi history
+file: a missing file fails reopen instead of creating an empty replacement.
+Native cleanup also resolves the selected durable binding, preserving unrelated
+native history even if its ID matches the public Task ID. Existing takeover,
+context-reset and non-Pi cleanup restrictions remain in force. Ordinary first-use
+tasks retain their existing new-session behavior.
+
+Codex recovery also retains its original native ID. Successful publication and a
+new source checkpoint do not restore authentication or current provider
+configuration. An empty native home can therefore pass cold history validation
+and still refuse live session reopen until the operator configures the CLI.
+That explicit step supplies current configuration; historical configuration and
+credentials remain inert. Browser acceptance reads actual Host `history.entries`
+for the reopened task, rather than matching a task-list preview or archive text.
+
+
 ## Ordinary destination after source loss
 
 Ordinary Pi/Codex restore uses [separate destination qualification](restore-destination-authority.md).
