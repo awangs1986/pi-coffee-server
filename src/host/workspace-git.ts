@@ -1,3 +1,5 @@
+import {ordinaryWorkspaceGit} from './ordinary-workspace-git.js';
+import type {NativeWriterCustody} from './native-custody.js';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {workspaceGitTransport,type WorkspaceGitTransport} from './workspace-git-transport.js';
@@ -5,7 +7,7 @@ import type {ManagedNativeCustody} from './managed-native.js';
 
 const exec=promisify(execFile);
 export function workspaceGitCommand(args:string[]){let index=0;while(args[index]==='-c')index+=2;return args[index];}
-interface GitOptions {cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
+interface GitOptions {cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;ordinaryCustody?:NativeWriterCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
 type Files={kind:'copy-index'|'remove-index';index:string}|{kind:'exclude'};
 
 // This program is passed as argv to an immutable interpreter inside the same
@@ -101,6 +103,7 @@ export async function executeWorkspaceGit(args:string[],options:GitOptions):Prom
   if(options.managedRequired&&!options.custody)throw Error('Managed workspace Git executor is unavailable');
   try {
     if(options.custody)return await managed(options.custody,options,{args,literal:options.env.GIT_LITERAL_PATHSPECS,index:options.env.GIT_INDEX_FILE});
+    if(options.ordinaryCustody)return await ordinaryWorkspaceGit(options.ordinaryCustody,args,options);
     return await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd:options.cwd,env:options.env,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'});
   } catch(error){
     const failure=error as Error & {stdout?:Buffer|string;stderr?:Buffer|string;code?:number|string};

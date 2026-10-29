@@ -1,3 +1,4 @@
+import type {NativeWriterCustody} from './native-custody.js';
 import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
 import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
 import {ManagedWriterFence} from './managed-writer-fence.js';
@@ -40,7 +41,7 @@ export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
 export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { managedGitCustody?:ManagedNativeCustody; deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface WorkspaceOptions { gitCommandCustody?:NativeWriterCustody;managedGitCustody?:ManagedNativeCustody; deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
 export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
@@ -92,6 +93,7 @@ interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<
 interface State { displayMode?:"compact"|"detailed"; sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
+  get backupGitCustody(){return this.options.gitCommandCustody;}
   backupWriterFence?:WriterAdmissionFence;
   setBackupWriterFence(fence:WriterAdmissionFence){this.backupWriterFence=fence;}
   private state: State = {version:2,projects:[],conversations:[]};
@@ -212,7 +214,8 @@ export class Workspaces {
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async gitExec(cwd:string,args:string[],options:{maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={}){
+  private async gitExec(cwd:string,args:string[],options:{maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={},admitted=false):Promise<{stdout:Buffer;stderr:Buffer}>{
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.gitExec(cwd,args,options,true));
     let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
     if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
       const conversation=this.state.conversations.find(c=>samePath(c.cwd,cwd)),project=conversation?this.state.projects.find(p=>p.id===conversation.projectId):undefined;
@@ -222,7 +225,7 @@ export class Workspaces {
         transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
       }
     }
-    return executeWorkspaceGit(args,{cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
+    return executeWorkspaceGit(args,{cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
   }
   private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
     const release=this.backupWriterFence?.beginWriter('platform');try {
@@ -807,7 +810,8 @@ export class Workspaces {
    * non-ignored files) written through a throwaway index, so the checkout's own
    * index, HEAD and refs are untouched. Runtime data under .pi-coffee is excluded.
    */
-  private async workingTree(cwd:string):Promise<{tree:string;head?:string}> {
+  private async workingTree(cwd:string,admitted=false):Promise<{tree:string;head?:string}> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.workingTree(cwd,true));
     const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
     // This internal command intentionally uses an exclusion pathspec; no user paths enter it.
@@ -1086,7 +1090,8 @@ export class Workspaces {
     if(info?.isDirectory() || kind.stdout.trim()==='tree' || (!info?.isFile() && !info?.isSymbolicLink() && kind.stdout.trim()!=='blob'))throw new Error('Invalid or private path: select one literal file');
   }
   /** `git diff <tree> -- <path>` against the working tree (untracked included) via a throwaway index. */
-  private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
+  private async pathAgainstWorkingTree(cwd:string,tree:string,path:string,admitted=false):Promise<string> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.pathAgainstWorkingTree(cwd,tree,path,true));
     const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
     const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
