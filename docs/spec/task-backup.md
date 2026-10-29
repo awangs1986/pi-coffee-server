@@ -9,6 +9,8 @@ account authorization and complete source consistency remain mandatory.
 See the [accepted trust boundary and remaining implementation gates](../reviews/backup-trusted-root-20261029.md)
 and [historical permission review / actual failed canonical check](../reviews/backup-native-permission-20261028.md).
 Storage, scheduling and recovery component passes do not close source integration.
+See [ordinary-source integration evidence and remaining gates](../reviews/backup-ordinary-source-20261029.md)
+for the current candidate; historical managed-profile results retain their original scope.
 
 The accepted complete product contract is [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130), with implementation slices #131–#134 and #138–#141. The candidate implementation covers source checkpoints, the encrypted repository, Pi/Codex recovery, scheduling, retention and account plans. The reviewed work is on `feat/backup-pi-codex-130` and its normally merged implementation branches, initially based on `33306539b6f5d86ae67178f4361f7c82bd6d5a9a`, with current GitHub/Gitea main `21f856b60c99b1c06bb312743ba69a4a9f69868c` normally merged into reviewed candidate `3bbf0e6`. Source behavior and isolated acceptance do not establish installed daily protection or complete production coverage. Final integrated acceptance remains #141.
 
@@ -18,7 +20,7 @@ A source checkpoint is immutable task material captured at a verified consistenc
 
 Host owns `BackupCoordinator`; native source layout is encapsulated by versioned `NativeRecoveryAdapter`. Trusted local jobs consume `sealedCheckpoint`, which validates the seal and streams object hashes. Browser status reads cached bounded metadata, without starting native processes or hashing the whole repository on every refresh. A seal is source-capture evidence; it does not claim repository integrity or a completed restore drill.
 
-## Accepted ordinary-permission architecture (implementation pending)
+## Accepted ordinary-permission architecture (integration in progress)
 
 Repository readiness and access to existing sealed points are independent of
 live source qualification. Exact selected checkpoint IDs, immutable manifests,
