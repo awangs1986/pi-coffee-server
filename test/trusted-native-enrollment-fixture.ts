@@ -57,4 +57,3 @@ export async function reopen(f:Awaited<ReturnType<typeof existingPi>>){
  const custody=new NativeWriterCustody(f.custody.root,{lock:f.lock}),physical=new PhysicalWriterFence({lock:f.lock,custody}),authority=await f.open(physical),workspaces=new Workspaces(f.workspaces.root,{gitCommandCustody:custody});workspaces.setBackupWriterFence(authority.writerFence('host'));await workspaces.list();
  return {authority,custody,physical,options:{producer:'host',handoff:await readNativeSourceHandoff({custody,fence:physical}),scopes:[{...f.scopes[0],workspaces}],checkpointRoot:f.checkpointRoot}};
 }
-
