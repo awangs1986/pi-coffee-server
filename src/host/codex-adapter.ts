@@ -1,3 +1,9 @@
+import {ownedNativeAuditClose} from './native-audit-process.js';
+import {BackupError} from './backup.js';
+import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
+import {codexStore} from './codex-recovery.js';
+import {homedir} from 'node:os';
+import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
@@ -54,6 +60,7 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
  * Login is Codex's own (`codex login` once in the VM, credentials in
  * `CODEX_HOME`); every user's server process shares it.
  */export interface CodexSessionFactoryOptions {
+  nativeCustody?:NativeWriterCustody;
   instructions?:()=>Promise<string|undefined>;
   /** Host-proven empty Chat only; revoked durably before any prompt admission. */
   allowEmptyRecovery?:()=>Promise<boolean>;
@@ -66,6 +73,8 @@ export const CODEX_QUESTION_INSTRUCTION = 'In this Web client, ask choices with 
   /** Shared Codex home (auth, config, session rollouts); Codex's default when omitted. */
   codexHome?: string;
   model?: string;
+  protectedProvider?:string;
+  allowedModels?:string[];
   reasoningEffort?: string;
   /** Codex sandbox for the agent's own tools; full access mirrors Pi's Execution Seam (ADR-0005). */
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
@@ -93,6 +102,12 @@ const LIST_PAGE_SIZE = 100;
 /** Safety stop for a server that keeps handing out cursors (10k threads). */
 const MAX_LIST_PAGES = 100;
 
+const codexHistoryObservations=new WeakMap<object,NativeHistoryObservation[]>();
+const codexLaunches=new WeakMap<object,{directory:string;home:string;sqliteHome?:string}>();
+export function codexNativeHistoryObservation(subject:object){const rows=codexHistoryObservations.get(subject);return rows?structuredClone(rows):undefined;}
+const codexWriterProvenance=new WeakMap<object,NativeWriterCustody>();
+export function codexFactoryWriterCustody(factory:unknown){return typeof factory==='object'&&factory!==null?codexWriterProvenance.get(factory):undefined;}
+
 export class CodexSessionFactory implements PiSessionFactory {
   private readonly options: CodexSessionFactoryOptions;
   private server?: CodexAppServer;
@@ -113,7 +128,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   private unsubscribeAccount?: () => void;
 
   constructor(options: CodexSessionFactoryOptions) {
-    this.options = options.preparation?{...options,sandbox:'read-only',approvalPolicy:'never'}:options;
+    this.options = options.preparation?{...options,sandbox:'read-only',approvalPolicy:'never'}:{...options};if(new.target===CodexSessionFactory&&options.nativeCustody)codexWriterProvenance.set(this,options.nativeCustody);
     this.mappingFile = options.mappingFile ?? join(options.cwd, ".pi-coffee", "codex-threads.json");
   }
 
@@ -146,13 +161,38 @@ export class CodexSessionFactory implements PiSessionFactory {
     finally { this.connecting = undefined; }
   }
 
+  private async nativeServer(options:ConstructorParameters<typeof CodexAppServer>[0]):Promise<CodexAppServer>{
+    if(!this.options.nativeCustody)return new CodexAppServer(options);
+    const launch=await this.options.nativeCustody.prepare({engine:'codex',executable:options.cliPath,args:options.args,cwd:options.cwd,env:options.env});
+    const server=new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
+    codexLaunches.set(server,{directory:launch.env.PI_COFFEE_CUSTODY_DIR,home:options.env?.CODEX_HOME??process.env.CODEX_HOME??join(options.env?.HOME??homedir(),'.codex'),sqliteHome:options.env?.CODEX_SQLITE_HOME??process.env.CODEX_SQLITE_HOME});
+    const stop=server.stop.bind(server);server.stop=async()=>{for(const row of codexHistoryObservations.get(server)??[])row.normalCloseRequested=true;await persistNativeNormalClose(server).catch(()=>undefined);await stop();};return server;
+  }
+
+  /** Owned metadata-only app-server. Never resumes/rebinds a thread or stops
+   * this factory's user connection. Its native configuration is unchanged. */
+  async auditNativeHistory(input:{nativeId:string;cwd:string;signal:AbortSignal}):Promise<void>{
+    const custody=codexWriterProvenance.get(this);if(!custody?.groupLock)throw new BackupError('native_audit_unavailable','Codex audit requires concrete source custody');
+    input.signal.throwIfAborted();const env={...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})};
+    const server=await this.nativeServer({cliPath:this.options.cliPath??'codex',args:[...(this.options.commandArgs??[]),'app-server',...(this.options.args??[])],cwd:dirname(custody.root),env:Object.fromEntries(Object.entries(env).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
+    let observationWrite:Promise<void>|undefined;const launch=codexLaunches.get(server)!,close=ownedNativeAuditClose(launch.directory,async()=>{await observationWrite?.catch(()=>undefined);await server.stop();}),cancel=()=>{void close().catch(()=>undefined);};
+    const started=server.start('pi_coffee_backup_audit','1');input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
+    try{
+      await started;input.signal.throwIfAborted();
+      let result:Obj;try{result=await server.request('thread/read',{threadId:input.nativeId,includeTurns:true},10000) as Obj;}catch(error){input.signal.throwIfAborted();throw new BackupError('native_audit_unavailable','Codex audit history unavailable');}
+      const thread=result.thread as Obj;if(thread?.id!==input.nativeId||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(input.cwd)||typeof thread.path!=='string'||!Array.isArray(thread.turns))throw new BackupError('native_audit_unavailable','Codex audit history identity changed');
+      const roots=await codexStore({operation:'roots',home:resolve(launch.home),environmentSqliteHome:launch.sqliteHome});input.signal.throwIfAborted();
+      codexHistoryObservations.set(server,[{launchDirectory:launch.directory,engine:'codex',roots:[roots.nativeHome,roots.sqliteHome],binding:input.nativeId,sourceFile:thread.path}]);observationWrite=persistNativeHistoryObservation(server);await observationWrite;input.signal.throwIfAborted();
+    }finally{input.signal.removeEventListener('abort',cancel);await close();}
+  }
+
   private async startConnection(): Promise<CodexAppServer> {
     const args = [...(this.options.commandArgs ?? []), "app-server", ...(this.options.args ?? []),...(this.options.preparation?Object.entries(forkPreparationConfig()).flatMap(([key,value])=>['-c',key+'='+JSON.stringify(value)]):[])];
     const env: Record<string, string | undefined> = {
       ...nativeEnvironment({...this.options.env,...await this.options.envForSession?.()}),
       ...(this.options.codexHome === undefined ? {} : { CODEX_HOME: this.options.codexHome }),
     };
-    const server = new CodexAppServer({
+    const server = await this.nativeServer({
       cliPath: this.options.cliPath ?? "codex",
       args,
       cwd: this.options.cwd,
@@ -171,7 +211,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       if (parsed) { this.rateLimits = parsed; this.rateLimitsReadAt = Date.now(); }
     });
     // The VM admin logs Codex in, not the users: say so loudly when nobody has.
-    void server.request("getAuthStatus", {}).then((status) => {
+    if(!this.options.protectedProvider)void server.request("getAuthStatus", {}).then((status) => {
       const method = (status as Obj | null)?.authMethod;
       if (method === null || method === undefined) {
         console.warn(`[codex] ${this.options.cwd}: no Codex login in ${this.options.codexHome ?? "~/.codex"}; run \`codex login\` as the VM owner or set an API key`);
@@ -183,7 +223,7 @@ export class CodexSessionFactory implements PiSessionFactory {
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
     if(engine!=="codex")throw new Error("This adapter only discovers Codex models");
     // A short-lived native connection lists models only: no thread/start or turn/start.
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_models","0.1.0");
@@ -191,7 +231,7 @@ export class CodexSessionFactory implements PiSessionFactory {
       const config=configResult.config as Obj | undefined;
       const model=this.options.model ?? (typeof config?.model==="string" ? config.model : undefined);
       const effort=this.options.reasoningEffort ?? (typeof config?.model_reasoning_effort==="string" ? config.model_reasoning_effort : undefined);
-      return {...codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),context:{preset:"272k"}};
+      return {...filterProtectedCodexModels(codexModelChoices(await server.request("model/list",{},10000) as Obj,model,effort),this.options.allowedModels),context:{preset:"272k"}};
     }finally{await server.stop();}
   }
 
@@ -203,7 +243,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     return this.commandDiscovery;
   }
   private async discoverCommands():Promise<CommandInfo[]> {
-    const server=new CodexAppServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
+    const server=await this.nativeServer({cliPath:this.options.cliPath ?? "codex",args:[...(this.options.commandArgs??[]),"app-server",...(this.options.args??[])],cwd:this.options.cwd,
       env:Object.fromEntries(Object.entries({...nativeEnvironment(this.options.env),...(this.options.codexHome?{CODEX_HOME:this.options.codexHome}:{})}).filter((entry):entry is [string,string]=>entry[1]!==undefined))});
     try {
       await server.start("pi_coffee_skills","0.1.0");
@@ -363,9 +403,11 @@ export class CodexSessionFactory implements PiSessionFactory {
         ...(typeof response.reasoningEffort==='string'?{reasoningEffort:response.reasoningEffort}:initialEffort?{reasoningEffort:initialEffort}:{}),
       });
     }
+    if(this.options.protectedProvider&&response.modelProvider!==this.options.protectedProvider)throw Error('Native Codex provider is outside the protected transport');
     const thread = response.thread as Obj;
     await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
+      allowedModels:this.options.allowedModels,
       freshEmpty:!resumed||preferences.emptyContext===true&&(!this.options.allowEmptyRecovery||await this.options.allowEmptyRecovery()),
       cwd: this.options.cwd,
       preset,
@@ -383,6 +425,13 @@ export class CodexSessionFactory implements PiSessionFactory {
       approvalPolicy: this.options.approvalPolicy ?? "never",
       rateLimits: () => this.readRateLimits(),
     });
+    const history=session.getHistory.bind(session);session.getHistory=async()=>{const result=await history(),launch=codexLaunches.get(server);if(launch&&this.options.nativeCustody?.groupLock){try{
+      const metadata=await server.request('thread/read',{threadId:session.threadId,includeTurns:false}) as Obj,observed=metadata.thread as Obj;
+      if(observed.id!==session.threadId||typeof observed.path!=='string')throw Error('Native history identity missing');
+      const roots=await codexStore({operation:'roots',home:resolve(launch.home),environmentSqliteHome:launch.sqliteHome});
+      const rows=codexHistoryObservations.get(server)??[];const observation:NativeHistoryObservation={launchDirectory:launch.directory,engine:'codex',roots:[roots.nativeHome,roots.sqliteHome],binding:session.threadId,sourceFile:observed.path};
+      codexHistoryObservations.set(server,[...rows.filter(row=>row.binding!==session.threadId),observation]);await persistNativeHistoryObservation(server);
+    }catch{/* Optional witness failure never changes native history. */}}return result;};
     session.absorbThread(thread);
     this.live.add(session);
     session.onStop = () => this.release(session);
@@ -565,6 +614,7 @@ interface CodexPreferences {
   reasoningEffort?:string;
 }
 interface CodexSessionSettings {
+  allowedModels?:string[];
   planMode?:boolean;
   freshEmpty?:boolean;
   developerInstructions?:string;
@@ -706,6 +756,7 @@ class CodexSession implements PiSession {
   }
 
   async prompt(text: string, images?: ImageInput[]): Promise<void> {
+    if(this.settings.allowedModels&&!this.settings.allowedModels.includes(this.model??''))throw Error('Choose a model enrolled in the protected provider transport');
     const command=/^\/(review|init|plan|recap)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if(/^\/[a-z][a-z0-9-]*(?:\s|$)/i.test(text.trim())&&!command)throw Error("Native command requires the Web command dispatcher; no prompt was sent");
     if(command&&images?.length)throw Error('Native command does not accept attachments');
@@ -847,11 +898,12 @@ class CodexSession implements PiSession {
 
   async getModels(): Promise<PiModels> {
     const result = await this.server.request("model/list", {},10000) as Obj;
-    const models=codexModelChoices(result,this.model,this.effort);
+    const models=filterProtectedCodexModels(codexModelChoices(result,this.model,this.effort),this.settings.allowedModels);
     return {...models,speed:{mode:this.speed,fastAvailable:models.models.some(m=>m.id===models.current?.id&&m.fastMode===true)},context:{preset:this.preset,limit:this.preset==='272k'?272000:500000}};
   }
 
   async setModel(_provider: string, id: string): Promise<void> {
+    if(this.settings.allowedModels&&!this.settings.allowedModels.includes(id))throw Error('This model is not enrolled in the protected provider transport');
     // Applied as an override on the next turn; Codex has no per-thread setter.
     await this.updatePreferences({model:id});
   }
@@ -1299,3 +1351,5 @@ function codexModelChoices(result:Obj,configuredModel?:string,configuredEffort?:
       thinkingLevels: levels,
     };
 }
+
+function filterProtectedCodexModels(models:PiModels,allowed?:readonly string[]):PiModels{if(!allowed)return models;return {...models,models:models.models.filter(model=>allowed.includes(model.id)),current:models.current&&allowed.includes(models.current.id)?models.current:null};}
