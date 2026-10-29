@@ -86,7 +86,7 @@ test('a competing authority cannot claim the same enrollment and an unfinished l
  const f=await fixture();let reopened:TrustedSourceAuthority|undefined;try{
   await f.authority.enrollFresh('awangs',[{id:'host',pid:process.pid},{id:'runner',pid:process.pid}]);await f.authority.runWriter('host','bootstrap',f.native);await expect(f.open()).rejects.toThrow();
   await expect(f.authority.runWriter('host','uncertain-write',async()=>{await writeFile(join(f.source,'note'),'partial');throw Error('operation completion uncertain');})).rejects.toThrow('completion uncertain');
-  expect((await f.authority.qualification()).state).toBe('unknown');await f.authority.close();reopened=await f.open();await expect(reopened.capture()).rejects.toThrow();expect(await readFile(join(f.source,'note'),'utf8')).toBe('partial');
+  expect((await f.authority.qualification()).state).toBe('unknown');await expect(f.authority.capture()).rejects.toThrow();await f.authority.close();reopened=await f.open();await expect(reopened.capture()).rejects.toThrow();expect(await readFile(join(f.source,'note'),'utf8')).toBe('partial');
  }finally{await reopened?.close();await f.cleanup();}
 });
 
@@ -128,6 +128,14 @@ test('a source enrollment covers only its real canonical roots and descendants, 
   expect(f.authority.verifyRoots([f.source,join(f.source,'workspace')]).groupId).toBe('shared-native');expect(()=>f.authority.verifyRoots([f.root])).toThrow();
   await symlink(f.root,join(f.source,'outside'));expect(()=>f.authority.verifyRoots([join(f.source,'outside')])).toThrow();
   await rename(f.source,f.source+'-retained');await mkdir(f.source,{mode:0o700});expect(()=>f.authority.verifyRoots([f.source])).toThrow();
+ }finally{await f.cleanup();}
+});
+
+test.each([{scope:'__legacy_default__',accepted:true},{scope:'gitea-2',accepted:true},{scope:'owner.with-dot',accepted:true},{scope:'UpperCase',accepted:false}])('source graph preserves canonical scope $scope without remapping',async({scope,accepted})=>{
+ const f=await fixture();try{
+  await writeFile(f.graph,JSON.stringify({schema:1,groupId:'shared-native',roots:[{id:'task-data',scope,engine:'pi'}]}),{mode:0o600});
+  const enrollment=f.authority.enrollFresh('awangs',[{id:'host',pid:process.pid},{id:'runner',pid:process.pid}]);
+  if(accepted){await enrollment;expect(f.authority.verifyRoots([f.source]).groupId).toBe('shared-native');expect(JSON.parse(await readFile(f.graph,'utf8')).roots[0].scope).toBe(scope);}else await expect(enrollment).rejects.toThrow();
  }finally{await f.cleanup();}
 });
 

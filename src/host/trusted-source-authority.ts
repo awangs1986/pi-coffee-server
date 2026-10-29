@@ -2,7 +2,8 @@ import {constants,openSync,closeSync,fstatSync,readFileSync,lstatSync,realpathSy
 import {mkdir} from 'node:fs/promises';
 import {dirname,join,resolve,relative,isAbsolute} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
-import {BackupError,WriterAdmissionFence,type CaptureLease,type RecoveryPublication} from './backup.js';
+import {BackupError,WriterAdmissionFence,LEGACY_BACKUP_SCOPE,type CaptureLease,type RecoveryPublication} from './backup.js';
+import {normalizeUsername} from '../shared/identity.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {PhysicalWriterFence} from './physical-writer-fence.js';
 
@@ -69,7 +70,7 @@ function configuration(text:string):Configuration{
 function graph(text:string,config:Configuration){
  const value:unknown=JSON.parse(text);
  if(!record(value)||!keys(value,['schema','groupId','roots'])||value.schema!==1||value.groupId!==config.groupId||!Array.isArray(value.roots)||value.roots.length!==config.roots.length)throw invalid();
- for(const root of value.roots)if(!record(root)||!keys(root,['id','scope','engine'])||!id(root.id)||!id(root.scope)&&root.scope!=='__legacy_default__'||!['pi','codex','shared'].includes(String(root.engine))||!config.roots.some(entry=>entry.id===root.id))throw invalid();
+ for(const root of value.roots)if(!record(root)||!keys(root,['id','scope','engine'])||!id(root.id)||typeof root.scope!=='string'||root.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(root.scope)!==root.scope||!['pi','codex','shared'].includes(String(root.engine))||!config.roots.some(entry=>entry.id===root.id))throw invalid();
  if(new Set(value.roots.map(root=>root.id)).size!==value.roots.length)throw invalid();
 }
 
