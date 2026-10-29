@@ -1,8 +1,9 @@
 import {createServer,type Socket,type Server} from 'node:net';
 import {once} from 'node:events';
-import {open,lstat,realpath,readFile,chmod,rm} from 'node:fs/promises';
+import {open,lstat,realpath,readFile} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {dirname,isAbsolute,resolve,join} from 'node:path';
+import {TrustedSourceEndpoint} from './trusted-source-endpoint.js';
 import {kernelPeerCredentials} from './linux-file-lease.js';
 import {BackupBrokerError,type BackupBrokerPolicy,type BackupBrokerContext,type BackupHostClientIdentity} from './backup-key-protocol.js';
 import {verifySealedCheckpoint,type SealedCheckpoint,LEGACY_BACKUP_SCOPE} from './backup.js';
@@ -26,14 +27,16 @@ const same=(actual:BackupHostClientIdentity,expected:BackupHostClientIdentity)=>
  * native privileges. Producer delegation is only from an explicitly enrolled
  * fixed-worker listener to its direct child, not arbitrary Host ancestry. */
 export class TrustedSealedCheckpointSource {
- private server?:Server;private sockets=new Set<Socket>();private active=0;private socketIdentity?:{dev:number;ino:number};
+ private server?:Server;private sockets=new Set<Socket>();private active=0;private endpoint?:TrustedSourceEndpoint;
  constructor(private options:TrustedSealedSourceOptions){if(!isAbsolute(options.socket)||Buffer.byteLength(options.socket)>100||!isAbsolute(options.policyFile)||options.maxBytes!==undefined&&(!Number.isSafeInteger(options.maxBytes)||options.maxBytes<1||options.maxBytes>1024**3)||options.maxConcurrent!==undefined&&(!Number.isSafeInteger(options.maxConcurrent)||options.maxConcurrent<1||options.maxConcurrent>4)||options.timeoutMs!==undefined&&(!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<100||options.timeoutMs>30*60000))throw fail('source_configuration_invalid');}
  async listen(){
   if(this.server)throw fail('source_already_started');const directory=await lstat(dirname(this.options.socket));if(!directory.isDirectory()||directory.isSymbolicLink()||directory.uid!==process.getuid?.()||(directory.mode&0o007)||await realpath(dirname(this.options.socket))!==resolve(dirname(this.options.socket)))throw fail('source_configuration_invalid');
-  if(await lstat(this.options.socket).then(()=>true,()=>false))throw fail('source_endpoint_exists');await this.policy();
+  await this.policy();this.endpoint=await TrustedSourceEndpoint.acquire(this.options.socket);
+  try{
   this.server=createServer(socket=>{socket.on('error',()=>undefined);if(this.active>=(this.options.maxConcurrent??2)){socket.end(JSON.stringify({schema:1,error:{code:'source_busy'}})+'\n',()=>socket.destroy());return;}this.active++;this.sockets.add(socket);const timer=setTimeout(()=>socket.destroy(),this.options.timeoutMs??5*60000);
    void this.handle(socket).catch(async error=>{const code=error instanceof BackupBrokerError?error.code:'source_export_refused';await this.options.audit?.({event:'refused',code}).catch(()=>undefined);if(!socket.destroyed)socket.write(JSON.stringify({schema:1,error:{code}})+'\n');}).finally(()=>{clearTimeout(timer);this.active--;this.sockets.delete(socket);socket.end(()=>socket.destroy());});
-  });this.server.listen(this.options.socket);await once(this.server,'listening');await chmod(this.options.socket,0o660);const info=await lstat(this.options.socket);this.socketIdentity={dev:info.dev,ino:info.ino};
+  });this.server.listen(this.endpoint.temporary);await once(this.server,'listening');await this.endpoint.publish();
+  }catch(error){await this.close();throw error;}
  }
  private async policy():Promise<SealedSourcePolicy>{
   const info=await lstat(this.options.policyFile);if(!info.isFile()||info.isSymbolicLink()||info.uid!==process.getuid?.()||(info.mode&0o077)||info.nlink!==1||info.size>131072||await realpath(this.options.policyFile)!==resolve(this.options.policyFile))throw fail('source_authority_unavailable');
@@ -63,5 +66,5 @@ export class TrustedSealedCheckpointSource {
    if(frame.type==='chunk'){bytes+=Buffer.from(frame.data!,'base64').length;await this.options.audit?.({event:'progress',...audit,bytes});}
   },seal);await this.options.audit?.({event:'completed',...audit,bytes});
  }
- async close(){const server=this.server;if(!server)return;this.server=undefined;for(const socket of this.sockets)socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));const current=await lstat(this.options.socket).catch(()=>undefined);if(current&&current.dev===this.socketIdentity?.dev&&current.ino===this.socketIdentity?.ino)await rm(this.options.socket);}
+ async close(){const server=this.server,endpoint=this.endpoint;this.server=undefined;this.endpoint=undefined;for(const socket of this.sockets)socket.destroy();try{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));}finally{await endpoint?.close();}}
 }
