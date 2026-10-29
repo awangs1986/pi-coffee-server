@@ -7,10 +7,10 @@ import {once} from 'node:events';
 async function json(path:string,value:unknown){await writeFile(path,JSON.stringify(value),{mode:0o600});}
 async function identity(pid:number){const raw=await readFile('/proc/'+pid+'/stat','utf8');return {pid,uid:process.getuid!(),boot:(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]};}
 async function stop(child:ChildProcess|undefined){if(child&&child.exitCode===null&&child.signalCode===null){const ended=once(child,'close');child.kill('SIGTERM');await ended;}}
-async function fixture(manualListener=true){
+async function fixture(manualListener=true,socketName='key.sock'){
  const root=await mkdtemp('/tmp/coffee-start-'),python=await realpath('/usr/bin/python3'),releaseRoot=await realpath(resolve('.'));
  const keyRoot=join(root,'key'),disk=join(root,'disk'),stateRoot=join(root,'startup');for(const path of [keyRoot,disk,stateRoot])await mkdir(path,{mode:0o700});
- const authorityFile=join(root,'authority.json'),sourcePolicy=join(root,'source-policy.json'),keyConfig=join(root,'key-config.json'),brokerProfile=join(root,'client.json'),profile=join(root,'startup.json'),socket=join(root,'key.sock'),backupRoot=join(root,'backup');
+ const authorityFile=join(root,'authority.json'),sourcePolicy=join(root,'source-policy.json'),keyConfig=join(root,'key-config.json'),brokerProfile=join(root,'client.json'),profile=join(root,'startup.json'),socket=join(root,socketName),backupRoot=join(root,'backup');
  const unrelated=await identity(process.pid),application={schema:1,revision:1,administrator:'awangs',scopes:['alice'],actors:{awangs:{role:'administrator',scopes:['alice']},alice:{role:'reader',scopes:['alice']}}};
  await json(authorityFile,{...application,hostClients:[unrelated]});await json(sourcePolicy,{...application,sourceProducers:[]});
  await json(keyConfig,{schema:1,trustModel:'host-root',socket,serviceUid:process.getuid!(),hostUid:process.getuid!(),sourceUid:process.getuid!(),privateRoot:keyRoot,authorityFile,sourceSocket:join(root,'source.sock'),binary:process.env.PI_COFFEE_TEST_RESTIC??'/usr/bin/false',destination:disk,node:process.execPath,handler:join(releaseRoot,'dist/src/backup-key-worker.js')});
@@ -127,17 +127,18 @@ it('keeps ordinary Host startup and task creation available during a key service
 },20000);
 
 
-it.each(['before-link','after-link'] as const)('recovers a key process crash %s without exposing an unowned public socket',async phase=>{
- const f=await fixture(false);let key:ChildProcess|undefined;
+it.each(['before-link','after-link','before-link-collision'] as const)('recovers a key process crash %s without exposing an unowned public socket',async phase=>{
+ const f=await fixture(false,phase==='before-link-collision'?'.k000000':'key.sock');let key:ChildProcess|undefined;
  try{
   const original=JSON.parse(await readFile(f.profile,'utf8')),keyConfig=JSON.parse(await readFile(f.keyConfig,'utf8')),release=join(f.root,'fault-release');await mkdir(join(release,'dist/src/host'),{recursive:true,mode:0o700});
   const listenerPath=join(release,'dist/src/host/backup-unix-peer.py');let listener=await readFile(join(original.releaseRoot,'dist/src/host/backup-unix-peer.py'),'utf8');
-  const crash="os.kill(os.getpid(), signal.SIGKILL)";listener=listener.replace('        os.link(temporary, target)',phase==='before-link'?'        '+crash+'\n        os.link(temporary, target)':'        os.link(temporary, target)\n        '+crash);await writeFile(listenerPath,listener,{mode:0o600});
+  if(phase==='before-link-collision')listener=listener.replace('        temporary = target.parent', '        uuid.uuid4 = lambda: uuid.UUID(int=0)\n        temporary = target.parent');
+  const crash="os.kill(os.getpid(), signal.SIGKILL)";listener=listener.replace('        os.link(temporary, target)',phase!=='after-link'?'        '+crash+'\n        os.link(temporary, target)':'        os.link(temporary, target)\n        '+crash);await writeFile(listenerPath,listener,{mode:0o600});
   await copyFile(join(original.releaseRoot,'dist/src/backup-key-worker.js'),join(release,'dist/src/backup-key-worker.js'));
   await copyFile(join(original.releaseRoot,'dist/src/host/ordinary-backup-start.py'),join(release,'dist/src/host/ordinary-backup-start.py'));
   await json(f.profile,{...original,releaseRoot:release});await json(f.keyConfig,{...keyConfig,handler:join(release,'dist/src/backup-key-worker.js')});
   const crashed=f.launch('key');key=crashed.child;await crashed.result;expect(key.signalCode).toBe('SIGKILL');expect(await stat(f.socket).then(()=>true,()=>false)).toBe(phase==='after-link');
-  const pending=JSON.parse(await readFile(join(f.stateRoot,'state.json'),'utf8'));expect(pending.listenerSocket.temporary).toBeDefined();expect(await stat(pending.listenerSocket.temporary).then(()=>true,()=>false)).toBe(true);
+  const pending=JSON.parse(await readFile(join(f.stateRoot,'state.json'),'utf8'));expect(pending.listenerSocket.temporary).toBeDefined();expect(pending.listenerSocket.temporary).not.toBe(f.socket);expect(await stat(pending.listenerSocket.temporary).then(()=>true,()=>false)).toBe(true);
   await json(f.profile,original);await json(f.keyConfig,keyConfig);const restarted=f.launch('key');key=restarted.child;
   await expect.poll(async()=>{const state=JSON.parse(await readFile(join(f.stateRoot,'state.json'),'utf8'));return state.listenerSocket?.pid;},{timeout:5000}).toBe(key.pid);
   expect(await f.launch().result).toMatchObject({code:0});expect(await stat(pending.listenerSocket.temporary).then(()=>true,()=>false)).toBe(false);

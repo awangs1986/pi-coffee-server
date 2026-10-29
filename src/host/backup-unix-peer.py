@@ -77,6 +77,10 @@ def serve(config_path):
         # Publish the public name only after the actual bound inode has a
         # durable owner receipt. link(2) refuses an existing unknown endpoint.
         temporary = target.parent / ('.k' + uuid.uuid4().hex[:6])
+        if temporary == target:
+            # Keep the staged bind private even when randomness matches the
+            # configured public basename; do not rely on another random draw.
+            temporary = temporary.with_name('.k' + ('1' if temporary.name[2] == '0' else '0') + temporary.name[3:])
         listener.bind(str(temporary))
         os.chmod(temporary, 0o660)
         module.record_listener_socket(startup_profile, config_path, str(target), str(temporary))
