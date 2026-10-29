@@ -88,3 +88,38 @@ it.each(['SIGKILL','SIGTERM'] as const)('native %s without adapter close cannot 
   await expect.poll(async()=>(await f.custody.state()).state,{timeout:10000}).toBe('quiescent');await expect(readNativeSourceHandoff(f)).rejects.toThrow();
  }finally{await f.session.stop();await rm(f.root,{recursive:true,force:true});}
 },20000);
+
+it('deleting a historical native binding does not poison passive handoff for the remaining inventory',async()=>{
+ const f=await observedPi();let remaining:Awaited<ReturnType<RpcPiSessionFactory['create']>>|undefined;
+ try{await f.session.getHistory();await f.session.stop();await expect.poll(async()=>(await f.custody.state()).state).toBe('quiescent');
+  const oldFile=(await readdir(f.sessionDir)).find(name=>name.endsWith('.jsonl'))!;
+  SessionManager.create(f.root,f.sessionDir,{id:'remaining-pi'}).appendMessage({role:'user',content:'Remaining task history',timestamp:2});
+  const factory=new RpcPiSessionFactory({cwd:f.root,sessionDir:f.sessionDir,agentDir:f.agentDir,nativeCustody:f.custody,writerFence:f.fence,env:{PI_OFFLINE:'1'},args:['--no-extensions','--no-skills','--no-prompt-templates','--no-themes']});
+  remaining=await factory.create({sessionId:'remaining-pi',requireExisting:true});await remaining.getHistory();await remaining.stop();remaining=undefined;await expect.poll(async()=>(await f.custody.state()).state).toBe('quiescent');
+  // The authority's separate test exercises the actual Workspaces delete lane.
+  // Here the public handoff seam receives the resulting current inventory.
+  await rm(join(f.sessionDir,oldFile));const custody=new NativeWriterCustody(f.custodyRoot,{lock:f.lock}),fence=new PhysicalWriterFence({lock:f.lock,custody}),token=await readNativeSourceHandoff({custody,fence}),lease=await fence.lease();
+  try{expect((await verifyNativeSourceHandoff(token,{fence,lease,stores:[{scope:'fixture',engine:'pi',roots:[f.sessionDir,f.agentDir],bindings:['remaining-pi']}]})).observations).toEqual([{engine:'pi',roots:[f.sessionDir,f.agentDir],bindings:['remaining-pi']}]);
+   await expect(verifyNativeSourceHandoff(token,{fence,lease,stores:[{scope:'fixture',engine:'pi',roots:[f.sessionDir,f.agentDir],bindings:['pi-binding']}]})).rejects.toThrow();
+  }finally{lease.release();}
+ }finally{await remaining?.stop();await f.session.stop();await rm(f.root,{recursive:true,force:true});}
+},30000);
+
+import {createHash} from 'node:crypto';
+it('SIMULATED previous boot: old native observations cannot qualify a source until a real current-boot lifecycle completes',async()=>{
+ const f=await observedPi();let next:Awaited<ReturnType<RpcPiSessionFactory['create']>>|undefined;
+ const digest=(text:string)=>createHash('sha256').update(text).digest('hex'),previousBoot='11111111-1111-4111-8111-111111111111';
+ try{await f.session.getHistory();await f.session.stop();await expect.poll(async()=>(await f.custody.state()).state).toBe('quiescent');
+  const dir=join(f.custodyRoot,(await readdir(f.custodyRoot)).find(name=>name!=='group-lock.json')!),command=JSON.parse(await readFile(join(dir,'command.json'),'utf8')),observation=JSON.parse(await readFile(join(dir,'history-observation.json'),'utf8')),close=JSON.parse(await readFile(join(dir,'normal-close.json'),'utf8')),receipt=JSON.parse(await readFile(join(dir,'state.json'),'utf8'));
+  // Explicit synthetic previous-boot ledger. The real kernel boot reader and
+  // production options are unchanged; this is not a real machine reboot test.
+  command.boot=previousBoot;const commandText=JSON.stringify(command);observation.boot=previousBoot;observation.commandDigest=digest(commandText);const observationText=JSON.stringify(observation);close.boot=previousBoot;close.observationDigest=digest(observationText);const closeText=JSON.stringify(close);
+  const receiptText=JSON.stringify({...receipt,boot:previousBoot,commandDigest:digest(commandText),observationDigest:digest(observationText),closeDigest:digest(closeText)});
+  for(const [name,text] of [['command.json',commandText],['history-observation.json',observationText],['normal-close.json',closeText],['state.json',receiptText]])await writeFile(join(dir,name),text);
+  expect(await f.custody.state()).toEqual({state:'quiescent'});await expect(readNativeSourceHandoff(f)).rejects.toThrow();
+  const factory=new RpcPiSessionFactory({cwd:f.root,sessionDir:f.sessionDir,agentDir:f.agentDir,nativeCustody:f.custody,writerFence:f.fence,env:{PI_OFFLINE:'1'},args:['--no-extensions','--no-skills','--no-prompt-templates','--no-themes']});
+  next=await factory.create({sessionId:'pi-binding',requireExisting:true});await next.getHistory();await next.stop();next=undefined;await expect.poll(async()=>(await f.custody.state()).state).toBe('quiescent');
+  const token=await readNativeSourceHandoff(f),lease=await f.fence.lease();try{const proof=await verifyNativeSourceHandoff(token,{fence:f.fence,lease,stores:[{scope:'fixture',engine:'pi',roots:[f.sessionDir,f.agentDir],bindings:['pi-binding']}]});expect(proof.kernelBoot).toBe((await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim());expect(proof.priorBootReceiptDigest).toMatch(/^[a-f0-9]{64}$/);}finally{lease.release();}
+  expect(await readFile(join(dir,'state.json'),'utf8')).toBe(receiptText);
+ }finally{await next?.stop();await f.session.stop();await rm(f.root,{recursive:true,force:true});}
+},30000);

@@ -1,12 +1,14 @@
 import { mkdir, lstat, realpath, readFile, readdir, open, rename } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {sourceGroupLockIdentity,assertSourceGroupLock,type SourceGroupLockIdentity} from './source-group-lock.js';
 
 export type NativeCustodyState = { state: 'quiescent' } | { state: 'active' | 'unknown'; reason: string };
 const custodyInstances=new WeakSet<object>();
 export const isNativeWriterCustody=(value:unknown):value is NativeWriterCustody=>typeof value==='object'&&value!==null&&custodyInstances.has(value);
+const bootPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
 const idPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 /** Custody of launched descendants only. This does NOT prove exclusive ownership
@@ -26,8 +28,10 @@ export class NativeWriterCustody {
     const groupLock=this.groupLock?await this.bindGroupLock():undefined;
     const id = randomUUID(), dir = join(this.root, id);
     await mkdir(dir, { mode: 0o700 });
-    await this.atomicJson(dir, 'command.json', { schema: 1, id, executable: command.executable, args: command.args ?? [],...(groupLock?{groupLock}:{}) });
-    await this.atomicJson(dir, 'state.json', { schema: 1, id, state: 'prepared' });
+    const boot=(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim();if(!bootPattern.test(boot))throw Error('Kernel boot identity unavailable');
+    const launch={schema:2,id,boot,executable:command.executable,args:command.args??[],...(groupLock?{groupLock}:{})};
+    await this.atomicJson(dir, 'command.json', launch);
+    await this.atomicJson(dir, 'state.json', {schema:2,id,boot,state:'prepared',commandDigest:digest(JSON.stringify(launch)),...(groupLock?{groupLock}:{})});
     return {
       cliPath: fileURLToPath(new URL('./native-custody-launcher.mjs', import.meta.url)),
       env: { PI_COFFEE_CUSTODY_DIR: dir, PI_COFFEE_CUSTODY_ID: id },
@@ -41,16 +45,23 @@ export class NativeWriterCustody {
       const groupLock=this.groupLock?await this.readGroupLock():undefined;
       const ids = (await readdir(this.root)).filter(name=>!groupLock||name!=='group-lock.json');
       if (!ids.length) return { state: 'unknown', reason: 'native-custody-unestablished' };
-      const boot = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+      const boot = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();if(!bootPattern.test(boot))throw Error('Kernel boot identity unavailable');
       let active = false;
       for (const id of ids) {
         if (!idPattern.test(id)) throw Error('Unknown custody entry');
         const dir = join(this.root, id);
         await this.checkedDirectory(dir);
-        const command = await this.readJson(join(dir, 'command.json'));
+        const commandText=await this.readJsonText(join(dir,'command.json')),command=JSON.parse(commandText);
         const receipt = await this.readJson(join(dir, 'state.json'));
-        if (receipt.schema !== 1 || command.schema !== 1 || receipt.id !== id || command.id !== id || receipt.boot !== boot) throw Error('Unknown custody receipt');
+        if (receipt.schema !== command.schema || ![1,2].includes(command.schema) || receipt.id !== id || command.id !== id) throw Error('Unknown custody receipt');
+        if(command.schema===2){if(typeof command.executable!=='string'||!command.executable||!Array.isArray(command.args)||command.args.some((arg:unknown)=>typeof arg!=='string')||!bootPattern.test(command.boot)||receipt.boot!==command.boot||receipt.commandDigest!==digest(commandText)||!['prepared','active','quiescent'].includes(receipt.state))throw Error('Custody launch epoch changed');}
+        else if(receipt.boot!==boot)throw Error('Legacy custody boot is unverifiable');
         if(JSON.stringify(command.groupLock)!==JSON.stringify(groupLock)||JSON.stringify(receipt.groupLock)!==JSON.stringify(groupLock))throw Error('Custody source group changed');
+        if(command.schema===2&&receipt.state==='active'&&(!Number.isSafeInteger(receipt.pid)||receipt.pid<1||typeof receipt.birth!=='string'||!/^\d+$/.test(receipt.birth)))throw Error('Invalid custody process identity');
+        if(command.schema===2&&receipt.state==='quiescent'&&!Number.isSafeInteger(receipt.nativeStatus))throw Error('Invalid custody completion');
+        // A real kernel boot change ends prior LOCAL process lifetimes. It says
+        // nothing about remote operations or source graph completeness.
+        if(command.schema===2&&command.boot!==boot)continue;
         if (receipt.state === 'quiescent') continue;
         if (receipt.state !== 'active' || !Number.isSafeInteger(receipt.pid) || receipt.pid < 1 || typeof receipt.birth !== 'string') throw Error('Incomplete custody');
         const processStat = await readFile(`/proc/${receipt.pid}/stat`, 'utf8');
@@ -76,10 +87,11 @@ export class NativeWriterCustody {
     const info = await lstat(path);
     if (!info.isDirectory() || info.isSymbolicLink() || await realpath(path) !== resolve(path) || (info.mode & 0o077) !== 0 || info.uid !== process.getuid?.()) throw Error('Custody path unavailable');
   }
-  private async readJson(path: string) {
+  private async readJson(path:string){return JSON.parse(await this.readJsonText(path));}
+  private async readJsonText(path: string) {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024 || (info.mode & 0o077) !== 0 || info.uid !== process.getuid?.()) throw Error('Custody receipt unavailable');
-    return JSON.parse(await readFile(path, 'utf8'));
+    return readFile(path, 'utf8');
   }
   private async atomicJson(dir: string, name: string, value: unknown) {
     const temp = join(dir, randomUUID() + '.tmp');
