@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {spawn} from 'node:child_process';import {once} from 'node:events';
+import {spawn,execFileSync} from 'node:child_process';import {once} from 'node:events';
 import {mkdtemp,mkdir,writeFile,readFile,rm,stat,readdir} from 'node:fs/promises';import {join,resolve} from 'node:path';
 import {LEGACY_BACKUP_SCOPE} from '../src/host/backup.js';
 import {WebSocket} from 'ws';
@@ -9,11 +9,12 @@ import {codexFixture} from './codex-recovery-fixture.js';
 import {Workspaces} from '../src/host/workspaces.js';
 import {SessionManager} from '@earendil-works/pi-coding-agent';
 async function identity(pid:number){const raw=await readFile('/proc/'+pid+'/stat','utf8');return {pid,uid:process.getuid!(),boot:(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]};}
-async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode:'fresh'|'existing'='fresh',codex=false,coldPi=false,extraEnv:Record<string,string>={}){
+async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode:'fresh'|'existing'='fresh',codex=false,coldPi=false,extraEnv:Record<string,string>={},neighbor=false){
  const native=codex?await codexFixture():undefined;
  const root=await mkdtemp('/tmp/ordinary-main-'),data=native?.root??join(root,'data'),control=join(root,'control'),disk=join(root,'disk'),keys=join(root,'keys');for(const dir of [control,disk,keys])await mkdir(dir,{mode:0o700});
  if(existing){await mkdir(data,{mode:0o700,recursive:true});await writeFile(join(data,'preserve'),'existing synthetic source');}
- if(coldPi){const store=new Workspaces(join(data,'work','projects'));const task=await store.createChatConversation('native-pi-task','pi'),session=SessionManager.create(task.cwd,join(data,'sessions'));session.appendMessage({role:'user',content:'Cold synthetic Pi history',timestamp:1});await store.setNativeBinding(task.id,{state:'bound',id:session.getSessionId()});}
+ if(coldPi){const store=new Workspaces(join(data,'work','projects'));for(const id of ['native-pi-task',...neighbor?['native-pi-neighbor']:[]]){const task=await store.createChatConversation(id,'pi'),session=SessionManager.create(task.cwd,join(data,'sessions'));session.appendMessage({role:'user',content:id==='native-pi-task'?'Cold synthetic Pi history':'Surviving Pi neighbor',timestamp:1});await store.setNativeBinding(task.id,{state:'bound',id:session.getSessionId()});}}
+ if(native&&neighbor){const task=await native.store.createChatConversation('codex-neighbor','codex'),id=randomUUID(),rollout=join(native.home,'sessions','2026','10','25','rollout-2026-10-25T12-00-00-'+id+'.jsonl');await native.store.setNativeBinding(task.id,{state:'bound',id});await writeFile(rollout,(await readFile(native.rollout,'utf8')).replaceAll(native.id,id).replaceAll(native.task.cwd,task.cwd).replaceAll('The ordinary question','Surviving Codex neighbor question').replaceAll('The ordinary answer','Surviving Codex neighbor answer'));execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.row_factory=sqlite3.Row;row=dict(c.execute('SELECT * FROM threads WHERE id=?',(sys.argv[2],)).fetchone());row.update(id=sys.argv[3],rollout_path=sys.argv[4],cwd=sys.argv[5]);c.execute('INSERT INTO threads ('+','.join(row)+') VALUES ('+','.join('?' for _ in row)+')',list(row.values()));c.commit();c.close()",join(native.sql,'state_5.sqlite'),native.id,id,rollout,task.cwd]);}
  const keySocket=join(root,'key.sock'),sourceSocket=join(root,'source.sock'),keyConfig=join(control,'key.json'),keyPolicy=join(control,'key-policy.json'),sourcePolicy=join(control,'source-policy.json'),profile=join(control,'ordinary.json'),client=join(control,'client.json'),gate=join(control,'start'),preload=join(control,'gate.mjs');
  const policy={schema:1,revision:1,administrator:'awangs',scopes:[LEGACY_BACKUP_SCOPE],actors:{awangs:{role:'administrator',scopes:[LEGACY_BACKUP_SCOPE]}},hostClients:[] as Awaited<ReturnType<typeof identity>>[]};
  await writeFile(keyPolicy,JSON.stringify(policy),{mode:0o600});const command=[process.execPath,resolve('dist/src/backup-key-worker.js'),keyConfig];
@@ -187,3 +188,74 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('actual ordinary Host SIGKILL rest
   await captureReady(f,'native-pi-task');expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
  }finally{await f.stop();}
 },45000);
+
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC).each([true,false])('ordinary main publishes a missing Pi task with original native history (surviving neighbor: %s)',async(neighbor)=>{
+ const f=await fixture(false,true,false,'existing',false,true,{},neighbor);let socket:WebSocket|undefined;
+ try{
+  await captureReady(f,'native-pi-task');
+  expect((await f.post('/api/backup',{action:'repository-configure'})).status).toBe(200);
+  const exported=await f.post('/api/backup',{action:'repository-export'});expect((await f.post('/api/backup',{action:'repository-verify',recoveryPackage:exported.body.recoveryPackage})).status).toBe(200);
+  const saved=await f.post('/api/backup',{action:'repository-backup',taskId:'native-pi-task'});expect(saved).toMatchObject({status:200,body:{state:'succeeded'}});
+  const files=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(files).toHaveLength(neighbor?2:1);
+  const original=(await new Workspaces(join(f.data,'work','projects')).lookup('native-pi-task'))!.nativeBinding!.id!;const lostFile=files.find(name=>SessionManager.open(join(f.data,'sessions',name)).getSessionId()===original)!;
+  await f.restart(async()=>{const store=new Workspaces(join(f.data,'work','projects'));await store.archive('native-pi-task',true);await store.deleteWorkspace('native-pi-task','native-pi-task',()=>rm(join(f.data,'sessions',lostFile)),true);});
+  if(neighbor)await captureReady(f,'native-pi-neighbor');
+  const requested=await f.post('/api/backup',{action:'restore-request',taskId:'native-pi-task',jobId:saved.body.id});expect(requested.status).toBe(200);
+  const planned=await f.post('/api/backup',{action:'restore-plan',id:requested.body.id,revision:requested.body.revision});expect(planned,JSON.stringify(planned)).toMatchObject({status:200,body:{state:'staged'}});
+  const approval={id:planned.body.id,revision:planned.body.revision,digest:planned.body.digest};
+  expect((await f.post('/api/backup',{action:'restore-publish',...approval})).status).toBe(409);
+  expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
+  const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
+  expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
+  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
+  const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(neighbor?2:1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
+ }finally{socket?.terminate();await f.stop();}
+},90000);
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_CODEX_ROOT).each([true,false])('ordinary main publishes a missing Codex task with original native history (surviving neighbor: %s)',async(neighbor)=>{
+ const f=await fixture(false,true,false,'existing',true,false,{},neighbor);let socket:WebSocket|undefined;
+ try{
+  await captureReady(f,'codex-task');
+  expect((await f.post('/api/backup',{action:'repository-configure'})).status).toBe(200);
+  const exported=await f.post('/api/backup',{action:'repository-export'});expect((await f.post('/api/backup',{action:'repository-verify',recoveryPackage:exported.body.recoveryPackage})).status).toBe(200);
+  const saved=await f.post('/api/backup',{action:'repository-backup',taskId:'codex-task'});expect(saved).toMatchObject({status:200,body:{state:'succeeded'}});
+  const original=f.native!.id;
+  await f.restart(async()=>{const store=new Workspaces(join(f.data,'alice','projects'));await store.archive('codex-task',true);await store.deleteWorkspace('codex-task','codex-task',()=>rm(f.native!.rollout),true);execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('DELETE FROM threads WHERE id=?',(sys.argv[2],));c.commit();c.close()",join(f.native!.sql,'state_5.sqlite'),original]);});
+  if(neighbor)await captureReady(f,'codex-neighbor');
+  const requested=await f.post('/api/backup',{action:'restore-request',taskId:'codex-task',jobId:saved.body.id});expect(requested.status).toBe(200);
+  const planned=await f.post('/api/backup',{action:'restore-plan',id:requested.body.id,revision:requested.body.revision});expect(planned,JSON.stringify(planned)).toMatchObject({status:200,body:{state:'staged'}});
+  const approval={id:planned.body.id,revision:planned.body.revision,digest:planned.body.digest};
+  expect((await f.post('/api/backup',{action:'restore-publish',...approval})).status).toBe(409);
+  expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
+  const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
+  expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'codex-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
+  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('The ordinary answer');expect(JSON.stringify(frames)).toContain('The ordinary question');
+  const restored=(await new Workspaces(join(f.data,'alice','projects')).lookup('codex-task'))!;expect(restored.nativeBinding!.id).toBe(original);expect(JSON.parse((await readFile(f.native!.rollout,'utf8')).split('\n')[0]).payload.id).toBe(original);
+ }finally{socket?.terminate();await f.stop();}
+},90000);
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('ordinary main publishes a missing Pi task into an explicitly fresh empty source with original native history',async()=>{
+ const f=await fixture(false,true,false,'existing',false,true);let socket:WebSocket|undefined;
+ try{
+  await captureReady(f,'native-pi-task');
+  expect((await f.post('/api/backup',{action:'repository-configure'})).status).toBe(200);
+  const exported=await f.post('/api/backup',{action:'repository-export'});expect((await f.post('/api/backup',{action:'repository-verify',recoveryPackage:exported.body.recoveryPackage})).status).toBe(200);
+  const saved=await f.post('/api/backup',{action:'repository-backup',taskId:'native-pi-task'});expect(saved).toMatchObject({status:200,body:{state:'succeeded'}});
+  const files=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(files).toHaveLength(1);
+  const original=(await new Workspaces(join(f.data,'work','projects')).lookup('native-pi-task'))!.nativeBinding!.id!;const lostFile=files.find(name=>SessionManager.open(join(f.data,'sessions',name)).getSessionId()===original)!;
+  await f.restart(async()=>{await rm(f.data,{recursive:true});const profile=join(f.control,'ordinary.json'),value=JSON.parse(await readFile(profile,'utf8'));value.root=join(f.control,'fresh-authority');value.enrollment.mode='fresh';await writeFile(profile,JSON.stringify(value));});
+  const requested=await f.post('/api/backup',{action:'restore-request',taskId:'native-pi-task',jobId:saved.body.id});expect(requested.status).toBe(200);
+  const planned=await f.post('/api/backup',{action:'restore-plan',id:requested.body.id,revision:requested.body.revision});expect(planned,JSON.stringify(planned)).toMatchObject({status:200,body:{state:'staged'}});
+  const approval={id:planned.body.id,revision:planned.body.revision,digest:planned.body.digest};
+  expect((await f.post('/api/backup',{action:'restore-publish',...approval})).status).toBe(409);
+  expect(await f.post('/api/backup',{action:'restore-approve',...approval})).toMatchObject({status:200,body:{state:'approved'}});
+  const published=await f.post('/api/backup',{action:'restore-publish',...approval});expect(published).toMatchObject({status:200,body:{state:'completed'}});
+  expect(await f.post('/api/backup',{action:'restore-publish',...approval})).toMatchObject({status:200,body:{state:'completed'}});
+  const frames:any[]=[];socket=new WebSocket(f.base.replace('http:','ws:')+'/host',{headers:{authorization:'Bearer fixture','x-pi-coffee-actor':'awangs'}});socket.on('message',data=>frames.push(JSON.parse(String(data))));await once(socket,'open');socket.send(JSON.stringify({v:1,type:'open',sessionId:'native-pi-task',nativeProtocol:1}));await expect.poll(()=>frames.find(frame=>frame.type==='opened'||frame.type==='error'),{timeout:15000}).toMatchObject({type:'opened'});
+  socket.send(JSON.stringify({v:1,type:'get_messages',requestId:'restored-history'}));await expect.poll(()=>JSON.stringify(frames),{timeout:10000}).toContain('Cold synthetic Pi history');
+  const restoredFiles=(await readdir(join(f.data,'sessions'))).filter(name=>name.endsWith('.jsonl'));expect(restoredFiles).toHaveLength(1);expect(SessionManager.open(join(f.data,'sessions',lostFile)).getSessionId()).toBe(original);
+ }catch(error){console.error('Synthetic Host diagnostics',f.output());throw error;}finally{socket?.terminate();await f.stop();}
+},90000);
