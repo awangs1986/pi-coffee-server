@@ -1,3 +1,4 @@
+import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
 import type {WriterAdmissionFence} from './backup.js';
 import type {NativeWriterCustody} from './native-custody.js';
 import type { HostPiRuntime } from './pi-runtime.js';
@@ -30,6 +31,8 @@ import type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing, AgentModels as PiModels, AgentSession as PiSession, AgentSessionFactory as PiSessionFactory } from "./agent-adapter.js";
 
 
+const piHistoryObservations=new WeakMap<object,NativeHistoryObservation[]>();
+export function piNativeHistoryObservation(subject:object){const rows=piHistoryObservations.get(subject);return rows?structuredClone(rows):undefined;}
 const piWriterProvenance=new WeakMap<object,{custody:NativeWriterCustody;fence?:WriterAdmissionFence}>();
 export function piFactoryWriterBinding(factory:unknown){return typeof factory==='object'&&factory!==null?piWriterProvenance.get(factory):undefined;}
 
@@ -112,7 +115,11 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     try{
       const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({engine:'pi',executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()],cwd:options?.cwd,env:options?.env}):undefined;
       const client=new RpcClient({...options,...(launch?{cliPath:launch.cliPath,env:{...options?.env,...launch.env}}:{})});
-      const stop=client.stop.bind(client);client.stop=async()=>{try{await stop();}finally{release?.();}};
+      const entries=client.getEntries.bind(client);
+      client.getEntries=async(since)=>{const result=await entries(since);
+        if(since===undefined&&launch&&this.options.nativeCustody?.groupLock&&this.options.sessionDir&&options?.env?.PI_CODING_AGENT_DIR){try{const state=await client.getState();if(state.sessionFile){piHistoryObservations.set(client,[{launchDirectory:launch.env.PI_COFFEE_CUSTODY_DIR,engine:'pi',roots:[this.options.sessionDir,options.env.PI_CODING_AGENT_DIR],binding:state.sessionId,sourceFile:state.sessionFile}]);await persistNativeHistoryObservation(client);}}catch{/* Optional witness failure never changes native history. */}}
+        return result;};
+      const stop=client.stop.bind(client);client.stop=async()=>{try{for(const row of piHistoryObservations.get(client)??[])row.normalCloseRequested=true;await persistNativeNormalClose(client).catch(()=>undefined);await stop();}finally{release?.();}};
       return client;
     }catch(error){release?.();throw error;}
   }
