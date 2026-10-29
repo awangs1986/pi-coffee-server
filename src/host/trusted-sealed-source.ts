@@ -45,7 +45,7 @@ export class TrustedSealedCheckpointSource {
  private async authorize(request:Request,peer:ProcessIdentity,members:string[]=[]){
   const policy=await this.policy(),current=await identity(peer.pid);if(!same(current,peer)||current.parent!==peer.parent)throw fail('source_producer_not_enrolled');
   const grant=policy.sourceProducers.find(grant=>grant.listener.pid===current.parent&&grant.listener.uid===current.uid);if(!grant||!same(await identity(current.parent),grant.listener))throw fail('source_producer_not_enrolled');
-  const command=(await bounded('/proc/'+peer.pid+'/cmdline',65536)).split('\0');if(command.at(-1)==='')command.pop();if(JSON.stringify(command)!==JSON.stringify(grant.workerCommand)||await realpath('/proc/'+peer.pid+'/exe')!==await realpath(grant.workerCommand[0]))throw fail('source_producer_not_enrolled');
+  const command=(await bounded('/proc/'+peer.pid+'/cmdline',65536).catch(()=>{throw fail('source_producer_command_unreadable');})).split('\0');if(command.at(-1)==='')command.pop();if(JSON.stringify(command)!==JSON.stringify(grant.workerCommand))throw fail('source_producer_not_enrolled');
   const context=request.context;if(!context||Object.keys(context).some(key=>!['actor','dataScope','authorityRevision'].includes(key))||!scope(context.actor)||!scope(context.dataScope)||context.authorityRevision!==policy.revision)throw fail('source_authority_stale');
   const actor=Object.hasOwn(policy.actors,context.actor)?policy.actors[context.actor]:undefined;if(!actor||context.actor!==policy.administrator||actor.role!=='administrator')throw fail('source_administrator_required');
   if(!Array.isArray(actor.scopes)||[context.dataScope,request.scope,...members].some(value=>!scope(value)||!policy.scopes.includes(value)||!actor.scopes.includes(value)))throw fail('source_scope_denied');
@@ -59,7 +59,7 @@ export class TrustedSealedCheckpointSource {
   await this.authorize(request,peer,members);const audit={requestId:request.id,actor:request.context.actor,scope:request.scope,checkpointId:request.expectedCheckpointId};await this.options.audit?.({event:'started',...audit});let bytes=0,encoded=0;
   await emitSealedCheckpoint(point.directory,async value=>{
    const frame=value as {type?:string;data?:string};if(socket.destroyed)throw fail('source_connection_lost');if(frame.type==='end')await verifySealedCheckpoint(point.directory,seal);await this.authorize(request,peer,members);
-   const output=JSON.stringify(value)+'\n';encoded+=Buffer.byteLength(output);if(Buffer.byteLength(output)>1024*1024||encoded>(this.options.maxBytes??1024**3)*1.4+64*1024**2)throw fail('source_transfer_limit');if(!socket.write(output))await once(socket,'drain');
+   const output=JSON.stringify(value)+'\n';encoded+=Buffer.byteLength(output);if(Buffer.byteLength(output)>1024*1024||encoded>(this.options.maxBytes??1024**3)*1.4+64*1024**2)throw fail('source_transfer_limit');await new Promise<void>((resolve,reject)=>{const closed=()=>reject(fail('source_connection_lost'));socket.once('close',closed);socket.write(output,error=>{socket.off('close',closed);error?reject(error):resolve();});});
    if(frame.type==='chunk'){bytes+=Buffer.from(frame.data!,'base64').length;await this.options.audit?.({event:'progress',...audit,bytes});}
   },seal);await this.options.audit?.({event:'completed',...audit,bytes});
  }
