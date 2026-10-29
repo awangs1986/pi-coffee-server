@@ -120,7 +120,7 @@ Listener restart requires explicit enrollment replacement.
 
 The worker connects directly from Node, preserving its real kernel peer identity.
 Every request names scope, task and exact checkpoint ID. The source checks the
-selected membership, full sealed manifest and object hashes, all member scopes,
+selected membership, complete sealed manifest and object hashes, all member scopes,
 and the current process/application policy before each frame. It verifies sealed
 material again before the footer. Observed revocation, parent death or endpoint
 closure aborts transfer; the receiver cannot publish an incomplete point. An
@@ -143,4 +143,4 @@ repository mode retains its existing optional-latest behavior.
 
 This endpoint and CLI are source candidates, not installed services. Host startup,
 policy ownership and lifecycle enrollment, production writer qualification and
-full scheduled Pi/Codex restore acceptance remain separate integration work.
+complete scheduled Pi/Codex restore acceptance remain separate integration work.

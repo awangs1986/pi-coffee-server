@@ -61,7 +61,7 @@ instead of being rejected. No mutation result relies on build/setup failure.
 
 After restoration the source SHA256 was
 `1a4a8530af870b5cb10e529e25d04b55346d5c1b17b6c1865652497d9292766e`.
-The pre-mutation build and successful full scoped run used that same source.
+The pre-mutation build and successful entire scoped run used that same source.
 
 ## Evidence and retained failures
 
@@ -79,7 +79,7 @@ Private logs under `/home/awang/tmp/backup-implementation-130/`:
 - `sealed-cli-red.log`: test fixture PID typo, not a product failure.
 - `sealed-cli-red2.log`: missing-ID CLI validation reached the broker instead of
   failing locally; an idle-socket fixture also mishandled expected ECONNRESET.
-  The CLI and fixture were corrected; later full scoped run passed with no unhandled errors.
+  The CLI and fixture were corrected; later entire scoped run passed with no unhandled errors.
 
 No expensive canonical suite or Browser deployment probe was repeated for this
 slice; both remain final integrated-candidate responsibilities. Prior canonical
