@@ -5,6 +5,7 @@ store. Never signals descendants for backup. Missing/partial records fail closed
 """
 import ctypes
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -69,7 +70,8 @@ def main():
     command_info = command_path.lstat()
     if not stat.S_ISREG(command_info.st_mode) or command_info.st_mode & 0o077 or command_info.st_uid != os.getuid() or command_info.st_size > 65536:
         raise ValueError('Invalid native command')
-    command = json.loads(command_path.read_text())
+    command_bytes = command_path.read_bytes()
+    command = json.loads(command_bytes)
     if command['schema'] != 1 or command['id'] != identity or not isinstance(command['executable'], str) or not isinstance(command['args'], list) or not all(isinstance(x, str) for x in command['args']):
         raise ValueError('Invalid native command')
     libc = ctypes.CDLL(None, use_errno=True)
@@ -79,8 +81,8 @@ def main():
     own_stat = Path('/proc/self/stat').read_text()
     birth = own_stat[own_stat.rindex(')') + 2:].split()[19]
 
-    def publish(state):
-        value = {'schema': 1, 'id': identity, 'state': state, 'boot': boot, 'pid': os.getpid(), 'birth': birth, **({'groupLock': command['groupLock']} if 'groupLock' in command else {})}
+    def publish(state, extra=None):
+        value = {'schema': 1, 'id': identity, 'state': state, 'boot': boot, 'pid': os.getpid(), 'birth': birth, **(extra or {}), **({'groupLock': command['groupLock']} if 'groupLock' in command else {})}
         temp = root / (str(uuid.uuid4()) + '.tmp')
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'w') as output:
@@ -158,7 +160,22 @@ def main():
     if group_identity is not None:
         assert_group_binding(root, group_identity)
         assert_group_lock(group_identity, group_lock)
-    publish('quiescent')
+    if command_path.read_bytes() != command_bytes:
+        raise ValueError('Native launch command changed')
+    completion = {'nativeStatus': native_status, 'commandDigest': hashlib.sha256(command_bytes).hexdigest()}
+    for name, field in [('history-observation.json', 'observationDigest'), ('normal-close.json', 'closeDigest')]:
+        path = root / name
+        if path.exists():
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 65536:
+                    raise ValueError('Invalid native lifecycle observation')
+                with os.fdopen(descriptor, closefd=False) as value:
+                    completion[field] = hashlib.sha256(value.read().encode()).hexdigest()
+            finally:
+                os.close(descriptor)
+    publish('quiescent', completion)
     if group_lock is not None:
         os.close(group_lock)
     if managed_lock is not None:

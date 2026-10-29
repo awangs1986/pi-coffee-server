@@ -8,6 +8,8 @@ export interface PhysicalWriterCustody {readonly groupLock?:string;state():Promi
 const fenceCustody=new WeakMap<object,{custody:PhysicalWriterCustody;lock:string}>();
 /** Local launch binding only, never whole-source enrollment proof. */
 export function physicalFenceCoversCustody(fence:unknown,custody:unknown):custody is NativeWriterCustody {if(typeof fence!=='object'||fence===null||!isNativeWriterCustody(custody))return false;const bound=fenceCustody.get(fence);return Boolean(bound&&bound.custody===custody&&bound.lock===custody.groupLock);}
+const physicalCaptureLeases=new WeakMap<CaptureLease,{fence:PhysicalWriterFence;assertValid:()=>void}>();
+export function assertPhysicalCaptureLease(fence:PhysicalWriterFence,lease:CaptureLease){const held=physicalCaptureLeases.get(lease);if(held?.fence!==fence)throw Error('Actual source physical capture lease required');held.assertValid();}
 const physicalPublicationLeases=new WeakSet<CaptureLease>();
 export const isPhysicalPublicationLease=(lease:CaptureLease)=>physicalPublicationLeases.has(lease);
 
@@ -42,6 +44,6 @@ export class PhysicalWriterFence extends WriterAdmissionFence {
   if(publication)this.physical.publicationGate?.assertPublication();else this.physical.publicationGate?.assertAdmission();
   const lease=await super.lease();let kernel:FileLease|undefined;try{lease.assertValid();kernel=this.acquire('exclusive');if(!kernel)throw new BackupError('writers_active','Native descendants remain active');lease.assertValid();this.kernelCuts.add(kernel);}catch(error){kernel?.release();lease.release();throw error;}
   const cut=kernel;let released=false;
-  return {epoch:lease.epoch,signal:lease.signal,...(publication?{publicationFd:cut.fd}:{}),assertValid:()=>{if(released)throw new BackupError('capture_revoked','Source cut released');lease.assertValid();assertSourceGroupLock(this.lockIdentity);cut.assertHeld();},release:()=>{if(!released){released=true;this.kernelCuts.delete(cut);cut.release();lease.release();}}};
+  const result:CaptureLease={epoch:lease.epoch,signal:lease.signal,...(publication?{publicationFd:cut.fd}:{}),assertValid:()=>{if(released)throw new BackupError('capture_revoked','Source cut released');lease.assertValid();assertSourceGroupLock(this.lockIdentity);cut.assertHeld();},release:()=>{if(!released){released=true;this.kernelCuts.delete(cut);physicalCaptureLeases.delete(result);cut.release();lease.release();}}};physicalCaptureLeases.set(result,{fence:this,assertValid:result.assertValid});return result;
  }
 }

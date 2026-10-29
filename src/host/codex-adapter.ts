@@ -1,3 +1,6 @@
+import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
+import {codexStore} from './codex-recovery.js';
+import {homedir} from 'node:os';
 import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
 import {fileURLToPath} from "node:url";
@@ -97,6 +100,9 @@ const LIST_PAGE_SIZE = 100;
 /** Safety stop for a server that keeps handing out cursors (10k threads). */
 const MAX_LIST_PAGES = 100;
 
+const codexHistoryObservations=new WeakMap<object,NativeHistoryObservation[]>();
+const codexLaunches=new WeakMap<object,{directory:string;home:string;sqliteHome?:string}>();
+export function codexNativeHistoryObservation(subject:object){const rows=codexHistoryObservations.get(subject);return rows?structuredClone(rows):undefined;}
 const codexWriterProvenance=new WeakMap<object,NativeWriterCustody>();
 export function codexFactoryWriterCustody(factory:unknown){return typeof factory==='object'&&factory!==null?codexWriterProvenance.get(factory):undefined;}
 
@@ -156,7 +162,9 @@ export class CodexSessionFactory implements PiSessionFactory {
   private async nativeServer(options:ConstructorParameters<typeof CodexAppServer>[0]):Promise<CodexAppServer>{
     if(!this.options.nativeCustody)return new CodexAppServer(options);
     const launch=await this.options.nativeCustody.prepare({engine:'codex',executable:options.cliPath,args:options.args,cwd:options.cwd,env:options.env});
-    return new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
+    const server=new CodexAppServer({...options,cliPath:process.execPath,args:[launch.cliPath],env:{...options.env,...launch.env}});
+    codexLaunches.set(server,{directory:launch.env.PI_COFFEE_CUSTODY_DIR,home:options.env?.CODEX_HOME??process.env.CODEX_HOME??join(options.env?.HOME??homedir(),'.codex'),sqliteHome:options.env?.CODEX_SQLITE_HOME??process.env.CODEX_SQLITE_HOME});
+    const stop=server.stop.bind(server);server.stop=async()=>{for(const row of codexHistoryObservations.get(server)??[])row.normalCloseRequested=true;await persistNativeNormalClose(server).catch(()=>undefined);await stop();};return server;
   }
 
   private async startConnection(): Promise<CodexAppServer> {
@@ -398,6 +406,13 @@ export class CodexSessionFactory implements PiSessionFactory {
       approvalPolicy: this.options.approvalPolicy ?? "never",
       rateLimits: () => this.readRateLimits(),
     });
+    const history=session.getHistory.bind(session);session.getHistory=async()=>{const result=await history(),launch=codexLaunches.get(server);if(launch&&this.options.nativeCustody?.groupLock){try{
+      const metadata=await server.request('thread/read',{threadId:session.threadId,includeTurns:false}) as Obj,observed=metadata.thread as Obj;
+      if(observed.id!==session.threadId||typeof observed.path!=='string')throw Error('Native history identity missing');
+      const roots=await codexStore({operation:'roots',home:resolve(launch.home),environmentSqliteHome:launch.sqliteHome});
+      const rows=codexHistoryObservations.get(server)??[];const observation:NativeHistoryObservation={launchDirectory:launch.directory,engine:'codex',roots:[roots.nativeHome,roots.sqliteHome],binding:session.threadId,sourceFile:observed.path};
+      codexHistoryObservations.set(server,[...rows.filter(row=>row.binding!==session.threadId),observation]);await persistNativeHistoryObservation(server);
+    }catch{/* Optional witness failure never changes native history. */}}return result;};
     session.absorbThread(thread);
     this.live.add(session);
     session.onStop = () => this.release(session);
