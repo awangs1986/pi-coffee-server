@@ -156,5 +156,4 @@ and configuration bytes, and task bindings. They cover no-viewer bootstrap,
 existing and newly admitted users, caller/factory cancellation followed by a
 successful retry, malformed custody, concrete provenance, typed historical
 engine selection, and cancellation during delayed observation publication.
-Main/HTTP scheduling authorization, service activation and end-to-end accepted
-backup remain separate integration gates.
+Ordinary main/HTTP integration has [separate executed evidence](../reviews/backup-ordinary-composition-20261029.md); final integrated acceptance and service activation remain separate gates.
