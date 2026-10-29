@@ -1,151 +1,144 @@
-# Task backup and recovery
+# 个人增量备份与恢复规格
 
-**2026-10-29 owner decision:** preserve existing native permissions and trust
-existing Host root. Version one covers accidental deletion, corruption and
-source-disk loss; it does not defend against Host-root execution. No mandatory
-namespace/no-sudo/no-network profile or external root-proof key authority is
-required. Normal interfaces must not disclose keys; application administrator,
-account authorization and complete source consistency remain mandatory.
-See the [accepted trust boundary and remaining implementation gates](../reviews/backup-trusted-root-20261029.md)
-and [historical permission review / actual failed canonical check](../reviews/backup-native-permission-20261028.md).
-Storage, scheduling and recovery component passes do not close source integration.
-See [ordinary-source integration evidence and remaining gates](../reviews/backup-ordinary-source-20261029.md)
-for the current candidate; historical managed-profile results retain their original scope.
+版本：PB-2，2026-10-29。状态：**用户目标已确认；精简实现与验收待完成。**
 
-The accepted complete product contract is [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130), with implementation slices #131–#134 and #138–#141. The candidate implementation covers source checkpoints, the encrypted repository, Pi/Codex recovery, scheduling, retention and account plans. The reviewed work is on `feat/backup-pi-codex-130` and its normally merged implementation branches, initially based on `33306539b6f5d86ae67178f4361f7c82bd6d5a9a`, with GitHub/Gitea main `21f856b60c99b1c06bb312743ba69a4a9f69868c` normally merged. The ordinary-source composition baseline is `de1e857`; `3bbf0e6` identifies the retained earlier failed canonical run, not the current candidate. Source behavior and isolated acceptance do not establish installed daily protection or complete production coverage. Final integrated acceptance remains #141.
+权威需求：[Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130)。
+本版依据用户明确决定：“整个备份系统是我个人使用，我就是唯一用户；不用过度保护安全”。
+它替代旧规格中备份多用户产品、分角色审批及防范受信任操作者的要求。
+旧要求与旧测试保留为历史证据，不再作为恢复这些复杂机制的理由。
 
-## Checkpoint first
+## 1. 目标与使用边界
 
-A source checkpoint is immutable task material captured at a verified consistency-group cut. A repository backup job later saves this material. Job completion does not change `captureAt`. Host and active Agent tasks keep running; new writers revoke capture before side effects. Busy groups retain their previous sealed point. No point means unprotected, and point age over 24 hours is stale.
+每天自动增量保存自己的 Pi/Codex 任务；发生误删、损坏或源盘故障后，选择时间点即可恢复一个任务或选定的任务集合，不手工拼接差异。
 
-Host owns `BackupCoordinator`; native source layout is encapsulated by versioned `NativeRecoveryAdapter`. Trusted local jobs consume `sealedCheckpoint`, which validates the seal and streams object hashes. Browser status reads cached bounded metadata, without starting native processes or hashing the whole repository on every refresh. A seal is source-capture evidence; it does not claim repository integrity or a completed restore drill.
+- 唯一备份操作者为拥有者 `awangs`。信任其本人、其管理的 Host/root，以及由其配置运行的备份程序和脚本；不防范拥有者主动读取密钥、修改配置或操作源文件。
+- 个人数据可能保留多个既有 scope/目录标签。标签用于选对资料、避免恢复错位置，不意味着要建设多个备份用户、读者/管理员角色或跨角色请求审批产品。
+- 沿用 PI Coffee 现有登录及账号边界，备份入口供拥有者使用。此决定不删除其他 PI Coffee 账号，不自动授予读取其他真实账号资料或凭证的权限，也不修改平台现有身份路由。
+- 本期只支持 Pi/Codex；Claude/Cursor/Grok 的备份延期，现有执行能力保持。必要的跨引擎历史依赖缺失时明确列出，不冒称完整。
+- 第一版是同机备份；不承诺整机丢失、源盘与备份同时损坏、实时零丢失或运行中进程内存恢复。硬盘的接入、格式化和挂载仍由拥有者处理，软件验证可用现有磁盘隔离目录。
 
-## Accepted ordinary-permission architecture (source candidate)
+## 2. 最小产品结构
 
-Repository readiness and access to existing sealed points are independent of
-live source qualification. Exact selected checkpoint IDs, immutable manifests,
-complete members, hashes, current actor/scope authority and original capture ages
-remain required. Restore publication independently requires an approved plan and
-destination writer exclusion.
+代码归 Server 仓库，Host 继续留在 Server。采用 **PI Coffee 备份/恢复入口 + 独立定时作业 + Restic + Pi/Codex 原生适配**，不做 Pi 专属插件，也不为拆进程另建软件仓库。
 
-Complete live source history is not required to restore missing history.
-Ordinary Pi/Codex planning and publication now use a separate
-[restore destination capability](../development/restore-destination-authority.md):
-current application authority, exact configured scope/root/producer identities,
-unchanged journal and real physical exclusion remain mandatory. Tagged dead-local
-operations remain recorded, not cleared by recovery. Fresh destination allocation
-can prove a never-launched custody directory without fabricating a native
-observation. Replacement still needs a fresh source safety point. Original path
-mapping, approved revision/digest, conflict preimages and the durable publication
-gate remain required. Restoration then returns to actual native auditing and
-source capture; destination qualification never serves as a source-cut claim.
+| 部分 | 必须承担的职责 | 精简约束 |
+| --- | --- | --- |
+| 现有 Web/Host | 已有登录、任务选择、状态、准备稳定材料、恢复接回 | 不另建备份账号、角色、授权服务或“用户请求管理员”的流程 |
+| 一个备份作业入口 | 定时/手动触发、串行作业、持久状态、重试、保留 | 系统定时器或必要的轻量常驻作业均可；不要求一套自定义固定角色启动平台 |
+| Restic 封装 | 加密、去重增量、存储、读回校验、保留点提取 | 复用成熟引擎，不自研增量链或秘密分发协议 |
+| Pi/Codex 适配 | 各自的数据清单、一致性获取、恢复合并与原生身份验证 | 原生差异留在 Agent 接口后，不扩散为通用身份权威系统 |
 
-Source qualification requires actual writer admission and descendant lifetime
-leases plus an explicit, verified producer/delegation topology. Root trust does
-not prove a cut; an empty FD scan, matching hashes or a Boolean cannot certify
-coverage. Unknown source writers remain visible without restricting their native
-execution. First and later Pi/Codex points and restoration must pass with existing
-permissions before this feature is complete. See the [decision](../reviews/backup-trusted-root-20261029.md).
+拥有者管理的本地作业可直接读取私有配置和 Restic 密钥文件。独立密钥服务、Unix 身份代理、按角色启动器、进程身份授权登记及多份策略修订日志，**不作为本期架构要求；仅用于防操作者的实现应精简掉**。确实用于取消、子进程回收、资源限制或数据写入互斥的小型辅助进程可以保留，应能说明具体故障用途。
 
-## Current ordinary source-capture boundary
+## 3. 操作流程
 
-The Pi 1.1.0 / JSONL v3 and Codex 0.159.1 adapters participate in
-`TrustedSourceAuthority` through the actual ordinary Host composition. The
-private ordinary source profile explicitly declares roots, producer inventory,
-application authorization and fresh/existing enrollment mode. The accepted
-operating assumptions are trusted Host root and complete admission integration
-for every source producer. They do not establish arbitrary daemon or remote
-writer coverage. Unaccounted producers, replaced roots, incomplete graphs and
-uncertain custody remain unqualified while ordinary execution stays available.
-See [configuration and actual main evidence](../deployment/ordinary-backup-source.md).
+### 首次配置
 
-Existing-source enrollment requires current administrator/role/scope/revision,
-actual native history evidence, complete current source closure and a new sealed
-checkpoint under the exact physical exclusive lease. It cannot be enabled by a
-marker, supplied PID list, empty scan, hash or Boolean. Cold data can be inspected
-without opening a viewer or submitting a prompt: backup owns a bounded Pi
-SessionManager SDK reader or independent Codex `thread/read` connection. It
-preserves native history/settings and closes only its own helper. New user work
-cancels this audit and takes priority. Pi SDK parsing is not RPC resume or provider
-continuation. See [owned-reader contract](../development/native-source-handoff.md#unattended-owned-native-audit).
+1. 在现有网页的“备份”入口选择已有授权的数据范围、备份目录和计划；默认每天 **04:00 America/Toronto**。
+2. 软件检查配置目录的身份、可访问性、容量/写入条件，生成加密仓库密钥，提供一次保存离线恢复副本的操作。
+3. 验证该副本能解密合成或已准备的验证材料后启用计划。结果持久保存；不在每次备份时重复要求导出密钥或确认。仓库/密钥改变时才重新验证相关配置。
+4. 显示首次完整恢复点，或说明哪些任务尚无可用点。普通任务运行不以备份配置成功为前提。
 
-Native and ordinary Git descendants retain real shared locks even after their
-request process exits. An idle live user native process remains a writer; backup
-does not stop it or shorten its idle policy to obtain a cut. The configured shared
-native group uses one fence across scopes. `GroupedRecoveryAdapter` materializes
-all registered in-scope members under one physical lease, then publishes one
-manifest/checkpoint/capture time with member-owned sources. Restore verifies the
-original group seal before projecting a selected member. Independent captures
-cannot be combined by copying timestamps or renaming group IDs.
+### 日常备份
 
-A Host restart requires requalification. Schema2 custody binds actual kernel boot
-and command identity. Tagged local pending operations may reconcile only after
-their exact previous owner is proven gone, current native evidence and complete
-capture pass, and a durable reconciliation receipt is recorded before the atomic
-journal update. Legacy/unowned/delegated/live/uncertain operations are retained;
-callbacks are never replayed. Prior-boot fixtures have been simulated, but no
-real machine reboot has been tested. Receipt history remains intact and scanning
-is O(total receipts); an archive/index protocol is future work, not an implemented
-scalability guarantee. See [reconciliation](../development/trusted-source-authority.md#interrupted-local-host-operation-reconciliation).
+- 定时器独立于网页和 Agent 会话；关闭网页、没有模型会话时仍运行。可手动“立即备份”，与定时任务使用同一入口。
+- 首次形成基线，后续由 Restic 保存变化内容。每个恢复点显示完整状态，不向拥有者暴露手工增量链操作。
+- 正常运行的恢复点目标约一天；漏跑补一次，首次失败后按 15/60 分钟最多重试两次。重启和同一计划重复触发不得重复提交同一作业。
+- 默认保留 **30 daily / 12 weekly / 12 monthly 的并集**。一次配置该策略后自动执行常规保留，不逐次要求审批；保留恢复/校验正在引用的点及每个纳管数据集合最后一个已验证完整点。
+- 页面区分原采集时间、仓库存储时间、校验/恢复验证状态。无点、部分覆盖、失败及超过 24 小时未更新要明确可见；持久站内告警去重，不默认发送外部通知或调用模型提醒。
 
-The historical managed namespace profile remains optional and separately gated.
-Its distinct-identity/read-only-device installation evidence is not a prerequisite
-of the accepted ordinary-permission design. Neither profile is installed by
-setting a Browser option, and no existing production account is claimed protected.
+### 恢复
 
-A short synchronous seal publication linearizes the checkpoint against new JavaScript writer admissions. Registry changes, Git/workspace operations, durable queue writes, uploads, MISHU state/memory persistence and native process admissions use the same fence when enabled. Native lifetime custody is separate from source provenance: neither is sufficient alone. A fresh, incomplete, replaced or unowned ledger, an unmanaged writer, or an unsupported source dependency fails closed.
+1. 选择任务或任务集合、恢复时间点。
+2. 软件准备并校验材料，展示涉及的任务、原生身份、目标位置、共享依赖、冲突和预计覆盖内容。
+3. 拥有者点击一次“确认恢复”。同一次恢复不再分成提交申请、管理员审核、批准、发布等多轮用户操作；内部准备与提交阶段仍可分开。
+4. 显示进度和实际结果。崩溃或连接断开后可接续同一作业；完成后看到原历史，是否发起新输入由拥有者决定。
 
-Pi source closure includes current/retained native bindings, native `parentSession` chains inside the owned store, Harness artifacts, workspace files including uncommitted content, task attachments/artifacts, authoritative task/project registry material and pending inputs as notes-only recovery material. The manifest records native adapter/runtime versions, group epoch, per-source recovery keys, native IDs, sizes, modes and checksums. Physical source paths are not exposed in Browser status. Authentication material is not a restore authority; provider reauthentication is required.
+默认恢复缺失任务。替换已有资料须在同一个预览中显式选择替换、保留可用回退材料，并核对确认之后目标是否又发生变化；有变化时重新预览，不静默覆盖。目标仍有写入时等待或明确提示，不为了恢复自动中断其他任务。技术修订号/摘要供内部防止过期提交使用，不让拥有者手工填写，也不作为多角色权限链。
 
-Source closure requires an explicit owned Pi agent directory. Standard settings/models/model-catalog files, global instruction files and private prompts/skills/themes have versioned source mappings. Authentication is omitted from restore authority; configuration that embeds credentials must be sanitized/reprovisioned by the restore adapter. External resources, custom extensions and packages without an exact immutable artifact mapping remain incomplete. Legacy global configuration cannot be adopted implicitly. External Git storage/alternates, external/absolute symlinks and hardlinks, unresolved historical bindings outside the supported Pi/Codex graph and unsupported MISHU source schemas/dependencies also fail closed. Versioned MISHU notes, retained binding/revision history, candidate evidence, questions and archived answers are projected as inert `platform/mishu/notes-only-v1` material; [capture details](../reviews/backup-mishu-source-candidate.md) define the mandatory no-authority restore policy. MISHU permission/execution state is never silently copied as restorable authority. Existing source directories cannot be adopted or migrated by adding a marker; explicit existing-source qualification above is required. An unconfigured or unqualified ordinary Host remains visibly unprotected. Preserving unrestricted native permissions is compatible with qualified capture under the accepted producer assumptions; it is not itself a reason to reject every new task. No production account has been enrolled or accepted by these synthetic tests.
+Web 不可用时，提供同一拥有者可运行的本地备份/提取/恢复命令。CLI 与网页共用业务实现，按需要给出一次明确确认；不要求为了本地使用再配置一组 `actor/user` 身份代理。Host 负责最终接回注册数据；Host 不可用时可先提取材料，接回须恢复必要服务或使用受支持的本地恢复入口，不假称 HTTP 已离线仍可工作。
 
-## Interfaces and enablement
+## 4. 必须保留的数据可靠性
 
-`GET /api/backup` uses the existing authenticated Web-to-Host user scope and lists only that user's tasks. The settings menu's Task backup dialog shows state, checkpoint identity, capture time, age, coverage and reasons. Ordinary users can read their own status. Administrator `awangs` is authorized by the authenticated actor forwarded by Web, independently of the routed data scope. Legacy owner routing retains its original default store; its reserved backup scope cannot collide with a real account named `default`. Browser-supplied actor/scope headers do not grant authority. The administrator can request or cancel capture; explicitly configured managed account names can be selected for administration. Unrecognized account/path input is rejected.
+### 一致性与运行中任务
 
-`get_backup_status` over the authenticated Host WebSocket returns the same own-scope protection rows; client-supplied foreign scopes are ignored.
+- 保留“检查点优先”。备份可在 Host 工作时运行；忙碌的相关数据组使用上一个完整点。持续忙碌期间不保证每天产生新完整点，必须显示旧点真实年龄。
+- 新点须来自实际稳定窗口或已验证的原生一致性协议。协调正常 Host/native 写入生命周期；新工作优先，撤销未完成采集，不暂停任务、不改变原生 HOME、权限、网络、工具或 Skills 来制造空闲。
+- 不要求对拥有者、sudo、任意外部 daemon 做对抗性进程身份证明。对未纳入协调的实际写入者，不能保证一致性时仍应延后/显示未保护；“信任操作者”不是随意复制活跃文件后宣称完整的依据。
+- 文件 hash 只校验内容；SQLite 在线复制只证明其自身事务状态。工作区、注册信息、rollout、SQLite/WAL、索引与原生绑定的组合仍须一致，未封存材料不得成为成功恢复点。
 
-`POST /api/backup` supports capture/cancel by task identity and administrator status selection by managed scope. Web applies its normal authenticated route and Origin policy. Capture is bounded to one coordinator operation, 30 seconds, 1 GiB and 100,000 source objects by default; new work has priority. Private checkpoint staging is not published or reused after restart. Trusted consumption verifies sealed materials; corrupted/partial points are not handed to the repository worker.
+### 范围、校验与目标
 
-`PI_COFFEE_BACKUP_ROOT` opts into private source ledgers, shared native custody, writer fences and the coordinator. It must be outside all live source trees. `PI_COFFEE_BACKUP_USERS` is the comma-separated data-scope administration allowlist (routing scope IDs such as `gitea-2`, with `__legacy_default__` for the legacy source), rather than display login names. The actor's own routed source is available without selecting a different scope. Existing runtime behavior is preserved when capture is not configured. Configuring source capture alone does not install the independent daemon or enable repository writes. A scoped Unix broker connection and verified offline recovery copy are required. Normal Host startup constructs no direct key-root repository fallback. The source Host refreshes seals at natural cold windows without provider requests; repository scheduling consumes existing seals independently.
+- 保护任务目录、附件/图片/产物/研究资料、未提交及未跟踪工作、版本控制状态、必要设置/依赖清单、Host 注册信息、当前及保留的 Pi/Codex 原生历史和身份。归档任务继续纳管。
+- 记录最小恢复清单：任务/数据标签、原生 ID、原采集时间、原生格式/版本、材料校验信息、共享依赖及明确遗漏。所选历史点不能被更新的点悄悄替代。
+- 路径检查、互斥锁、目标身份和必要内容前像用于防止选错目录、重复写入和误覆盖；保留它们的故障保护功能，不附带拥有者不可绕过的安全承诺。
+- 目标盘不可用、被替换、写满/写失败或材料损坏时明确失败，不自动新建同名回退目录写入系统盘，不破坏既有可恢复点。
+- 加密仓库可以在另一块磁盘。使用原子 rename 发布的恢复暂存目录须与目标处于兼容文件系统；工具应自动选择合适暂存位置，或在执行前给出明确可操作的配置错误。不能在最后一步才让拥有者猜测跨盘失败。
+- 正常网页、错误日志、聊天和 Issue 不展示明文密钥。拥有者可以访问自己管理的配置、凭据和恢复副本；不新增防 root 的密钥隔离边界。原生登录按 CLI 支持的方式处理，必要时明确提示重新认证，不承诺自动复活过期登录。
 
-The [fixed-role startup launcher](../deployment/ordinary-backup-startup.md)
-accepts only a private profile and `key`, `host`, `scheduler` or `cli` role. It
-refreshes actual process identities under permanent role locks and a durable
-policy-update journal. It preserves application roles/scopes/revisions and
-refuses live duplicate roles or unknown replacement listeners. Host startup and
-ordinary task creation remain available during a temporary key-service outage;
-backup readiness still reports the outage. Operator policy edits must take the
-same `policy.lock` or stop startup attempts; arbitrary external file edits are
-not protected by a compare-and-swap guarantee. The source/key sockets publish
-through distinct private staging names with durable owner/inode evidence and
-no-replace linking. Recovery reclaims only proven-dead, matching, connection-refused
-owned endpoints. Templates do not install services or make Host depend on a
-backup unit. See [startup evidence](../reviews/backup-ordinary-startup-20261029.md).
+### 恢复与保留的故障处理
 
-## Candidate components and acceptance gates
+- 以持久作业 ID、最小阶段日志和文件/数据库实际状态实现幂等接续；防止崩溃后重复创建、把半成品当完成或覆盖后来的工作。不强制沿用旧实现全部 authority/custody/角色日志。
+- 单任务恢复只合并所选材料和必要共享索引，不用旧快照整体覆盖现有 registry，不回退健康邻居。共享原生历史仍按实际依赖处理。
+- 恢复保留原生身份和实际历史；“文件可读”“原生会话可重开”“提供商新回合成功”分别记录。恢复本身不重放命令，不恢复旧浏览器 cookie、旧 MISHU 执行授权或未确认输入的执行状态。
+- 备份、恢复和清理之间保留必要的作业互斥/引用保护。恢复或清理中断后能够核对结果；未知材料保留并说明，不无条件删锁、删目录或回滚新写入。
 
-- #132 implements the pinned local Restic repository, actual authenticated read-back, target identity checks, offline key copy/rotation and independently capped engine workers. [Repository contract](../deployment/task-backup-repository.md).
-- #133/#134 implement reviewed Pi 1.1.0 JSONL-v3 and Codex 0.159.1 native-store recovery, current authorization, revision/digest approval, original identity and missing-only default. Explicit replacement requires a fresh repository-read safety point and exact current preimages. [Recovery contract](../development/task-recovery.md).
-- #138 implements the independent daily daemon and persistent scoped incidents. #139 implements exact administrator retention plans and bounded real recovery pins. #140 implements account checkpoint vectors and retained-date browsing. [Schedule](../deployment/backup-schedule.md), [retention](../deployment/backup-retention.md).
-- Publication first acquires the task lifecycle lane and an actual physical exclusive group lease. Registry, every staged/target preimage and native merge conflicts are checked without changing live sources. Only then are the durable group gate and publication intent recorded; MISHU authority retirement and display/index invalidation run under that same exact operation/digest/lease capability before native and registry writes. A rejected untouched plan can be revised or cancelled without freezing healthy neighboring writers. Once intent or side effects exist, the gate remains durable after process/kernel-lease death until the same approved job rolls forward. Pending startup reads preserve authoritative registry preimages; generic writers cannot impersonate that capability.
-- Pi tasks sharing a native parent bind shared material to one approved publisher. A selected missing task may retain a healthy registered neighbor's parent only with exact current registry/native-chain ownership and inode/content witnesses, rechecked at publication. An unknown file with identical bytes is still a conflict.
-- The separate historical managed-profile cold enrollment and its concrete private maintenance wiring implement verified frozen-source capture, typed relocation, repository-read verification and approved account publication. An operator may supply an existing immutable sealed export or a fixed Pi/Codex source profile in a real read-only legacy namespace view; the software does not create snapshots or retire active production execution itself. Unknown roots remain unavailable. A marker, hash or caller-supplied Boolean cannot establish exclusive writer control. Real read-only block-backed and distinct-identity installation acceptance remains unverified. See [cold enrollment](../deployment/cold-legacy-enrollment.md).
-- #141 must reconcile all 45 stories and ticket criteria, canonical checks, actual Browser/Host paths, test audit, independent review and fresh checkout evidence. Distinct-UID installation and read-only snapshot/device qualification remain unverified historical managed-profile tests, not prerequisites of the accepted trusted-root design. Ordinary-permission first/later cuts, existing cold sources and same-boot Host restart have isolated real-native evidence. Final integrated capture/repository/native-recovery acceptance and provider continuation are separate gates; no provider turn was authorized or executed. Production activation/recovery requires separate authorization.
+## 5. 明确撤销的旧产品要求
 
-Claude, Cursor and Grok remain explicitly deferred/excluded. Their current execution implementations remain available; their writers/dependencies cannot be ignored when they affect an in-scope source.
+| 旧要求/机制 | PB-2 的处置 |
+| --- | --- |
+| 两名备份用户、普通用户只读/申请、管理员批准/发布 | 由单一拥有者直接操作；原数据标签和平台账号边界仍保留 |
+| 独立密钥权威、受信进程登记、每角色 peer/PID/boot 身份及策略授权链 | 不再作为交付门槛；删除纯对抗隔离用途，保留确有故障处理需要的互斥/回收功能 |
+| mandatory namespace、不同 UID、禁止 sudo/network、强制换原生 HOME | 不采用；保留现有原生执行环境 |
+| 每次恢复多轮审批、每次保留清理人工批准 | 恢复一个预览和一次确认；常规保留按拥有者已设置的策略自动执行 |
+| 任意本地执行者都不能触碰备份秘密/权威 | 明确不提供该保证；拥有者及其本地脚本受信任 |
+| 大而全的外部 producer/远程 writer 证明平台 | 只实现本期正常 PI Coffee/Pi/Codex 所需的数据协调；未支持的外部写入条件明确说明 |
 
-## Independent schedule candidate (#138)
+不再建设完整多用户备份产品，也不以未来插件化、跨机器权限平台或通用权限框架增加本期工作。原生一致性与故障接续可以有必要的内部状态，其保留理由须是可复现的数据故障，而不是防拥有者本人。
 
-`BackupJobRunner` persists local-date/revision dispatches, three bounded attempts
-(initial, +15, +60 minutes), worker observations and scoped incidents. An
-independent CLI daemon polls every 30 seconds without Web, a browser or a model.
-It consumes the authenticated Host task inventory and only sealed source points;
-repository coverage uses confirmed successful saved points. An outage retains
-last confirmed metadata and visibly marks coverage unknown. Original capture
-age is separate from job completion and worker observation. Shared kernel leases
-and stable repository request IDs reconcile controller death and response loss.
-Ordinary status is scope-owned; only the authenticated administrator may update
-a plan within the trusted managed allowlist. See [configuration and operational
-limits](../deployment/backup-schedule.md). This candidate is not production activation. Retention and account recovery are
-implemented source components; their final integrated acceptance remains #141.
+## 6. PB-2 验收条件（当前均待验证）
+
+- [ ] **PB-AC-01**：拥有者通过现有登录完成一次配置、离线恢复副本验证和计划启用，无独立角色/身份登记向导；其他平台账号不会因此获得额外访问。
+- [ ] **PB-AC-02**：真实 Restic 基线、未变/变化增量及两个历史点读回通过；关闭整个浏览器后同一作业继续完成。
+- [ ] **PB-AC-03**：默认 04:00 Toronto、夏令时、漏跑一次补偿、重启幂等及 15/60 分钟重试上限通过；旧点年龄不被作业时间刷新。
+- [ ] **PB-AC-04**：Pi/Codex 各有真实正常存储到检查点的证据；新写入撤销采集、忙碌沿用旧点、未支持写入者明确未保护，任务不被打断。
+- [ ] **PB-AC-05**：单任务、最后任务及整个纳管集合丢失后，可用一个预览和一次确认恢复原生 ID/历史、任务文件及注册信息；健康邻居保留。
+- [ ] **PB-AC-06**：覆盖三类发布窗口崩溃、幂等重试、部分成功接续、取消、目标后来改变和显式替换；不重放输入。
+- [ ] **PB-AC-07**：坏目录、替换目标、写失败、损坏材料、格式不兼容和不兼容恢复暂存位置给出明确错误，保留旧恢复点及新工作。
+- [ ] **PB-AC-08**：30/12/12 并集自动保留，无逐次审批；引用中的点和最后完整点受保护，清理后真实还原保留点。
+- [ ] **PB-AC-09**：在不依赖原本地密钥文件的环境中验证离线恢复副本；普通状态/错误无明文秘密。拥有者本地作业不依赖独立密钥代理和角色授权链。
+- [ ] **PB-AC-10**：网页和本地 CLI 共用流程；Web/Host 故障时可按实际服务状态提取/接回，状态、过期和失败提示持久可见。
+- [ ] **PB-AC-11**：精简不丢弃已有仓库、密钥、检查点、作业结果和有效恢复资料；旧格式/配置的保留或迁移有可审查说明，不默认从空环境开始。
+- [ ] **PB-AC-12**：基于实施时最新 main 保留 Host/Web/原生适配器；分片先证明 Pi 与 Codex 各一条端到端闭环，再验证组合场景。最终源码规范检查、实际 UI/API、适用审查及独立新克隆通过，记录真实资源和未测边界。
+
+正常路径贯通后才扩展故障矩阵。修复先运行相关小范围测试；规范整套检查在集成稳定后执行，发布精确提交后做独立新克隆。硬盘接入、实机重启/断电或提供商新回合不自动成为本次规格更新的任务，也不以未授权而伪称已验证。
+
+## 7. 旧需求与工单的迁移
+
+旧 #130 的 US01–US45 保留历史编号。PB-2 为后续实施权威；旧测试数量和已勾选旧 AC 不自动满足 PB-AC。
+
+| 原编号 | 本版处置 |
+| --- | --- |
+| US01–US15 | 保留备份/恢复和运行不中断目标，统一改为拥有者视角 |
+| US16 | 沿用平台登录/数据范围，撤销备份多角色权限产品 |
+| US17–US30 | 保留冲突、无重放、独立调度、增量、保留、恢复和覆盖透明要求 |
+| US31 | 保留秘密不经普通界面泄露与可用配置/认证说明，撤销防拥有者的秘密权威隔离 |
+| US32–US43 | 保留范围、一致性、身份、崩溃/幂等、误清理防护及离线恢复副本；US33/36/40 不再要求对抗性身份/授权证明平台 |
+| US44 | 由“请求管理员恢复”替换为“拥有者直接预览并确认恢复” |
+| US45 | 保留持久、去重的单用户站内告警，无多角色通知流程 |
+
+#131/#132 的数据采集/仓库能力、#133/#134 的原生恢复、#138/#139 的调度/保留、#140 的集合恢复继续复用可靠性成果；其中角色、独立代理和审批要求须按本版重规划。#141 须使用新的 PB-AC 矩阵。#135–#137 仍延期。本次不自动重写全部子票、不关闭工单、不把旧验收改判成新验收，也不授权部署或修改生产安全配置。
+
+## 8. 实现基线与明确差距
+
+文档工作基于 GitHub/Gitea main `d58ac4e814e34167157c57ae76f3b7461042f025`，两端已获取并确认相同。该 main 已消费 [Pi 1.4](../development/pi-140-upgrade.md)，未合入旧备份候选。备份代码观察基线为 [PR #142](https://github.com/awangs1986/pi-coffee-server/pull/142) 的 `d1b4816b9bc1c76a789ae176f4782970fef57510`；此次不修改该源码/分支。
+
+| 观察证据（d1b4816） | 与 PB-2 的差距 |
+| --- | --- |
+| [旧规格](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/spec/task-backup.md)要求源/目的地权威、显式 actor/scope/角色及独立 broker | 个人作业结构尚未精简，不能称本版已实现 |
+| [恢复 CLI](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/src/restore-cli.ts)要求 schema2 actor/user，并提供 request/plan/approve/publish 操作 | 本地可信入口与一次恢复确认仍待调整；平台原有远程身份校验不能误删 |
+| [恢复文档](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/development/task-recovery.md)记录阶段日志、原子发布、原生 ID 和共享数据合并 | 可靠性成果可复用；暂存位置预检与精简后崩溃接续需重新验证 |
+| [密钥 worker](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/src/backup-key-worker.ts)及[固定角色启动](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/deployment/ordinary-backup-startup.md)维护私有身份协议 | 需要收敛为可信拥有者配置和作业生命周期，不能只隐藏界面而保留强制门槛 |
+| [旧验收记录](https://github.com/awangs1986/pi-coffee-server/issues/130#issuecomment-6500868506)为 Pi 1.1/Codex 0.159.1 候选的 280 文件、1,697 测试和17 Browser probes | 只证明旧提交/旧要求；不能证明 PB-2、当前 Pi 1.4 兼容或生产已启用 |
+
+本轮为文档修订，未运行模型、备份/恢复、完整产品测试、部署或重启。后续实现须保留最新 main 能力，并重新核对依赖安全状态；旧候选的依赖告警与旧通过数字都不能直接外推到新的 main。
