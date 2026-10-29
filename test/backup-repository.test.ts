@@ -20,7 +20,7 @@ it.skipIf(!binary)('requires an exported offline copy before enabling encrypted 
   const stores=new Map<string,Workspaces>();for(const scope of ['awangs','bob']){const store=new Workspaces(join(root,'http',scope,'projects'));await store.createChatConversation('task');stores.set(scope,store);}
   const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Backup must not launch native');}};
   server=new HostServer({port:0,token:'synthetic-repository-http',requireUser:true,factory,backup:{coordinator,repository,binary,scopes:['bob']},scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();
-  const call=async(user:string,body?:unknown)=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/backup`,{method:body?'POST':'GET',headers:{authorization:'Bearer synthetic-repository-http','x-pi-coffee-user':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,cache:response.headers.get('cache-control'),data:await response.json()};};
+  const call=async(user:string,body?:unknown)=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/backup`,{method:body?'POST':'GET',headers:{authorization:'Bearer synthetic-repository-http','x-pi-coffee-user':user,'x-pi-coffee-actor':user,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,cache:response.headers.get('cache-control'),data:await response.json()};};
   expect((await call('bob',{action:'repository-export'})).status).toBe(403);
   const exported=await call('awangs',{action:'repository-export'});expect(exported.cache).toBe('no-store');let copy=exported.data.recoveryPackage;
 

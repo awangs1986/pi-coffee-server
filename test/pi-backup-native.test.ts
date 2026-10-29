@@ -27,7 +27,7 @@ it('seals real Pi JSONL with task registry/files only after supervised native li
   const adapter=new PiNativeRecoveryAdapter({scope:'awangs',workspaces:store,sessionDir:nativeDir,agentDir,fence,sourceCustody:sourceProof});
   const backup=new BackupCoordinator({root:join(root,'checkpoints'),adapter});
   server=new HostServer({port:0,token:'native-cut',requireUser:true,factory,backup:{coordinator:backup},scopeForUser:()=>({factory,workspaces:store})});await server.start();
-  const capture=async()=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/backup`,{method:'POST',headers:{authorization:'Bearer native-cut','x-pi-coffee-user':'awangs','content-type':'application/json'},body:JSON.stringify({action:'capture',taskId:task.id})});expect(response.status).toBe(200);return response.json();};
+  const capture=async()=>{const response=await fetch(`http://127.0.0.1:${server!.address().port}/api/backup`,{method:'POST',headers:{authorization:'Bearer native-cut','x-pi-coffee-user':'awangs','x-pi-coffee-actor':'awangs','content-type':'application/json'},body:JSON.stringify({action:'capture',taskId:task.id})});expect(response.status).toBe(200);return response.json();};
   session=await factory.create({sessionId:task.id});
   expect(await capture()).toMatchObject({state:'waiting',checkpointId:null});
   // The backup request did not terminate or restart the live native runtime.

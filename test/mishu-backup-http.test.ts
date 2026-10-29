@@ -19,7 +19,7 @@ it('captures API-created MISHU note revisions, tombstones and old bindings as in
  const factory=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:sessions,agentDir,writerFence:fence});
  const backup=new BackupCoordinator({root:join(root,'checkpoints'),adapter:new PiNativeRecoveryAdapter({scope:'awangs',workspaces,sessionDir:sessions,agentDir,fence,sourceCustody:async()=>({known:true})})});
  const host=new HostServer({port:0,token:'fixture',requireUser:true,factory,backup:{coordinator:backup},scopeForUser:()=>({factory,workspaces})});
- const call=async(path:string,body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'awangs','content-type':'application/json'},body:JSON.stringify(body)});expect(response.status).toBe(200);return response.json();};
+ const call=async(path:string,body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'awangs','x-pi-coffee-actor':'awangs','content-type':'application/json'},body:JSON.stringify(body)});expect(response.status).toBe(200);return response.json();};
  const memory=(id:string,body:Record<string,unknown>)=>call('/api/mishu',{id,action:'memory',...body});
  try{await host.start();
   for(const id of [task.id,other.id]){await memory(id,{action:'select',selected:true});await memory(id,{operation:'configure',operationId:'enable',enabled:true});}
@@ -64,7 +64,7 @@ it('retains the old point when a MISHU API write arrives during capture and reje
  const adapter={version:native.version,async resolve(scope:string,id:string){const group=await native.resolve(scope,id);return {...group,async validate(){if(hold){hold=false;reached();await new Promise<void>(r=>release=r);}await group.validate();}};}};
  const backup=new BackupCoordinator({root:join(root,'checkpoints'),adapter}),factory=new RpcPiSessionFactory({cliPath:resolve('test/fixtures/fake-pi-rpc.mjs'),sessionDir:sessions,agentDir,writerFence:fence});
  const host=new HostServer({port:0,token:'fixture',requireUser:true,factory,backup:{coordinator:backup},scopeForUser:()=>({factory,workspaces})});
- const call=async(path:string,body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'awangs','content-type':'application/json'},body:JSON.stringify(body)});expect(response.status).toBe(200);return response.json();};
+ const call=async(path:string,body:Record<string,unknown>)=>{const response=await fetch(`http://127.0.0.1:${host.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'awangs','x-pi-coffee-actor':'awangs','content-type':'application/json'},body:JSON.stringify(body)});expect(response.status).toBe(200);return response.json();};
  const memory=(body:Record<string,unknown>)=>call('/api/mishu',{id:task.id,action:'memory',...body});
  try{await host.start();await memory({action:'select',selected:true});await memory({operation:'configure',operationId:'enable',enabled:true});await memory({operation:'save',operationId:'original',kind:'preference',text:'original checkpoint note'});
   const old=await call('/api/backup',{action:'capture',taskId:task.id});expect(old.state).toBe('protected');
