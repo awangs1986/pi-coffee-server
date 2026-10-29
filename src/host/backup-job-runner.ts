@@ -11,7 +11,7 @@ export interface BackupInventoryTask {taskId:string;engine:AgentEngine;archived?
 export interface BackupInventoryConnection {url:string;tokenFile:string;actor:string;}
 interface Policy {schema:1;revision:string;scopes:string[];timeZone:string;hour:number;minute:number;startDate:string;host?:BackupInventoryConnection;}
 interface Coverage {state:'complete'|'partial'|'stale'|'unknown';inventoryAvailable:boolean;repositoryAvailable:boolean;unprotected:string[];stale:string[];excluded:BackupInventoryTask[];points:{taskId:string;captureAt:string;checkpointId:string}[];}
-interface Attempt {number:number;id:string;startedAt:string;finishedAt?:string;state:'running'|'succeeded'|'partial'|'failed'|'uncertain';errorCode?:string;scopeStates?:Record<string,Attempt['state']>;}
+interface Attempt {dispatchVersion?:1;selection?:BackupSelection[];number:number;id:string;startedAt:string;finishedAt?:string;state:'running'|'succeeded'|'partial'|'failed'|'uncertain';errorCode?:string;scopeStates?:Record<string,Attempt['state']>;}
 interface ScheduledRun {id:string;date:string;revision:string;scopes?:string[];startedAt:string;finishedAt?:string;state:Attempt['state'];attempts:Attempt[];scopeStates?:Record<string,Attempt['state']>;}
 interface Alert {id:string;scope:string;kind:'job-failed'|'point-stale'|'unprotected'|'inventory-unavailable'|'repository-unavailable';openedAt:string;lastObservedAt:string;resolvedAt?:string;occurrences:number;message:string;}
 interface Journal {schema:1;lastCheckedAt?:string;runs:ScheduledRun[];alerts:Alert[];}
@@ -48,7 +48,7 @@ export class BackupJobRunner {
   if(policy&&!policy.scopes.includes(scope))return {schemaVersion:1,configured:false,lastCheckedAt:null,workerState:'not-observed',schedule:null,coverage:{state:'unknown',inventoryAvailable:false,repositoryAvailable:false,unprotected:[],stale:[],excluded:[],points:[]},runs:[],alerts:[],excludedEngines:['claude','cursor','grok']};
   const journal=await this.journal();const coverage=await this.coverage(scope);
   return {schemaVersion:1,configured:Boolean(policy),lastCheckedAt:journal.lastCheckedAt??null,workerState:!journal.lastCheckedAt?'not-observed':this.now()-Date.parse(journal.lastCheckedAt)>120000?'overdue':'recent',schedule:policy?{revision:policy.revision,timeZone:policy.timeZone,hour:policy.hour,minute:policy.minute}:null,coverage,
-   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates})=>({id,date,revision,startedAt,finishedAt,state:scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
+   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates})=>({id,date,revision,startedAt,finishedAt,state:scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,selection:_selection,dispatchVersion:_dispatchVersion,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
  }
  async tick():Promise<{dispatched:boolean;run?:ScheduledRun}>{
   await this.initialize();return this.locked(async()=>{
@@ -70,7 +70,7 @@ export class BackupJobRunner {
    }else{
     run={id,date,revision:policy.revision,scopes:[...policy.scopes],startedAt:this.time(),state:'running',attempts:[]};journal.runs.push(run);
    }
-   const number=run.attempts.length+1,attempt:Attempt={number,id:operationId(run.id+':'+number),startedAt:this.time(),state:'running'};
+   const number=run.attempts.length+1,attempt:Attempt={dispatchVersion:1,number,id:operationId(run.id+':'+number),startedAt:this.time(),state:'running'};
    run.attempts.push(attempt);run.state='running';delete run.finishedAt;await this.save(journal);
    await this.execute(journal,run,coverage,false);return {dispatched:true,run};
   });
@@ -85,9 +85,15 @@ export class BackupJobRunner {
     if(job?.state==='failed')throw new BackupError(job.errorCode??'repository_failed','Previous attempt failed');
    }
    if(!job){
-    const selection:BackupSelection[]=[];for(const scope of coverage.keys())for(const p of (await this.coverage(scope,false)).points)selection.push({scope,taskId:p.taskId});
-    if(!selection.length)throw new BackupError('coverage_incomplete','No protected task checkpoint is available');
-    submitted=true;job=await this.options.repository.backup(selection,undefined,attempt.id);
+    if(!attempt.selection){
+     // Version 1 persists selection before any transport call. Older journals
+     // cannot prove that an unrecorded selection was never submitted.
+     if(reconciling&&attempt.dispatchVersion!==1)throw new BackupError('operation_uncertain','Previous dispatch has no durable checkpoint selection');
+     const selection:BackupSelection[]=[];for(const scope of coverage.keys())for(const p of (await this.coverage(scope,false)).points)selection.push({scope,taskId:p.taskId,expectedCheckpointId:p.checkpointId});
+     if(!selection.length)throw new BackupError('coverage_incomplete','No protected task checkpoint is available');
+     attempt.selection=selection;await this.save(journal);
+    }
+    submitted=true;job=await this.options.repository.backup(attempt.selection,undefined,attempt.id);
    }
    for(const scope of coverage.keys())coverage.set(scope,await this.coverage(scope,true,true));
    this.updateCoverageAlerts(journal,coverage);
