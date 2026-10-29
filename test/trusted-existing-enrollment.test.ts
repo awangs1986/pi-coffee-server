@@ -1,3 +1,4 @@
+import {existingPi,normalPiHandoff} from './trusted-native-enrollment-fixture.js';
 import {test,expect} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,rm,chmod,stat,readdir,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -14,20 +15,6 @@ import {codexFixture} from './codex-recovery-fixture.js';
 import {readNativeSourceHandoff} from '../src/host/native-source-handoff.js';
 import {RpcPiSessionFactory} from '../src/host/pi-adapter.js';
 
-async function existingPi(){
- const source=await mkdtemp(join(tmpdir(),'existing-pi-source-')),control=await mkdtemp(join(tmpdir(),'existing-pi-control-')),sessions=join(source,'sessions'),agent=join(source,'agent');
- const lock=join(control,'group.lock'),custody=new NativeWriterCustody(join(control,'custody'),{lock}),physical=new PhysicalWriterFence({lock,custody});
- await mkdir(sessions,{mode:0o700});await mkdir(agent,{mode:0o700});const workspaces=new Workspaces(join(source,'projects'),{gitCommandCustody:custody});const task=await workspaces.createChatConversation('original-task');
- const stored=SessionManager.create(task.cwd,sessions,{id:task.id});stored.appendMessage({role:'user',content:'Existing native context',timestamp:1});await writeFile(join(task.cwd,'note'),'first');
- const configuration=join(control,'configuration.json'),graph=join(control,'graph.json');
- await writeFile(configuration,JSON.stringify({schema:1,groupId:'native-group',owner:{administrator:'awangs',operatingAssumption:'all-source-producers-use-admission-v1'},roots:[{id:'source',path:source}],producers:[{id:'host',kind:'host'}]}),{mode:0o600});
- await writeFile(graph,JSON.stringify({schema:1,groupId:'native-group',roots:[{id:'source',scope:'awangs',engine:'pi'}]}),{mode:0o600});
- const open=(selected=physical)=>TrustedSourceAuthority.open({root:join(control,'authority'),configuration,graph,fence:selected,authorize:async actor=>actor==='awangs'});
- const authority=await open(),fence=authority.writerFence('host');workspaces.setBackupWriterFence(fence);
- const factory=new RpcPiSessionFactory({cwd:task.cwd,sessionDir:sessions,agentDir:agent,nativeCustody:custody,writerFence:fence,env:{PI_OFFLINE:'1'},args:['--no-extensions','--no-skills','--no-prompt-templates','--no-themes']});
- const scopes=[{scope:'awangs',workspaces,pi:{sessionDir:sessions,agentDir:agent}}],checkpointRoot=join(control,'checkpoints');
- return {lock,source,control,sessions,agent,workspaces,task,stored,configuration,graph,custody,physical,authority,open,fence,factory,scopes,checkpointRoot,cleanup:async()=>{await authority.close();await rm(source,{recursive:true,force:true});await rm(control,{recursive:true,force:true});}};
-}
 
 test('a no-op custodian cannot enroll existing native data or manufacture a cold producer handoff',async()=>{
  const f=await existingPi();try{
@@ -73,9 +60,7 @@ test.skipIf(!process.env.PI_COFFEE_TEST_CODEX_ROOT)('existing pinned Codex with 
  }finally{await session?.stop();await factory.close();await reopened?.close();await authority.close();await rm(f.root,{recursive:true,force:true});await rm(control,{recursive:true,force:true});}
 },50000);
 
-async function normalPiHandoff(f:Awaited<ReturnType<typeof existingPi>>){
- const session=await f.factory.create({sessionId:f.task.id,requireExisting:true});try{await session.getHistory();}finally{await session.stop();}await expect.poll(async()=>(await f.custody.state()).state,{timeout:10000}).toBe('quiescent');return readNativeSourceHandoff({custody:f.custody,fence:f.physical});
-}
+
 test.each(['forged','extra-producer','incomplete-scope','untracked-delegation','active-writer'] as const)('existing enrollment refuses %s even after a real completed native lifecycle',async failure=>{
  const f=await existingPi();try{
   const handoff=await normalPiHandoff(f),options={producer:'host',handoff,scopes:f.scopes,checkpointRoot:f.checkpointRoot};let release:(()=>void)|undefined;
@@ -159,5 +144,13 @@ test.each(['maxBytes','maxFiles','captureTimeoutMs'] as const)('later actual nat
  const f=await existingPi();try{
   const handoff=await normalPiHandoff(f),options={producer:'host',handoff,scopes:f.scopes,checkpointRoot:f.checkpointRoot},first=await f.authority.enrollExisting('awangs',options),coordinator=f.authority.createNativeCoordinator({...options,[limit]:1});
   const result=await coordinator.capture('awangs',f.task.id,'pi');expect(result.state).toBe('failed');expect(result.checkpointId).toBe(first.checkpoint.manifest.checkpointId);expect(result.captureAt).toBe(first.checkpoint.manifest.captureAt);expect((await coordinator.sealedCheckpoint('awangs',f.task.id))?.manifest.checkpointId).toBe(first.checkpoint.manifest.checkpointId);
+ }finally{await f.cleanup();}
+},30000);
+
+
+test('current administrator authorization is rechecked after native materialization before enrollment commits',async()=>{
+ let allowed=true;const f=await existingPi({authorize:async actor=>allowed&&actor==='awangs'});try{
+  const handoff=await normalPiHandoff(f),list=f.workspaces.list.bind(f.workspaces);f.workspaces.list=async()=>{const value=await list();allowed=false;return value;};
+  await expect(f.authority.enrollExisting('awangs',{producer:'host',handoff,scopes:f.scopes,checkpointRoot:f.checkpointRoot})).rejects.toThrow();expect((await f.authority.qualification()).state).toBe('unknown');const state=JSON.parse(await readFile(join(f.control,'authority','state.json'),'utf8'));expect(state.enrollment).toBeUndefined();
  }finally{await f.cleanup();}
 },30000);
