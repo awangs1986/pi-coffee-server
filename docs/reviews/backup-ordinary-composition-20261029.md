@@ -61,10 +61,12 @@ downgrade across restart, the configured initial capture file budget, and an
 actual SIGKILL of the synthetic Host followed by source endpoint recovery.
 
 The source socket uses a private kernel lease and a durable real owner/inode
-receipt before its staged inode is linked into the public name. Five endpoint
+receipt before its staged inode is linked into the public name. Six endpoint
 cases cover real SIGKILL, live/unknown refusal, crash before public linking,
 a refused socket with a still-live recorded owner, and a different unknown inode
-after the former owner dies. This does not qualify source writers.
+after the former owner dies, and forced randomness equal to the configured
+public basename. The public endpoint remains absent until explicit publication
+even in that last case. This does not qualify source writers.
 
 ## Scoped verification
 
@@ -125,7 +127,14 @@ zero survivors. Two endpoint mutants then removed real-owner liveness and inode
 matching. Each incorrectly permitted startup and failed the refusal assertion;
 source bytes were restored. Evidence: `ordinary-endpoint-mutants.log`,
 `ordinary-endpoint-mutants.json`, `ordinary-mutant-source-{owner-liveness,owned-inode}.log`.
-Total targeted production mutants across this composition work: nine, zero survivors.
+A tenth mutant removed the stage/public-name collision guard. The forced-randomness
+fault case then exposed the public socket before the explicit publication step
+(expected absent, observed present). It was killed and restored with successful
+TypeScript compilation (`ordinary-stage-collision-mutant.log`,
+`ordinary-stage-name-mutant.json`). The final endpoint suite passed 6 / 6, no skips,
+in 1.23 seconds (`ordinary-endpoint-final-tests.log`); final build after that source
+guard is `ordinary-endpoint-final-build.log`. This adds one distinct passing case
+to the 37 above. Total targeted production mutants: ten, zero survivors.
 
 ## Failures retained and limits
 
