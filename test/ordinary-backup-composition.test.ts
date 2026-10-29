@@ -6,7 +6,7 @@ import {WebSocket} from 'ws';
 import {BackupRepositoryClient} from '../src/host/backup-repository-client.js';
 import {randomUUID} from 'node:crypto';
 async function identity(pid:number){const raw=await readFile('/proc/'+pid+'/stat','utf8');return {pid,uid:process.getuid!(),boot:(await readFile('/proc/sys/kernel/random/boot_id','utf8')).trim(),birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]};}
-async function fixture(seed=false,existing=false,wrongRoots=false){
+async function fixture(seed=false,existing=false,wrongRoots=false,enrollmentMode:'fresh'|'existing'='fresh'){
  const root=await mkdtemp('/tmp/ordinary-main-'),data=join(root,'data'),control=join(root,'control'),disk=join(root,'disk'),keys=join(root,'keys');for(const dir of [control,disk,keys])await mkdir(dir,{mode:0o700});
  if(existing){await mkdir(data,{mode:0o700});await writeFile(join(data,'preserve'),'existing synthetic source');}
  const keySocket=join(root,'key.sock'),sourceSocket=join(root,'source.sock'),keyConfig=join(control,'key.json'),keyPolicy=join(control,'key-policy.json'),sourcePolicy=join(control,'source-policy.json'),profile=join(control,'ordinary.json'),client=join(control,'client.json'),gate=join(control,'start'),preload=join(control,'gate.mjs');
@@ -18,7 +18,7 @@ async function fixture(seed=false,existing=false,wrongRoots=false){
  const configuration=join(control,'source-configuration.json'),graph=join(control,'source-graph.json');
  await writeFile(configuration,JSON.stringify({schema:1,groupId:'ordinary-shared',owner:{administrator:'awangs',operatingAssumption:'all-source-producers-use-admission-v1'},roots:[{id:'domain',path:wrongRoots?join(root,'unrelated'):data}],producers:[{id:'host',kind:'host'}]}),{mode:0o600});
  await writeFile(graph,JSON.stringify({schema:1,groupId:'ordinary-shared',roots:[{id:'domain',scope:LEGACY_BACKUP_SCOPE,engine:'shared'}]}),{mode:0o600});
- await writeFile(profile,JSON.stringify({schema:1,root:join(control,'authority'),configuration,graph,sourceSocket,sourcePolicy,enrollment:{mode:'fresh',actor:'awangs'}}),{mode:0o600});
+ await writeFile(profile,JSON.stringify({schema:1,root:join(control,'authority'),configuration,graph,sourceSocket,sourcePolicy,enrollment:{mode:enrollmentMode,actor:'awangs'}}),{mode:0o600});
  await writeFile(client,JSON.stringify({schema:1,socket:keySocket,serviceUid:process.getuid!(),actor:'awangs',dataScope:LEGACY_BACKUP_SCOPE,authorityRevision:1}),{mode:0o600});
  await writeFile(preload,"import {access} from 'node:fs/promises';import {setTimeout} from 'node:timers/promises';const deadline=Date.now()+10000;while(!(await access("+JSON.stringify(gate)+").then(()=>true,()=>false))){if(Date.now()>deadline)throw Error('gate timeout');await setTimeout(10);}");
  const seedExtension=join(control,'seed.mjs');if(seed)await writeFile(seedExtension,"export default pi=>pi.registerCommand('fixture-seed',{handler:async(text,ctx)=>{ctx.sessionManager.appendMessage({role:'user',content:text,timestamp:Date.now()});const leaf=ctx.sessionManager.appendCustomEntry('fixture-seed',{});ctx.sessionManager.appendCustomEntry('fixture-end',{});await ctx.navigateTree(leaf,{summarize:false});}});",{mode:0o400});
@@ -86,3 +86,14 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('an enrolled unrelated directory c
   expect((await f.post('/api/workspace',{action:'archive',id:'native-pi-task'})).status).toBe(200);
  }finally{await f.stop();}
 },30000);
+
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('explicit existing-source mode waits for actual Pi history lifecycle then qualifies through ordinary main',async()=>{
+ const f=await fixture(true,true,false,'existing');try{
+  expect((await f.post('/api/workspace',{action:'conversation',workspaceKind:'chat',engine:'pi',id:'native-pi-task'})).status).toBe(200);
+  expect((await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state).toBe('unavailable');
+  await seedNative(f,'existing-source native evidence');
+  await expect.poll(async()=> (await f.post('/api/backup',{action:'capture',taskId:'native-pi-task'})).body.state,{timeout:15000,interval:500}).toBe('protected');
+  expect(await readFile(join(f.data,'preserve'),'utf8')).toBe('existing synthetic source');
+  const state=JSON.parse(await readFile(join(f.control,'authority','enrollment','state.json'),'utf8'));expect(state.enrollment.initialCheckpoint).toMatch(/^[a-f0-9-]{36}$/);expect(state.enrollment.handoffDigest).toMatch(/^[a-f0-9]{64}$/);
+ }finally{await f.stop();}
+},45000);
