@@ -1,5 +1,5 @@
 import {constants} from 'node:fs';
-import {execFile} from 'node:child_process';
+import {spawn} from 'node:child_process';
 import {readNativeSourceHandoff} from './native-source-handoff.js';
 import type {TrustedNativeSourceScope} from './trusted-native-source-closure.js';
 import {open,lstat,realpath,mkdir} from 'node:fs/promises';
@@ -63,7 +63,16 @@ export class OrdinaryBackupComposition {
  async codexVersion(command:string,options:{cwd:string;env:NodeJS.ProcessEnv}):Promise<string>{
   try{return await this.fence.runWriter('native',async()=>{
    const launch=await this.custody.prepare({executable:command,args:['--version']});
-   return await new Promise<string>(resolve=>execFile(process.execPath,[launch.cliPath],{cwd:options.cwd,env:{...process.env,...options.env,...launch.env},timeout:5000,maxBuffer:8192},(error,stdout)=>resolve(error?'unknown':String(stdout).trim().match(/^codex-cli (\d+\.\d+\.\d+)$/)?.[1]??'unknown')));
+   return await new Promise<string>(resolve=>{
+    const child=spawn(process.execPath,[launch.cliPath],{cwd:options.cwd,env:{...process.env,...options.env,...launch.env},stdio:['ignore','pipe','pipe']});
+    let done=false,stdout='',bytes=0;
+    const finish=(value:string)=>{if(done)return;done=true;clearTimeout(timer);resolve(value);};
+    const abort=()=>{child.kill('SIGTERM');finish('unknown');};
+    const timer=setTimeout(abort,5000);
+    child.stdout.on('data',chunk=>{if(done)return;bytes+=chunk.length;if(bytes>8192){abort();return;}stdout+=chunk;});
+    child.stderr.on('data',chunk=>{if(done)return;bytes+=chunk.length;if(bytes>8192)abort();});
+    child.on('error',()=>finish('unknown'));child.on('close',code=>finish(code===0?stdout.trim().match(/^codex-cli (\d+\.\d+\.\d+)$/)?.[1]??'unknown':'unknown'));
+   });
   });}catch{return 'unknown';}
  }
  async sourceProof(paths:readonly string[]):Promise<{known:boolean;reason?:string}>{
