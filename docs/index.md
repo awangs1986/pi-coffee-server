@@ -5,7 +5,7 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
-- Personal backup PB-2: [single trusted owner, daily incremental backup and one-confirmation recovery](spec/task-backup.md). Accepted target; simplification and current-main/Pi 1.4 acceptance remain pending. This supersedes the backup multi-role product requirements, not existing PI Coffee account boundaries.
+- Personal backup PB-2.1: [single operator, Pi/Codex and Gitea backup, one administrator recovery key and CLI recovery](spec/task-backup.md). Accepted MVP design; Agent assistance is optional. Implementation, credential recovery, Gitea-loss recovery and current-main/Pi 1.4 acceptance remain pending. Existing PI Coffee account boundaries remain; emergency recovery covers all enrolled accounts.
 
 > Historical PB-1 implementation pointers below; current personal requirements are PB-2/PB-2.1.
 
