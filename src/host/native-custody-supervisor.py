@@ -4,6 +4,7 @@ The record is custody evidence, not proof that unrelated clients cannot write a
 store. Never signals descendants for backup. Missing/partial records fail closed.
 """
 import ctypes
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,48 @@ import stat
 import subprocess
 import sys
 import uuid
+
+
+def assert_group_lock(identity, descriptor):
+    if set(identity) != {'schema', 'path', 'dev', 'ino', 'uid', 'parentDev', 'parentIno'} or identity['schema'] != 1:
+        raise ValueError('Invalid source lock identity')
+    path = Path(identity['path'])
+    parent = path.parent.lstat()
+    named = path.lstat()
+    current = os.fstat(descriptor)
+    if path.resolve() != path or path.parent.resolve() != path.parent or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid() or parent.st_mode & 0o077 or (parent.st_dev, parent.st_ino) != (identity['parentDev'], identity['parentIno']):
+        raise ValueError('Source lock parent changed')
+    if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1 or current.st_uid != os.getuid() or current.st_mode & 0o077 or (current.st_dev, current.st_ino, current.st_uid) != (identity['dev'], identity['ino'], identity['uid']) or stat.S_ISLNK(named.st_mode) or (named.st_dev, named.st_ino) != (current.st_dev, current.st_ino):
+        raise ValueError('Source lock changed')
+
+
+def assert_group_binding(root, identity):
+    path = root.parent / 'group-lock.json'
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(descriptor)
+        named = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 65536 or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino):
+            raise ValueError('Invalid source lock binding')
+        with os.fdopen(descriptor, closefd=False) as value:
+            if json.load(value) != identity:
+                raise ValueError('Source lock binding changed')
+    finally:
+        os.close(descriptor)
+
+
+def acquire_group_lock(identity):
+    # Nonblocking: capture must be revoked at the Host admission seam before
+    # launch. This foundation never waits behind a backup or signals writers.
+    descriptor = os.open(identity['path'], os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        assert_group_lock(identity, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        assert_group_lock(identity, descriptor)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
 
 
 def main():
@@ -37,7 +80,7 @@ def main():
     birth = own_stat[own_stat.rindex(')') + 2:].split()[19]
 
     def publish(state):
-        value = {'schema': 1, 'id': identity, 'state': state, 'boot': boot, 'pid': os.getpid(), 'birth': birth}
+        value = {'schema': 1, 'id': identity, 'state': state, 'boot': boot, 'pid': os.getpid(), 'birth': birth, **({'groupLock': command['groupLock']} if 'groupLock' in command else {})}
         temp = root / (str(uuid.uuid4()) + '.tmp')
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, 'w') as output:
@@ -50,6 +93,12 @@ def main():
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+    group_lock = None
+    group_identity = command.get('groupLock')
+    if group_identity is not None:
+        assert_group_binding(root, group_identity)
+        group_lock = acquire_group_lock(group_identity)
 
     native = None
     native_signal_fd = None
@@ -104,9 +153,16 @@ def main():
             break
     if native_status is None:
         raise RuntimeError('Native exit not observed')
+    # Durable completion precedes releasing either source lock. A killed
+    # supervisor leaves an active/prepared receipt, never known quiescence.
+    if group_identity is not None:
+        assert_group_binding(root, group_identity)
+        assert_group_lock(group_identity, group_lock)
+    publish('quiescent')
+    if group_lock is not None:
+        os.close(group_lock)
     if managed_lock is not None:
         os.close(managed_lock)
-    publish('quiescent')
     return native_status if native_status >= 0 else 128 - native_status
 
 
