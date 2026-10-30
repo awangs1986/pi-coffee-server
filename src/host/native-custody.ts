@@ -20,7 +20,8 @@ const idPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0
 export class NativeWriterCustody {
   readonly root: string;
   readonly groupLock?:string;
-  constructor(root: string, options?:{lock:string}) { this.root = resolve(root);custodyInstances.add(this);if(options){if(resolve(options.lock)!==options.lock)throw Error('Source group lock must be canonical');this.groupLock=options.lock;} }
+  private readonly allowUnused:boolean;
+  constructor(root: string, options?:{lock:string;allowUnused?:boolean}) { this.allowUnused=options?.allowUnused===true;this.root = resolve(root);custodyInstances.add(this);if(options){if(resolve(options.lock)!==options.lock)throw Error('Source group lock must be canonical');this.groupLock=options.lock;} }
 
   async allocateFreshDestination():Promise<FreshCustodyAllocation>{
     if(!this.groupLock)throw Error('Destination custody requires its source lock');
@@ -57,6 +58,9 @@ export class NativeWriterCustody {
     if (process.platform !== 'linux') return { state: 'unknown', reason: 'native-custody-unavailable' };
     try {
       await this.checkedDirectory(this.root);
+      // The trusted personal Host can start with no prior child launches. This
+      // says nothing about external writers; its source policy handles those.
+      if(this.allowUnused&&(await readdir(this.root)).length===0)return {state:'quiescent'};
       const groupLock=this.groupLock?await this.readGroupLock():undefined;
       const ids = (await readdir(this.root)).filter(name=>name!=='allocation.json'&&(!groupLock||name!=='group-lock.json'));
       if (!ids.length) return { state: 'unknown', reason: 'native-custody-unestablished' };

@@ -6,6 +6,7 @@ import { BackupError } from './backup.js';
 type ConfigurationSource = { id: string; recoveryKey: string; role: 'native'; path: string };
 export interface PiRecoveryConfigurationOptions {
   agentDir: string;
+  includeAuthentication?: boolean;
   /** Exact configured package source -> immutable artifact identity. Supplied by
    * the trusted release consumer, never inferred from a name or browser input. */
   immutablePackages?: Record<string,string>;
@@ -19,7 +20,7 @@ export async function collectPiRecoveryConfiguration(options: PiRecoveryConfigur
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || await realpath(root) !== root) throw new BackupError('unsafe_source', 'Unsafe Pi configuration root');
   const selected = new Set<string>();
   const packages: { source: string; artifact: string }[] = [];
-  const regular = new Set(['settings.json', 'models.json', 'models-store.json', 'web-search.json', 'AGENTS.md', 'SYSTEM.md', 'APPEND_SYSTEM.md']);
+  const regular = new Set([...(options.includeAuthentication?['auth.json']:[]),'settings.json', 'models.json', 'models-store.json', 'web-search.json', 'AGENTS.md', 'SYSTEM.md', 'APPEND_SYSTEM.md']);
   const resources = new Set(['skills', 'prompts', 'themes']);
   const names = await readdir(root);
   let settings: Record<string,unknown> = {};
@@ -52,7 +53,7 @@ export async function collectPiRecoveryConfiguration(options: PiRecoveryConfigur
     }
   }
   for (const name of names) {
-    if (name === 'auth.json' || name === '.pi-coffee-backup-source') continue;
+    if (name === 'auth.json'&&!options.includeAuthentication || name === '.pi-coffee-backup-source') continue;
     if (!regular.has(name) && !resources.has(name) && !selected.has(name)) throw new BackupError('configuration_incomplete', 'Unknown mutable Pi configuration source');
     selected.add(name);
   }
@@ -76,8 +77,8 @@ export async function collectPiRecoveryConfiguration(options: PiRecoveryConfigur
     validate: async () => {
       const current = await lstat(root);
       if (JSON.stringify([current.dev, current.ino]) !== rootIdentity || await realpath(root) !== root) throw new BackupError('capture_revoked', 'Pi configuration root changed');
-      const currentNames = (await readdir(root)).filter(name => !['auth.json', '.pi-coffee-backup-source'].includes(name)).sort();
-      if (JSON.stringify(currentNames) !== JSON.stringify(names.filter(name => !['auth.json', '.pi-coffee-backup-source'].includes(name)).sort())) throw new BackupError('capture_revoked', 'Pi configuration graph changed');
+      const currentNames = (await readdir(root)).filter(name => !['.pi-coffee-backup-source',...options.includeAuthentication?[]:['auth.json']].includes(name)).sort();
+      if (JSON.stringify(currentNames) !== JSON.stringify(names.filter(name => !['.pi-coffee-backup-source',...options.includeAuthentication?[]:['auth.json']].includes(name)).sort())) throw new BackupError('capture_revoked', 'Pi configuration graph changed');
       for (const [path, before] of identity) if (await inspect(path) !== before) throw new BackupError('capture_revoked', 'Pi configuration changed');
     },
   };

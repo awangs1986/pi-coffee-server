@@ -72,7 +72,7 @@ export type BackupScheduleAccess=Pick<BackupJobRunner,'status'|'configure'>;
 export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>&Partial<Pick<BackupRepository,'recoveryPoints'>>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {personal?:boolean;coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
 
 
   releaseDir?:string;
@@ -280,7 +280,7 @@ export class HostServer {
 
   async mishuRuntime(user:string|undefined,id:string):Promise<{extensions:string[];env:Record<string,string>}> {
     const slot=await this.slotFor(user);if(!slot.mishu)return {extensions:[],env:{}};
-    const task=await slot.workspaces?.lookup(id);if(!task||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
+    const task=await slot.workspaces?.lookup(id);if(!task||task.archived||task.workspaceRemoved||task.cleanupStarted||task.creationState&&task.creationState!=='ready'||task.takeover?.status==='preparing'||task.forking?.status==='preparing'||task.workspaceKind!=='chat'||(task.engine??'pi')!=='pi')return {extensions:[],env:{}};
     const extension=this.mishuExtension();if(!extension)return {extensions:[],env:{}};
     const address=this.mishuHttp.address();if(!address||typeof address==='string')throw Error('MISHU local interface is not listening');
     try{const env=await slot.mishu.environment(id,`http://127.0.0.1:${address.port}/api/mishu/runtime`);
@@ -318,7 +318,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),...(this.options.backup?.configureRepositoryForActor?{repositoryConfiguration:'service-managed'}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,personal:this.options.backup?.personal===true,scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),...(this.options.backup?.configureRepositoryForActor?{repositoryConfiguration:'service-managed'}:{}),excludedEngines:['claude','cursor','grok']};
 
       };
       const scheduleFor=(target:UserSlot)=>this.options.backup?.scheduleForActor?scopedSchedule(()=>this.options.backup!.scheduleForActor!(actor,target.user??LEGACY_BACKUP_SCOPE)):this.options.backup?.schedule;
@@ -356,6 +356,24 @@ export class HostServer {
           if(this.options.backup?.activationUnavailable&&['plan','publish'].includes(action)){json(res,409,{error:this.options.backup.activationUnavailable});return;}
           json(res,200,await recovery.operate(actor??'',input.id,{action:action as 'plan'|'approve'|'publish'|'cancel'|'revise',revision:input.revision as number,...(typeof input.digest==='string'?{digest:input.digest}:{})}));
         }catch(error){json(res,error instanceof BackupError&&error.code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Account recovery operation failed'});}return;
+      }
+      if(this.options.backup?.personal&&['restore-preview','restore-confirm'].includes(input.action as string)){
+        res.setHeader('cache-control','no-store');
+        if(actor!==administrator){json(res,403,{error:'Owner recovery required'});return;}
+        const restore=this.options.backup.restore;
+        if(!restore){json(res,409,{error:'Restore service unavailable'});return;}
+        try{
+          if(input.action==='restore-preview'){
+            const scope=input.scope??dataScope;
+            if(typeof scope!=='string'||scope!==dataScope&&!this.options.backup.scopes?.includes(scope)){json(res,403,{error:'Recovery scope denied'});return;}
+            if(typeof input.taskId!=='string'||typeof input.jobId!=='string'){json(res,400,{error:'Choose a task and recovery point'});return;}
+            const requested=await restore.request(actor,scope,{taskId:input.taskId,jobId:input.jobId,...(input.mode!==undefined?{mode:input.mode as 'missing-only'|'replace'}:{})});
+            json(res,200,await restore.operate(actor,requested.id,{action:'plan',revision:requested.revision}));return;
+          }
+          if(typeof input.id!=='string'||!Number.isSafeInteger(input.revision)||typeof input.digest!=='string'){json(res,400,{error:'Confirm the current preview'});return;}
+          const result=await restore.operate(actor,input.id,{action:'confirm',revision:input.revision as number,digest:input.digest});
+          json(res,200,result);this.broadcastSessions(await this.slotFor(result.scope===LEGACY_BACKUP_SCOPE?undefined:result.scope));
+        }catch(error){json(res,error instanceof BackupError&&error.code==='forbidden'?403:error instanceof BackupError?409:500,{error:error instanceof BackupError?error.message:'Restore failed'});}return;
       }
       if(typeof input.action==='string'&&input.action.startsWith('restore-')){
         res.setHeader('cache-control','no-store');const restore=this.options.backup?.restore;
