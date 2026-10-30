@@ -13,7 +13,7 @@ import {readCodexHistory} from '../src/host/codex/history.js';
 import {ManagedNativeCustody} from '../src/host/managed-native.js';
 import {CodexSessionFactory} from '../src/host/codex-adapter.js';
 
-export async function codexFixture(options?:{project?:boolean;initialEngine?:'pi'|'codex'}){
+export async function codexFixture(options?:{project?:boolean;initialEngine?:'pi'|'codex';personalConfiguration?:boolean}){
  const root=await mkdtemp(join(tmpdir(),'coffee-codex-recovery-')),home=join(root,'native'),sql=join(root,'sqlite');await mkdir(home,{mode:0o700});await mkdir(sql,{mode:0o700});
  const store=new Workspaces(join(root,'alice','projects'));const engine=options?.initialEngine??'codex';let task:import('../src/host/workspaces.js').Conversation;
  if(options?.project){const source=join(root,'fixture-git');await mkdir(source,{mode:0o700});const git=(...args:string[])=>execFileSync('git',['-c','user.name=Synthetic','-c','user.email=synthetic@localhost',...args],{cwd:source,stdio:'ignore'});git('init','-b','main');await writeFile(join(source,'base.txt'),'committed base');git('add','.');git('commit','-m','synthetic base');const project=await store.registerProject('Synthetic',source);task=await store.createConversation(project.id,undefined,'codex-task',engine);execFileSync('git',['repack','-a','-d'],{cwd:task.cwd,stdio:'ignore'});}
@@ -35,7 +35,7 @@ for name,s in schema.items():
  c.commit();c.close()
 c=sqlite3.connect(root/'state_5.sqlite');c.execute('INSERT INTO threads(id,rollout_path,created_at,updated_at,source,model_provider,cwd,title,sandbox_policy,approval_mode,cli_version,history_mode) VALUES (?,?,1,1,?,?,?,?,?,?,?,?)',(sys.argv[3],sys.argv[4],'cli','fixture',sys.argv[5],'Synthetic','{"type":"read-only"}','never','0.159.1','paginated'));c.commit();c.close()
 `,resolve('src/host/codex-schema-01591.json'),sql,id,rollout,task.cwd]);
- const fence=new WriterAdmissionFence({writerClasses:['native','platform'],uncoveredWriters:[],probe:async()=>({known:true})}),adapter=new CodexNativeRecoveryAdapter({scope:'alice',workspaces:store,codexHome:home,sqliteHome:sql,cliVersion:'0.159.1',fence,sourceCustody:async()=>({known:true})});
+ const fence=new WriterAdmissionFence({writerClasses:['native','platform'],uncoveredWriters:[],probe:async()=>({known:true})}),adapter=new CodexNativeRecoveryAdapter({scope:'alice',workspaces:store,codexHome:home,sqliteHome:sql,cliVersion:'0.159.1',restoreConfiguration:options?.personalConfiguration,fence,sourceCustody:async()=>({known:true})});
  const coordinator=new BackupCoordinator({root:join(root,'checkpoints'),adapter});return {root,home,sql,store,task:current,id,rollout,fence,adapter,coordinator};
 }
 export async function nativeReadResume(f:Awaited<ReturnType<typeof codexFixture>>){
@@ -46,8 +46,8 @@ export async function nativeReadResume(f:Awaited<ReturnType<typeof codexFixture>
  finally{if(child.exitCode===null&&child.signalCode===null){const exit=once(child,'exit');child.stdin.end();const timer=setTimeout(()=>child.kill('SIGTERM'),5000);await exit;clearTimeout(timer);}await expect.poll(async()=>(await custody.state()).state,{timeout:10000}).toBe('quiescent');}
 }
 
-export async function preparedCodexRecovery(binary:string,hooks?:{populate?:(f:Awaited<ReturnType<typeof codexFixture>>)=>Promise<void>;lose?:(f:Awaited<ReturnType<typeof codexFixture>>)=>Promise<void>}){
- const f=await codexFixture();await f.store.createChatConversation('neighbor','codex');const other=new Workspaces(join(f.root,'bob','projects'));await other.createChatConversation('other-account','codex');
+export async function preparedCodexRecovery(binary:string,hooks?:{personalConfiguration?:boolean;populate?:(f:Awaited<ReturnType<typeof codexFixture>>)=>Promise<void>;lose?:(f:Awaited<ReturnType<typeof codexFixture>>)=>Promise<void>}){
+ const f=await codexFixture({personalConfiguration:hooks?.personalConfiguration});await f.store.createChatConversation('neighbor','codex');const other=new Workspaces(join(f.root,'bob','projects'));await other.createChatConversation('other-account','codex');
  await writeFile(join(f.home,'session_index.jsonl'),JSON.stringify({id:f.id,thread_name:'Recovered ordinary task',updated_at:'2026-10-25T12:00:00Z'})+'\n');
  await hooks?.populate?.(f);expect((await f.coordinator.capture('alice',f.task.id,'codex')).state).toBe('protected');const disk=join(f.root,'disk');await mkdir(disk,{mode:0o700});const repository=new BackupRepository({root:join(f.root,'repository'),coordinator:f.coordinator});await repository.configure({destination:disk,binary});await repository.verifyRecoveryPackage(await repository.exportRecoveryPackage());const job=await repository.backup([{scope:'alice',taskId:f.task.id}]);
  execFileSync('/usr/bin/python3',['-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('DELETE FROM threads WHERE id=?',(sys.argv[2],));c.commit();c.close()",join(f.sql,'state_5.sqlite'),f.id]);

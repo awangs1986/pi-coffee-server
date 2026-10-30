@@ -15,7 +15,7 @@ The owner signs in through Gitea, configures the existing backup directory,
 downloads the recovery package and verifies the saved copy once. Keep the package
 separately (the owner may save it to their mailbox). The UI then offers checkpoint
 capture, repository backup, preview and one confirmation to restore. A selected
-historical point is never replaced by a newer one. Missing Pi configuration and
+historical point is never replaced by a newer one. Missing Pi/Codex configuration and
 authentication files are restored in personal mode; existing configuration wins.
 Credentials may need native login again. Old inputs are never automatically sent.
 
@@ -44,5 +44,5 @@ records prevent accidental overwrite; they do not protect against the owner.
 Only normal Host/native writers in this configured topology are coordinated.
 An uncoordinated writer makes new capture unavailable until a stable source can
 be established; existing repository points remain readable. No task is stopped
-to produce a checkpoint. Complete Gitea, account-set, scheduling and standalone
+to produce a checkpoint. Codex native format is currently qualified at CLI 0.159.1; unknown formats are refused. Complete Gitea, account-set, scheduling and standalone
 source-loss recovery acceptance is tracked separately in #145–#150.

@@ -7,6 +7,8 @@
 
 - Personal backup PB-2.1: [single operator, Pi/Codex and Gitea backup, one administrator recovery key and CLI recovery](spec/task-backup.md). Accepted MVP design; Agent assistance is optional. Implementation, credential recovery, Gitea-loss recovery and current-main/Pi 1.4 acceptance remain pending. Existing PI Coffee account boundaries remain; emergency recovery covers all enrolled accounts.
 
+- Personal source candidate: [direct Host configuration and one-confirmation CLI recovery](deployment/personal-backup.md). Pi/Codex focused recovery evidence is recorded on #144/#145; final acceptance and production activation remain pending.
+
 > Historical PB-1 implementation pointers below; current personal requirements are PB-2/PB-2.1.
 
 - Ordinary backup candidate: [source composition](deployment/ordinary-backup-source.md), [fixed-role startup](deployment/ordinary-backup-startup.md), [empty-target recovery](development/restore-destination-authority.md), and [current evidence / remaining acceptance gates](reviews/backup-ordinary-source-20261029.md), and [actual restore/daily-worker paths](reviews/backup-ordinary-restore-20261029.md). Account approval previews include native identities and shared dependency roles. No production service activation is implied.
