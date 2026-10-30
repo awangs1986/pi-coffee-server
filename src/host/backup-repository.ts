@@ -3,7 +3,8 @@ import {recoveryPointPage,type RecoveryPointQuery} from './recovery-point-catalo
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {planRetention,type RecoveryPin,type RecoveryPinLease,type RepositoryRetentionPlan,type RetentionSnapshot} from './backup-retention.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {constants,createReadStream} from 'node:fs';
 import {mkdir,lstat,realpath,open,readFile,readdir,rename,rm,mkdtemp,statfs} from 'node:fs/promises';
 import {join,resolve,dirname,isAbsolute} from 'node:path';
@@ -328,9 +329,21 @@ export class BackupRepository {
  }
  private async exclusive<T>(run:()=>Promise<T>):Promise<T>{
   await this.initialize();const lock=join(this.root,'operation-lock');
-  try{await mkdir(lock,{mode:0o700});}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw fail('repository_busy');throw error;}
-  const nonce=randomUUID(),identity=await privateDirectory(lock);this.lockNonce=nonce;
-  try{await atomicJson(lock,'owner.json',{pid:process.pid,identity:await processIdentity(process.pid),nonce,startedAt:this.time()});await syncDirectory(this.root);return await run();}finally{const current=await privateDirectory(lock),owner=JSON.parse(await privateText(join(lock,'owner.json'),8192));if(current.ino!==identity.ino||current.dev!==identity.dev||owner.nonce!==nonce)throw fail('repository_busy');this.lockNonce=undefined;await rm(lock,{recursive:true,force:true});await syncDirectory(this.root);}
+  if(await exists(lock))throw fail('repository_busy');
+  const nonce=randomUUID(),preparing=join(this.root,'operation-lock-preparing-'+nonce);
+  await mkdir(preparing,{mode:0o700});const identity=await privateDirectory(preparing);
+  try{
+   // Publish a complete owner record in one no-replace rename. A killed
+   // initializer leaves only private preparation, never an ownerless authority.
+   await atomicJson(preparing,'owner.json',{pid:process.pid,identity:await processIdentity(process.pid),nonce,startedAt:this.time()});
+   try{await promisify(execFile)('/usr/bin/python3',['-c',"import ctypes,os,sys;l=ctypes.CDLL(None,use_errno=True);r=l.renameat2(-100,os.fsencode(sys.argv[1]),-100,os.fsencode(sys.argv[2]),1);sys.exit(ctypes.get_errno() if r else 0)",preparing,lock],{timeout:10000,maxBuffer:8192});}
+   catch(error){throw fail(error&&typeof error==='object'&&'code' in error&&error.code===17?'repository_busy':'repository_failed');}
+  }catch(error){
+   if(await exists(preparing)){const current=await privateDirectory(preparing);if(current.dev===identity.dev&&current.ino===identity.ino)await rm(preparing,{recursive:true,force:true});}
+   throw error;
+  }
+  this.lockNonce=nonce;
+  try{await syncDirectory(this.root);return await run();}finally{const current=await privateDirectory(lock),owner=JSON.parse(await privateText(join(lock,'owner.json'),8192));if(current.ino!==identity.ino||current.dev!==identity.dev||owner.nonce!==nonce)throw fail('repository_busy');this.lockNonce=undefined;await rm(lock,{recursive:true,force:true});await syncDirectory(this.root);}
  }
 }
 function parseRecovery(copy:string,config:RepositoryConfig):RecoveryPackage{if(typeof copy!=='string'||copy.length>8192)throw fail('recovery_verification_failed');let value;try{value=JSON.parse(copy);}catch{throw fail('recovery_verification_failed');}if(!value||typeof value!=='object'||value.schema!==1||value.repositoryId!==config.repositoryId||value.keyId!==config.keyId||value.backend?.sha256!==RESTIC_PIN.sha256||typeof value.password!=='string'||value.password.length<32||value.password.length>512)throw fail('recovery_verification_failed');return value;}

@@ -112,6 +112,15 @@ sealed numeric ID/scope/directory mapping and checked target identities. No new
 npm dependency was introduced by the personal changes. This is the targeted
 five-category review, not an adversarial owner/root-isolation claim.
 
+An independent fresh clone exposed the repository controller being killed between
+creating its active lock directory and writing its owner record. The regression
+now delays the real mkdir boundary deterministically; the repository prepares and
+fsyncs owner metadata privately, then publishes it with a no-replace rename. A
+killed initializer leaves no ownerless active authority, and unknown existing
+authorities remain untouched. `150-lock-publication-red.log` records the original
+failure; `150-lock-publication-green.log` passes six related cases in three files.
+The published candidate is updated and its full source/fresh-clone gates rerun.
+
 The final source review receipt is recorded only after focused repairs and their
 checks pass; the canonical publication gate follows it. Production deployment
 requires its own authorization and actual environment qualification.
