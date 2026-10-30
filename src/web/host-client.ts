@@ -1,10 +1,11 @@
-import { USER_HEADER } from "../shared/identity.js";
+import { USER_HEADER,ACTOR_HEADER } from "../shared/identity.js";
 import { WebSocket, type RawData } from "ws";
 
 export interface HostClientOptions {
   url: string;
   token?: string;
   user?: string;
+  actor?: string;
   onUnavailable?: (error: Error) => void;
 }
 
@@ -25,7 +26,7 @@ export class HostClient {
   async connect(): Promise<void> {
     if (this.socket?.readyState === WebSocket.OPEN) return;
     this.clearUpstreamPing();this.ready=false;
-    const headers = { ...(this.options.token ? {Authorization:`Bearer ${this.options.token}`} : {}), ...(this.options.user ? {[USER_HEADER]:this.options.user} : {}) };
+    const headers = { ...(this.options.actor?{[ACTOR_HEADER]:this.options.actor}:{}), ...(this.options.token ? {Authorization:`Bearer ${this.options.token}`} : {}), ...(this.options.user ? {[USER_HEADER]:this.options.user} : {}) };
     const socket = new WebSocket(this.options.url, headers === undefined ? undefined : { headers });
     this.socket = socket;
     this.intentionalClose = false;

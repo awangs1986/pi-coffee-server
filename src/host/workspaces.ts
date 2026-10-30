@@ -1,3 +1,9 @@
+import type {NativeWriterCustody} from './native-custody.js';
+import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
+import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
+import {ManagedWriterFence} from './managed-writer-fence.js';
+import type {ManagedNativeCustody} from './managed-native.js';
+import {executeWorkspaceGit,managedWorkspaceGitFiles,workspaceGitCommand} from './workspace-git.js';
 import type {ForkState,ForkProgress,ForkMode,ForkSettings} from './fork.js';
 import {copyForkTree} from './fork-files.js';
 import type {GitHubAccounts} from './github-accounts.js';
@@ -17,7 +23,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -35,7 +41,7 @@ export const FILE_PATCH_LIMIT = 4 * 1024 * 1024;
 export const FILE_CONTENTS_LIMIT = 1024 * 1024;
 export type SideText = { text:string|null; reason?:'binary'|'too_large' };
 export interface PullRequest { number:number; url:string; state:string; target:string; source:string }
-export interface WorkspaceOptions { githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
+export interface WorkspaceOptions { gitCommandCustody?:NativeWriterCustody;managedGitCustody?:ManagedNativeCustody; deferStartupReconciliation?:()=>boolean; githubAccounts?:GitHubAccounts; taskRoot?:string; ownerId?: string; chatRoot?: string; forge?: CodeForge; github?: GitHubForge }
 export interface ForgeRepository { id:string; fullName:string; private:boolean; archived:boolean; defaultBranch:string; cloneUrl:string; webUrl:string; canPush:boolean; pushedAt?:string; description?:string }
 export type GitHubRepository = ForgeRepository;
 /** GitHub API adapter (ADR-0022). Git transport still uses the VM owner's credentials. */
@@ -87,10 +93,14 @@ interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<
 interface State { displayMode?:"compact"|"detailed"; sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
+  get backupGitCustody(){return this.options.gitCommandCustody;}
+  backupWriterFence?:WriterAdmissionFence;
+  setBackupWriterFence(fence:WriterAdmissionFence){this.backupWriterFence=fence;}
   private state: State = {version:2,projects:[],conversations:[]};
   private tails = new Map<string, Promise<unknown>>();
   private saveTail: Promise<void> = Promise.resolve();
   private initialized = false;
+  private startupReconciliationPending=false;
   private loading?: Promise<void>;
   private readonly runStatusWrites=new Set<Promise<void>>();
   readonly chatRoot:string;
@@ -99,8 +109,9 @@ export class Workspaces {
   private readonly github?:GitHubForge;
   private readonly githubAccounts?:GitHubAccounts;
   private readonly pendingAccounts=new Map<string,string>();
+  private readonly pendingRepositories=new Map<string,string>();
   private readonly taskRoot?:string;
-  constructor(readonly root: string, options:WorkspaceOptions={}) {
+  constructor(readonly root: string, private options:WorkspaceOptions={}) {
     this.root = resolve(root);
     this.chatRoot=resolve(options.chatRoot ?? join(this.root,"..","chats"));
     if(this.chatRoot===this.root || this.chatRoot.startsWith(this.root+"/") || this.root.startsWith(this.chatRoot+"/"))throw new Error("Chat and Project roots must be separate");
@@ -110,8 +121,9 @@ export class Workspaces {
     this.taskRoot=options.taskRoot ? resolve(options.taskRoot) : undefined;
   }
   private async load() {
-    if(this.initialized)return;
-    if(!this.loading)this.loading=this.loadState();
+    if(this.initialized&&!this.startupReconciliationPending)return;
+    if(this.initialized&&this.options.deferStartupReconciliation?.())return;
+    if(!this.loading)this.loading=this.initialized?this.reconcileStartup():this.loadState();
     try {await this.loading;} finally {this.loading=undefined;}
   }
   private async loadState() {
@@ -127,23 +139,28 @@ export class Workspaces {
       this.state={...data,version:2};
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
+    this.initialized=true;this.startupReconciliationPending=true;
+    if(!this.options.deferStartupReconciliation?.())await this.reconcileStartup();
+  }
+  private async reconcileStartup(){const run=async()=>{
     let interrupted=false;
     for(const c of this.state.conversations){if(c.fork?.status==='preparing'){c.fork.status='failed';c.fork.error='Host restarted during Fork; retained files and native history require inspection. No automatic retry.';interrupted=true;}if(c.forking?.status==='preparing'){c.forking.status='failed';c.forking.error='Fork interrupted by Host restart';interrupted=true;}}
     for(const c of this.state.conversations)if(c.takeover?.status==='preparing'){c.takeover.status='failed';c.takeover.error='Host restarted during takeover; original binding retained. Inspect preparation records before retrying.';interrupted=true;}
     for(const c of this.state.conversations) if(c.runState==="running" || c.lastRunStatus==="running") {c.runState="interrupted";c.lastRunStatus="interrupted";interrupted=true;}
     for(const c of this.state.conversations)if(c.creationState==='creating'){c.creationState='failed';c.creationError='Creation interrupted; retry the same task after inspecting retained files';interrupted=true;}
-    if(interrupted)await this.save();
-    this.initialized=true;
+    if(interrupted)await this.saveState();this.startupReconciliationPending=false;
+    };if(this.backupWriterFence)await this.backupWriterFence.runWriter('platform',run);else await run();
   }
-  private async save() {
+  private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
+  private async saveState(exportTasks=true) {
     const next=this.saveTail.then(async()=>{
-      const temp=join(this.root,'.coffee',randomUUID()+'.tmp');
-      await writeFile(temp,JSON.stringify(this.state,null,2),{mode:0o600});await rename(temp,join(this.root,'.coffee','state.json'));
-      for(const c of this.state.conversations)if(c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
+      await durableJson(join(this.root,'.coffee','state.json'),this.state);
+      for(const c of this.state.conversations)if(exportTasks&&c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
     });this.saveTail=next.catch(()=>undefined);return next;
   }
   /** Git operations serialize per project; only metadata publication is VM-wide. */
-  private async mutate<T>(run:()=>Promise<T>, key:()=>string=()=>"registry"):Promise<T> {
+  private async mutate<T>(run:()=>Promise<T>, key:()=>string=()=>"registry",admitted=false):Promise<T> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.mutate(run,key,true));
     await this.load();const name=key();
     const next=(this.tails.get(name) ?? Promise.resolve()).catch(()=>undefined).then(async()=> {
       const dir=join(this.root,'.coffee','locks');await mkdir(dir,{recursive:true,mode:0o700});
@@ -154,29 +171,81 @@ export class Workspaces {
     this.tails.set(name,next);
     try {return await next;} finally {if(this.tails.get(name)===next)this.tails.delete(name);}
   }
+  /** Trusted restore boundary. Missing-original-path imports only; the current
+   * in-memory registry is merged and durably committed, never replaced from disk. */
+  async recoveryPaths(task:Conversation):Promise<{workspace:string;taskData:string}>{
+    await this.load();
+    if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(task.id))throw restoreFail('invalid_identity');
+    const base=this.taskRoot??(task.workspaceKind==='chat'?this.chatRoot:join(this.root,'checkouts'));
+    await privateDir(base);
+    const taskData=this.taskRoot?join(base,task.id):task.cwd;
+    const workspace=this.taskRoot?join(taskData,'workspace'):join(base,task.id);
+    if(task.cwd!==workspace||(task.taskRoot!==undefined&&task.taskRoot!==taskData)||Boolean(task.taskRoot)!==Boolean(this.taskRoot))throw restoreFail('original_path_not_owned');
+    return {workspace,taskData};
+  }
+  async recoveryOwnsNativeCwd(cwd:string):Promise<boolean>{
+    await this.load();if(typeof cwd!=='string'||resolve(cwd)!==cwd)return false;
+    const roots=this.taskRoot?[this.taskRoot]:[this.chatRoot,join(this.root,'checkouts')];
+    for(const root of roots){const rel=relative(root,cwd),parts=rel.split('/');if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(parts[0])||parts.length!==(this.taskRoot?2:1)||(this.taskRoot&&parts[1]!=='workspace'))continue;await privateDir(root);const info=await lstat(cwd).catch((e:NodeJS.ErrnoException)=>{if(e.code==='ENOENT')return undefined;throw e;});if(info&&(info.isSymbolicLink()||!info.isDirectory()||await realpath(cwd)!==cwd))return false;return true;}
+    return false;
+  }
+  async recoveryRegistryIdentity(){await this.load();return privateDir(join(this.root,'.coffee'));}
+  async importRecoveredTask(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null;publication?:RecoveryPublication}):Promise<void>{
+    if(this.backupWriterFence){if(!input.publication||input.publication.operationId!==input.operationId||input.publication.digest!==input.digest)throw restoreFail('recovery_publication_required');return this.backupWriterFence.runRecoveryPublication(input.publication,()=>this.importRecoveredTaskState(input,true));}return this.importRecoveredTaskState(input,false);
+  }
+  private async importRecoveredTaskState(input:{operationId:string;digest:string;conversation:Conversation;project?:Project;expectedRegistry:string|null},publication:boolean):Promise<void>{
+    await this.load();await privateDir(join(this.root,'.coffee'));const current=this.state.conversations.find(c=>c.id===input.conversation.id);
+    if(current?.recoveryReceipt?.operationId===input.operationId&&current.recoveryReceipt.digest===input.digest){if(publication)await this.saveState(false);else await this.save();return;}
+    if((current?sha(JSON.stringify(current)):null)!==input.expectedRegistry)throw restoreFail('registry_changed');
+    await this.recoveryPaths(input.conversation);await this.checkDirectory(input.conversation);
+    if(input.project){const existing=this.state.projects.find(p=>p.id===input.project!.id);if(existing&&JSON.stringify(existing)!==JSON.stringify(input.project))throw restoreFail('project_changed');}
+    // Fields are allowlisted by the native adapter. Current roles, queue stores,
+    // authentication and MISHU execution journals never come through this seam.
+    const recovered=structuredClone(input.conversation);recovered.recoveryReceipt={operationId:input.operationId,digest:input.digest};
+    const at=this.state.conversations.findIndex(c=>c.id===recovered.id);if(at<0)this.state.conversations.push(recovered);else this.state.conversations[at]=recovered;
+    if(input.project&&!this.state.projects.some(p=>p.id===input.project!.id))this.state.projects.push(structuredClone(input.project));
+    this.state.deletedIds=this.state.deletedIds?.filter(id=>id!==recovered.id);
+    if(publication)await this.saveState(false);else await this.save();
+  }
   private conversationLock(id:string) { return 'conversation:'+id; }
   private async gitEnvironment(cwd:string,accountId?:string) {
+    if(this.options.managedGitCustody)return {GIT_LITERAL_PATHSPECS:'1'};
     if(!this.githubAccounts)return {...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'};
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
     return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false) {
-    const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:await this.gitEnvironment(cwd,accountId)});
-    return raw||args.includes('-z')?r.stdout:r.stdout.trim();
+  private async gitExec(cwd:string,args:string[],options:{maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={},admitted=false):Promise<{stdout:Buffer;stderr:Buffer}>{
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.gitExec(cwd,args,options,true));
+    let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
+    if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
+      const conversation=this.state.conversations.find(c=>samePath(c.cwd,cwd)),project=conversation?this.state.projects.find(p=>p.id===conversation.projectId):undefined;
+      const repository=args.find(arg=>/^https?:\/\//.test(arg))??project?.repoUrl??this.pendingRepositories.get(cwd);
+      if(repository&&/^https?:\/\//.test(repository)){
+        if(!this.githubAccounts)throw Error('Managed Git requires account-bound authorization');
+        transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
+      }
+    }
+    return executeWorkspaceGit(args,{cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
+  }
+  private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
+    const release=this.backupWriterFence?.beginWriter('platform');try {
+    const r=await this.gitExec(cwd,args,{maxBuffer,accountId});
+    return raw||args.includes('-z')?r.stdout.toString():r.stdout.toString().trim();
+    }finally{release?.();}
   }
   private async gitBounded(cwd:string,args:string[],maxBuffer:number):Promise<string> {
     try {return await this.git(cwd,args,maxBuffer);}
     catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
   }
   private async gitResult(cwd:string,args:string[],maxBuffer=2*1024*1024):Promise<{code:number;stdout:string;stderr:string}> {
-    try {
-      const r=await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:120000,maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
+    const release=this.backupWriterFence?.beginWriter('platform');try {try {
+      const r=await this.gitExec(cwd,args,{maxBuffer,env:{...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:args[0]==='check-ignore' ? '0' : '1'}});
       return {code:0,stdout:String(r.stdout),stderr:String(r.stderr)};
     } catch(error) {
       const e=error as NodeJS.ErrnoException & {stdout?:string;stderr?:string};
       if(typeof e.code==='number')return {code:e.code,stdout:String(e.stdout ?? ''),stderr:String(e.stderr ?? e.message)};
       throw error;
-    }
+    }}finally{release?.();}
   }
   private async remoteBranchSha(cwd:string,branch:string,remote='origin'):Promise<string|undefined> {
     const row=await this.git(cwd,['ls-remote','--heads',remote,`refs/heads/${branch}`]);
@@ -403,7 +472,7 @@ export class Workspaces {
     if(url && !this.forge)return this.registerProjectUnlocked(safe,url);
     if(!this.forge?.createRepository)throw new Error('Gitea project adapter is not configured');
     const registration=await this.forge.createRepository(safe);
-    const path=join(this.root,'.coffee','imports',randomUUID());await mkdir(path,{recursive:true});
+    const path=join(this.root,'.coffee','imports',randomUUID());await mkdir(path,{recursive:true});this.pendingRepositories.set(path,registration.repoUrl);
     try {
       if(archive)await exec(pythonCommand,[fileURLToPath(new URL('./import-zip.py',import.meta.url)),archive,path],{timeout:60000,maxBuffer:1024*1024});
       await this.git(path,['init','-b',registration.branch]);
@@ -412,7 +481,7 @@ export class Workspaces {
       await this.git(path,['remote','add','origin',registration.repoUrl]);await this.git(path,['push','-u','origin',registration.branch]);
       const p={id:registration.repoId,name:safe,path:'',branch:registration.branch,repoUrl:registration.repoUrl,repoId:registration.repoId,webUrl:registration.webUrl};this.state.projects.push(p);await this.save();return p;
     } catch(e) {throw new Error(`Project creation failed; the Gitea repository was retained for inspection. ${e instanceof Error ? e.message.slice(0,300) : ''}`);}
-    finally {await rm(path,{recursive:true,force:true});}
+    finally {this.pendingRepositories.delete(path);await rm(path,{recursive:true,force:true});}
   }); }
   private async registerProjectUnlocked(name:string,repoUrl:string,branch='main',repoId?:string,webUrl?:string) {
     const normalized=await this.validateRepository(repoUrl,branch);
@@ -439,7 +508,7 @@ export class Workspaces {
     if(refs)return refs.split('\n').some(row=>row.split('\t')[1]===`refs/heads/${from}`);
     if(from!==p.branch)throw new Error(`Empty repository: choose its initial branch ${p.branch}`);
     const temporary=join(this.root,'.coffee','initialize-'+randomUUID());
-    await mkdir(temporary,{mode:0o700});
+    await mkdir(temporary,{mode:0o700});this.pendingRepositories.set(temporary,p.repoUrl!);
     try {
       await this.git(temporary,['init','-b',from],undefined,accountId);
       await this.git(temporary,['remote','add','origin',p.repoUrl!],undefined,accountId);
@@ -454,7 +523,7 @@ export class Workspaces {
       const published=await this.git(temporary,['ls-remote','--heads','origin',`refs/heads/${from}`],undefined,accountId);
       if(!published)throw new Error('Remote did not confirm the initial branch');
       return true;
-    } finally {await rm(temporary,{recursive:true,force:true});}
+    } finally {this.pendingRepositories.delete(temporary);await rm(temporary,{recursive:true,force:true});}
   }
   private assertId(id:string) {
     if(!/^[a-zA-Z0-9-]{1,100}$/.test(id))throw new Error('Invalid conversation ID');
@@ -467,7 +536,8 @@ export class Workspaces {
     if(!info?.isDirectory() || info.isSymbolicLink())throw new Error('Workspace directory unavailable; restore it explicitly');
     return c.cwd;
   }
-  async dataRoot(id:string) {
+  async dataRoot(id:string):Promise<string> {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.dataRootAdmitted(id)):this.dataRootAdmitted(id);}
+  private async dataRootAdmitted(id:string) {
     await this.load();const c=this.conversation(id);await this.checkDirectory(c);
     if(c.taskRoot){await prepareTaskRoot(c.taskRoot);return c.taskRoot;}
     const root=c.workspaceKind==='chat' ? c.cwd : join(c.cwd,'.pi-coffee');
@@ -478,6 +548,8 @@ export class Workspaces {
       if(relative(await realpath(root),await realpath(path))!==dir)throw new Error('Workspace data directory is outside its registered path');
     }
     if(c.workspaceKind!=='chat') {
+      if(this.options.managedGitCustody){await managedWorkspaceGitFiles(this.options.managedGitCustody,c.cwd,{kind:'exclude'});return root;}
+      if(this.backupWriterFence instanceof ManagedWriterFence)throw Error('Managed workspace Git executor is unavailable');
       const exclude=resolve(c.cwd,await this.git(c.cwd,['rev-parse','--git-path','info/exclude']));
       await mkdir(dirname(exclude),{recursive:true});
       if(!(await readFile(exclude,'utf8').catch(()=>'' )).split('\n').includes('/.pi-coffee/'))await appendFile(exclude,'\n/.pi-coffee/\n');
@@ -488,10 +560,19 @@ export class Workspaces {
     const c=await this.lookup(id);const root=await this.dataRoot(id);
     return join(root,c?.taskRoot?'attachments':'inbox');
   }
-  async exportHistory(id:string,history:AgentHistory) {
+  async exportHistory(id:string,history:AgentHistory):Promise<void> {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.exportHistoryAdmitted(id,history)):this.exportHistoryAdmitted(id,history);}
+  private async exportHistoryAdmitted(id:string,history:AgentHistory) {
     const c=await this.lookup(id);if(!c?.taskRoot || c.workspaceRemoved || c.cleanupStarted)return;
     await checkedTaskRoot(c.taskRoot);
     await writeTaskJson(join(c.taskRoot,'history'),'conversation.json',{schemaVersion:1,role:'display-export-only',conversationId:id,engine:c.engine ?? 'pi',exportedAt:new Date().toISOString(),...history});
+  }
+  /** Preserve typed native provenance before lifecycle records are replaced.
+   * These records identify required sources; adapters still require actual
+   * native files/SQL witnesses before they can protect or restore a task. */
+  private retainNativeHistory(c:Conversation,bindings:{engine:AgentEngine;nativeId:string|undefined}[],operationIds:(string|undefined)[]=[]){
+    const retained=[...(c.retainedNativeBindings??[])];for(const binding of bindings)if(binding.nativeId&&!retained.some(old=>old.engine===binding.engine&&old.nativeId===binding.nativeId))retained.push({engine:binding.engine,nativeId:binding.nativeId});
+    if(retained.length)c.retainedNativeBindings=retained;
+    const operations=[...new Set([...(c.retiredOperationIds??[]),...operationIds.filter((id):id is string=>Boolean(id))])];if(operations.length)c.retiredOperationIds=operations;
   }
   async beginTakeover(id:string,operation:TakeoverState){return this.mutate(async()=>{
     const c=this.conversation(id);
@@ -508,6 +589,7 @@ export class Workspaces {
     const c=this.conversation(id);if(c.takeover?.id!==operation.id||c.takeover.status!=='preparing'||c.engine!==operation.from)throw new Error('Stale takeover');
     const old={...c};
     if(operation.purpose==='compaction'&&(c.archived||c.cleanupStarted||c.workspaceRemoved||c.nativeBinding?.id!==operation.sourceNativeId))throw new Error('Task binding changed during context replacement');
+    this.retainNativeHistory(c,[{engine:operation.from,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}],[operation.id]);
     c.takeoverSegments=[...(c.takeoverSegments??[]),{...(operation.purpose?{purpose:operation.purpose,version:operation.version}:{}),id:operation.id,from:operation.from,to:operation.to,at:operation.at,nativeId:c.nativeBinding?.id??(operation.from==='pi'?c.id:undefined)}];
     c.engine=operation.to;c.nativeBinding=binding;c.takeoverTitle=operation.title??c.takeoverTitle;c.takeover={...c.takeover,status:'completed'};c.acceptedRequestIds=[];c.runState='idle';delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     try{await this.save();}catch(error){
@@ -520,7 +602,8 @@ export class Workspaces {
     const c=this.conversation(id);
     if(c.workspaceKind!=='chat'||!CHAT_ENGINES.includes(c.engine??'pi')||c.archived||c.cleanupStarted||c.workspaceRemoved||c.creationState!=='ready')throw new Error('Only an active Pi or Codex Chat can clear context');
     if((c.nativeBinding?.id??c.id)!==operation.expectedNativeId)throw new Error('Context changed; refresh before clearing');
-    const previous={nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds,takeoverSegments:c.takeoverSegments,takeover:c.takeover,takeoverTitle:c.takeoverTitle};
+    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,contextReset:c.contextReset,retainedNativeIds:c.retainedNativeIds,lastRunStatus:c.lastRunStatus,completionId:c.completionId,completedAt:c.completedAt,nativeContextEmpty:c.nativeContextEmpty,acceptedRequestIds:c.acceptedRequestIds,takeoverSegments:c.takeoverSegments,takeover:c.takeover,takeoverTitle:c.takeoverTitle};
+    this.retainNativeHistory(c,[...(c.takeoverSegments??[]).map(segment=>({engine:segment.from,nativeId:segment.nativeId})),{engine:c.engine??'pi',nativeId:operation.expectedNativeId},...(c.takeover?.nativeId?[{engine:c.takeover.to,nativeId:c.takeover.nativeId}]:[])],[...(c.takeoverSegments??[]).map(segment=>segment.id),c.takeover?.id,c.contextReset?.id,operation.id]);
     delete c.lastRunStatus;delete c.completionId;delete c.completedAt;
     c.nativeBinding={state:'bound',id:nativeId};c.contextReset={id:operation.id,at:new Date().toISOString(),...(operation.title?{title:operation.title}:{})};
     if(c.engine==='codex')c.nativeContextEmpty=true;
@@ -537,7 +620,8 @@ export class Workspaces {
   async rebindCodexThread(id:string,expectedNativeId:string,nativeId:string){return this.mutate(async()=>{
     const c=this.conversation(id);
     if(c.engine!=='codex'||c.nativeBinding?.id!==expectedNativeId||c.archived||c.workspaceRemoved||c.cleanupStarted)throw new Error('Native context changed; refresh before changing settings');
-    const previous={nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    this.retainNativeHistory(c,[{engine:'codex',nativeId:expectedNativeId}]);
     c.nativeBinding={state:'bound',id:nativeId};c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),expectedNativeId])];
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
   },()=>this.conversationLock(id));}
@@ -599,7 +683,7 @@ export class Workspaces {
     if(error&&target.creationState==='creating'){target.creationState='failed';target.creationError='Fork failed; retained files require inspection';}
     await this.save();return structuredClone(target);
   },()=>this.conversationLock(targetId));}
-  async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
+  async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);this.retainNativeHistory(c,[{engine:c.engine??'pi',nativeId}]);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
   async createChatConversation(id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
@@ -726,15 +810,17 @@ export class Workspaces {
    * non-ignored files) written through a throwaway index, so the checkout's own
    * index, HEAD and refs are untouched. Runtime data under .pi-coffee is excluded.
    */
-  private async workingTree(cwd:string):Promise<{tree:string;head?:string}> {
-    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+  private async workingTree(cwd:string,admitted=false):Promise<{tree:string;head?:string}> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.workingTree(cwd,true));
+    const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-snapshot-'+randomUUID()+'.index');
     // This internal command intentionally uses an exclusion pathspec; no user paths enter it.
     const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'0',GIT_INDEX_FILE:index};
-    const run=(args:string[])=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer:2*1024*1024,env}).then(r=>r.stdout.trim());
+    const run=(args:string[])=>this.gitExec(cwd,args,{timeout:TURN_SNAPSHOT_TIMEOUT_MS,env}).then(r=>r.stdout.toString().trim());
     try {
       // Reusing the real index's stat cache keeps large, mostly unchanged checkouts fast.
-      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'copy-index',index});
+      else await copyFile(await gitPath('index'),index).catch(()=>undefined);
       // Git rejects an exclude pathspec that names an ignored path, so exclude runtime
       // data explicitly only when info/exclude does not already hide it.
       const runtimeIgnored=(await this.gitResult(cwd,['check-ignore','-q','.pi-coffee/'])).code===0;
@@ -742,7 +828,7 @@ export class Workspaces {
       const tree=await run(['write-tree']);
       const head=await this.git(cwd,['rev-parse','--verify','--quiet','HEAD']).catch(()=>'');
       return {tree,...(head?{head}:{})};
-    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+    } finally {if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'remove-index',index});else{await rm(index,{force:true});await rm(index+'.lock',{force:true});}}
   }
   /** Read-only view of what the latest (or running) turn changed, from its start snapshot to now. */
   async turnChanges(id:string) {
@@ -873,7 +959,7 @@ export class Workspaces {
     const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
     const cwd=taskRoot ? join(taskRoot,'workspace') : join(this.root,'checkouts',id);await mkdir(dirname(cwd),{recursive:true});
     if(await stat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
-    if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);
+    if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);if(p.repoUrl)this.pendingRepositories.set(cwd,p.repoUrl);
     try {
       await this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',sourceBranch,'--',p.repoUrl,cwd],2*1024*1024,p.githubAccountId);
       const head=await this.git(cwd,['rev-parse','HEAD']);
@@ -883,7 +969,7 @@ export class Workspaces {
       await this.git(cwd,['checkout','-b',branch]);
       await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`]);
       const c:Conversation={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
-    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);}
+    } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);this.pendingRepositories.delete(cwd);}
   },()=>`conversation:${id}`);}
   /** Read-only change view against the last fetched target branch. */
   async changes(id:string) {
@@ -1004,18 +1090,20 @@ export class Workspaces {
     if(info?.isDirectory() || kind.stdout.trim()==='tree' || (!info?.isFile() && !info?.isSymbolicLink() && kind.stdout.trim()!=='blob'))throw new Error('Invalid or private path: select one literal file');
   }
   /** `git diff <tree> -- <path>` against the working tree (untracked included) via a throwaway index. */
-  private async pathAgainstWorkingTree(cwd:string,tree:string,path:string):Promise<string> {
-    const gitPath=async(name:string)=>resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
+  private async pathAgainstWorkingTree(cwd:string,tree:string,path:string,admitted=false):Promise<string> {
+    if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.pathAgainstWorkingTree(cwd,tree,path,true));
+    const gitPath=async(name:string)=>this.options.managedGitCustody?join(cwd,'.git',name):resolve(cwd,await this.git(cwd,['rev-parse','--git-path',name]));
     const index=await gitPath('pi-coffee-file-'+randomUUID()+'.index');
     const env={...await this.gitEnvironment(cwd),GIT_LITERAL_PATHSPECS:'1',GIT_INDEX_FILE:index};
-    const run=(args:string[],maxBuffer=2*1024*1024)=>exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd,timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
+    const run=(args:string[],maxBuffer=2*1024*1024)=>this.gitExec(cwd,args,{timeout:TURN_SNAPSHOT_TIMEOUT_MS,maxBuffer,env});
     try {
-      await copyFile(await gitPath('index'),index).catch(()=>undefined);
+      if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'copy-index',index});
+      else await copyFile(await gitPath('index'),index).catch(()=>undefined);
       // A path gone from both the index and the working tree has nothing to add; the diff still shows it deleted.
       await run(['add','-A','--',path]).catch(()=>undefined);
-      try {return (await run(['diff','--cached','--no-ext-diff','--no-textconv','--no-renames',tree,'--',path],FILE_PATCH_LIMIT)).stdout;}
+      try {return (await run(['diff','--cached','--no-ext-diff','--no-textconv','--no-renames',tree,'--',path],FILE_PATCH_LIMIT)).stdout.toString();}
       catch(error) {const stdout=(error as {stdout?:string}).stdout;if(typeof stdout==='string')return stdout;throw error;}
-    } finally {await rm(index,{force:true});await rm(index+'.lock',{force:true});}
+    } finally {if(this.options.managedGitCustody)await managedWorkspaceGitFiles(this.options.managedGitCustody,cwd,{kind:'remove-index',index});else{await rm(index,{force:true});await rm(index+'.lock',{force:true});}}
   }
   /** A side's text from a commit or tree; null when absent there, binary or over the limit. */
   private async blobText(cwd:string,treeish:string,path:string):Promise<SideText> {
@@ -1023,7 +1111,7 @@ export class Workspaces {
     const size=await this.gitResult(cwd,['cat-file','-s',spec]);
     if(size.code!==0)return {text:null};
     if(Number(size.stdout.trim())>FILE_CONTENTS_LIMIT)return {text:null,reason:'too_large'};
-    const {stdout}=await exec('git',['-c','core.hooksPath=/dev/null','cat-file','blob',spec],{cwd,timeout:120000,maxBuffer:FILE_CONTENTS_LIMIT+1024,encoding:'buffer',env:await this.gitEnvironment(cwd)});
+    const {stdout}=await this.gitExec(cwd,['cat-file','blob',spec],{maxBuffer:FILE_CONTENTS_LIMIT+1024});
     return stdout.includes(0) ? {text:null,reason:'binary'} : {text:stdout.toString('utf8')};
   }
   /** The working-tree side as Git sees it (a symlink is its target text); null when deleted. */

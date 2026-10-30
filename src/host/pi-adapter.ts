@@ -1,9 +1,15 @@
+import {spawn} from 'node:child_process';
+import {ownedNativeAuditClose} from './native-audit-process.js';
+import {BackupError} from './backup.js';
+import {persistNativeHistoryObservation,persistNativeNormalClose,type NativeHistoryObservation} from './native-source-handoff.js';
+import type {WriterAdmissionFence} from './backup.js';
+import type {NativeWriterCustody} from './native-custody.js';
 import type { HostPiRuntime } from './pi-runtime.js';
 import {runPiMemoryExtraction} from './pi-memory-runner.js';
 import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSourceLines, readStableSource, sourceHash, unknownHistory } from "./native/history-source.js";
 import { nativeHistoryJob, nativeHistoryNeedsWorker } from "./native/history-pool.js";
@@ -28,7 +34,14 @@ import type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing
 export type { AgentHistory as PiHistory, AgentSessionListing as PiSessionListing, AgentModels as PiModels, AgentSession as PiSession, AgentSessionFactory as PiSessionFactory } from "./agent-adapter.js";
 
 
+const piHistoryObservations=new WeakMap<object,NativeHistoryObservation[]>();
+export function piNativeHistoryObservation(subject:object){const rows=piHistoryObservations.get(subject);return rows?structuredClone(rows):undefined;}
+const piWriterProvenance=new WeakMap<object,{custody:NativeWriterCustody;fence?:WriterAdmissionFence}>();
+export function piFactoryWriterBinding(factory:unknown){return typeof factory==='object'&&factory!==null?piWriterProvenance.get(factory):undefined;}
+
 export interface RpcPiSessionFactoryOptions {
+  writerFence?:WriterAdmissionFence;
+  nativeCustody?:NativeWriterCustody;
   runtime?: HostPiRuntime;
   instructions?:(id?:string)=>Promise<string|undefined>;
   runtimeIdForSession?: (id:string)=>string;
@@ -40,6 +53,8 @@ export interface RpcPiSessionFactoryOptions {
   model?: string;
   /** Exact provider/model IDs selectable through this Host; absent means unrestricted. */
   allowedModels?: string[];
+  /** Protected transport supports exactly this enrolled native provider. */
+  providerOnly?:string;
   args?: string[];
   /** Additional native Pi extensions loaded for every Host session. */
   extensions?: string[];
@@ -95,16 +110,55 @@ export class RpcPiSessionFactory implements PiSessionFactory {
 
   constructor(options: RpcPiSessionFactoryOptions = {}) {
     if(options.allowedModels && (options.allowedModels.length===0 || options.allowedModels.some(id=>!/^([^\s/]+)\/(\S+)$/.test(id))))throw new Error("Pi allowedModels must contain exact provider/model IDs");
-    this.options = options;
+    this.options = {...options};if(new.target===RpcPiSessionFactory&&options.nativeCustody)piWriterProvenance.set(this,Object.freeze({custody:options.nativeCustody,fence:options.writerFence}));
+  }
+
+  private async managedClient(options:ConstructorParameters<typeof RpcClient>[0]):Promise<RpcClient>{
+    const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');
+    try{
+      const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({engine:'pi',executable:process.execPath,args:[options?.cliPath??resolvePiCliPath()],cwd:options?.cwd,env:options?.env}):undefined;
+      const client=new RpcClient({...options,...(launch?{cliPath:launch.cliPath,env:{...options?.env,...launch.env}}:{})});
+      const entries=client.getEntries.bind(client);
+      client.getEntries=async(since)=>{const result=await entries(since);
+        if(since===undefined&&launch&&this.options.nativeCustody?.groupLock&&this.options.sessionDir&&options?.env?.PI_CODING_AGENT_DIR){try{const state=await client.getState();if(state.sessionFile){piHistoryObservations.set(client,[{launchDirectory:launch.env.PI_COFFEE_CUSTODY_DIR,engine:'pi',roots:[this.options.sessionDir,options.env.PI_CODING_AGENT_DIR],binding:state.sessionId,sourceFile:state.sessionFile}]);await persistNativeHistoryObservation(client);}}catch{/* Optional witness failure never changes native history. */}}
+        return result;};
+      const stop=client.stop.bind(client);client.stop=async()=>{try{for(const row of piHistoryObservations.get(client)??[])row.normalCloseRequested=true;await persistNativeNormalClose(client).catch(()=>undefined);await stop();}finally{release?.();}};
+      return client;
+    }catch(error){release?.();throw error;}
+  }
+
+  /** Owned pinned native SDK read; does not initialize an Agent/provider or
+   * resume a user RPC session, which can normalize native model settings. */
+  async auditNativeHistory(input:{nativeId:string;cwd:string;signal:AbortSignal}):Promise<void>{
+    const binding=piWriterProvenance.get(this);if(!binding?.custody.groupLock||!this.options.sessionDir||!this.options.agentDir)throw new BackupError('native_audit_unavailable','Pi audit requires concrete source custody');
+    input.signal.throwIfAborted();
+    const release=this.options.writerFence?.beginWriter('native');let child:ReturnType<typeof spawn>|undefined,close:(()=>Promise<void>)|undefined;
+    try{
+      input.signal.throwIfAborted();const launch=await binding.custody.prepare({engine:'pi',executable:process.execPath,args:[fileURLToPath(new URL('./pi-native-audit.mjs',import.meta.url)),this.options.sessionDir,input.nativeId,input.cwd]});
+      child=spawn(process.execPath,[launch.cliPath],{cwd:dirname(binding.custody.root),env:{...process.env,...buildHostChildEnv({...this.options.env,...launch.env})},stdio:['pipe','pipe','pipe']});
+      const owned=child;owned.stdin!.on('error',()=>undefined);let exited=false;let observationWrite:Promise<void>|undefined;const completion=new Promise<number|null>((ok,fail)=>{owned.once('error',fail);owned.once('exit',code=>{exited=true;ok(code);});});completion.catch(()=>undefined);
+      close=ownedNativeAuditClose(launch.env.PI_COFFEE_CUSTODY_DIR,async()=>{await observationWrite?.catch(()=>undefined);if(!exited){owned.stdin!.end('cancel\n');const term=setTimeout(()=>owned.kill('SIGTERM'),1000),kill=setTimeout(()=>owned.kill('SIGKILL'),2000);try{await completion;}finally{clearTimeout(term);clearTimeout(kill);}}});
+      const cancel=()=>{void close!().catch(()=>undefined);};input.signal.addEventListener('abort',cancel,{once:true});if(input.signal.aborted)cancel();
+      try{
+        const result=await new Promise<any>((ok,fail)=>{let text='',settled=false;owned.stdout!.on('data',chunk=>{if(settled)return;text+=String(chunk);if(text.length>65536){settled=true;fail(Error('Native audit response exceeded limit'));return;}const end=text.indexOf('\n');if(end>=0){settled=true;try{ok(JSON.parse(text.slice(0,end)));}catch{fail(Error('Invalid native audit response'));}}});completion.then(()=>fail(new BackupError('native_audit_unavailable','Native Pi SDK audit did not return history')),fail);});
+        input.signal.throwIfAborted();if(result.schema!==1||result.sdkVersion!=='1.1.0'||result.sessionId!==input.nativeId||typeof result.sourceFile!=='string'||resolve(result.cwd)!==resolve(input.cwd)||!Number.isSafeInteger(result.entryCount)||result.entryCount<0||!/^[a-f0-9]{64}$/.test(result.entriesDigest))throw new BackupError('native_audit_unavailable','Native Pi SDK audit identity changed');
+        const subject={};piHistoryObservations.set(subject,[{launchDirectory:launch.env.PI_COFFEE_CUSTODY_DIR,engine:'pi',roots:[this.options.sessionDir,this.options.env?.PI_CODING_AGENT_DIR??this.options.agentDir],binding:result.sessionId,sourceFile:result.sourceFile,nativeAudit:{implementation:'pi-session-manager',version:'1.1.0',entriesDigest:result.entriesDigest,entryCount:result.entryCount}}]);observationWrite=persistNativeHistoryObservation(subject);await observationWrite;input.signal.throwIfAborted();owned.stdin!.end('observed\n');
+        if(await completion!==0)throw new BackupError('native_audit_unavailable','Native Pi SDK audit did not complete');input.signal.throwIfAborted();
+      }finally{input.signal.removeEventListener('abort',cancel);await close();}
+    }finally{await close?.();release?.();}
   }
 
   async extractMemory(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
-    if(this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
+    const release=this.options.writerFence?.beginWriter(this.options.nativeCustody?'native':'unmanaged-native');try{return await this.extractMemoryAdmitted(_id,input);}finally{release?.();}
+  }
+  private async extractMemoryAdmitted(_id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}){
+    if(this.options.providerOnly&&input.provider!==this.options.providerOnly||this.options.allowedModels&&!this.options.allowedModels.includes(`${input.provider}/${input.model}`))throw Error('Selected memory model is not allowed');
     // An explicit provider registration is the sole optional extension. The normal
     // Harness, MISHU, MCP, project resources and subagents are never loaded here.
     const providerExtension=input.provider==='antigravity'?this.extensions().find(path=>path.endsWith('/pi-antigravity')):undefined;
     if(input.provider==='antigravity'&&!providerExtension)throw Error('Selected native provider unavailable for isolated memory extraction');
-    return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:this.options.cliPath,agentDir:this.options.agentDir,env:buildHostChildEnv(this.options.env),providerExtension});
+    const launch=this.options.nativeCustody?await this.options.nativeCustody.prepare({engine:'pi',executable:process.execPath,args:[this.options.cliPath??resolvePiCliPath()],cwd:dirname(input.sessionFile),env:this.options.env}):undefined;
+    return runPiMemoryExtraction({...input,cwd:dirname(input.sessionFile),cliPath:launch?.cliPath??this.options.cliPath,agentDir:this.options.agentDir,env:{...buildHostChildEnv(this.options.env),...launch?.env},providerExtension});
   }
 
   private extensions(): string[] { return this.options.runtime?.extensions() ?? this.options.extensions ?? []; }
@@ -127,10 +181,10 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   private async discoverCommands():Promise<CommandInfo[]> {
     const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.extensions()),this.options.skills??[]);
     args.push("--no-session");
-    const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
+    const client=await this.managedClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
       env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
-    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
+    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels,undefined,this.options.providerOnly);
     try{await session.start();return await session.getCommands();}finally{await session.stop();}
   }
   async modelCatalog(engine:"pi" | "codex"):Promise<PiModels> {
@@ -141,10 +195,10 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     const args=appendSkillArgs(appendExtensionArgs([...(this.options.args??[])],this.extensions()),this.options.skills??[]);
     // Native ephemeral mode: discover configured providers without a task or saved transcript.
     args.push("--no-session");
-    const client=new RpcClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
+    const client=await this.managedClient({cliPath:this.options.cliPath??resolvePiCliPath(),cwd:this.options.cwd,
       provider:this.options.provider,model:this.options.model,args,
       env:{PI_COFFEE_CONTEXT_CONTROL:"1",...(this.options.agentDir?{PI_CODING_AGENT_DIR:this.options.agentDir}:{}),...buildHostChildEnv(this.options.env)}});
-    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels);
+    const session=new RpcPiSession(client,extensionPathsFromArgs(args),this.options.allowedModels,undefined,this.options.providerOnly);
     try{await session.start();return await session.getModels();}finally{await session.stop();}
   }
 
@@ -174,7 +228,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       args.push("--session-dir", this.options.sessionDir);
     }
     const dispatchToken=randomUUID();
-    const client = new RpcClient({
+    const client = await this.managedClient({
       cliPath: this.options.cliPath ?? resolvePiCliPath(),
       cwd: this.options.cwdForSession ? await this.options.cwdForSession(options.workspaceSessionId ?? options.sessionId, existing !== undefined) : this.options.cwd,
       // Global defaults seed new sessions only. Pi restores existing choices
@@ -190,7 +244,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
       },
       args,
     });
-    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken);
+    const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken,this.options.providerOnly);
     try{
       await session.start();
       // Pi applies defaults when resuming a branch with no messages. Restore the
@@ -204,6 +258,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async resetNative(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<PiSession>{
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.resetNativeAdmitted(sourceNativeId,options);}finally{release?.();}
+  }
+  private async resetNativeAdmitted(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<PiSession>{
     const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
     if(!source)throw new Error('Native Pi history is unavailable; no context was cleared');
     if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Reset destination already exists');
@@ -213,6 +270,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     return this.create({sessionId:options.sessionId,workspaceSessionId:options.workspaceSessionId,requireExisting:true});
   }
   async forkNative(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.forkNativeAdmitted(sourceNativeId,options);}finally{release?.();}
+  }
+  private async forkNativeAdmitted(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<PiSession>{
     const source=(await this.listWithPaths()).find(row=>row.id===sourceNativeId);
     if(!source)throw new Error('Native Pi source history is unavailable; no replacement was created');
     if((await this.listWithPaths()).some(row=>row.id===options.sessionId))throw new Error('Native Fork destination already exists');
@@ -302,6 +362,9 @@ export class RpcPiSessionFactory implements PiSessionFactory {
   }
 
   async delete(sessionId: string): Promise<boolean> {
+    const release=this.options.writerFence?.beginWriter('platform');try{return await this.deleteAdmitted(sessionId);}finally{release?.();}
+  }
+  private async deleteAdmitted(sessionId:string):Promise<boolean>{
     const existing = (await this.listWithPaths()).find((session) => session.id === sessionId);
     if (existing === undefined) return false;
     if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(sessionId)) {
@@ -395,7 +458,7 @@ class RpcPiSession implements PiSession {
   private running = false;
   private handoffActive = false;
 
-  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[], private readonly dispatchToken?:string) {
+  constructor(client: RpcClient, configuredExtensions: readonly string[] = [], private readonly allowedModels?: readonly string[], private readonly dispatchToken?:string,private readonly providerOnly?:string) {
     this.client = client;
     this.configuredExtensions = configuredExtensions;
     this.unsubscribe = client.onEvent((event) => {
@@ -451,7 +514,7 @@ class RpcPiSession implements PiSession {
   }
 
   private modelAllowed(provider:unknown,id:unknown):boolean {
-    return !this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`));
+    return (!this.providerOnly||provider===this.providerOnly)&&(!this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`)));
   }
 
   async prompt(text: string, images?: ImageInput[],correlation?:{runId:string}): Promise<void> {
@@ -461,9 +524,9 @@ class RpcPiSession implements PiSession {
       const disposition=await this.client.prompt(`/coffee-dispatch-control ${this.dispatchToken} ${correlation.runId} ${sourceHash(text)}`);
       if(disposition!=="handled")throw Error("Native dispatch correlation was not admitted");
     }
-    if(this.allowedModels && /^\/model(?:\s|$)/.test(text.trim())){
+    if((this.allowedModels||this.providerOnly) && /^\/model(?:\s|$)/.test(text.trim())){
       const match=/^\/model\s+([^\s/]+)\/(\S+)\s*$/.exec(text.trim());
-      if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+this.allowedModels.join(', '));
+      if(!match)throw new Error('Use /model provider/model-id or the model menu. Allowed: '+(this.allowedModels?.join(', ')??this.providerOnly));
       if(images?.length)throw new Error('Send attachments separately from a model selection command');
       await this.setModel(match[1],match[2]);
       for(const listener of this.listeners)listener({type:'agent_settled'});
@@ -495,7 +558,7 @@ class RpcPiSession implements PiSession {
     if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
     const command=/^\/(\S+)/.exec(text)?.[1];
     if(command&&(await this.getCommands()).some(c=>c.name===command&&c.source==='extension'))throw new Error('Extension commands cannot be queued.');
-    if(this.allowedModels){
+    if(this.allowedModels||this.providerOnly){
       if(/^\/model(?:\s|$)/.test(text.trim()))throw new Error('Change models when the current turn has finished');
       const state=await this.client.getState();
       if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');
@@ -508,7 +571,7 @@ class RpcPiSession implements PiSession {
 
   /** Consume public RPC disposition; failed responses reject in Pi itself. */
   private async sendChecked(command: { type: "prompt" | "steer" | "follow_up"; message: string; images?: ImageInput[] }): Promise<"started" | "queued" | "handled"> {
-    if(this.allowedModels){
+    if(this.allowedModels||this.providerOnly){
       if(/^\/model(?:\s|$)/.test(command.message.trim()))throw new Error('Change models when the current turn has finished');
       const state=await this.client.getState();
       if(!this.modelAllowed(state.model?.provider,state.model?.id))throw new Error('Current Pi model is not allowed; select an approved model before sending');

@@ -1,0 +1,20 @@
+import {it,expect,vi} from 'vitest';
+import {mkdtemp,mkdir,writeFile,rm,realpath} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {ManagedNativeCustody} from '../src/host/managed-native.js';
+import {CodexSessionFactory} from '../src/host/codex-adapter.js';
+import {ProviderHttpBroker} from '../src/host/provider-http-broker.js';
+import {ProviderCredentialGrant} from '../src/host/provider-credentials.js';
+
+it.runIf(Boolean(process.env.PI_COFFEE_TEST_CODEX_ROOT))('the pinned Codex native app-server uses its actual same-provider transport overlay through the namespace broker without exposing current auth',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'managed-codex-provider-')),source=join(root,'source'),authority=join(root,'authority'),home=join(source,'codex'),work=join(source,'work'),privateHome=join(authority,'auth');for(const path of [source,authority,home,work,privateHome])await mkdir(path,{mode:0o700});let calls=0,authorization='';
+ const upstream=createServer((req,res)=>{calls++;authorization=String(req.headers.authorization);req.resume();res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{type:'synthetic_fixture',message:'Synthetic transport only; no model invoked'}}));});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const port=(upstream.address() as import('node:net').AddressInfo).port;
+ const config=(base:string)=>`model="gpt-6.1-sol"\nmodel_provider="fixture"\ncli_auth_credentials_store="file"\n[model_providers.fixture]\nname="Synthetic"\nbase_url="${base}"\nwire_api="responses"\nenv_key="COFFEE_SYNTHETIC_CREDENTIAL"\nrequires_openai_auth=false\n[analytics]\nenabled=false\n[feedback]\nenabled=false\n`;await writeFile(join(home,'config.toml'),'model="gpt-6.1-sol"\n',{mode:0o600});await writeFile(join(privateHome,'config.toml'),config(`http://127.0.0.1:${port}/v1`),{mode:0o600});vi.stubEnv('COFFEE_SYNTHETIC_CREDENTIAL','SYNTHETIC_PRIVATE_NATIVE_KEY');
+ const runtime=process.env.PI_COFFEE_TEST_CODEX_ROOT!,cli=await realpath(join(runtime,'node_modules','.bin','codex')),socket=join(authority,'provider.sock'),grant=new ProviderCredentialGrant({schema:1,serviceUid:process.getuid!(),sourceUid:process.getuid!()+1,socket,provider:'fixture',models:['gpt-6.1-sol'],api:'openai-responses',baseUrl:`http://127.0.0.1:${port}/v1`,auth:{kind:'codex',home:privateHome,cli,version:'0.159.1',mode:'custom-env',envKey:'COFFEE_SYNTHETIC_CREDENTIAL'}}),broker=new ProviderHttpBroker({socket,peerUid:process.getuid!(),operations:grant.operations,credentials:req=>grant.credentials(req)});await broker.listen();
+ const custody=new ManagedNativeCustody(join(authority,'custody'),{sourceParent:root,lock:join(authority,'group.lock'),sources:[{path:source,destination:source}],runtimeRoots:[dirname(dirname(process.execPath)),runtime],environment:{HOME:home,CODEX_HOME:home,PATH:dirname(process.execPath)+':/usr/bin:/bin'},cwd:work,requireProviderTransport:true,providerTransports:{codex:{provider:'fixture',socket,serviceUid:process.getuid!(),port:23579,models:['gpt-6.1-sol']}}}),factory=new CodexSessionFactory({cwd:work,codexHome:home,cliPath:cli,nativeCustody:custody,protectedProvider:'fixture',allowedModels:['gpt-6.1-sol'],model:'gpt-6.1-sol',mappingFile:join(source,'mapping.json')});let session:Awaited<ReturnType<typeof factory.create>>|undefined;
+ try{session=await factory.create({sessionId:'synthetic-codex-provider'});await expect(session.setModel('codex','ungranted-model')).rejects.toThrow();expect(calls).toBe(0);await session.prompt('Synthetic local transport fixture.');await expect.poll(()=>calls,{timeout:10000}).toBe(1);expect(authorization).toBe('Bearer SYNTHETIC_PRIVATE_NATIVE_KEY');
+ }finally{await session?.stop();await factory.close();await broker.close();await new Promise<void>(resolve=>upstream.close(()=>resolve()));vi.unstubAllEnvs();await rm(root,{recursive:true,force:true});}
+},30000);

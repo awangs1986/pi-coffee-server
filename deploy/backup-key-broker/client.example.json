@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "socket": "/run/pi-coffee-backup/control.sock",
+  "serviceUid": 2002,
+  "actor": "awangs",
+  "dataScope": "awangs",
+  "authorityRevision": 1
+}
