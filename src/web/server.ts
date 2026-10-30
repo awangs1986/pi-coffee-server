@@ -3,7 +3,7 @@ import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
-import { USER_HEADER } from "../shared/identity.js";
+import { USER_HEADER,ACTOR_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json, parseRequestTarget } from "../shared/http.js";
@@ -98,12 +98,14 @@ export class WebServer {
     this.http.on("upgrade", (request, socket, head) => {void this.handleUpgrade(request, socket, head).catch(()=>socket.destroy());});
     this.wsServer.on("connection", (socket, request) => {
       const route = (request as IncomingMessage & { coffeeRoute?: { hostUrl: string; hostToken: string; user?:string } }).coffeeRoute;
-      const bridge = new BrowserBridge(socket, { url: route?.hostUrl ?? this.hostUrl, token: route?.hostToken ?? this.hostToken, user:route?.user ?? this.defaultUser, authorize:async()=>this.identity ? Boolean(await this.identity.authorize(request)) : this.auth ? Boolean(this.auth.principalOf(request)) : true, onFrame:(data,binary)=>{if(!binary){try{this.recordTransferGrant(JSON.parse(typeof data==="string"?data:data.toString()),(request as IncomingMessage & {coffeeTransferOwner?:string}).coffeeTransferOwner ?? "local");}catch{}}} });
+      const actor=(request as IncomingMessage & {coffeeActor?:string}).coffeeActor;
+      const authorized=async()=>{if(this.identity){const session=await this.identity.authorize(request);return Boolean(session&&session.login===actor&&session.route.hostUrl===route?.hostUrl&&session.route.hostToken===route?.hostToken&&session.route.user===route?.user);}if(this.auth)return this.auth.principalOf(request)?.user===actor&&actor!==undefined;return true;};
+      const bridge = new BrowserBridge(socket, {actor, url: route?.hostUrl ?? this.hostUrl, token: route?.hostToken ?? this.hostToken, user:route?route.user:this.defaultUser, authorize:authorized, onFrame:(data,binary)=>{if(!binary){try{this.recordTransferGrant(JSON.parse(typeof data==="string"?data:data.toString()),(request as IncomingMessage & {coffeeTransferOwner?:string}).coffeeTransferOwner ?? "local");}catch{}}} });
       if (this.identity || this.auth) {
         let checking = false;
         const timer = setInterval(async () => {
           if(checking) return; checking = true;
-          try { if (this.identity ? !await this.identity.authorize(request) : !this.auth!.principalOf(request)) {
+          try { if (!await authorized()) {
             bridge.close();
             if(route) await this.hostApi(route,"/api/revoke-files","POST",{}).catch(()=>undefined);
           } } finally { checking=false; }
@@ -278,7 +280,7 @@ export class WebServer {
         json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion)});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
-    if(path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    if(path === "/api/backup" || path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
@@ -286,8 +288,9 @@ export class WebServer {
         if(request.method === "POST" && (this.identity ? !this.identity.originAllowed(request) : this.auth ? !this.auth.originAllowed(request) : request.headers.origin !== `${this.scheme}://${request.headers.host}`)) {json(response,403,{error:"Invalid origin"});return;}
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
-        const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined);
+        const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined,path==='/api/backup'?session?.login??this.auth?.principalOf(request)?.user:undefined);
         const body=await result.json();
+        if(path==='/api/backup')response.setHeader('cache-control','no-store');
         if(result.ok)this.recordTransferGrant(body, session ? `identity:${session.id}` : this.auth ? `auth:${this.auth.principalOf(request)!.user}` : "local");
         json(response,result.status,body);
       } catch {json(response,502,{error:"VM unavailable or invalid request"});}
@@ -408,9 +411,9 @@ export class WebServer {
     request.pipe(upstreamReq);
   }
 
-  private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown) {
+  private hostApi(route: { hostUrl:string;hostToken:string;user?:string }, path:string, method:string, value?:unknown,actor?:string) {
     const url=new URL(route.hostUrl);url.protocol=url.protocol==="wss:" ? "https:" : "http:";url.pathname=path;url.search="";
-    return fetch(url,{method,headers:{authorization:`Bearer ${route.hostToken}`,"content-type":"application/json",...(route.user?{[USER_HEADER]:route.user}:{})},...(value===undefined ? {} : {body:JSON.stringify(value)}),signal:AbortSignal.timeout(125000),redirect:"error"});
+    return fetch(url,{method,headers:{authorization:`Bearer ${route.hostToken}`,"content-type":"application/json",...(route.user?{[USER_HEADER]:route.user}:{}),...(actor?{[ACTOR_HEADER]:actor}:{})},...(value===undefined ? {} : {body:JSON.stringify(value)}),signal:AbortSignal.timeout(125000),redirect:"error"});
   }
 
   private async assertHostCompatibility(route: { hostUrl: string; hostToken: string; user?:string }): Promise<void> {
@@ -430,19 +433,19 @@ export class WebServer {
       socket.destroy();
       return;
     }
-    let transferOwner="local";
+    let transferOwner="local",actor:string|undefined;
     let route:{hostUrl:string;hostToken:string;user?:string} = { hostUrl: this.hostUrl, hostToken: this.hostToken ?? "",user:this.defaultUser };
     if(this.auth){
       const principal=this.auth.principalOf(request);
       if(!principal){socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");return;}
       if(!this.auth.originAllowed(request)){socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");return;}
-      route.user=principal.user;transferOwner=`auth:${principal.user}`;
+      actor=principal.user;route.user=principal.user;transferOwner=`auth:${principal.user}`;
     }
     if (this.identity) {
       if (!this.identity.originAllowed(request)) { socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); return; }
       const session = await this.identity.authorize(request);
       if (!session) { socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); return; }
-      route = session.route;transferOwner=`identity:${session.id}`;
+      actor=session.login;route = session.route;transferOwner=`identity:${session.id}`;
       try {
         const readiness=await this.hostApi(route,"/api/workspace","GET");
         await readiness.body?.cancel();
@@ -456,6 +459,7 @@ export class WebServer {
       socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
     }
+    (request as IncomingMessage & {coffeeActor?:string}).coffeeActor=actor;
     (request as IncomingMessage & { coffeeTransferOwner?:string }).coffeeTransferOwner=transferOwner;
     (request as IncomingMessage & { coffeeRoute?: unknown }).coffeeRoute=route;
     this.wsServer.handleUpgrade(request, socket, head, (websocket) => {
@@ -465,6 +469,7 @@ export class WebServer {
 }
 
 interface BrowserBridgeOptions {
+  actor?:string;
   authorize?:()=>Promise<boolean>;
   onFrame?:(data: RawData, isBinary: boolean)=>void;
   user?: string;

@@ -6,6 +6,9 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 await checkedReleaseVersion(root);
 await mkdir(resolve(root, "dist/src/host"), { recursive: true });
 await cp(resolve(root, "src/host/import-zip.py"), resolve(root, "dist/src/host/import-zip.py"));
+await cp(resolve(root, 'src/host/native-custody-supervisor.py'), resolve(root, 'dist/src/host/native-custody-supervisor.py'));
+await cp(resolve(root, 'src/host/native-custody-launcher.mjs'), resolve(root, 'dist/src/host/native-custody-launcher.mjs'));
+for(const name of ['managed-native-profile.py','managed-runtime-init.py'])await cp(resolve(root,'src/host',name),resolve(root,'dist/src/host',name));
 
 await cp(resolve(root, 'src/host/github-tools.mjs'), resolve(root, 'dist/src/host/github-tools.mjs'));
 
@@ -18,3 +21,12 @@ await cp(resolve(root, 'src/shared/release-version.mjs'), resolve(root, 'dist/sr
 await mkdir(resolve(root,'dist/maintenance'),{recursive:true});
 await cp(resolve(root,'scripts/restart-worker.py'),resolve(root,'dist/maintenance/restart-worker.py'));
 await cp(resolve(root,'deploy/restart'),resolve(root,'dist/maintenance/restart'),{recursive:true});
+
+await cp(resolve(root, 'src/host/backup-unix-peer.py'), resolve(root, 'dist/src/host/backup-unix-peer.py'));
+await cp(resolve(root, 'src/host/provider-loopback.mjs'), resolve(root, 'dist/src/host/provider-loopback.mjs'));
+await cp(resolve(root, 'src/host/managed-pi-provider.mjs'), resolve(root, 'dist/src/host/managed-pi-provider.mjs'));
+
+for(const name of ['codex-store.py','codex-schema-01591.json'])await cp(resolve(root,'src/host',name),resolve(root,'dist/src/host',name));
+
+await cp(resolve(root, 'src/host/ordinary-backup-start.py'), resolve(root, 'dist/src/host/ordinary-backup-start.py'));
+await cp(resolve(root,'src/host/pi-native-audit.mjs'),resolve(root,'dist/src/host/pi-native-audit.mjs'));

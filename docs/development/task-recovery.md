@@ -1,0 +1,126 @@
+# Scoped task recovery
+
+`RestoreCoordinator` is the independent trusted job API. The Browser uses authenticated `POST /api/backup` actions `restore-request`, `restore-plan`, `restore-revise`, `restore-approve`, `restore-publish`, and `restore-cancel`. Status includes only the selected authorized data scope. The authenticated actor is separate from `__legacy_default__`, which is a data-scope identifier, never an administrator login.
+
+A request records an operation and repository-job/task choice. It grants no material access, approval or execution. Only `awangs` can prepare a plan, approve the exact revision/digest, or publish. Revision invalidates prior approval; publication rechecks the caller and original approver through current authorization. Production source-writer and secret-boundary gates remain mandatory; the controlled synthetic tests do not qualify arbitrary same-UID tools, external daemons or production paths.
+
+Preparation extracts into a new private directory, verifies repository/sealed-object integrity, and interprets the versioned native graph behind `NativeRestoreAdapter`. Plans bind operation/requester, data scope, repository job, checkpoint/manifest digest, adapter version, native identities, original target paths, current registry record, registry directory identity, staged inode/digest, and target-parent identity. Review precedes explicit approval and a separate confirmation to attach the task. Missing-only is the default and refuses existing original paths. Explicit `mode:replace` requires a fresh repository-read safety checkpoint, verified current registry/native preimages and approval of that exact replacement plan. Atomic exchange preserves the approved previous files in private staging; retry recognizes those exact inodes and hashes, while a later write causes refusal. No implicit rollback overwrites later data. A changed registry, new target, symlink, unsupported native schema, missing graph member, unknown source or changed parent is a conflict.
+
+Publication uses a stable Linux kernel lease, never age-based lock deletion. The owner audit stores PID, process birth, nonce and authority-file inode. A crash releases the actual kernel lease; replacement of the authority file is refused. Prepared/task/native/registry/complete journal transitions are fsynced. A staged object is published with atomic no-replace rename; a restart recognizes the exact published inode and content even when the process died before its journal transition. `Workspaces.importRecoveredTask` merges the live owner state and writes a durable per-task receipt. It never replaces the registry with an old snapshot. Repeating the operation returns its durable completion receipt.
+
+Cancellation before publication cancels the request. Once publication starts, cancellation records intent; recovery rolls forward already-owned material and reports `completed-after-cancel` if it commits. No implicit rollback or overwrite occurs. Plan/material directories remain private for investigation and retention pinning. Staging and original targets currently require compatible rename filesystems; a cross-device rename fails closed.
+
+Pi 1.1.0 JSONL v3 recovery preserves original IDs, bytes, retained/parent session graph and original path bindings. Parents must belong to the selected scope's configured workspace roots and native store. Unrelated native records and other task/account registries are preserved. Display exports never substitute for native history. The real native RPC/Host test exercises history reading; no provider continuation is claimed or run.
+
+Pi↔Codex takeover history uses the typed `native-history/engine-bindings-v1` source and `pi-codex-history-v1` adapter view. The current registry engine stays unchanged. The adapter binds current/retained native IDs, each recorded segment's source engine, and separately recorded takeover operation IDs to actual owned Pi headers and Codex rollout/SQL witnesses under the same source cut. `retainedNativeBindings` and `retiredOperationIds` preserve that provenance when a context reset or rebind retires transient takeover records. A typed ID alone is not proof that its native material exists. Unknown legacy IDs and ambiguous untyped engine ownership refuse a new point while retaining the preceding sealed point. Operation IDs are never silently treated as native sessions.
+
+The sealed descriptor binds the original registry digest and each engine's native dependency closure. Restore verifies the original complete seal before deriving engine-specific source selections; it does not rewrite historical registry/seal bytes or construct a replacement Workspaces identity. Both native adapters prepare their actual files and SQL; one task-tree action merges only the generated inert recovery archives. Current engine/binding, historical segments and typed provenance are preserved. Exact revision/digest approval covers both native graphs and their target preimages. Explicit replacement additionally checks the fresh repository-read safety point for the historical Codex graph even when Pi is the current engine. Restored provider configuration, MISHU grants and queued commands remain subject to the ordinary no-authority/no-replay contract.
+
+Configuration resources are archived as a fingerprint inventory requiring deliberate reconfiguration and authentication. Arbitrary `models.json`/`web-search.json` fields can contain keys or headers, so raw configuration is never installed as current native authority. MISHU `platform/mishu/notes-only-v1` is copied only into an inert task history archive with its notes-only policy. Surviving live MISHU authority is retired before publication and a new receipt retires stale authority at startup. Historical roles, cookies, execution grants and idempotency stores are not imported. Queued text is archived as notes; old queue generations are ignored.
+
+Restored tasks expose `recoveryGeneration` on `opened`. Prompts and queue mutations must name both the current generation and a socket opened on it. Old sockets and saved frames cannot become new authorized inputs. The Browser returns deferred first inputs to drafts and marks only an explicit post-history submission with the observed generation. Ordinary neighboring tasks retain their existing protocol behavior. The display index receives a new recovery epoch, including after a prior deletion, so an old local/indexed page cannot masquerade as the restored checkpoint.
+
+The isolated integration tests use the pinned Restic 0.19.1 executable, synthetic source roots, actual SIGKILL workers at three publication windows, and real Pi RPC reading. They verify process-crash recovery and fsync ordering. They are not physical power-loss, representative-scale, provider, or production deployment evidence. Pi/Codex are the declared release scope; Claude/Cursor/Grok remain excluded. The Codex adapter is supplied by the separate engine ticket.
+
+## Account recovery and retained-point browsing
+
+`AccountRecoveryCoordinator` plans the selected scope as a vector of verified consistency-group checkpoints. It chooses original capture times rather than repository-job timestamps; one group cannot use independently captured cuts. Missing or unsupported in-scope Pi/Codex tasks block approval. Claude/Cursor/Grok rows are explicitly excluded, and `allEngineAccountComplete` stays false. Separate child revisions/digests bind the reviewed task/native merges. Durable child receipts reconcile partial publication; retry skips committed children and preserves later human writes. Cancellation stops before the next child and never rolls back a committed child.
+
+Both single-task and account plans pin their selected and replacement-safety repository snapshots for a bounded 24-hour period. Approval and publication renew pins through the current actor's scoped broker. Standalone publication holds actual shared kernel pin authorities. Account publication holds one actual vector lease and passes its internal live lease capability to child publication; HTTP cannot opt out of pin enforcement. Cancellation/revision before publication attempts releases pins when authorized. If an ordinary cancellation cannot release broker pins, `pinReleasePending` remains visible and bounded expiry applies. Publication attempts cannot be revised into a new plan.
+
+Readers browse their own retained points using `POST /api/backup` with `action:recovery-points`, optional managed `scope`, and `query:{limit,cursor,capturedFrom,capturedTo}`. Limit is 1–100, default 50. Dates are canonical UTC timestamps and filter the original inclusive capture time. Cursors are bound to scope and date filters. Pages deduplicate repeated archive jobs, exclude retired/unverified snapshots, and include separate original capture and repository-job times. The scoped `recovery-job` broker operation resolves one historical job without transferring an unbounded journal history. Browser date/pagination controls support both individual-task requests and selected account vectors, beyond the recent 20-job status window.
+
+The authenticated Host CLI uses a canonical current-owner 0600 profile containing only `{schema:2,endpoint,token,user,actor}`. `user` is the routed data scope; `actor` is the separately provisioned authenticated login. Both must be explicit normalized identities and may differ (for example, `user:"gitea-2",actor:"alice"`). The trusted operator provisions this private transport profile; it is not a browser-supplied identity claim. The CLI forwards both fields independently and never derives actor or administrator rights from the route. Schema 1 and missing/malformed actors are rejected locally; recreate legacy candidate profiles with the reviewed identity mapping rather than automatically copying `user` into `actor`. HTTPS is required except for explicit loopback HTTP; redirects are refused. It never receives repository keys or opens private snapshot storage. Example commands:
+
+```
+node dist/src/restore-cli.js points --profile /private/host-recovery.json --limit 20 --captured-to 2025-12-31T23:59:59.999Z
+node dist/src/restore-cli.js request --profile /private/host-recovery.json --jobs JOB_UUID --mode missing-only
+node dist/src/restore-cli.js plan --profile /private/host-recovery.json --id OPERATION_UUID --revision 1
+node dist/src/restore-cli.js approve --profile /private/host-recovery.json --id OPERATION_UUID --revision 1 --digest REVIEWED_DIGEST
+node dist/src/restore-cli.js publish --profile /private/host-recovery.json --id OPERATION_UUID --revision 1 --digest REVIEWED_DIGEST
+```
+
+`status`, `cancel`, and `revise` use the same authenticated endpoint and current revision. Cross-account selection requires the configured administrator and managed-scope allowlist. Request/cancel metadata alone never grants approval, native execution, restored provider authentication or automatic input replay.
+
+Shared native files are coordinated before account approval. Children from the
+same verified complete checkpoint cut may bind an identical native target to one
+validated staged inode and exact replacement preimage. Their approval digests
+and the account vector are then recalculated. Later children require the
+publisher's matching completed registry receipt; byte equality alone never
+adopts an unrelated existing file. Replacement retains the old file at the one
+approved exchange source.
+
+For a single missing Pi task, an unchanged parent already used by a healthy
+registered neighbor may be reused only with a current binding/parent-chain
+proof. The plan binds the neighbor's registry and exact native-file inode/hash
+witnesses; publication checks them again and preserves that parent's inode.
+Different content, an unknown owner or changed witnesses reject the plan or
+publication. Historical text is not scanned or rewritten to infer ownership.
+The neighbor may now run Codex while retaining its earlier Pi binding: recorded
+typed Pi identities/segments and the actual Pi header/parent chain still prove
+that ancestor's ownership. Its current engine alone neither grants nor removes
+that proof. A changed retained Pi file is refused before task publication, and
+an approved reuse preserves the healthy neighbor's registry and ancestor inode.
+
+A Codex SQLite database first created by a restore has two approved logical images: its qualified empty schema and the exact merged tables, including migration and sequence rows. A crash after the SQL commit can resume on the original published inode only when the durable SQL journal names the same operation, approval digest and database in `started` or `done` state, and the complete live logical image equals the approved postimage. Existing stores keep their selected-row rules. A receipt marker, equal file bytes, unknown rows, a changed schema or a replacement inode cannot authorize this continuation. `test/codex-created-database-crash.test.ts` executes this window with Restic and SIGKILL and verifies the refusal boundaries before completing the original recovery.
+
+When the original Codex SQL target is entirely missing, restore planning uses a dedicated target-inspection operation. It resolves the current trusted home/configuration/options, compares them with the sealed checkpoint's original mapping, and creates only owned canonical private target roots. Missing `state_5.sqlite` is allowed for this target inspection; ordinary capture still requires the qualified source state database. Existing unknown databases, unsupported schemas and conflicting native index entries remain errors. Native authentication/configuration is explicitly reconfigured after recovery; it is not restored from the archive. The isolated missing-store test performs an actual Restic recovery and native Codex read/resume after this fixture reconfiguration, without a provider turn.
+
+
+## Reopening the recovered native identity
+
+A Task's public ID and its durable native session ID may differ. Pi passive
+history reads and native reopen use `nativeBinding.id` when present, while
+workspace/environment lookup retains the public Task ID. Listings coalesce that
+native history under the registered Task rather than exposing a second orphan
+conversation. A Task with a recovery receipt requires its original Pi history
+file: a missing file fails reopen instead of creating an empty replacement.
+Native cleanup also resolves the selected durable binding, preserving unrelated
+native history even if its ID matches the public Task ID. Existing takeover,
+context-reset and non-Pi cleanup restrictions remain in force. Ordinary first-use
+tasks retain their existing new-session behavior.
+
+Codex recovery also retains its original native ID. Successful publication and a
+new source checkpoint do not restore authentication or current provider
+configuration. An empty native home can therefore pass cold history validation
+and still refuse live session reopen until the operator configures the CLI.
+That explicit step supplies current configuration; historical configuration and
+credentials remain inert. Browser acceptance reads actual Host `history.entries`
+for the reopened task, rather than matching a task-list preview or archive text.
+
+
+## Ordinary destination after source loss
+
+Ordinary Pi/Codex restore uses [separate destination qualification](restore-destination-authority.md).
+A missing last task/history after Host restart no longer has to produce a source
+checkpoint before its approved restoration. The destination retains actual
+producer/root ownership, physical EX, current actor/scope checks, exact approved
+preimages and the existing publication gate. Unresolved tagged dead-local records
+are retained; incomplete source history stays unqualified until an actual native
+audit and new complete cut. This is not an exception for opaque delegation,
+unknown writers, changed roots or unapproved replacement.
+
+When all source roots are gone, an operator may explicitly configure a new fresh
+authority and genuinely absent roots at the original paths, preserving old
+control evidence. The first destination EX uses the durable unused custody
+allocation, without a fabricated task or native subprocess. Restored native
+configuration remains inert; configure current providers/credentials separately.
+No arbitrary relocation or old-journal reset is implied. Synthetic stopped-Host
+loss tests are not real physical disk-failure or provider-continuation evidence.
+
+The account approval panel shows each task's native session IDs and each
+consistency group's shared dependency roles/keys before the approval button.
+Values come from the approved-plan preview and render as plain text. Cross-scope
+shared dependency keys remain masked by the server; the Browser does not derive
+private paths or hidden account bindings.
+
+
+## Authenticated requester and routed data scope
+
+Reader status, recovery requests and cancellation authorize the authenticated
+login against the current trusted request's own routed scope, not string equality
+between login and directory name. Administrator planning/revision/approval and
+publication remain separate privileges, with managed-scope admission and current
+broker/destination checks. HTTP and WebSocket both carry the actual authenticated
+actor; a route named after the administrator does not grant its role. See the
+[actor/scope repair evidence](../reviews/backup-actor-scope-20261029.md).

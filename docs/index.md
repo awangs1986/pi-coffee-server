@@ -5,6 +5,27 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
+- Personal backup PB-2.1: [single operator, Pi/Codex and Gitea backup, one administrator recovery key and CLI recovery](spec/task-backup.md). v0.58 source candidate implements owner workflows and passes isolated Pi/Codex/Gitea emergency recovery; cold Pi history auditing includes the current SDK 1.4, and controller lock publication survives initialization crashes. [Current evidence and deployment boundaries](reviews/personal-backup-pb21.md); production activation remains separate. Existing PI Coffee account boundaries remain; emergency recovery covers all enrolled accounts.
+
+- Personal source candidate: [direct Host configuration and one-confirmation CLI recovery](deployment/personal-backup.md). Pi/Codex account collection, independent daily jobs, Gitea login restoration and offline CLI recovery are implemented; exact-source final evidence is recorded on #144–#150 and the delivery PR.
+
+> Historical PB-1 implementation pointers below; current personal requirements are PB-2/PB-2.1.
+
+- Ordinary backup candidate: [source composition](deployment/ordinary-backup-source.md), [fixed-role startup](deployment/ordinary-backup-startup.md), [empty-target recovery](development/restore-destination-authority.md), and [current evidence / remaining acceptance gates](reviews/backup-ordinary-source-20261029.md), and [actual restore/daily-worker paths](reviews/backup-ordinary-restore-20261029.md). Account approval previews include native identities and shared dependency roles. No production service activation is implied.
+
+
+- Backup ordinary-permission candidate: [integrated components, actual failures and pending lifecycle/startup acceptance](reviews/backup-ordinary-source-20261029.md). Source work remains in draft PR #142.
+
+- Backup accepted trust boundary: [trust Host root, preserve permissions, separate repository readiness from source consistency](reviews/backup-trusted-root-20261029.md). Implementation and final acceptance remain open.
+
+- Historical backup design correction: [preserve native permissions; rejected prerequisite,
+  retained requirements and failed canonical evidence](reviews/backup-native-permission-20261028.md).
+
+- Backup retention candidate: [administrator preview, pins and crash reconciliation](deployment/backup-retention.md), Server #139. Source tests do not activate production cleanup.
+
+- Pi/Codex backup candidate: [checkpoint/source-custody contract and remaining gates](spec/task-backup.md), [Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130). [Encrypted repository / offline recovery copy candidate](deployment/task-backup-repository.md); [Managed source authority and independent model authentication](deployment/managed-source-authority.md). Production qualification and integrated scheduling/restore acceptance remain pending.
+
+
 - Current physical and logical architecture: [one VM, separate Web/Host services, scoped users](architecture/topology.md). [2026-10-26 evidence and remaining cleanup](reviews/topology-freshness-20261026.md).
 
 - Latest scoped spec refresh (2026-10-23): [UI source baseline, evidence and unresolved gaps](reviews/spec-freshness-20261023-ui.md). Candidate v0.53 at `1bc2b27`; documentation-only refresh, not a deployment claim.

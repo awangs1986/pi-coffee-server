@@ -1,6 +1,6 @@
 {
   "name": "pi-coffee-server",
-  "version": "0.57.0",
+  "version": "0.58.0",
   "private": true,
   "description": "PI Coffee: Browser, Web gateway and native Agent Host",
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/copy-runtime.mjs && node scripts/build-vendor.mjs && node scripts/copy-public.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json && node scripts/build-linux-kernel.mjs && node scripts/copy-runtime.mjs && node scripts/build-vendor.mjs && node scripts/copy-public.mjs",
     "test": "vitest run",
     "check": "node scripts/check.mjs",
     "start": "node dist/src/main.js all",

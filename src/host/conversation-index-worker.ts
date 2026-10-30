@@ -123,6 +123,10 @@ function run(path: string, action: string, a: any): any {
 }
 function dispatch(db:DatabaseSync,action:string,a:any):any {
   let s = state(db);
+  if(action==='recover')return identity(mutate(db,current=>{
+    if(current.metadata?.recoveryGeneration===a.operationId&&!current.deleted)return;
+    db.exec('DELETE FROM entities; DELETE FROM changes; DELETE FROM tombstones; DELETE FROM commands;');Object.assign(current,initial());current.metadata={recoveryGeneration:a.operationId};current.binding='recovery:'+a.operationId;
+  },a.retainBytes),a.id);
   if (s.deleted && action !== 'delete') fail('conversation_deleted', s, a.id);
   if (action === 'meta') return identity(s, a.id);
   if(action==='commands') {const rows=a.requestId?db.prepare('SELECT body FROM commands WHERE id=?').all(a.requestId):db.prepare('SELECT body FROM commands ORDER BY rowid DESC LIMIT 20').all();return {...identity(s,a.id),commands:rows.map(row=>JSON.parse(String(row.body)))};}
@@ -152,7 +156,7 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
   if (action === 'reconcile') {
     return identity(mutate(db, current => {
       if (a.expectedEpoch && a.expectedEpoch !== current.bindingEpoch || a.expectedRevision && a.expectedRevision !== current.headRevision) fail('stale_audit');
-      if (a.binding && current.binding && current.binding !== a.binding) { db.exec('DELETE FROM entities; DELETE FROM changes; DELETE FROM tombstones;'); Object.assign(current, initial()); }
+      if (a.binding && current.binding && current.binding !== a.binding) { const recoveryGeneration=current.metadata?.recoveryGeneration;db.exec('DELETE FROM entities; DELETE FROM changes; DELETE FROM tombstones;'); Object.assign(current, initial());if(recoveryGeneration)current.metadata.recoveryGeneration=recoveryGeneration; }
       current.binding = a.binding ?? current.binding;
       const beforeOrder=db.prepare('SELECT id FROM entities ORDER BY position').all().map(row=>String(row.id));
       const seen = new Set<string>();
