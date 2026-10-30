@@ -166,7 +166,8 @@ PB-AC-13–15 是本次 Gitea、应急恢复及认证接回的新增验收；PB-
 
 集成分支 `feat/backup-personal-pb21` 从 GitHub/Gitea main
 `d58ac4e814e34167157c57ae76f3b7461042f025` 正常合并旧候选 `d1b4816`，保留当前
-Pi 1.4 与 Host/Web/native 实现。旧 PR #142 的测试数字仅是历史证据，不能代替
+Pi 1.4 与 Host/Web/native 实现。冷启动只读历史核对显式资格化 SDK 1.1.0/1.4.0，
+并记录实际 SDK 版本；现有 JSONL-v3 检查点格式标识不变。旧 PR #142 的测试数字仅是历史证据，不能代替
 本分支结果。当前实现对应 #144–#150；[验收与测试规则](../reviews/personal-backup-pb21.md)
 和 [使用/应急说明](../deployment/personal-backup.md) 是当前入口。
 

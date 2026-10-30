@@ -11,7 +11,7 @@ import {createInterface} from 'node:readline';
 try {
  const modulePath=fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
  const sdk=JSON.parse(await readFile(join(dirname(modulePath),'..','package.json'),'utf8'));
- if(sdk.version!=='1.1.0')throw Error('Unqualified native SDK');
+ if(!['1.1.0','1.4.0'].includes(sdk.version))throw Error('Unqualified native SDK');
  const root=resolve(process.argv[2]),nativeId=process.argv[3],expectedCwd=resolve(process.argv[4]);
  if(await realpath(root)!==root)throw Error('Native source root is not canonical');
  async function inspect(path){const info=await lstat(path);if(info.isSymbolicLink()||info.uid!==process.getuid())throw Error('Native source is not owned');if(info.isDirectory()){for(const name of await readdir(path))await inspect(join(path,name));}else if(!info.isFile()||path.endsWith('.jsonl')&&info.size>64*1024*1024)throw Error('Native audit budget or source shape refused');}

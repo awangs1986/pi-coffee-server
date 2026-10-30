@@ -89,7 +89,16 @@ The independent recovery package has no npm install step at recovery time.
 Spec: found and repaired service state aggregation/independent retries, shared
 service journal ownership, service startup response loss after publication, and
 account completion response loss before the collection journal. Old/new failures
-are retained in the evidence directory. Old provider-authentication comments were
+are retained in the evidence directory. The canonical run also exposed a reused
+cold Pi audit still pinned to SDK 1.1.0 after the mainline upgrade: the reader,
+observation validator and recorded SDK version now qualify 1.1.0/1.4.0 explicitly.
+The unchanged cold-source HTTP regression goes from unavailable to protected
+(`150-cold-pi-red.log` / `150-cold-pi-green.log`); the JSONL-v3 checkpoint format
+identifier remains compatible with existing archives. Directory witnesses also
+record creation time so immediate inode reuse cannot hide replacement. The old
+Codex composition fixture now places staging and target under the same configured
+temporary root; the explicit incompatible-filesystem regression remains intact.
+The remaining five selected regressions passed (`150-remaining-compatibility.log`). Old provider-authentication comments were
 updated where the personal opt-in changes behavior. Normative requirements remain
 in the spec; deployment-only or external-resource limits are explicit.
 
