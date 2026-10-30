@@ -57,6 +57,23 @@ node dist/src/restore-cli.js preview --profile /private/recovery.json --task TAS
 node dist/src/restore-cli.js confirm --profile /private/recovery.json --id OPERATION --revision REVISION --digest DIGEST
 ```
 
+For one account, use `account-preview --jobs JOB` followed by `account-confirm`
+with the returned operation/revision/digest. For all enrolled accounts at a
+selected repository point:
+
+```sh
+node dist/src/restore-cli.js collection-preview --profile /private/recovery.json --scopes alice,bob --jobs JOB
+node dist/src/restore-cli.js collection-confirm --profile /private/recovery.json --id OPERATION --digest DIGEST
+```
+
+The panel offers the same all-enrolled-accounts selection. One owner confirmation
+drives the durable account operations; incomplete results remain visible and the
+same command resumes them. Missing-only recovery keeps healthy current tasks.
+If a preceding account creates a shared native database, the next unpublished
+missing-only plan is refreshed against that committed result, preserving the
+original selected checkpoints and unchanged account inventory. A replacement
+approval is never silently refreshed this way. Completed accounts are not replayed.
+
 The preview supplies the operation/revision/digest; repeat confirmation to resume
 the same operation after a disconnect. An incompatible staging filesystem is
 reported before confirmation. Necessary writer leases and durable publication
