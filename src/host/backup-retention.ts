@@ -1,4 +1,4 @@
-import {BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
+import {BackupError,LEGACY_BACKUP_SCOPE,isServiceBackupScope} from './backup.js';
 import type {RepositoryPoint} from './backup-repository.js';
 import {normalizeUsername} from '../shared/identity.js';
 export interface RetentionSnapshot {snapshotId:string;jobIds:string[];verified:boolean;points:RepositoryPoint[];}
@@ -11,7 +11,7 @@ export interface RepositoryRetentionPlan extends RetentionDecision {schema:1;id:
  * Capture times select buckets; storage completion never makes old material new. */
 export function planRetention(records:RetentionSnapshot[],pins:RecoveryPin[],input:{scopes:string[];now:number;timeZone?:string}):RetentionDecision{
  const timeZone=input.timeZone??'America/Toronto';
- if(!Array.isArray(input.scopes)||!input.scopes.length||input.scopes.length>256||new Set(input.scopes).size!==input.scopes.length||input.scopes.some(scope=>scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(scope)!==scope)||!Number.isFinite(input.now)||records.length>100000||pins.length>100000)throw new BackupError('invalid_retention','Invalid retention selection');
+ if(!Array.isArray(input.scopes)||!input.scopes.length||input.scopes.length>256||new Set(input.scopes).size!==input.scopes.length||input.scopes.some(scope=>scope!==LEGACY_BACKUP_SCOPE&&!isServiceBackupScope(scope)&&normalizeUsername(scope)!==scope)||!Number.isFinite(input.now)||records.length>100000||pins.length>100000)throw new BackupError('invalid_retention','Invalid retention selection');
  let format:Intl.DateTimeFormat;try{format=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});}catch{throw new BackupError('invalid_retention','Invalid retention time zone');}
  const scopes=[...input.scopes].sort(),allowed=new Set(scopes),reasons=new Map<string,RetentionReason[]>();
  const keep=(id:string,reason:RetentionReason)=>{const list=reasons.get(id)??[];if(!list.some(value=>JSON.stringify(value)===JSON.stringify(reason)))list.push(reason);reasons.set(id,list);};
@@ -20,12 +20,12 @@ export function planRetention(records:RetentionSnapshot[],pins:RecoveryPin[],inp
   if(!/^[a-f0-9]{64}$/.test(record.snapshotId)||catalog.has(record.snapshotId)||!Array.isArray(record.points)||!Array.isArray(record.jobIds))throw new BackupError('retention_catalog_invalid','Retention catalog is invalid');
   for(const point of record.points)if(!Number.isFinite(Date.parse(point.captureAt))||!point.scope||!point.taskId)throw new BackupError('retention_catalog_invalid','Retention point is invalid');
   catalog.set(record.snapshotId,record);
-  if(!record.verified||!record.points.length||record.points.some(point=>!['pi','codex'].includes(point.engine)))keep(record.snapshotId,{kind:'unverified'});
+  if(!record.verified||!record.points.length||record.points.some(point=>!['pi','codex','gitea','bootstrap','safety'].includes(point.engine)))keep(record.snapshotId,{kind:'unverified'});
   if(record.points.some(point=>!allowed.has(point.scope)))keep(record.snapshotId,{kind:'outside-scope'});
  }
  for(const pin of pins){if(!catalog.has(pin.snapshotId))continue;if(!Number.isFinite(Date.parse(pin.expiresAt)))throw new BackupError('retention_pin_invalid','Recovery pin cannot be evaluated');if(pin.activeLease)keep(pin.snapshotId,{kind:'active-pin',pinId:pin.id});else if(!pin.releasedAt&&Date.parse(pin.expiresAt)>input.now)keep(pin.snapshotId,{kind:'pin',pinId:pin.id});}
  for(const scope of scopes){
-  const candidates=records.filter(record=>record.verified&&record.points.some(point=>point.scope===scope)&&record.points.every(point=>['pi','codex'].includes(point.engine))).map(record=>({record,time:Math.min(...record.points.filter(point=>point.scope===scope).map(point=>Date.parse(point.captureAt)))})).sort((a,b)=>b.time-a.time||b.record.snapshotId.localeCompare(a.record.snapshotId));
+  const candidates=records.filter(record=>record.verified&&record.points.some(point=>point.scope===scope)&&record.points.every(point=>['pi','codex','gitea','bootstrap','safety'].includes(point.engine))).map(record=>({record,time:Math.min(...record.points.filter(point=>point.scope===scope).map(point=>Date.parse(point.captureAt)))})).sort((a,b)=>b.time-a.time||b.record.snapshotId.localeCompare(a.record.snapshotId));
   const latestTasks=new Map<string,{snapshotId:string;time:number}>();
   for(const {record} of candidates)for(const point of record.points.filter(point=>point.scope===scope)){const time=Date.parse(point.captureAt),old=latestTasks.get(point.taskId);if(!old||time>old.time)latestTasks.set(point.taskId,{snapshotId:record.snapshotId,time});}
   for(const [taskId,record] of latestTasks)keep(record.snapshotId,{kind:'last-complete',scope,taskId});

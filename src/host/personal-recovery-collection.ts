@@ -16,7 +16,7 @@ const complete=(view:AccountView)=>['completed','completed-after-cancel'].includ
  * the existing native restore, pinning and crash recovery implementation. */
 export class PersonalRecoveryCollection {
  readonly root:string;
- constructor(private options:{root:string;accounts:AccountRecoveryCoordinator;authorize:(actor:string,scope:string,manage:boolean)=>Promise<boolean>}){this.root=resolve(options.root);}
+ constructor(private options:{onAccountCommitted?:(scope:string)=>Promise<void>;root:string;accounts:AccountRecoveryCoordinator;authorize:(actor:string,scope:string,manage:boolean)=>Promise<boolean>}){this.root=resolve(options.root);}
  private path(id:string){if(!/^[a-f0-9-]{36}$/.test(id))throw restoreFail('invalid_operation');return join(this.root,id+'.json');}
  private save(value:Collection){return durableJson(this.path(value.id),value);}
  private digest(value:Collection){return sha(JSON.stringify({selections:value.selections,mode:value.mode,accounts:value.review??value.accounts.map(a=>({scope:a.scope,id:a.id,revision:a.revision,digest:a.digest}))}));}
@@ -54,12 +54,18 @@ export class PersonalRecoveryCollection {
     let account=value.accounts[index];if(complete(account))continue;
     try{
      await this.allowed(actor,value);
+     const current=(await this.options.accounts.status(actor,account.scope)).find(item=>item.id===account.id);
+     if(!current)throw restoreFail('collection_child_changed');
+     if(current.revision===account.revision&&current.digest===account.digest){account=current;value.accounts[index]=account;await this.save(value);}
+     else if(!(index>0&&value.mode==='missing-only'&&account.state==='staged'))throw restoreFail('collection_child_changed');
+     if(complete(account))continue;
      if(index>0&&value.mode==='missing-only'&&account.state==='staged'){
       const previous=value.accounts[index-1];if(!complete(previous))throw restoreFail('collection_predecessor_incomplete');
       account=await this.options.accounts.refreshForCollection(actor,account.id,{revision:account.revision,digest:account.digest!,precedingId:previous.id,precedingDigest:previous.digest!});
       value.accounts[index]=account;await this.save(value);
      }
-     value.accounts[index]=await this.options.accounts.operate(actor,account.id,{action:'confirm',revision:account.revision,digest:account.digest});
+     const committed=await this.options.accounts.operate(actor,account.id,{action:'confirm',revision:account.revision,digest:account.digest});
+     await this.options.onAccountCommitted?.(account.scope);value.accounts[index]=committed;
      await this.save(value);if(!complete(value.accounts[index]))break;
     }catch(error){value.errorCode=error instanceof BackupError?error.code:'collection_restore_failed';break;}
    }

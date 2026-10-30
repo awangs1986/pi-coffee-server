@@ -1,6 +1,6 @@
 # 个人增量备份与恢复规格
 
-版本：PB-2.1，2026-10-29。状态：**个人 MVP 的设计边界已确认；精简实现与端到端恢复验收待完成。**
+版本：PB-2.1，2026-10-30。状态：**v0.58 集成候选已实现个人流程；隔离 Gitea/Pi/Codex 整套应急恢复通过。源码最终检查、发布凭据和生产启用分别记录。**
 
 权威需求：[Server #130](https://github.com/awangs1986/pi-coffee-server/issues/130)。
 本版依据用户明确决定：“整个备份系统是我个人使用，我就是唯一用户；不用过度保护安全”。
@@ -124,7 +124,7 @@ Web 不可用时，提供同一拥有者可运行的本地备份/提取/恢复�
 
 PB-2.1 同时撤销“所有历史配置和认证材料只能保存指纹、必须全部手工重建”的一刀切要求：可迁移配置和凭据按上表加密备份、明确恢复；旧 Cookie、执行授权及输入不自动复活。管理员密钥是备份解密能力，不重建旧的多角色批准链。CLI 加短说明满足复杂恢复的 MVP 要求，Agent 是可选操作助手，不是备份运行或恢复必需的在线依赖。
 
-## 6. PB-2.1 验收条件（当前均待验证）
+## 6. PB-2.1 验收条件（按当前证据逐项验收）
 
 - [ ] **PB-AC-01**：拥有者通过现有登录完成一次配置、离线恢复副本验证和计划启用，无独立角色/身份登记向导；其他平台账号不会因此获得额外访问。
 - [ ] **PB-AC-02**：真实 Restic 基线、未变/变化增量及两个历史点读回通过；关闭整个浏览器后同一作业继续完成。
@@ -162,29 +162,41 @@ PB-2.1 同时撤销“所有历史配置和认证材料只能保存指纹、必�
 
 PB-AC-13–15 是本次 Gitea、应急恢复及认证接回的新增验收；PB-AC-09 扩展为全纳管范围的管理员密钥验证。新增工作继续由 #130 追踪，未因旧子票完成而自动满足。
 
-## 8. 实现基线与明确差距
+## 8. 当前实现与验证边界（2026-10-30）
 
-文档工作基于 GitHub/Gitea main `d58ac4e814e34167157c57ae76f3b7461042f025`，两端已获取并确认相同。该 main 已消费 [Pi 1.4](../development/pi-140-upgrade.md)，未合入旧备份候选。备份代码观察基线为 [PR #142](https://github.com/awangs1986/pi-coffee-server/pull/142) 的 `d1b4816b9bc1c76a789ae176f4782970fef57510`；此次不修改该源码/分支。
+集成分支 `feat/backup-personal-pb21` 从 GitHub/Gitea main
+`d58ac4e814e34167157c57ae76f3b7461042f025` 正常合并旧候选 `d1b4816`，保留当前
+Pi 1.4 与 Host/Web/native 实现。旧 PR #142 的测试数字仅是历史证据，不能代替
+本分支结果。当前实现对应 #144–#150；[验收与测试规则](../reviews/personal-backup-pb21.md)
+和 [使用/应急说明](../deployment/personal-backup.md) 是当前入口。
 
-本次在干净的文档分支 `docs/personal-backup-spec-20261029`、PB-2 提交 `2a57f9a2c6f36b601d054c11a278d492ef521662` 上修订；2026-10-29 再次获取两端 main，仍为上述同一 SHA，没有主线新提交需要整合。下述新增要求是文档变更，不是当前 main 或生产功能。
-
-| 观察证据（d1b4816） | 与 PB-2.1 的差距 |
+| 能力 | 当前源码与已执行证据 |
 | --- | --- |
-| [旧规格](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/spec/task-backup.md)要求源/目的地权威、显式 actor/scope/角色及独立 broker | 个人作业结构尚未精简，不能称本版已实现 |
-| [恢复 CLI](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/src/restore-cli.ts)要求 schema2 actor/user，并提供 request/plan/approve/publish 操作 | 本地可信入口与一次恢复确认仍待调整；平台原有远程身份校验不能误删 |
-| [恢复文档](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/development/task-recovery.md)记录阶段日志、原子发布、原生 ID 和共享数据合并 | 可靠性成果可复用；暂存位置预检与精简后崩溃接续需重新验证 |
-| [密钥 worker](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/src/backup-key-worker.ts)及[固定角色启动](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/deployment/ordinary-backup-startup.md)维护私有身份协议 | 需要收敛为可信拥有者配置和作业生命周期，不能只隐藏界面而保留强制门槛 |
-| [旧验收记录](https://github.com/awangs1986/pi-coffee-server/issues/130#issuecomment-6500868506)为 Pi 1.1/Codex 0.159.1 候选的 280 文件、1,697 测试和17 Browser probes | 只证明旧提交/旧要求；不能证明 PB-2.1、当前 Pi 1.4 兼容或生产已启用 |
-| [仓库恢复包](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/src/host/backup-repository.ts)已有导出密钥及离线读回校验；恢复 CLI 仍连接认证 Host | 可复用仓库解密能力；不能据此声称 Gitea/Host 全失后的应急接回或全账号恢复已实现 |
-| [旧恢复配置合同](https://github.com/awangs1986/pi-coffee-server/blob/d1b4816b9bc1c76a789ae176f4782970fef57510/docs/development/task-recovery.md)仅保存配置指纹，原生配置/认证需重配 | 与 PB-2.1 的可迁移配置和凭据恢复要求不符，采集、恢复及对应测试仍待调整 |
+| 可信个人模式 | `src/host/personal-backup.ts`、`src/main.ts`；实际 Host 启动及 Pi 往返测试，无 broker/角色登记；仍跟踪实际 writer 生命周期 |
+| 一次确认恢复 | `src/host/restore.ts`、`account-recovery.ts`、`personal-recovery-collection.ts`；HTTP/CLI、健康邻居、跨账号同名 ID、共享 Codex DB 全丢失和阶段中断测试 |
+| 配置与认证材料 | `personal-configuration-restore.ts`、Pi/Codex adapters；恢复缺失配置，保留现存配置；不会自动证明外部登录仍有效 |
+| 每日与保留 | `backup-job-runner.ts`；独立 worker、自动 30/12/12、Gitea/聊天各自状态及有界重试；失败部分不导致成功部分重复提交 |
+| Gitea/登录 | `gitea-backup.ts`、`state-archive.ts`；真实 Gitea 1.27.3、SQLite3、本地存储测试，保存配置/账号 ID/scope/目录绑定；OAuth 重新登录并核对隔离范围 |
+| 无旧运行资料的恢复 | `backup-repository.ts`、`backup-cli.ts`；管理员恢复包验证仓库 ID、只读列快照、按选择验证和重建索引；原本地密钥/Host token/登录服务均非解密前提 |
+| 独立工具 | `scripts/package-recovery.mjs`；不依赖 Gitea npm 包的 Linux amd64 CLI 包通过两账号 Pi/Codex + Gitea 共同丢失恢复测试 |
 
-当前 main 的登录证据另列，避免误用旧备份分支代替现有运行时：
+明确边界：
 
-| 源码证据（d58ac4e） | 本版需要补齐的部分 |
-| --- | --- |
-| [Web 启动](https://github.com/awangs1986/pi-coffee-server/blob/d58ac4e814e34167157c57ae76f3b7461042f025/src/web/main.ts)读取 Gitea OAuth 环境配置及 routes 文件 | 这些材料的加密采集、灾后恢复说明及 Gitea 配套备份仍待实现验证 |
-| [身份路由](https://github.com/awangs1986/pi-coffee-server/blob/d58ac4e814e34167157c57ae76f3b7461042f025/src/web/identity.ts)使用 Gitea 数字 ID、scope/legacy-default 映射及内存登录会话 | 恢复应保留账号绑定并重新登录；现有登录代码不是跨系统恢复通过的证据 |
+- 生产 Gitea 的实际数据库/路径和服务命令尚未核对。当前自动服务备份仅支持已验证的
+  SQLite3 + 本地存储；其他数据库、外部存储或漏列路径明确拒绝，不算完整 Gitea 备份。
+  对部署在其他机器的 Gitea，需要在有实际数据访问能力的位置运行工具；本期不提供
+  远程数据库管理平台。
+- Gitea 采集需要停止写入；没有明确配置获准窗口时保留旧点并报错。
+  `allowServicePause` 及 stop 命令是拥有者另行配置的授权，不能由浏览器请求构造。
+  本轮只启停合成测试实例，未重启生产 Host/Web/Gitea。
+- 自动恢复以原路径为当前支持范围；变更目录或账号映射时拒绝静默接错。
+  CLI 可先校验提取，拥有者/Agent 再明确完成迁移。
+- Pi 的外部资源、未映射包、未知可变配置仍可能令新采集不可用；错误明确显示，
+  不能把简单合成配置的成功外推成任意自定义资源都受保护。
+- 真实用户凭据是否有效、提供商新回合、真实备份盘和生产计划启用未验证；这些不是
+  隔离历史读回/原生重开的同义词。正常认证提示与保留现存配置行为已有测试。
+- 旧格式/入口保留；不会新建仓库覆盖旧点。离线只导入部分索引时，其余快照按未知
+  材料保留，不能由自动保留当作可删除点。
 
-Gitea 具体版本、数据库后端、存储清单和一致性采集命令本轮未读取生产配置或执行探针，须在实施时确认并用隔离实例验证 PB-AC-13/14；这是实现验证项，不扩展为新身份平台。
-
-本轮为文档修订，未运行模型、备份/恢复、完整产品测试、部署或重启。后续实现须保留最新 main 能力，并重新核对依赖安全状态；旧候选的依赖告警与旧通过数字都不能直接外推到新的 main。
+第 6 节验收条件继续保留，最终规范检查/新克隆证据随本分支 PR 和工单记录，
+不在文档刷新中自动勾选父票，也不把候选代码写成生产已启用。

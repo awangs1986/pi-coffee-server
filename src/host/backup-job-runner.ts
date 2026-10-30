@@ -3,16 +3,18 @@ import {mkdir,open,lstat,realpath,readFile,rename} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE} from './backup.js';
 import {BackupRepository,type RepositoryJob,type BackupSelection} from './backup-repository.js';
+import {GiteaBackupJob} from './gitea-backup.js';
+import {SERVICE_BACKUP_SCOPES} from './backup.js';
 import {normalizeUsername} from '../shared/identity.js';
 import type {AgentEngine} from '../shared/protocol.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 
 export interface BackupInventoryTask {taskId:string;engine:AgentEngine;archived?:boolean;}
 export interface BackupInventoryConnection {url:string;tokenFile:string;actor:string;}
-interface Policy {automaticRetention?:boolean;schema:1;revision:string;scopes:string[];timeZone:string;hour:number;minute:number;startDate:string;host?:BackupInventoryConnection;}
+interface Policy {giteaProfile?:string;automaticRetention?:boolean;schema:1;revision:string;scopes:string[];timeZone:string;hour:number;minute:number;startDate:string;host?:BackupInventoryConnection;}
 interface Coverage {state:'complete'|'partial'|'stale'|'unknown';inventoryAvailable:boolean;repositoryAvailable:boolean;unprotected:string[];stale:string[];excluded:BackupInventoryTask[];points:{taskId:string;captureAt:string;checkpointId:string}[];}
 interface Attempt {dispatchVersion?:1;selection?:BackupSelection[];number:number;id:string;startedAt:string;finishedAt?:string;state:'running'|'succeeded'|'partial'|'failed'|'uncertain';errorCode?:string;scopeStates?:Record<string,Attempt['state']>;}
-interface ScheduledRun {retention?:{id?:string;revision?:number;digest?:string;state:'pending'|'completed'|'failed';attempts:number;retryAt?:string;errorCode?:string};id:string;date:string;revision:string;scopes?:string[];startedAt:string;finishedAt?:string;state:Attempt['state'];attempts:Attempt[];scopeStates?:Record<string,Attempt['state']>;}
+interface ScheduledRun {giteaProfile?:string;nativeState?:Attempt['state'];gitea?:{state:Attempt['state'];attempts:number;id:string;startedAt:string;finishedAt?:string;retryAt?:string;errorCode?:string};retention?:{id?:string;revision?:number;digest?:string;state:'pending'|'completed'|'failed';attempts:number;retryAt?:string;errorCode?:string};id:string;date:string;revision:string;scopes?:string[];startedAt:string;finishedAt?:string;state:Attempt['state'];attempts:Attempt[];scopeStates?:Record<string,Attempt['state']>;}
 interface Alert {id:string;scope:string;kind:'job-failed'|'point-stale'|'unprotected'|'inventory-unavailable'|'repository-unavailable';openedAt:string;lastObservedAt:string;resolvedAt?:string;occurrences:number;message:string;}
 interface Journal {schema:1;lastCheckedAt?:string;runs:ScheduledRun[];alerts:Alert[];}
 const validScope=(v:string)=>v===LEGACY_BACKUP_SCOPE||normalizeUsername(v)===v;
@@ -23,17 +25,18 @@ const engines=new Set(['pi','codex','claude','cursor','grok']);
  * discovered native directories or a list of whichever points happen to exist. */
 export class BackupJobRunner {
  readonly root:string;private now:()=>number;private lease?:FileLease;
- constructor(private options:{root:string;repository:Pick<BackupRepository,'backup'|'jobs'|'status'|'recoverInterruptedOperation'>&Partial<Pick<BackupRepository,'previewRetention'|'executeRetention'|'retentionPlans'>>;coordinator:Pick<BackupCoordinator,'status'|'refreshStatusInventory'>;now?:()=>number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
+ constructor(private options:{root:string;repository:Pick<BackupRepository,'backup'|'jobs'|'status'|'recoverInterruptedOperation'>&Partial<Pick<BackupRepository,'previewRetention'|'executeRetention'|'retentionPlans'|'backupArchive'|'archivePoints'|'extractArchive'>>;coordinator:Pick<BackupCoordinator,'status'|'refreshStatusInventory'>;now?:()=>number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
  private async initialize(){await mkdir(this.root,{recursive:true,mode:0o700});await checkedDirectory(this.root);await mkdir(join(this.root,'inventory'),{recursive:true,mode:0o700});await checkedDirectory(join(this.root,'inventory'));}
- async configure(input:{revision:string;scopes:string[];timeZone?:string;hour?:number;minute?:number;host?:BackupInventoryConnection;automaticRetention?:boolean}):Promise<void>{
+ async configure(input:{giteaProfile?:string;revision:string;scopes:string[];timeZone?:string;hour?:number;minute?:number;host?:BackupInventoryConnection;automaticRetention?:boolean}):Promise<void>{
   if(input.automaticRetention!==undefined&&typeof input.automaticRetention!=='boolean')throw new BackupError('invalid_schedule','Invalid retention policy');
+  if(input.giteaProfile!==undefined&&(!input.giteaProfile.startsWith('/')||!(this.options.repository instanceof BackupRepository)))throw new BackupError('invalid_schedule','Gitea requires a personal local repository');
   await this.initialize();const timeZone=input.timeZone??'America/Toronto',hour=input.hour??4,minute=input.minute??0;
   if(typeof input.revision!=='string'||!/^[a-zA-Z0-9_-]{1,64}$/.test(input.revision)||!Array.isArray(input.scopes)||!input.scopes.length||input.scopes.length>256||new Set(input.scopes).size!==input.scopes.length||input.scopes.some(s=>typeof s!=='string'||!validScope(s))||!Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59)throw new BackupError('invalid_schedule','Invalid backup schedule');
   const startDate=localTime(this.now(),timeZone).date;
   if(input.host){const url=new URL(input.host.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||!input.host.tokenFile.startsWith('/')||normalizeUsername(input.host.actor)!==input.host.actor)throw new BackupError('invalid_schedule','Invalid trusted inventory connection');}
   await this.locked(async()=>{
    const old=await this.policy();
-   const policy:Policy={schema:1,revision:input.revision,scopes:[...input.scopes].sort(),timeZone,hour,minute,startDate,...(input.automaticRetention?{automaticRetention:true}:{}),...(input.host?{host:input.host}:{})};
+   const policy:Policy={...(input.giteaProfile?{giteaProfile:input.giteaProfile}:{}),schema:1,revision:input.revision,scopes:[...input.scopes].sort(),timeZone,hour,minute,startDate,...(input.automaticRetention?{automaticRetention:true}:{}),...(input.host?{host:input.host}:{})};
    if(old?.revision===policy.revision){if(JSON.stringify({...old,startDate:''})!==JSON.stringify({...policy,startDate:''}))throw new BackupError('schedule_revision_conflict','Use a new revision for schedule changes');return;}
    await atomic(this.root,'policy.json',policy);
   });
@@ -49,7 +52,7 @@ export class BackupJobRunner {
   if(policy&&!policy.scopes.includes(scope))return {schemaVersion:1,configured:false,lastCheckedAt:null,workerState:'not-observed',schedule:null,coverage:{state:'unknown',inventoryAvailable:false,repositoryAvailable:false,unprotected:[],stale:[],excluded:[],points:[]},runs:[],alerts:[],excludedEngines:['claude','cursor','grok']};
   const journal=await this.journal();const coverage=await this.coverage(scope);
   return {schemaVersion:1,configured:Boolean(policy),lastCheckedAt:journal.lastCheckedAt??null,workerState:!journal.lastCheckedAt?'not-observed':this.now()-Date.parse(journal.lastCheckedAt)>120000?'overdue':'recent',schedule:policy?{revision:policy.revision,timeZone:policy.timeZone,hour:policy.hour,minute:policy.minute}:null,coverage,
-   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates,retention})=>({id,date,revision,startedAt,finishedAt,...(retention?{retention}:{}),state:scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,selection:_selection,dispatchVersion:_dispatchVersion,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
+   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates,retention,gitea})=>({id,date,revision,startedAt,finishedAt,...(gitea?{gitea}:{}),...(retention?{retention}:{}),state:gitea&&gitea.state!=='succeeded'&&(scopeStates?.[scope]??state)==='succeeded'?'partial':scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,selection:_selection,dispatchVersion:_dispatchVersion,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
  }
  async tick():Promise<{dispatched:boolean;run?:ScheduledRun}>{
   await this.initialize();return this.locked(async()=>{
@@ -59,25 +62,53 @@ export class BackupJobRunner {
    const coverage=new Map<string,Coverage>();for(const scope of policy.scopes)coverage.set(scope,await this.coverage(scope,true,true));
    this.updateCoverageAlerts(journal,coverage);
    // A persisted in-flight attempt always reconciles before considering a new date.
-   const pending=journal.runs.find(r=>r.state==='running'||r.state==='uncertain');
-   if(pending){const pendingCoverage=new Map<string,Coverage>();for(const scope of pending.scopes??policy.scopes)pendingCoverage.set(scope,await this.coverage(scope,true,true));await this.execute(journal,pending,pendingCoverage,true);await this.retain(policy,journal,pending);return {dispatched:false,run:pending};}
+   const pending=journal.runs.find(r=>(r.nativeState??r.state)==='running'||(r.nativeState??r.state)==='uncertain');
+   if(pending){const pendingCoverage=new Map<string,Coverage>();for(const scope of pending.scopes??policy.scopes)pendingCoverage.set(scope,await this.coverage(scope,true,true));await this.execute(journal,pending,pendingCoverage,true);await this.finishRun(policy,journal,pending);return {dispatched:false,run:pending};}
    const local=localTime(now,policy.timeZone),date=local.minutes>=policy.hour*60+policy.minute?local.date:previousDate(local.date);
    if(date<policy.startDate){await this.save(journal);return {dispatched:false};}
    const id=policy.revision+':'+date;let run=journal.runs.find(r=>r.id===id);
    if(run){
-    if(run.state==='succeeded'||run.attempts.length>=3){await this.retain(policy,journal,run);await this.save(journal);return {dispatched:false};}
+    run.state=run.nativeState??run.state;
+    if(run.state==='succeeded'||run.attempts.length>=3){await this.finishRun(policy,journal,run);return {dispatched:false,run};}
     const offset=run.attempts.length===1?15*60000:60*60000;
-    if(now<Date.parse(run.startedAt)+offset){await this.save(journal);return {dispatched:false};}
+    if(now<Date.parse(run.startedAt)+offset){await this.finishRun(policy,journal,run);return {dispatched:false,run};}
    }else{
-    run={id,date,revision:policy.revision,scopes:[...policy.scopes],startedAt:this.time(),state:'running',attempts:[]};journal.runs.push(run);
+    run={id,date,revision:policy.revision,...(policy.giteaProfile?{giteaProfile:policy.giteaProfile}:{}),scopes:[...policy.scopes],startedAt:this.time(),state:'running',attempts:[]};journal.runs.push(run);
    }
    const number=run.attempts.length+1,attempt:Attempt={dispatchVersion:1,number,id:operationId(run.id+':'+number),startedAt:this.time(),state:'running'};
    run.attempts.push(attempt);run.state='running';delete run.finishedAt;await this.save(journal);
-   await this.execute(journal,run,coverage,false);await this.retain(policy,journal,run);return {dispatched:true,run};
+   await this.execute(journal,run,coverage,false);await this.finishRun(policy,journal,run);return {dispatched:true,run};
   });
  }
+ private async finishRun(policy:Policy,journal:Journal,run:ScheduledRun){
+  run.nativeState=run.state;
+  if(run.giteaProfile&&run.gitea?.state!=='succeeded'){
+   const current=run.gitea,reconciling=current?.state==='running'||current?.state==='uncertain';
+   if(reconciling||(!current||current.attempts<3&&(!current.retryAt||this.now()>=Date.parse(current.retryAt)))){
+    const attempt=reconciling?current!:{state:'running' as const,attempts:(current?.attempts??0)+1,id:operationId(run.id+':gitea:'+((current?.attempts??0)+1)),startedAt:this.time()};
+    run.gitea=attempt;await this.save(journal);
+    try{
+     const repository=this.options.repository;if(!(repository instanceof BackupRepository))throw new BackupError('gitea_unavailable','Local repository required');
+     if(reconciling)await repository.recoverInterruptedOperation();
+     const service=new GiteaBackupJob({root:join(this.root,'..','gitea'),repository,profile:run.giteaProfile});
+     const result=await service.backup(attempt.id);if(result.state!=='succeeded')throw new BackupError('gitea_backup_failed','Gitea backup failed');
+     attempt.state='succeeded';attempt.finishedAt=this.time();delete attempt.errorCode;delete attempt.retryAt;
+     // Include a newly successful independent service in a fresh retention plan.
+     if(run.retention?.state==='completed')delete run.retention;
+    }catch(error){
+     attempt.errorCode=error instanceof BackupError?error.code:'gitea_backup_failed';
+     attempt.state=['repository_busy','operation_uncertain'].includes(attempt.errorCode)?'uncertain':'failed';
+     attempt.finishedAt=this.time();attempt.retryAt=new Date(this.now()+(attempt.attempts===1?15:60)*60000).toISOString();
+    }
+   }
+  }
+  const scopes=[...(run.nativeState==='succeeded'?(run.scopes??policy.scopes):[]),...(run.gitea?.state==='succeeded'?[SERVICE_BACKUP_SCOPES.gitea]:[])];
+  if(scopes.length)await this.retain({...policy,scopes},journal,run);
+  if(run.gitea&&run.gitea.state!=='succeeded'&&run.state==='succeeded')run.state='partial';
+  await this.save(journal);
+ }
  private async retain(policy:Policy,journal:Journal,run:ScheduledRun){
-  if(!policy.automaticRetention||run.state!=='succeeded'||run.retention?.state==='completed'||(run.retention?.attempts??0)>=3||run.retention?.retryAt&&this.now()<Date.parse(run.retention.retryAt))return;
+  if(!policy.automaticRetention||run.retention?.state==='completed'||(run.retention?.attempts??0)>=3||run.retention?.retryAt&&this.now()<Date.parse(run.retention.retryAt))return;
   const repository=this.options.repository;
   run.retention={...run.retention,state:'pending',attempts:(run.retention?.attempts??0)+1};await this.save(journal);
   try{
@@ -121,7 +152,7 @@ export class BackupJobRunner {
    for(const scope of coverage.keys())coverage.set(scope,await this.coverage(scope,true,true));
    this.updateCoverageAlerts(journal,coverage);
    const complete=[...coverage.values()].every(c=>c.state==='complete');
-   attempt.state=complete?'succeeded':'partial';run.state=attempt.state;
+   attempt.state=complete?'succeeded':'partial';if(complete&&run.nativeState!=='succeeded'&&run.retention?.state==='completed')delete run.retention;run.state=attempt.state;
    run.scopeStates=Object.fromEntries([...coverage].map(([scope,c])=>[scope,c.state==='complete'?'succeeded':'partial']));
    for(const [scope,c] of coverage)if(c.state==='complete')this.resolveAlert(journal,scope,'job-failed');
   }catch(error){

@@ -9,6 +9,8 @@ import type {AgentEngine} from '../shared/protocol.js';
 export const BACKUP_PROTOCOL_VERSION=1;
 /** Reserved data-scope identity; cannot collide with a valid Gitea username. */
 export const LEGACY_BACKUP_SCOPE='__legacy_default__';
+export const SERVICE_BACKUP_SCOPES={gitea:'__service_gitea__',bootstrap:'__service_bootstrap__',safety:'__service_safety__'} as const;
+export const isServiceBackupScope=(scope:string)=>Object.values(SERVICE_BACKUP_SCOPES).some(value=>value===scope);
 export const BACKUP_ENGINES=['pi','codex'] as const;
 export const DEFERRED_BACKUP_ENGINES=['claude','cursor','grok'] as const;
 const validScope=(value:string)=>value===LEGACY_BACKUP_SCOPE||normalizeUsername(value)===value;

@@ -1,3 +1,4 @@
+import {renderGiteaBackup} from './gitea-backup.js';
 import {renderPersonalCollections} from './personal-recovery.js';
 import {renderBackupRetention} from './backup-retention.js';
 import {renderAccountRecoveryControls} from './account-recovery.js';
@@ -55,6 +56,7 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      }
      output.append(section);
     }
+    renderGiteaBackup({data,output,request,signal:active.signal,current,refresh:()=>read({action:'status',scope})});
     renderRestoreControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     renderAccountRecoveryControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     renderPersonalCollections({data,output,request,signal:active.signal,current,refresh:()=>read({action:'status',scope})});

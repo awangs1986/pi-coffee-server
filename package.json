@@ -1,6 +1,6 @@
 {
   "name": "pi-coffee-server",
-  "version": "0.57.0",
+  "version": "0.58.0",
   "private": true,
   "description": "PI Coffee: Browser, Web gateway and native Agent Host",
   "type": "module",

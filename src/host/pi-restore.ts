@@ -11,7 +11,8 @@ import {assertNativeHistoryCheckpoint,nativeHistorySources} from './native-bindi
 
 /** Pi's restore graph is interpreted here, behind the NativeRecovery boundary.
  * Native JSONL is preserved byte-for-byte at its original owned path. Settings,
- * secrets and execution authority are never installed as live configuration. */
+ * portable credentials are installed only by personal recovery; execution
+ * authority is never restored. */
 export async function preparePiRestore(options:{scope:string;workspaces:Workspaces;sessionDir:string;agentDir?:string;restoreConfiguration?:boolean},point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,restoreOptions?:NativeRestoreOptions):Promise<NativeRestorePreparation>{
  const history=restoreOptions?.nativeHistory;if(scope!==options.scope||point.manifest.adapterVersion!==(history?'pi-codex-history-v1':'pi-1.1.0-jsonl-v3/coffee-checkpoint-v1'))throw restoreFail('adapter_version_changed');
  const member=point.manifest.members.find(m=>m.scope===scope&&m.taskId===taskId&&(history||m.engine==='pi'));if(!member)throw restoreFail('native_binding_missing');

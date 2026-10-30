@@ -20,6 +20,7 @@ import {ManagedLaunchPolicy,LegacyAdmissionFence} from './host/managed-launch-po
 import {ManagedSourceAuthority,loadManagedSourceConfig,startManagedAdmissionControl} from './host/managed-source-authority.js';
 import {BackupRepositoryClient,readBackupRepositoryClientConfig} from './host/backup-repository-client.js';
 import {RestoreCoordinator,type NativeRestoreAdapter,type RestoreScope} from './host/restore.js';
+import {GiteaBackupJob} from './host/gitea-backup.js';
 import {BackupJobRunner,type BackupInventoryConnection} from './host/backup-job-runner.js';
 import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE,type NativeRecoveryAdapter} from './host/backup.js';
 import {PiNativeRecoveryAdapter} from './host/pi-recovery.js';
@@ -176,6 +177,8 @@ async function run(selectedRole: Role): Promise<void> {
   const personalRepository=personal&&backupCoordinator?new BackupRepository({root:join(backupRoot!,'repository-runtime'),coordinator:backupCoordinator}):undefined;
   // Ordinary HTTP/WS requests always obtain a fresh actor+scope facade. The
   // independent scheduler CLI owns its privileged worker profile separately.
+  const giteaProfile=personalRepository?process.env.PI_COFFEE_GITEA_BACKUP_PROFILE:undefined;
+  const gitea=giteaProfile&&personalRepository?new GiteaBackupJob({root:join(backupRoot!,'gitea'),repository:personalRepository,profile:giteaProfile}):undefined;
   const scheduleForActor=(brokerConfig||personalRepository)&&backupRoot&&backupCoordinator?(actor:string|undefined,dataScope:string)=>actor?new BackupJobRunner({root:join(backupRoot,'schedule'),coordinator:backupCoordinator,repository:personalRepository??new BackupRepositoryClient({...brokerConfig!,actor,dataScope})}):undefined:undefined;
   const scheduleConnection=backupRoot?(trustedBackupInventoryConnection()??(personal&&process.env.PI_COFFEE_HOST_TOKEN?await personal.inventoryConnection(process.env.PI_COFFEE_HOST_TOKEN):undefined)):undefined;
   const authorizeRecovery=async(actor:string,scope:string,manage:boolean)=>authorizeRecoveryRequest(actor,scope,manage,envList('PI_COFFEE_BACKUP_USERS'));
@@ -257,7 +260,7 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
-    ...(backupCoordinator?{backup:{personal:personalEnabled,coordinator:backupCoordinator,restore:restoreCoordinator,accountRecovery,collection,...(scheduleForActor?{scheduleForActor,scheduleConnection}:{}),...(personalRepository?{repository:personalRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY}:brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined,configureRepositoryForActor:async(actor:string|undefined,dataScope:string)=>{if(!actor)throw new BackupError('forbidden','Authenticated administrator required');await new BackupRepositoryClient({...brokerConfig,actor,dataScope}).configure();}}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
+    ...(backupCoordinator?{backup:{personal:personalEnabled,gitea,giteaProfile,coordinator:backupCoordinator,restore:restoreCoordinator,accountRecovery,collection,...(scheduleForActor?{scheduleForActor,scheduleConnection}:{}),...(personalRepository?{repository:personalRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY}:brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined,configureRepositoryForActor:async(actor:string|undefined,dataScope:string)=>{if(!actor)throw new BackupError('forbidden','Authenticated administrator required');await new BackupRepositoryClient({...brokerConfig,actor,dataScope}).configure();}}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,

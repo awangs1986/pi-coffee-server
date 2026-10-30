@@ -1,3 +1,4 @@
+import {verifyStateArchive,type StateArchiveKind} from './state-archive.js';
 import {recoveryPointPage,type RecoveryPointQuery} from './recovery-point-catalog.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {planRetention,type RecoveryPin,type RecoveryPinLease,type RepositoryRetentionPlan,type RetentionSnapshot} from './backup-retention.js';
@@ -7,7 +8,7 @@ import {constants,createReadStream} from 'node:fs';
 import {mkdir,lstat,realpath,open,readFile,readdir,rename,rm,mkdtemp,statfs} from 'node:fs/promises';
 import {join,resolve,dirname,isAbsolute} from 'node:path';
 import {tmpdir} from 'node:os';
-import {BackupCoordinator,BackupError,verifySealedCheckpoint,type CheckpointManifest} from './backup.js';
+import {BackupCoordinator,BackupError,verifySealedCheckpoint,SERVICE_BACKUP_SCOPES,type CheckpointManifest} from './backup.js';
 
 /** Reviewed upstream artifact, never PATH discovery or an executable supplied by a browser. */
 export const RESTIC_PIN={version:'0.19.1',platform:'linux/amd64',source:'https://github.com/restic/restic/releases/tag/v0.19.1',archiveSha256:'f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c',sha256:'20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'} as const;
@@ -15,7 +16,7 @@ interface DestinationIdentity {path:string;dev:number;ino:number;uid:number;moun
 interface RepositoryConfig {schema:1;binary:string;destination:DestinationIdentity;repository?:DestinationIdentity;repositoryId:string;keyId:string;enabled:boolean;exported:boolean;passwordName?:string;retiredKeys?:{id:string;passwordName:string}[];}
 export interface BackupSelection {scope:string;taskId:string;expectedCheckpointId?:string;}
 export interface RepositoryPoint extends BackupSelection {checkpointId:string;captureAt:string;engine:string;manifestSha256:string;}
-export interface RepositoryJob {schema:1;id:string;state:'running'|'succeeded'|'failed';startedAt:string;finishedAt?:string;selection:BackupSelection[];points:RepositoryPoint[];snapshotId?:string;dataBlobs?:number;verification:'none'|'repository-read';errorCode?:string;retiredAt?:string;retentionId?:string;}
+export interface RepositoryJob {kind?:'service';schema:1;id:string;state:'running'|'succeeded'|'failed';startedAt:string;finishedAt?:string;selection:BackupSelection[];points:RepositoryPoint[];snapshotId?:string;dataBlobs?:number;verification:'none'|'repository-read';errorCode?:string;retiredAt?:string;retentionId?:string;}
 interface RecoveryPackage {schema:1;backend:typeof RESTIC_PIN;repositoryId:string;keyId:string;password:string;repository:{path:string;identity:DestinationIdentity};recoveryInstructions:string[];}
 const idPattern=/^[0-9a-f-]{36}$/;
 const fail=(code:string)=>new BackupError(code,({offline_copy_required:'Export and independently verify the offline recovery copy before enabling backup',destination_unavailable:'Configured backup destination is unavailable',destination_changed:'Configured backup destination identity changed',repository_busy:'Another backup repository operation owns the lock',backend_untrusted:'Restic executable does not match the reviewed pin',checkpoint_unavailable:'No intact sealed checkpoint is available',recovery_verification_failed:'Offline recovery copy could not decrypt this repository',repository_failed:'Backup repository operation failed; previous successful points retained'} as Record<string,string>)[code]??'Backup repository operation refused');
@@ -55,6 +56,62 @@ export class BackupRepository {
    return {repositoryId:recovery.repositoryId,verification:'repository-read'};
   }catch{throw fail('recovery_verification_failed');}finally{await rm(temp,{recursive:true,force:true});}
  }
+ /** Reattach an existing encrypted repository without any original Host/login state.
+  * This only creates local runtime credentials; it never initializes or replaces a repository. */
+ async openOfflineRecovery(copy:string,input:{destination:string;binary:string}){
+  await this.initialize();return this.exclusive(async()=>{
+   let value;try{value=JSON.parse(copy);}catch{throw fail('recovery_verification_failed');}
+   const recovery=parseRecovery(copy,{repositoryId:value?.repositoryId,keyId:value?.keyId} as RepositoryConfig);
+   if(!/^[a-f0-9]{64}$/.test(recovery.repositoryId)||!idPattern.test(recovery.keyId)||!isAbsolute(input.destination)||!isAbsolute(input.binary)||overlap(this.root,input.destination))throw fail('invalid_configuration');
+   const destination=await identify(input.destination),config:RepositoryConfig={schema:1,binary:resolve(input.binary),destination,repository:await identify(join(destination.path,'repository')),repositoryId:recovery.repositoryId,keyId:recovery.keyId,enabled:true,exported:true,passwordName:'password-offline-'+recovery.keyId};
+   await this.withRecoveryPassword(recovery,async passwordFile=>{
+    let actual;try{actual=JSON.parse(await this.command(config,['cat','config'],{passwordFile,isolated:true}));}catch{throw fail('recovery_verification_failed');}
+    if(actual.id!==recovery.repositoryId)throw fail('recovery_verification_failed');
+   });
+   if(await exists(join(this.root,'config.json'))){const old=await this.config();if(old.repositoryId!==config.repositoryId||old.keyId!==config.keyId||JSON.stringify(old.destination)!==JSON.stringify(destination))throw fail('already_configured');return {repositoryId:config.repositoryId,opened:true};}
+   // Atomic files make an interrupted first open repeatable with the same key.
+   const password=join(this.root,config.passwordName!);if(await exists(password)){if((await privateText(password,1024)).trim()!==recovery.password)throw fail('already_configured');}else await atomicText(this.root,config.passwordName!,recovery.password+'\n');
+   await this.saveConfig(config);return {repositoryId:config.repositoryId,opened:true};
+  });
+ }
+ async offlineSnapshots(){
+  return this.exclusive(async()=>this.snapshotCatalog(await this.config()));
+ }
+ private async snapshotCatalog(config:RepositoryConfig):Promise<{snapshotId:string;jobId:string;kind:'native'|'service';storedAt:string}[]>{
+  const rows=JSON.parse(await this.command(config,['snapshots','--json']));if(!Array.isArray(rows)||rows.length>100000)throw fail('invalid_snapshot_catalog');
+  const result=[];for(const row of rows){
+   if(!row.tags?.includes('pi-coffee-v1')&&!row.tags?.includes('pi-coffee-service-v1'))continue;
+   const jobs=row.tags.filter((tag:unknown)=>typeof tag==='string'&&tag.startsWith('job:'));
+   if(!/^[a-f0-9]{64}$/.test(row.id)||jobs.length!==1||!idPattern.test(jobs[0].slice(4))||!Number.isFinite(Date.parse(row.time)))throw fail('invalid_snapshot_catalog');
+   result.push({snapshotId:row.id,jobId:jobs[0].slice(4),kind:row.tags.includes('pi-coffee-service-v1')?'service' as const:'native' as const,storedAt:row.time});
+  }
+  return result.sort((a,b)=>b.storedAt.localeCompare(a.storedAt));
+ }
+ /** Read and validate only a selected snapshot, then rebuild its local catalog.
+  * Native/group membership comes from sealed material, never from caller input. */
+ async importOfflineSnapshot(snapshotId:string):Promise<RepositoryJob>{
+  if(!/^[a-f0-9]{64}$/.test(snapshotId))throw fail('unknown_snapshot');
+  return this.exclusive(async()=>{
+   const config=await this.config(),row=(await this.snapshotCatalog(config)).find(row=>row.snapshotId===snapshotId);if(!row)throw fail('unknown_snapshot');
+   const old=(await this.jobs()).find(job=>job.id===row.jobId);if(old){if(old.snapshotId!==snapshotId||old.state!=='succeeded'||old.retiredAt)throw fail('operation_conflict');return old;}
+   const target=await mkdtemp(join(tmpdir(),'coffee-offline-import-'));
+   try{
+    await this.command(config,['restore',snapshotId,'--target',target,'--verify']);const points:RepositoryPoint[]=[];
+    if(row.kind==='service'){
+     const manifest=await verifyStateArchive(join(target,'archive'));
+     points.push({scope:SERVICE_BACKUP_SCOPES[manifest.kind],taskId:manifest.kind,engine:manifest.kind,checkpointId:manifest.id,captureAt:manifest.captureAt,manifestSha256:createHash('sha256').update(JSON.stringify(manifest)).digest('hex')});
+    }else{
+     for(const name of await readdir(target)){
+      if(!idPattern.test(name))throw fail('snapshot_incomplete');const manifest=await verifySealedCheckpoint(join(target,name));if(manifest.checkpointId!==name||!manifest.members.length)throw fail('snapshot_incomplete');
+      const manifestSha256=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');for(const member of manifest.members)points.push({scope:member.scope,taskId:member.taskId,engine:member.engine,checkpointId:name,captureAt:manifest.captureAt,manifestSha256});
+     }
+    }
+    if(!points.length)throw fail('snapshot_incomplete');await this.verifyExtraction(target,points);
+    const job:RepositoryJob={schema:1,id:row.jobId,...(row.kind==='service'?{kind:'service' as const}:{}),state:'succeeded',startedAt:row.storedAt,finishedAt:this.time(),selection:points.map(p=>({scope:p.scope,taskId:p.taskId,expectedCheckpointId:p.checkpointId})),points,snapshotId,verification:'repository-read'};
+    await this.saveJob(job);return job;
+   }finally{await rm(target,{recursive:true,force:true});}
+  });
+ }
  async verifyRecoveryPackage(copy:string):Promise<void>{await this.exclusive(async()=>{
   const config=await this.config();if(!config.exported)throw fail('offline_copy_required');
   try{parseRecovery(copy,config);await this.destination(config);await BackupRepository.verifyOfflineRecoveryPackage(copy,{destination:config.destination.path,binary:config.binary});}
@@ -84,6 +141,30 @@ export class BackupRepository {
   }
   config.retiredKeys=[];
  }
+ async backupArchive(kind:StateArchiveKind,source:string,requestId?:string):Promise<RepositoryJob>{
+  const manifest=await verifyStateArchive(source);
+  if(manifest.kind!==kind||!Object.hasOwn(SERVICE_BACKUP_SCOPES,kind)||!isAbsolute(source)||source!==resolve(source)||source.split('/').at(-1)!=='archive')throw fail('invalid_archive');
+  return this.exclusive(async()=>{
+   const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');
+   if(overlap(source,config.destination.path)||overlap(source,this.root))throw fail('invalid_configuration');
+   const id=requestId??manifest.id;if(!idPattern.test(id))throw fail('invalid_operation');
+   const scope=SERVICE_BACKUP_SCOPES[kind],manifestSha256=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+   const old=(await this.jobs()).find(job=>job.id===id);
+   if(old){if(old.kind!=='service'||old.points[0]?.manifestSha256!==manifestSha256)throw fail('operation_conflict');if(old.state==='succeeded')return old;throw fail('operation_uncertain');}
+   const job:RepositoryJob={schema:1,kind:'service',id,state:'running',startedAt:this.time(),selection:[{scope,taskId:kind,expectedCheckpointId:manifest.id}],points:[{scope,taskId:kind,engine:kind,checkpointId:manifest.id,manifestSha256,captureAt:manifest.captureAt}],verification:'none'};
+   await this.saveJob(job);
+   try{
+    const output=await this.command(config,['backup','--json','--host','pi-coffee','--tag','pi-coffee-service-v1','--tag','job:'+job.id,'--','archive'],{cwd:dirname(source)});
+    const summary=output.trim().split('\n').map(line=>JSON.parse(line)).find(line=>line.message_type==='summary');
+    if(!summary||!/^[0-9a-f]{8,64}$/.test(summary.snapshot_id))throw fail('repository_failed');
+    job.snapshotId=summary.snapshot_id;job.dataBlobs=summary.data_blobs;
+    await this.command(config,['check','--read-data']);await this.verifySnapshot(config,job.snapshotId!,job.points);
+    job.state='succeeded';job.verification='repository-read';job.finishedAt=this.time();await this.saveJob(job);return job;
+   }catch(error){job.state='failed';job.errorCode=error instanceof BackupError?error.code:'archive_failed';job.finishedAt=this.time();await this.saveJob(job);throw error;}
+  });
+ }
+ async archivePoints(kind:StateArchiveKind){return (await this.jobs()).filter(job=>job.kind==='service'&&job.points[0]?.engine===kind);}
+ async extractArchive(id:string,destination:string,copy?:string){const job=await this.recoveryJob(id);if(job?.kind!=='service')throw fail('unknown_archive');await this.extract(id,destination,copy);}
  async backup(selection:BackupSelection[],signal?:AbortSignal,requestId?:string):Promise<RepositoryJob>{
   await this.initialize();return this.exclusive(async()=>{
    const config=await this.config();if(!config.enabled)throw fail('offline_copy_required');
@@ -120,11 +201,11 @@ export class BackupRepository {
   const points=new Map<string,RepositoryPoint>();for(const job of jobs.filter(j=>j.state==='succeeded'&&!j.retiredAt))for(const point of job.points)if(!points.has(point.taskId)||point.captureAt>points.get(point.taskId)!.captureAt)points.set(point.taskId,point);
   return {configured:Boolean(config),enabled:config?.enabled??false,offlineCopyExported:config?.exported??false,backend:{name:'restic',version:RESTIC_PIN.version},jobs:jobs.slice(0,20),points:[...points.values()].map(p=>({...p,ageMs:Math.max(0,this.now()-Date.parse(p.captureAt)),stale:this.now()-Date.parse(p.captureAt)>86400000})),excludedEngines:['claude','cursor','grok']};
  }
- async pinRecoveryJob(jobId:string,input:{operationId:string;revision:number;ttlMs?:number}):Promise<RecoveryPin>{
+ async pinRecoveryJob(jobId:string,input:{operationId:string;revision:number;ttlMs?:number;recoveryPackage?:string}):Promise<RecoveryPin>{
   return this.exclusive(async()=>{
    await this.initializeRetention();const ttl=input.ttlMs??86400000;if(!idPattern.test(jobId)||!idPattern.test(input.operationId)||!Number.isSafeInteger(input.revision)||input.revision<1||!Number.isSafeInteger(ttl)||ttl<1000||ttl>86400000)throw fail('invalid_recovery_pin');
    const job=(await this.jobs()).find(row=>row.id===jobId&&row.state==='succeeded'&&row.verification==='repository-read'&&!row.retiredAt);if(!job?.snapshotId||!job.points.length)throw fail('unknown_snapshot');
-   const catalog=await this.retentionCatalog(await this.config());if(!catalog.some(row=>row.snapshotId===job.snapshotId))throw fail('unknown_snapshot');
+   const catalog=await this.retentionCatalog(await this.config(),input.recoveryPackage);if(!catalog.some(row=>row.snapshotId===job.snapshotId))throw fail('unknown_snapshot');
    const hash=createHash('sha256').update(input.operationId+':'+input.revision+':'+jobId).digest('hex'),id=hash.slice(0,8)+'-'+hash.slice(8,12)+'-'+hash.slice(12,16)+'-'+hash.slice(16,20)+'-'+hash.slice(20,32);
    let previous:RecoveryPin|undefined;try{previous=JSON.parse(await privateText(join(this.root,'recovery-pins',id+'.json'),32768));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
    const pin:RecoveryPin={schema:1,id,operationId:input.operationId,revision:input.revision,jobId,snapshotId:job.snapshotId,scopes:[...new Set(job.points.map(point=>point.scope))].sort(),createdAt:previous?.createdAt??this.time(),expiresAt:new Date(this.now()+ttl).toISOString()};
@@ -167,7 +248,7 @@ export class BackupRepository {
   }catch(error){plan.state='failed';plan.errorCode=error instanceof BackupError?error.code:'retention_failed';await this.saveRetention(plan);throw error;}finally{for(const lease of leases)lease.release();}
  });}
  private async initializeRetention(){await this.initialize();for(const name of ['recovery-pins','recovery-pin-locks','retention']){await mkdir(join(this.root,name),{mode:0o700,recursive:true});await privateDirectory(join(this.root,name));}}
- private async retentionCatalog(config:RepositoryConfig):Promise<RetentionSnapshot[]>{const snapshots=JSON.parse(await this.command(config,['snapshots','--json'])),jobs=await this.jobs();if(!Array.isArray(snapshots)||snapshots.length>100000)throw fail('retention_catalog_invalid');return snapshots.map(row=>{if(!row||typeof row.id!=='string'||!/^[0-9a-f]{64}$/.test(row.id))throw fail('retention_catalog_invalid');const matches=jobs.filter(job=>job.snapshotId===row.id&&!job.retiredAt),points=new Map<string,RepositoryPoint>();for(const job of matches)for(const point of job.points)points.set(point.scope+'/'+point.taskId+'/'+point.checkpointId,point);return {snapshotId:row.id,jobIds:matches.map(job=>job.id).sort(),verified:matches.length>0&&matches.every(job=>job.state==='succeeded'&&job.verification==='repository-read'),points:[...points.values()].sort((a,b)=>(a.scope+'/'+a.taskId).localeCompare(b.scope+'/'+b.taskId))};}).sort((a,b)=>a.snapshotId.localeCompare(b.snapshotId));}
+ private async retentionCatalog(config:RepositoryConfig,copy?:string):Promise<RetentionSnapshot[]>{const snapshots=JSON.parse(copy?await this.withRecoveryPassword(parseRecovery(copy,config),passwordFile=>this.command(config,['snapshots','--json'],{passwordFile,isolated:true})):await this.command(config,['snapshots','--json'])),jobs=await this.jobs();if(!Array.isArray(snapshots)||snapshots.length>100000)throw fail('retention_catalog_invalid');return snapshots.map(row=>{if(!row||typeof row.id!=='string'||!/^[0-9a-f]{64}$/.test(row.id))throw fail('retention_catalog_invalid');const matches=jobs.filter(job=>job.snapshotId===row.id&&!job.retiredAt),points=new Map<string,RepositoryPoint>();for(const job of matches)for(const point of job.points)points.set(point.scope+'/'+point.taskId+'/'+point.checkpointId,point);return {snapshotId:row.id,jobIds:matches.map(job=>job.id).sort(),verified:matches.length>0&&matches.every(job=>job.state==='succeeded'&&job.verification==='repository-read'),points:[...points.values()].sort((a,b)=>(a.scope+'/'+a.taskId).localeCompare(b.scope+'/'+b.taskId))};}).sort((a,b)=>a.snapshotId.localeCompare(b.snapshotId));}
  private async retentionPins(){const pins:RecoveryPin[]=[],leases:FileLease[]=[];try{for(const name of (await readdir(join(this.root,'recovery-pins'))).sort()){if(!name.endsWith('.json')||!idPattern.test(name.slice(0,-5)))continue;const lease=acquireFileLease(join(this.root,'recovery-pin-locks',name.slice(0,-5)+'.lock'),'exclusive');if(lease)leases.push(lease);const pin=JSON.parse(await privateText(join(this.root,'recovery-pins',name),32768)) as RecoveryPin;if(pin.schema!==1||pin.id!==name.slice(0,-5)||!idPattern.test(pin.operationId)||!Array.isArray(pin.scopes)||!Number.isFinite(Date.parse(pin.expiresAt)))throw fail('recovery_pin_invalid');pins.push({...pin,activeLease:!lease});if(pins.length>100000)throw fail('recovery_pin_capacity');}return {pins,leases};}catch(error){for(const lease of leases)lease.release();throw error;}}
  private retentionApprovalDigest(plan:RepositoryRetentionPlan){return retentionDigest({schema:plan.schema,id:plan.id,revision:plan.revision,createdAt:plan.createdAt,repositoryId:plan.repositoryId,catalogDigest:plan.catalogDigest,policy:plan.policy,timeZone:plan.timeZone,scopes:plan.scopes,keep:plan.keep,remove:plan.remove,pins:plan.pins});}
  private async saveRetention(plan:RepositoryRetentionPlan){await atomicJson(join(this.root,'retention'),plan.id+'.json',plan);}
@@ -211,6 +292,7 @@ export class BackupRepository {
   }finally{recoveryLease.release();}
  }
  private async verifyExtraction(destination:string,points:RepositoryPoint[]){
+  if(points.length===1&&Object.hasOwn(SERVICE_BACKUP_SCOPES,points[0].engine)){const point=points[0],entries=await readdir(destination);if(entries.length!==1||entries[0]!=='archive')throw fail('snapshot_incomplete');const manifest=await verifyStateArchive(join(destination,'archive'));if(manifest.id!==point.checkpointId||manifest.kind!==point.engine||manifest.captureAt!==point.captureAt||createHash('sha256').update(JSON.stringify(manifest)).digest('hex')!==point.manifestSha256)throw fail('snapshot_incomplete');return;}
   const ids=new Map(points.map(point=>[point.checkpointId,point.manifestSha256]));
   const entries=await readdir(destination);if(entries.length!==ids.size||entries.some(entry=>!ids.has(entry)))throw fail('snapshot_incomplete');
   for(const [id,digest] of ids){const manifest=await verifySealedCheckpoint(join(destination,id),digest);if(manifest.checkpointId!==id)throw fail('snapshot_incomplete');}

@@ -4,6 +4,7 @@ import {BackupCoordinator,BackupError,LEGACY_BACKUP_SCOPE,type RecoveryPublicati
 import type {AccountRecoveryCoordinator} from './account-recovery.js';
 import type {RestoreCoordinator} from './restore.js';
 import type {BackupRepository} from './backup-repository.js';
+import type {GiteaBackupJob} from './gitea-backup.js';
 import type {BackupJobRunner,BackupInventoryConnection} from './backup-job-runner.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
@@ -73,7 +74,7 @@ export type BackupScheduleAccess=Pick<BackupJobRunner,'status'|'configure'>;
 export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>&Partial<Pick<BackupRepository,'recoveryPoints'>>;
 export interface HostServerOptions {
   /** Trusted source coordinator; omitted until native writer custody is verified. */
-  backup?: {collection?:PersonalRecoveryCollection;personal?:boolean;coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
+  backup?: {gitea?:GiteaBackupJob;giteaProfile?:string;collection?:PersonalRecoveryCollection;personal?:boolean;coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
 
 
   releaseDir?:string;
@@ -319,7 +320,7 @@ export class HostServer {
       const repositoryFor=(target:UserSlot)=>this.options.backup?.repositoryForActor?this.options.backup.repositoryForActor(actor,target.user??LEGACY_BACKUP_SCOPE):this.options.backup?.repository;
       const status=async(target:UserSlot)=>{
         const saved=await repositoryStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE,this.options.backup?.activationUnavailable);
-        return {schemaVersion:1,personal:this.options.backup?.personal===true,...(actor===administrator&&this.options.backup?.collection?{collectionRestores:await this.options.backup.collection.status(actor)}:{}),scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),...(this.options.backup?.configureRepositoryForActor?{repositoryConfiguration:'service-managed'}:{}),excludedEngines:['claude','cursor','grok']};
+        return {schemaVersion:1,personal:this.options.backup?.personal===true,...(actor===administrator&&this.options.backup?.gitea?{gitea:await this.options.backup.gitea.status()}:{}),...(actor===administrator&&this.options.backup?.collection?{collectionRestores:await this.options.backup.collection.status(actor)}:{}),scope:target.user??LEGACY_BACKUP_SCOPE,canManage:actor===administrator,managedScopes:actor===administrator?[...new Set([dataScope,...this.options.backup?.scopes??[]])]:[],tasks:await backupStatuses(target),...(actor===administrator?{retention:await retentionStatus(()=>repositoryFor(target),target.user??LEGACY_BACKUP_SCOPE)}:{}),accountRestores:actor&&this.options.backup?.accountRecovery?await this.options.backup.accountRecovery.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],restores:actor&&this.options.backup?.restore?await this.options.backup.restore.status(actor,target.user??LEGACY_BACKUP_SCOPE):[],...(saved?{repository:saved}:{}),...(this.options.backup?.configureRepositoryForActor?{repositoryConfiguration:'service-managed'}:{}),excludedEngines:['claude','cursor','grok']};
 
       };
       const scheduleFor=(target:UserSlot)=>this.options.backup?.scheduleForActor?scopedSchedule(()=>this.options.backup!.scheduleForActor!(actor,target.user??LEGACY_BACKUP_SCOPE)):this.options.backup?.schedule;
@@ -334,13 +335,25 @@ export class HostServer {
         if(typeof input.scope!=='string'||(input.scope!==LEGACY_BACKUP_SCOPE&&normalizeUsername(input.scope)!==input.scope)||(input.scope!==dataScope&&!this.options.backup?.scopes?.includes(input.scope))){json(res,403,{error:'Scope is not managed by this backup service'});return;}
         const target=await this.slotFor(input.scope===LEGACY_BACKUP_SCOPE?undefined:input.scope);if(!target.workspaces){json(res,503,{error:'Task storage unavailable'});return;}json(res,200,await scheduledStatus(target));return;
       }
+      if(typeof input.action==='string'&&input.action.startsWith('gitea-')){
+        res.setHeader('cache-control','no-store');
+        if(actor!==administrator){json(res,403,{error:'Owner recovery required'});return;}
+        const service=this.options.backup?.personal?this.options.backup.gitea:undefined;
+        if(!service){json(res,409,{error:'Gitea backup is not configured'});return;}
+        try{
+          if(input.action==='gitea-backup'){json(res,200,await service.backup());return;}
+          if(input.action==='gitea-preview'&&typeof input.jobId==='string'&&(input.mode===undefined||input.mode==='missing-only'||input.mode==='replace')){json(res,200,await service.preview(input.jobId,{mode:input.mode}));return;}
+          if(input.action==='gitea-confirm'&&typeof input.id==='string'&&typeof input.digest==='string'){json(res,200,await service.confirm(input.id,input.digest));return;}
+          json(res,400,{error:'Invalid Gitea action'});
+        }catch(error){json(res,error instanceof BackupError?409:500,{error:error instanceof BackupError?error.code:'gitea_operation_failed'});}return;
+      }
       if(input.action==='schedule-configure'){
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
         const schedule=scheduleFor(slot),connection=this.options.backup?.scheduleConnection;
         if(!schedule||!connection||this.options.backup?.activationUnavailable){json(res,409,{error:'Configure the backup worker and its Host inventory connection first'});return;}
         const allowed=new Set([dataScope,...this.options.backup?.scopes??[]]);
         if(!Array.isArray(input.scopes)||input.scopes.some((scope:unknown)=>typeof scope!=='string'||!allowed.has(scope))){json(res,403,{error:'Schedule includes an unmanaged account scope'});return;}
-        try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection,...(this.options.backup?.personal?{automaticRetention:true}:{})});json(res,200,await scheduledStatus(slot));}
+        try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection,...(this.options.backup?.personal?{automaticRetention:true,...(this.options.backup.giteaProfile?{giteaProfile:this.options.backup.giteaProfile}:{})}:{})});json(res,200,await scheduledStatus(slot));}
         catch(error){json(res,error instanceof BackupError?409:400,{error:error instanceof BackupError?error.message:'Invalid schedule configuration'});}return;
       }
       if(input.action==='recovery-points'){

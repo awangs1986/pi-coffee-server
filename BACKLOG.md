@@ -1,3 +1,5 @@
+> PB-2.1 personal backup v0.58 candidate: [current implementation/evidence](docs/reviews/personal-backup-pb21.md), [operator recovery steps](docs/deployment/personal-backup.md), Server #144–#150. Source delivery does not activate production backup or service restarts.
+
 > Current deployment topology (2026-10-26): [one VM and one OS account for Web, primary Host and native CLIs](docs/architecture/topology.md), with separate services and authenticated user scopes. Historical multi-VM milestones below are not current deployment prerequisites. [Audit and remaining operational cleanup](docs/reviews/topology-freshness-20261026.md).
 
 > Recent-first Codex display (2026-10-20): [contract](docs/spec/recent-native-history.md), tracked with [Server #128](https://github.com/awangs1986/pi-coffee-server/issues/128). New Browser capability avoids complete-history fallback; publication and activation evidence are separate.
