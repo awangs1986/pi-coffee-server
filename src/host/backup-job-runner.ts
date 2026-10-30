@@ -9,10 +9,10 @@ import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 
 export interface BackupInventoryTask {taskId:string;engine:AgentEngine;archived?:boolean;}
 export interface BackupInventoryConnection {url:string;tokenFile:string;actor:string;}
-interface Policy {schema:1;revision:string;scopes:string[];timeZone:string;hour:number;minute:number;startDate:string;host?:BackupInventoryConnection;}
+interface Policy {automaticRetention?:boolean;schema:1;revision:string;scopes:string[];timeZone:string;hour:number;minute:number;startDate:string;host?:BackupInventoryConnection;}
 interface Coverage {state:'complete'|'partial'|'stale'|'unknown';inventoryAvailable:boolean;repositoryAvailable:boolean;unprotected:string[];stale:string[];excluded:BackupInventoryTask[];points:{taskId:string;captureAt:string;checkpointId:string}[];}
 interface Attempt {dispatchVersion?:1;selection?:BackupSelection[];number:number;id:string;startedAt:string;finishedAt?:string;state:'running'|'succeeded'|'partial'|'failed'|'uncertain';errorCode?:string;scopeStates?:Record<string,Attempt['state']>;}
-interface ScheduledRun {id:string;date:string;revision:string;scopes?:string[];startedAt:string;finishedAt?:string;state:Attempt['state'];attempts:Attempt[];scopeStates?:Record<string,Attempt['state']>;}
+interface ScheduledRun {retention?:{id?:string;revision?:number;digest?:string;state:'pending'|'completed'|'failed';attempts:number;retryAt?:string;errorCode?:string};id:string;date:string;revision:string;scopes?:string[];startedAt:string;finishedAt?:string;state:Attempt['state'];attempts:Attempt[];scopeStates?:Record<string,Attempt['state']>;}
 interface Alert {id:string;scope:string;kind:'job-failed'|'point-stale'|'unprotected'|'inventory-unavailable'|'repository-unavailable';openedAt:string;lastObservedAt:string;resolvedAt?:string;occurrences:number;message:string;}
 interface Journal {schema:1;lastCheckedAt?:string;runs:ScheduledRun[];alerts:Alert[];}
 const validScope=(v:string)=>v===LEGACY_BACKUP_SCOPE||normalizeUsername(v)===v;
@@ -23,16 +23,17 @@ const engines=new Set(['pi','codex','claude','cursor','grok']);
  * discovered native directories or a list of whichever points happen to exist. */
 export class BackupJobRunner {
  readonly root:string;private now:()=>number;private lease?:FileLease;
- constructor(private options:{root:string;repository:Pick<BackupRepository,'backup'|'jobs'|'status'|'recoverInterruptedOperation'>;coordinator:Pick<BackupCoordinator,'status'|'refreshStatusInventory'>;now?:()=>number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
+ constructor(private options:{root:string;repository:Pick<BackupRepository,'backup'|'jobs'|'status'|'recoverInterruptedOperation'>&Partial<Pick<BackupRepository,'previewRetention'|'executeRetention'|'retentionPlans'>>;coordinator:Pick<BackupCoordinator,'status'|'refreshStatusInventory'>;now?:()=>number}){this.root=resolve(options.root);this.now=options.now??Date.now;}
  private async initialize(){await mkdir(this.root,{recursive:true,mode:0o700});await checkedDirectory(this.root);await mkdir(join(this.root,'inventory'),{recursive:true,mode:0o700});await checkedDirectory(join(this.root,'inventory'));}
- async configure(input:{revision:string;scopes:string[];timeZone?:string;hour?:number;minute?:number;host?:BackupInventoryConnection}):Promise<void>{
+ async configure(input:{revision:string;scopes:string[];timeZone?:string;hour?:number;minute?:number;host?:BackupInventoryConnection;automaticRetention?:boolean}):Promise<void>{
+  if(input.automaticRetention!==undefined&&typeof input.automaticRetention!=='boolean')throw new BackupError('invalid_schedule','Invalid retention policy');
   await this.initialize();const timeZone=input.timeZone??'America/Toronto',hour=input.hour??4,minute=input.minute??0;
   if(typeof input.revision!=='string'||!/^[a-zA-Z0-9_-]{1,64}$/.test(input.revision)||!Array.isArray(input.scopes)||!input.scopes.length||input.scopes.length>256||new Set(input.scopes).size!==input.scopes.length||input.scopes.some(s=>typeof s!=='string'||!validScope(s))||!Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59)throw new BackupError('invalid_schedule','Invalid backup schedule');
   const startDate=localTime(this.now(),timeZone).date;
   if(input.host){const url=new URL(input.host.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||!input.host.tokenFile.startsWith('/')||normalizeUsername(input.host.actor)!==input.host.actor)throw new BackupError('invalid_schedule','Invalid trusted inventory connection');}
   await this.locked(async()=>{
    const old=await this.policy();
-   const policy:Policy={schema:1,revision:input.revision,scopes:[...input.scopes].sort(),timeZone,hour,minute,startDate,...(input.host?{host:input.host}:{})};
+   const policy:Policy={schema:1,revision:input.revision,scopes:[...input.scopes].sort(),timeZone,hour,minute,startDate,...(input.automaticRetention?{automaticRetention:true}:{}),...(input.host?{host:input.host}:{})};
    if(old?.revision===policy.revision){if(JSON.stringify({...old,startDate:''})!==JSON.stringify({...policy,startDate:''}))throw new BackupError('schedule_revision_conflict','Use a new revision for schedule changes');return;}
    await atomic(this.root,'policy.json',policy);
   });
@@ -48,7 +49,7 @@ export class BackupJobRunner {
   if(policy&&!policy.scopes.includes(scope))return {schemaVersion:1,configured:false,lastCheckedAt:null,workerState:'not-observed',schedule:null,coverage:{state:'unknown',inventoryAvailable:false,repositoryAvailable:false,unprotected:[],stale:[],excluded:[],points:[]},runs:[],alerts:[],excludedEngines:['claude','cursor','grok']};
   const journal=await this.journal();const coverage=await this.coverage(scope);
   return {schemaVersion:1,configured:Boolean(policy),lastCheckedAt:journal.lastCheckedAt??null,workerState:!journal.lastCheckedAt?'not-observed':this.now()-Date.parse(journal.lastCheckedAt)>120000?'overdue':'recent',schedule:policy?{revision:policy.revision,timeZone:policy.timeZone,hour:policy.hour,minute:policy.minute}:null,coverage,
-   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates})=>({id,date,revision,startedAt,finishedAt,state:scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,selection:_selection,dispatchVersion:_dispatchVersion,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
+   runs:journal.runs.filter(run=>!run.scopes||run.scopes.includes(scope)).slice().reverse().slice(0,30).map(({id,date,revision,startedAt,finishedAt,state,attempts,scopeStates,retention})=>({id,date,revision,startedAt,finishedAt,...(retention?{retention}:{}),state:scopeStates?.[scope]??state,attempts:attempts.map(({scopeStates:states,selection:_selection,dispatchVersion:_dispatchVersion,...a})=>({...a,state:states?.[scope]??a.state}))})),alerts:journal.alerts.filter(a=>a.scope===scope).map(a=>({...a})),excludedEngines:['claude','cursor','grok']};
  }
  async tick():Promise<{dispatched:boolean;run?:ScheduledRun}>{
   await this.initialize();return this.locked(async()=>{
@@ -59,12 +60,12 @@ export class BackupJobRunner {
    this.updateCoverageAlerts(journal,coverage);
    // A persisted in-flight attempt always reconciles before considering a new date.
    const pending=journal.runs.find(r=>r.state==='running'||r.state==='uncertain');
-   if(pending){const pendingCoverage=new Map<string,Coverage>();for(const scope of pending.scopes??policy.scopes)pendingCoverage.set(scope,await this.coverage(scope,true,true));await this.execute(journal,pending,pendingCoverage,true);return {dispatched:false,run:pending};}
+   if(pending){const pendingCoverage=new Map<string,Coverage>();for(const scope of pending.scopes??policy.scopes)pendingCoverage.set(scope,await this.coverage(scope,true,true));await this.execute(journal,pending,pendingCoverage,true);await this.retain(policy,journal,pending);return {dispatched:false,run:pending};}
    const local=localTime(now,policy.timeZone),date=local.minutes>=policy.hour*60+policy.minute?local.date:previousDate(local.date);
    if(date<policy.startDate){await this.save(journal);return {dispatched:false};}
    const id=policy.revision+':'+date;let run=journal.runs.find(r=>r.id===id);
    if(run){
-    if(run.state==='succeeded'||run.attempts.length>=3){await this.save(journal);return {dispatched:false};}
+    if(run.state==='succeeded'||run.attempts.length>=3){await this.retain(policy,journal,run);await this.save(journal);return {dispatched:false};}
     const offset=run.attempts.length===1?15*60000:60*60000;
     if(now<Date.parse(run.startedAt)+offset){await this.save(journal);return {dispatched:false};}
    }else{
@@ -72,8 +73,30 @@ export class BackupJobRunner {
    }
    const number=run.attempts.length+1,attempt:Attempt={dispatchVersion:1,number,id:operationId(run.id+':'+number),startedAt:this.time(),state:'running'};
    run.attempts.push(attempt);run.state='running';delete run.finishedAt;await this.save(journal);
-   await this.execute(journal,run,coverage,false);return {dispatched:true,run};
+   await this.execute(journal,run,coverage,false);await this.retain(policy,journal,run);return {dispatched:true,run};
   });
+ }
+ private async retain(policy:Policy,journal:Journal,run:ScheduledRun){
+  if(!policy.automaticRetention||run.state!=='succeeded'||run.retention?.state==='completed'||(run.retention?.attempts??0)>=3||run.retention?.retryAt&&this.now()<Date.parse(run.retention.retryAt))return;
+  const repository=this.options.repository;
+  run.retention={...run.retention,state:'pending',attempts:(run.retention?.attempts??0)+1};await this.save(journal);
+  try{
+   if(!repository.previewRetention||!repository.executeRetention||!repository.retentionPlans)throw new BackupError('retention_unavailable','Automatic retention unavailable');
+   if(!run.retention.id){
+    // Resume an interrupted deletion before planning another one. A mere old
+    // preview may be discarded because it has not removed any material.
+    const pending=(await repository.retentionPlans()).find(p=>p.state!=='completed'&&p.phase!=='preview'&&p.scopes.every(scope=>policy.scopes.includes(scope)));
+    const plan=pending??await repository.previewRetention({scopes:policy.scopes,timeZone:policy.timeZone});
+    Object.assign(run.retention,{id:plan.id,revision:plan.revision,digest:plan.digest});await this.save(journal);
+   }
+   await repository.executeRetention(run.retention.id!,run.retention.revision!,run.retention.digest!);
+   run.retention.state='completed';delete run.retention.errorCode;delete run.retention.retryAt;
+  }catch(error){
+   run.retention.state='failed';run.retention.errorCode=error instanceof BackupError?error.code:'retention_failed';
+   run.retention.retryAt=new Date(this.now()+(run.retention.attempts===1?15:60)*60000).toISOString();
+   if(run.retention.errorCode==='retention_plan_stale'){delete run.retention.id;delete run.retention.revision;delete run.retention.digest;}
+  }
+  await this.save(journal);
  }
  private async execute(journal:Journal,run:ScheduledRun,coverage:Map<string,Coverage>,reconciling:boolean){
   const attempt=run.attempts.at(-1)!;let job:RepositoryJob|undefined,submitted=false;

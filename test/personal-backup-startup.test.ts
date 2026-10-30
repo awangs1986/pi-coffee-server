@@ -37,6 +37,7 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC)('backs up and restores a Pi task t
   const capture=await call('backup',{action:'capture',taskId:task.id});expect(capture).toMatchObject({state:'protected'});
   await call('backup',{action:'repository-configure',destination:disk});
   const recovery=await call('backup',{action:'repository-export'});await call('backup',{action:'repository-verify',recoveryPackage:recovery.recoveryPackage});
+  const scheduled=await call('backup',{action:'schedule-configure',revision:'personal-v1',scopes:['__legacy_default__']});expect(scheduled.schedule.configured).toBe(true);
   const job=await call('backup',{action:'repository-backup',taskId:task.id});expect(job.state).toBe('succeeded');
   await call('workspace',{action:'archive',id:task.id});await call('workspace',{action:'delete',id:task.id,confirmation:task.id,includeLocalFiles:true});
   const preview=await call('backup',{action:'restore-preview',taskId:task.id,jobId:job.id});expect(preview.state).toBe('staged');

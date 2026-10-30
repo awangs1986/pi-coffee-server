@@ -336,10 +336,10 @@ export class HostServer {
       if(input.action==='schedule-configure'){
         if(actor!==administrator){json(res,403,{error:'Backup administration requires '+administrator});return;}
         const schedule=scheduleFor(slot),connection=this.options.backup?.scheduleConnection;
-        if(!schedule||!connection||this.options.backup?.activationUnavailable){json(res,409,{error:'An isolated backup worker and trusted inventory connection must be configured first'});return;}
+        if(!schedule||!connection||this.options.backup?.activationUnavailable){json(res,409,{error:'Configure the backup worker and its Host inventory connection first'});return;}
         const allowed=new Set([dataScope,...this.options.backup?.scopes??[]]);
         if(!Array.isArray(input.scopes)||input.scopes.some((scope:unknown)=>typeof scope!=='string'||!allowed.has(scope))){json(res,403,{error:'Schedule includes an unmanaged account scope'});return;}
-        try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection});json(res,200,await scheduledStatus(slot));}
+        try{await schedule.configure({revision:input.revision as string,scopes:input.scopes as string[],timeZone:input.timeZone as string|undefined,hour:input.hour as number|undefined,minute:input.minute as number|undefined,host:connection,...(this.options.backup?.personal?{automaticRetention:true}:{})});json(res,200,await scheduledStatus(slot));}
         catch(error){json(res,error instanceof BackupError?409:400,{error:error instanceof BackupError?error.message:'Invalid schedule configuration'});}return;
       }
       if(input.action==='recovery-points'){

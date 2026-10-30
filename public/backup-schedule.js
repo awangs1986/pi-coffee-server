@@ -15,7 +15,7 @@ export function renderBackupSchedule(data,{request,refresh,isCurrent}){
   if(schedule.coverage.unprotected?.length)text('p','未保护任务：'+schedule.coverage.unprotected.join('、'));
   if(schedule.coverage.excluded?.length)text('p','延期排除：'+schedule.coverage.excluded.map(task=>`${task.taskId} (${task.engine})`).join('、'));
  }
- for(const run of schedule.runs||[])text('p',`${run.date} · ${run.state} · 作业结束时间 ${run.finishedAt||'尚未结束'}`);
+ for(const run of schedule.runs||[]){text('p',`${run.date} · ${run.state} · 作业结束时间 ${run.finishedAt||'尚未结束'}`);if(run.retention)text('p',`自动保留：${run.retention.state}${run.retention.errorCode?' · '+run.retention.errorCode:''}`);}
  for(const alert of schedule.alerts||[])text('p',`${alert.resolvedAt?'已解决':'未解决'}告警 ${alert.kind}：${alert.message}${alert.resolvedAt?' · '+alert.resolvedAt:''}`);
  if(data.canManage&&!data.repository?.activationUnavailable&&data.managedScopes?.length){
   const time=document.createElement('input');time.type='time';time.setAttribute('aria-label','每日备份时间');time.value=policy?`${String(policy.hour).padStart(2,'0')}:${String(policy.minute).padStart(2,'0')}`:'04:00';

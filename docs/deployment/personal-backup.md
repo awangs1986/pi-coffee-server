@@ -19,6 +19,27 @@ historical point is never replaced by a newer one. Missing Pi/Codex configuratio
 authentication files are restored in personal mode; existing configuration wins.
 Credentials may need native login again. Old inputs are never automatically sent.
 
+## Daily worker
+
+Save the daily plan in the normal backup panel (default 04:00 America/Toronto).
+Personal mode derives its private inventory connection from the existing Host
+token and bound address; no separate broker profile is needed. Configure enrolled
+scopes using the existing `PI_COFFEE_BACKUP_USERS` setting. Run this independent
+command under the owner's normal service manager:
+
+```sh
+node dist/src/backup-cli.js schedule-daemon --root /private/backup-runtime
+```
+
+It survives closing the browser and does not require an Agent. Service installation
+and production activation remain operator steps. The saved personal policy
+automatically runs 30 daily / 12 weekly / 12 monthly retention after a successful
+daily backup; it protects referenced points and the last complete point. Retention
+progress/error is persistent and visible in schedule status. An interrupted
+deletion resumes its existing plan; a stale untouched preview is replanned.
+Automatic retention has bounded retries rather than an unbounded cleanup loop.
+The CLI also accepts `schedule-tick` for a system timer or a manual worker check.
+
 For normal local recovery while Host is available, the existing restore CLI also
 accepts a private owner profile:
 
