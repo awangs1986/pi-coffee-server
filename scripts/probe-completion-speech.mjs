@@ -26,7 +26,7 @@ function fakeSession(user,id,engine){
  return {engine,entries,getState:async()=>({isStreaming:streaming,model:{provider:'fixture',id:engine+'-fixture'},thinkingLevel:'medium'}),getHistory:async()=>({entries,leafId:entries.at(-1)?.id??null}),
   setTurnInstructions:async value=>{instructions=value;},onEvent:listener=>{listeners.add(listener);return()=>listeners.delete(listener);},
   prompt:async text=>{requests.push({user,id,text,instructions,engine});streaming=true;for(const f of listeners)f({type:'agent_start'});const userEntry={kind:'user',id:'u'+entries.length,text};entries.push(userEntry);
-   const answer=fullAnswer(text,Boolean(instructions));const entry={kind:'assistant',id:'a'+entries.length,text:answer};entries.push(entry);
+   const answer=fullAnswer(text,Boolean(instructions));const nativeId='a'+entries.length;const entry={kind:'assistant',id:nativeId,sourceMessageKey:'native-message:'+nativeId,text:answer};entries.push(entry);
    for(const f of listeners)f({type:'message_update',id:entry.id,assistantMessageEvent:{type:'text_delta',delta:answer}});
    for(const f of listeners)f({type:'message_end',id:entry.id,text:answer,message:{role:'assistant',content:[{type:'text',text:answer}]}});
    streaming=false;for(const f of listeners)f({type:'agent_settled'});
