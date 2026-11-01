@@ -48,3 +48,26 @@ it.each(['pi','codex'])('injects one stable opted-in %s instruction slot per ori
   await speech.handle({action:'configure',enabled:false});await session.preparePrompt('four');await session.prompt('four','disabled');expect(inputs[3].instructions).toBeUndefined();
  }finally{await session.stop();await rm(root,{recursive:true,force:true});}
 });
+
+it('claims account-owned recent completions once over HTTP across browser races and Host restart, without creating Agents',async()=>{
+ const {createCompletionSpeech}=await import('../src/host/completion-speech.js');
+ const root=await mkdtemp(join(tmpdir(),'coffee-speech-claims-'));let server:HostServer|undefined;
+ const stores=new Map<string,Workspaces>();let creates=0;
+ const factory={list:async()=>[{id:'same-id',name:'Renamed title'}],delete:async()=>false,create:async()=>{creates++;throw Error('Must not wake Agents');}};
+ const start=async()=>{server=new HostServer({port:0,token:'synthetic-claims',requireUser:true,factory,scopeForUser:user=>({factory,workspaces:stores.get(user)!})});await server.start();};
+ const call=async(user:string,body:unknown)=>{const r=await fetch(`http://127.0.0.1:${server!.address().port}/api/completion-speech`,{method:'POST',headers:{authorization:'Bearer synthetic-claims','x-pi-coffee-user':user,'content-type':'application/json'},body:JSON.stringify(body)});expect(r.status).toBe(200);return r.json() as Promise<any>;};
+ try{
+  for(const user of ['alice','bob']){
+   const store=new Workspaces(join(root,user,'projects'),{chatRoot:join(root,user,'chats')});stores.set(user,store);await store.createChatConversation('same-id');
+   const speech=createCompletionSpeech(join(store.root,'.coffee','completion-speech'),store,async()=>[{id:'same-id',name:'Renamed title'}]);
+   await speech.handle({action:'configure',enabled:true});await speech.handle({action:'select',id:'same-id',enabled:true});await speech.handle({action:'designate',browserId:'browser-one'});await speech.prepare('same-id');
+   speech.event('same-id',{type:'message_end',message:{role:'assistant',content:'Result\n\n```coffee-speech\n{"profile_version":"0.1.0","summary":"Verified completion."}\n```'}});
+   const settle=speech.event('same-id',{type:'agent_settled'});await store.recordRunStatus('same-id','settled');await settle?.();
+  }
+  await start();
+  const a=(await call('alice',{action:'pending',browserId:'browser-one'})).items[0],b=(await call('bob',{action:'pending',browserId:'browser-one'})).items[0];expect(a.title).toBe('Renamed title');expect(a.completionId).not.toBe(b.completionId);
+  expect(await call('alice',{action:'claim',browserId:'browser-one',id:'same-id',completionId:b.completionId})).toEqual({claimed:false});
+  const claims=await Promise.all([call('alice',{action:'claim',browserId:'browser-one',id:a.id,completionId:a.completionId}),call('alice',{action:'claim',browserId:'browser-one',id:a.id,completionId:a.completionId})]);expect(claims.filter(v=>v.claimed)).toHaveLength(1);
+  await server!.close();await start();expect((await call('alice',{action:'pending',browserId:'browser-one'})).items).toEqual([]);expect((await call('bob',{action:'pending',browserId:'browser-one'})).items).toHaveLength(1);expect(creates).toBe(0);
+ }finally{await server?.close();await rm(root,{recursive:true,force:true});}
+});
