@@ -1,7 +1,8 @@
 # Completion speech and summary-first replies
 
 Status: approved MVP specification, 2026-11-01; ready for implementation.
-Implementation and deployment have not been performed.
+Implementation is being accepted on the integration branch; production deployment
+has not been performed.
 Tracking: [Server #152](https://github.com/awangs1986/pi-coffee-server/issues/152).
 
 ## Problem Statement
@@ -141,6 +142,25 @@ examples as data, not valid current-turn brief envelopes. The concrete envelope
 must be verified across adapters during implementation; no new write-file tool
 is required in Chat merely to deliver a brief.
 
+### Original-turn output disposition
+
+The initial versioned profile uses one terminal `coffee-speech` JSON envelope.
+A result carries exactly `profile_version` and `summary`. A final question awaiting
+the user carries exactly `profile_version` and `status`, with status `awaiting_user`.
+That disposition suppresses automatic status fallback; native approval/dialog waits
+are suppressed independently. Missing or invalid result metadata retains the
+truthful generic status fallback without another Agent request.
+
+Both forms require the active retained profile version and current assistant-turn
+provenance. Waiting metadata may be stripped only from the authenticated exact
+answer projection; the complete question stays visible, with no speech summary,
+replay action or summary-read proof. Native history is never rewritten.
+
+When multiple recorded results share an identical answer digest and there is no
+trustworthy entry identity, retain the ordinary complete answer instead of guessing
+which completion its summary or replay belongs to. Repeated content must not
+acknowledge or replay a different result.
+
 ### Cache-stable summary Skill injection
 
 Enabling speech may change the prompt prefix once at the next submission. During
@@ -155,6 +175,10 @@ per-turn values. Host should bind briefs to their turn/completion outside the
 prompt where possible. If the model needs dynamic metadata, supply it at the
 current-input tail without changing the reusable instruction prefix. Correlation
 and brief validation must remain enforced; cache optimization does not weaken them.
+
+Resolve pinned versions through an immutable retained-profile registry. Report an
+unsupported pinned version explicitly and preserve ordinary execution; never
+silently repin or substitute the newest profile.
 
 Pin the Skill version for the current Conversation. A package upgrade must not
 silently rewrite that Conversation's active instruction profile. Preserve the
