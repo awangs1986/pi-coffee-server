@@ -27,3 +27,13 @@ it('publishes only captured opted-in briefs bound to the entire answer, and reta
   expect((await speech.handle({action:'summaries',id:'task'}) as any).items).toEqual(value.items);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+it('reclaims expired presentation brief texts without erasing durable delivery identity',async()=>{
+ const {CompletionSpeech}=await import('../packages/completion-speech/index.js');let now=Date.parse('2026-11-01T12:00:00Z'),saved:any;
+ const task={id:'task',engine:'pi',title:'Task',runStatus:'settled',completionId:'c1',completedAt:new Date(now).toISOString()};
+ const policy=new CompletionSpeech({load:async()=>saved,save:async value=>{saved=structuredClone(value);},task:async id=>id==='task'?task:undefined,now:()=>now,digest:async text=>createHash('sha256').update(text).digest('hex')});
+ await policy.handle({action:'configure',enabled:true});await policy.handle({action:'select',id:'task',enabled:true});await policy.handle({action:'designate',browserId:'browser-one'});
+ const text='Done.\n\n```coffee-speech\n{"profile_version":"0.1.0","summary":"PRIVATE_BRIEF"}\n```';
+ await policy.settled('task','0.1.0',text,false);await policy.handle({action:'claim',browserId:'browser-one',id:'task',completionId:'c1'});now+=86400001;
+ expect(await policy.handle({action:'summaries',id:'task'})).toEqual({items:[]});expect(JSON.stringify(saved)).not.toContain('PRIVATE_BRIEF');expect(saved.attempts.task).toBe('c1');
+});
