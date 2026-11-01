@@ -14,6 +14,10 @@ owns account authorization, task persistence, current completion/read identities
 native instruction slots and UI mounting. No daemon, general plugin framework,
 auxiliary summary conversation or MISHU role was added.
 
+Projection requires both an immutable native message key and the digest of the
+entire answer, preserved across raw history, bounded index pages and disposable
+browser caches. Legacy answers without that binding retain their complete view.
+
 Only **Pi and Codex** advertise this feature. Claude, Cursor and Grok task switches
 are disabled; they are not accepted as supporting the brief protocol. The host
 accepts one terminal `coffee-speech` JSON fence from the current opted-in
@@ -89,18 +93,18 @@ download bytes are verified. Evidence contains screenshots, HTTP contracts,
 criterion results, native input counts, page errors and request cancellations.
 Every created service/browser is closed and temporary fixture files are reclaimed.
 
-Observed candidate evidence (behavior commit `f80b197`, 2026-11-01):
+Observed candidate evidence (behavior commit `f5a061b`, 2026-11-01):
 
-- `/tmp/verify-completion-speech-final-v1/result.json`: protocol 1, fourteen
+- `/tmp/verify-completion-speech-cache-v1/result.json`: protocol 1, fourteen
   observed criteria passed, four explicit user/native prompts, no extra summary
   prompt and no page errors. Screenshots and HTTP contracts share that directory.
-- `/tmp/verify-completion-speech-final-v2/result.json`: the same fourteen criteria
+- `/tmp/verify-completion-speech-cache-v2/result.json`: the same fourteen criteria
   passed through indexed protocol 2, with four explicit native prompts and zero
   page errors. Request cancellations were navigation-related `ERR_ABORTED` only.
-- `/tmp/verify-completion-speech-package-final/standalone.json`: final tarball
+- `/tmp/verify-completion-speech-package-mvp/standalone.json`: final tarball
   installed in a separate consumer and accepted a brief with a fake authorized
   adapter, without Coffee/MISHU/native CLIs or model calls. Artifact SHA256:
-  `a5b7602648006432d10d7fb178f903c357be72ff5ab3240c8d8e785060dd99bd`.
+  `e7b96c73cb056631a798c06441b49a1659462215a66301aa46a9a16fd0fac93b`.
 - `/tmp/coffee-speech-native-slot-evidence.json`: separate installed Codex CLI
   0.159.1 no-model instruction-slot smoke preserved model/thinking, zero messages
   and model calls. This is protocol compatibility, not model-summary-quality proof.
@@ -109,6 +113,15 @@ The local fresh-clone check uses the identical source commit and a read-only
 symlink to the existing lock-matched dependency installation. This verifies clean
 source/build/check behavior, not a second network dependency installation. Its
 retained output is `/tmp/verify-completion-speech-final-fresh-check.log`.
+
+The final fresh-clone command `PI_COFFEE_TEST_TIMEOUT_MS=20000 npm run check`
+exited **0**: ESLint and the TypeScript/build pipeline passed; Vitest passed
+1,342 tests in 183 files plus three isolated runtime-reclamation tests in one
+file (**1,345 tests / 184 files total**); all **17 registered Chromium probes**
+passed, including the new completion-speech journey. The fresh-clone source was
+`f5a061b`; subsequent T5 changes document that evidence without changing behavior.
+Separately, the final asset-boundary/documentation checks passed three tests in
+two files. No production restart or deployment was performed.
 
 The configured check timeout avoids the baseline five-second Git fixture limit
 on a shared busy VM; it does not permit live parallel model sessions. A fresh
