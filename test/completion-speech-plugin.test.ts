@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import {CompletionSpeech} from '../packages/completion-speech/index.js';
-import {SpeechTurnCapture} from '../src/host/completion-speech.js';
+import {SpeechTurnCapture} from '../packages/completion-speech/index.js';
 it('runs with an independent authorized adapter and rejects stale, read, cancelled or copied tool-only results',async()=>{
  let now=Date.parse('2026-11-01T12:00:00Z');let saved:any;
  const task={id:'task',title:'Current title',engine:'codex',runStatus:'settled',completionId:'c1',completedAt:new Date(now).toISOString(),readCompletionId:undefined as string|undefined};

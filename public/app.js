@@ -1,4 +1,3 @@
-import {initCompletionSpeech} from './completion-speech.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
@@ -104,6 +103,7 @@ let activeId = null;
 let currentUser = null;
 const completionReads=new CompletionReads();
 let closeNativeCommandResult;
+let completionSpeech=null;
 let completionProof=null, completionIndexState=null, openCompletionKey=null, openedEventCursor=0, receivedEventCursor=0, liveCompletionStart=null, liveCompletionSettled=false;
 const loginCoffee=createLoginCoffee();
 let activeBindingEpoch=null, syncHintTimer=null;
@@ -3266,7 +3266,10 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
-const completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),taskButton:$('#speech-task'),takeoverButton:$('#speech-browser'),toast});
+void import('./completion-speech.js').then(({initCompletionSpeech})=>{
+ completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),taskButton:$('#speech-task'),takeoverButton:$('#speech-browser'),toast});
+ void completionSpeech.refresh();
+}).catch(()=>{for(const id of ['speech-master','speech-task','speech-browser']){const node=document.getElementById(id);if(node)node.hidden=true;}});
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
 const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.className='brand-menu-item';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
 mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});
