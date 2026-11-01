@@ -1,0 +1,11 @@
+import {mkdir,readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=resolve(import.meta.dirname,'..'),destination=resolve(process.argv[2]||resolve(root,'.coffee-release'));
+const pkg=JSON.parse(await readFile(resolve(root,'dist/packages/completion-speech/package.json'),'utf8'));
+for(const file of ['index.js','profile.js','browser.js','SKILL.md','LICENSE.upstream'])await readFile(resolve(root,'dist/packages/completion-speech',file));
+await mkdir(destination,{recursive:true});
+const result=spawnSync('npm',['pack',resolve(root,'dist/packages/completion-speech'),'--pack-destination',destination],{stdio:'inherit'});
+if(result.error)throw result.error;
+if(result.status!==0)process.exitCode=result.status??1;
+else console.log(`Packaged ${pkg.name}@${pkg.version}; this does not publish or deploy the plugin.`);
