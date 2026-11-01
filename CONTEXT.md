@@ -146,3 +146,22 @@ Native engine login is not migrated into it.
 service failures with cooldown and a persistent circuit breaker, independently
 of MISHU's task tracking and deterministic watch. A browser disconnect alone is not proof of a
 Host/Web crash. See [watchdog](docs/deployment/watchdog.md).
+
+## Completion speech
+
+**Completion Speech**: an explicitly enabled spoken notification of a newly
+unread conversation result. It is distinct from reading the original answer.
+An independently versioned PI Coffee plugin owns speech policy, with no MISHU
+dependency. See the [approved specification](docs/spec/completion-speech.md).
+
+**Conversation Speech Selection**: a user's explicit choice that a particular
+conversation's new unread results are eligible for speech when speech is enabled.
+
+**Spoken Brief**: a concise rendition of one completed conversation's result for
+listening, distinct from the original written answer.
+
+**Speech Delivery**: the playback status of a spoken brief. Completing playback
+does not establish that the full written result has been read.
+
+**Playback Browser**: the browser explicitly designated by a user to play that
+user's automatic completion speech.

@@ -289,3 +289,5 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 - [Pi 1.4 consumer candidate](development/pi-140-upgrade.md): native package upgrade, xAI OAuth and deferred idle activation.
 
 - [Pi 1.4 and Go/OpenRouter DeepSeek model selection](spec/native-agent-engines.md#pi-chat-provider-selection-2026-10-29): next-maintenance policy, private native credentials and explicit activation boundary.
+
+- [Completion speech and summary-first replies — approved MVP](spec/completion-speech.md): explicit per-task Skill injection, original-turn briefs, browser playback and separate read/delivery receipts; [accepted package boundary](adr/0025-independent-completion-speech.md), [interview decisions](design/completion-tts-discussion.md). Not implemented or deployed.
