@@ -52,3 +52,22 @@ it('replays the captured completion without sending another native input',async(
  const node=assistantNode({text});document.body.append(node);await controller.refresh();controller.apply([{k:'assistant',text,node}]);
  const button=[...node.querySelectorAll('button')].find(value=>value.textContent==='重播摘要');expect(button).toBeDefined();button!.click();expect(replay).toHaveBeenCalledWith('task','c1');expect(request).toHaveBeenCalledTimes(1);node.remove();controller.close();
 });
+
+it('leaves identical historical replies complete when their captured completion identity is ambiguous',async()=>{
+ const {summaryReadProof}=await import('../packages/completion-speech/presentation.js');
+ const text='Identical completed answer.';const answerDigest=syncDigest(text),replay=vi.fn();
+ const controller=createSpeechPresentation({request:async()=>({items:[{answerDigest,summary:'The same result.',completionId:'new-turn'},{answerDigest,summary:'The same result.',completionId:'old-turn'}]}),context:()=>({user:'alice',id:'task'}),digest:syncDigest,storage:null,onReplay:replay});
+ const root=document.createElement('div');document.body.append(root);
+ const entries=['old-native-message','new-native-message'].map(id=>({k:'assistant',id,text,node:assistantNode({text})}));root.append(...entries.map(entry=>entry.node));
+ await controller.refresh();controller.apply(entries);
+ for(const entry of entries){expect(entry.node.querySelector('.speech-summary')).toBeNull();expect(entry.node.querySelector('.speech-replay')).toBeNull();expect(entry.node.querySelector('.body')?.textContent?.trim()).toBe(text);expect(summaryReadProof(entry,'new-turn')).toBe(false);}
+ expect(replay).not.toHaveBeenCalled();controller.close();root.remove();
+});
+
+it('restores an already folded answer when late metadata makes its completion identity ambiguous',async()=>{
+ const text='Identical answer.';const answerDigest=syncDigest(text);let items=[{answerDigest,summary:'Result.',completionId:'old-turn'}];
+ const controller=createSpeechPresentation({request:async()=>({items}),context:()=>({user:'alice',id:'task'}),digest:syncDigest,storage:null});
+ const entry={k:'assistant',text,node:assistantNode({text})};document.body.append(entry.node);await controller.refresh();controller.apply([entry]);expect(entry.node.querySelector('.speech-summary')).not.toBeNull();
+ items=[{answerDigest,summary:'Result.',completionId:'new-turn'},...items];await controller.refresh();controller.apply([entry]);
+ expect(entry.node.querySelector('.speech-summary')).toBeNull();expect(entry.node.querySelector('.speech-replay')).toBeNull();expect(entry.node.dataset.speechCompletionId).toBeUndefined();expect(entry.node.querySelector('.body')?.textContent?.trim()).toBe(text);controller.close();entry.node.remove();
+});
