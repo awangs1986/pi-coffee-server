@@ -73,8 +73,8 @@ export class CompletionSpeech {
   await this.adapter.save(s);return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,selected:structuredClone(s.selected)};
  });}
  async prepare(id:string):Promise<{profileVersion:string;instructions:string}|undefined>{await this.tail;const s=await this.loaded(),selection=s.selected[id];if(!s.enabled||!selection?.enabled)return;const task=await this.adapter.task(id);if(!task||task.archived||!['pi','codex'].includes(task.engine)||selection.profileVersion!==PROFILE_VERSION)return;return {profileVersion:selection.profileVersion,instructions:SPEECH_PROFILE};}
- async settled(id:string,profileVersion:string,text:string,failure:boolean){return this.serial(async()=>{
-  const s=await this.loaded(),task=await this.adapter.task(id);if(!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
+ async settled(id:string,profileVersion:string,text:string,failure:boolean,admit:()=>boolean=()=>true){return this.serial(async()=>{
+  const s=structuredClone(await this.loaded()),task=await this.adapter.task(id);if(!admit()||!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
   const brief=parseBrief(text,profileVersion);
   if(brief&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,summary:brief.summary,answerDigest,completedAt:task.completedAt}];
    const cached=Object.entries(s.projections).flatMap(([key,values])=>values.map(value=>({key,value}))).filter(({value})=>this.now()-Date.parse(value.completedAt)<=86400000).sort((a,b)=>b.value.completedAt.localeCompare(a.value.completedAt)).slice(0,100);
@@ -82,15 +82,16 @@ export class CompletionSpeech {
   }
   if(!s.enabled||!s.selected[id]?.enabled)s.attempts[id]=task.completionId;
   s.completions[id]={id,completionId:task.completionId,profileVersion,completedAt:task.completedAt,outcome:failure?'failure':'result',...(parseBrief(text,profileVersion)?{summary:parseBrief(text,profileVersion)!.summary}:{})};
-  await this.eligible(s);await this.adapter.save(s);
+  await this.eligible(s);if(!admit())return;this.state=s;await this.adapter.save(s);
  });}
 }
 
 /** Capture only live assistant final messages belonging to the explicitly submitted turn. */
 export class SpeechTurnCapture {
  private turns=new Map<string,{version:string;text:string;failure:boolean;waiting:boolean}>();
+ private generations=new Map<string,number>();
  constructor(readonly policy:CompletionSpeech){}
- async prepare(id:string){const choice=await this.policy.prepare(id);this.turns.delete(id);if(choice)this.turns.set(id,{version:choice.profileVersion,text:'',failure:false,waiting:false});return choice?.instructions;}
+ async prepare(id:string){const generation=(this.generations.get(id)??0)+1;this.generations.set(id,generation);this.turns.delete(id);const choice=await this.policy.prepare(id);if(this.generations.get(id)!==generation)return;if(choice)this.turns.set(id,{version:choice.profileVersion,text:'',failure:false,waiting:false});return choice?.instructions;}
  event(id:string,event:unknown):(()=>Promise<void>)|undefined {
   const run=this.turns.get(id);if(!run||!event||typeof event!=='object'||Array.isArray(event))return;
   const value=event as Record<string,any>;
@@ -103,7 +104,7 @@ export class SpeechTurnCapture {
   if(['agent_interrupted','run_interrupted'].includes(value.type)){this.turns.delete(id);return;}
   if(['agent_settled','run_completed'].includes(value.type)){
    this.turns.delete(id);if(value.aborted===true||run.waiting)return;
-   return ()=>this.policy.settled(id,run.version,run.text,run.failure);
+   const generation=this.generations.get(id);return ()=>this.policy.settled(id,run.version,run.text,run.failure,()=>this.generations.get(id)===generation);
   }
  }
 }
