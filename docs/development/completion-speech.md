@@ -17,9 +17,9 @@ auxiliary summary conversation or MISHU role was added.
 Only **Pi and Codex** advertise this feature. Claude, Cursor and Grok task switches
 are disabled; they are not accepted as supporting the brief protocol. The host
 accepts one terminal `coffee-speech` JSON fence from the current opted-in
-assistant turn with the exact pinned profile version. Ordinary full answers stay
+assistant turn with the exact pinned profile version. Ordinary complete answers stay
 in native history. Missing, ambiguous or invalid brief metadata leaves the normal
-full-answer view; speech can use a truthful completion/error status fallback.
+complete-answer view; speech can use a truthful completion/error status fallback.
 
 The profile uses the native request instruction mechanism, not repeated user
 messages. Pi's request-bound provider instruction slot preserves native history;
@@ -61,7 +61,7 @@ may require network access and actual browser permission/user activation.
 To stop automatic playback, disable the account master switch; task selections
 are retained. To disable Host integration during an authorized release/restart,
 set `PI_COFFEE_COMPLETION_SPEECH=off`. Ordinary sends, model controls, native
-history and full answers remain available. If removing the optional package,
+history and complete answers remain available. If removing the optional package,
 remove its public modules as part of the same release; do not delete task/native
 history or account state. Restore the previous immutable Server release to roll
 back implementation. Do not mix plugin browser assets from one commit with Host
@@ -70,7 +70,7 @@ policy from another. Production restarts require the normal deployment process.
 ## Reproducible verification
 
 The repository has no `docs/agents/feedback-loops.md`; package commands and existing
-full-app probe conventions are used instead. Run build/check sequentially: build
+complete-app probe conventions are used instead. Run build/check sequentially: build
 replaces `dist`, so a second concurrent build can invalidate an active browser
 fixture even when the application is correct.
 
@@ -125,7 +125,7 @@ policy/controller tests remain necessary for controlled-time and crash cases.
 
 | Spec story | Observable behavior and evidence |
 | --- | --- |
-| 1 | Authenticated account/task opt-in in full browser journey and scoped HTTP tests |
+| 1 | Authenticated account/task opt-in in complete browser journey and scoped HTTP tests |
 | 2 | Default-off selections in HTTP tests; existing new/fork task IDs do not inherit a selection |
 | 3 | Original-turn fixed brief displayed/spoken in browser; duration/quality by hand |
 | 4 | Four explicit browser sends yield exactly four native prompts; no summary turn |
@@ -136,7 +136,7 @@ policy/controller tests remain necessary for controlled-time and crash cases.
 | 9 | Controlled policy/controller tests serialize and bound the queue |
 | 10 | Controlled policy tests reject read/stale/superseded completion IDs |
 | 11 | Five-minute boundary and enablement/backlog policy tests |
-| 12 | Hidden full-app playback leaves `readCompletionId` unset |
+| 12 | Hidden complete-app playback leaves `readCompletionId` unset |
 | 13 | Expand actual Markdown/code, clipboard Copy and scoped binary download |
 | 14 | Latest visible summary clears actual sidebar coffee/read state |
 | 15 | Tool-only/absent brief produces truthful fallback without another prompt |
@@ -147,7 +147,7 @@ policy/controller tests remain necessary for controlled-time and crash cases.
 | 20 | Fake-OAuth alice/bob with identical task ID keep settings, summaries and playback separate |
 | 21 | Archive/deletion policy and account-change cancellation/controller tests |
 | 22 | Independently packaged fake-adapter consumer; no MISHU/native imports |
-| 23 | Missing-package Host execution regression; asset negative paths; full-answer fallback |
+| 23 | Missing-package Host execution regression; asset negative paths; complete-answer fallback |
 | 24 | Pi provider-request capture, Codex request-mode capture and multi-turn browser equality |
 | 25 | Scoped persisted profile, restart/resume capture and unsupported-pin safety tests |
 | 26 | Stable-prefix evidence explicitly separated from unavailable provider cache metrics |
@@ -155,7 +155,7 @@ policy/controller tests remain necessary for controlled-time and crash cases.
 ## Ticket acceptance matrix
 
 Numbers correspond to checkbox order in each ticket, including the cache-stability
-additions. “Automated” refers to the named public-boundary tests plus full-app
+additions. “Automated” refers to the named public-boundary tests plus complete-app
 probe where specified. Actual command completion is recorded in the PR checks;
 this matrix must not be used to substitute planned tests for executed evidence.
 
@@ -168,17 +168,17 @@ this matrix must not be used to substitute planned tests for executed evidence.
 | T1.5 | Independent policy and delayed-capture race tests; no speech for interrupted/tool-only stale result; browser completion/read identities |
 | T1.6 | Authenticated claim races/Host restart and hidden-browser read receipt assertion |
 | T1.7 | Pinned profile, README and upstream license; diagnosis/permanent activation not imported |
-| T1.8 | Independent fake adapter; absent-package execution test; real Web/Host/browser/transfer full journey |
+| T1.8 | Independent fake adapter; absent-package execution test; real Web/Host/browser/transfer complete journey |
 | T1.9 | Multi-turn Pi provider/Codex captures and browser profile equality without historical append |
 | T1.10 | Fixed profile excludes dynamic title/time/ID; completion association in Host; renamed-title policy test |
 | T1.11 | Persisted task profile and adapter restart/resume tests; unsupported-profile safety, no silent repin |
 | T1.12 | Deterministic successive request captures, resume/disable; provider cache metrics unavailable without live provider |
-| T2.1 | Exact authenticated answer digest projection; invalid/unselected answer ordinary full view |
+| T2.1 | Exact authenticated answer digest projection; invalid/unselected answer ordinary complete view |
 | T2.2 | Actual browser expansion, clipboard and transfer download; raw native answer retained |
 | T2.3 | Hidden/audio-only unread then latest visible summary clears; stale digest/revision and viewport proof tests |
 | T2.4 | Browser reload expansion and switch tests; existing latest-history/busy-switch probes; read-before-play claim rejection |
-| T2.5 | Projection retained on disable, future normal view; absent-plugin execution/full reply |
-| T2.6 | Browser full journey + scoped HTTP and presentation controller tests with synthetic accounts |
+| T2.5 | Projection retained on disable, future normal view; absent-plugin execution/complete reply |
+| T2.6 | Browser complete journey + scoped HTTP and presentation controller tests with synthetic accounts |
 | T2.7 | Public UI presentation/replay/voice actions leave native invocation count and subsequent profile unchanged |
 | T3.1 | Controlled policy overflow test drops oldest of 11 and retains its unread state |
 | T3.2 | Controlled late-read/supersession/freshness/current identity tests and latest rename at claim |
@@ -197,8 +197,8 @@ this matrix must not be used to substitute planned tests for executed evidence.
 | T4.6 | Throwing speech boundary does not touch native task; existing navigation/download probes; actual suspension by hand |
 | T4.7 | Controller/settings disposal and API tests, plus real browser replay/disable path |
 | T4.8 | Native counters/profile equality plus stored voice without profile change |
-| T5.1 | Full documented check, local fresh-clone check, tarball pack/install identity and rollback procedure |
-| T5.2 | Full actual Chromium journey and screenshots/HTTP JSON; audible Chinese listening remains by hand |
+| T5.1 | complete documented check, local fresh-clone check, tarball pack/install identity and rollback procedure |
+| T5.2 | complete actual Chromium journey and screenshots/HTTP JSON; audible Chinese listening remains by hand |
 | T5.3 | Fake ownership/reconnect/blocked speech/clock tests; actual OS suspension explicitly unverifiable here |
 | T5.4 | Only synthetic alice/bob; no other user's files or credentials read |
 | T5.5 | Pi actual local provider-boundary test; Codex fake app-server plus installed CLI no-model slot smoke; other engines not advertised |
