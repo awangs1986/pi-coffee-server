@@ -117,7 +117,7 @@ export class SpeechTurnCapture {
   if(value.type==='message_end'&&value.message?.role==='assistant'){
    const content=value.message.content;
    run.sourceMessageKey=typeof value.message.timestamp==='number'&&Number.isSafeInteger(value.message.timestamp)?'pi-message:'+value.message.timestamp:typeof value.id==='string'&&value.id.length>0&&value.id.length<=1024?'native-message:'+value.id:undefined;
-   run.text=typeof value.text==='string'?value.text:typeof content==='string'?content:Array.isArray(content)?content.filter((p:Record<string,unknown>)=>p.type==='text'&&typeof p.text==='string').map((p:Record<string,unknown>)=>p.text).join(''):'';
+   run.text=typeof value.text==='string'?value.text:typeof content==='string'?content:Array.isArray(content)?content.filter((p:Record<string,unknown>)=>p.type==='text'&&typeof p.text==='string').map((p:Record<string,unknown>)=>p.text).join('\n'):'';
    run.waiting=false;run.failure=value.message.stopReason==='error'||Boolean(value.message.errorMessage);
   }
   if(['agent_interrupted','run_interrupted'].includes(value.type)){this.turns.delete(id);return;}
