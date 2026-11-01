@@ -454,8 +454,15 @@ class RpcPiSession implements PiSession {
     return !this.allowedModels || (typeof provider==='string' && typeof id==='string' && this.allowedModels.includes(`${provider}/${id}`));
   }
 
+  async setTurnInstructions(instructions:string|undefined):Promise<void>{
+    if(!this.dispatchToken){if(instructions)throw Error('Native speech instruction slot unavailable');return;}
+    const version=instructions?'0.1.0':'off';
+    const disposition=await this.client.prompt(`/coffee-speech-control ${this.dispatchToken} ${version}`);
+    if(disposition!=='handled')throw Error('Native speech instruction slot unavailable');
+  }
+
   async prompt(text: string, images?: ImageInput[],correlation?:{runId:string}): Promise<void> {
-    if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
+    if(/^\/coffee-(?:dispatch|speech)-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
     if(correlation){
       if(!this.dispatchToken||!/^mishu-dispatch-[A-Za-z0-9-]+$/.test(correlation.runId))throw Error("Unsupported native dispatch correlation");
       const disposition=await this.client.prompt(`/coffee-dispatch-control ${this.dispatchToken} ${correlation.runId} ${sourceHash(text)}`);
@@ -492,7 +499,7 @@ class RpcPiSession implements PiSession {
   }
 
   async validateFollowUp(text:string):Promise<void>{
-    if(/^\/coffee-dispatch-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
+    if(/^\/coffee-(?:dispatch|speech)-control(?:\s|$)/.test(text.trim()))throw Error('Host dispatch control is not a user command');
     const command=/^\/(\S+)/.exec(text)?.[1];
     if(command&&(await this.getCommands()).some(c=>c.name===command&&c.source==='extension'))throw new Error('Extension commands cannot be queued.');
     if(this.allowedModels){
@@ -609,7 +616,7 @@ class RpcPiSession implements PiSession {
 
   async getCommands(): Promise<CommandInfo[]> {
     const commands = await this.client.getCommands();
-    return commands.filter(command=>!['coffee-context-window','coffee-dispatch-control'].includes(command.name)).map((command) => ({
+    return commands.filter(command=>!['coffee-context-window','coffee-dispatch-control','coffee-speech-control'].includes(command.name)).map((command) => ({
       name: command.name,
       ...(command.description === undefined ? {} : { description: command.description }),
       source: command.source,

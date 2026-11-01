@@ -23,6 +23,7 @@ export interface SessionSink {
 export interface HostSessionOptions {
   queueStore?:QueueStore;
   completionForHistory?:(id:string)=>Promise<string|null>;
+  turnInstructions?:(id:string)=>Promise<string|undefined>;
   runnerGuidance?:(id:string)=>Promise<{revision:string;text?:string}|undefined>;
   id?: string;
   factory: PiSessionFactory;
@@ -65,6 +66,7 @@ export class HostSession {
   private readonly inputs:InputQueue;
   private readonly queueStore?:QueueStore;
   private queueLoaded=false;
+  private readonly turnInstructions?:HostSessionOptions['turnInstructions'];
   private readonly runnerGuidance?:HostSessionOptions['runnerGuidance'];
   private runnerRevision?:string;
   private readonly factory: PiSessionFactory;
@@ -113,7 +115,7 @@ export class HostSession {
   private externalTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: HostSessionOptions) {
-    this.runnerGuidance=options.runnerGuidance;this.queueStore=options.queueStore;
+    this.turnInstructions=options.turnInstructions;this.runnerGuidance=options.runnerGuidance;this.queueStore=options.queueStore;
     this.id = options.id ?? randomUUID();
     this.inputs=new InputQueue({persist:options.queueStore?rows=>options.queueStore!.write(this.id,rows):undefined,busy:()=>this.executionBusy,
       validate:async text=>{await this.ready().validateFollowUp?.(text);},
@@ -286,6 +288,7 @@ export class HostSession {
     const generation=this.deliveryGeneration;
     try {
       await this.onCommand?.(this.id,requestId,"delivering","prompt",text);this.assertDelivery(generation);this.runCommands.add(requestId);
+      if(this.turnInstructions){const instruction=await this.turnInstructions(this.id).catch(()=>undefined);this.assertDelivery(generation);await this.ready().setTurnInstructions?.(instruction).catch(()=>undefined);this.assertDelivery(generation);}
       await this.deliverWithRunnerGuidance(text,value=>this.ready().prompt(value,images,requestId.startsWith("mishu-dispatch-")?{runId:requestId}:undefined),generation);
     } catch (error) {
       if(this.activeRequestId===requestId)this.activeRequestId = undefined;this.runCommands.delete(requestId);
@@ -675,7 +678,7 @@ export class HostSessionRegistry {
 
   async supportsDispatchCorrelation(id:string){return await this.factory.supportsDispatchCorrelation?.(id)??false;}
   async readRunEvidence(id:string,runId?:string){return await this.sessions.get(id)?.readRunEvidence(runId)??await this.factory.readRunEvidence?.(id,runId)??{supported:false,freshness:'unknown' as const,state:'uncertain' as const,reason:'Engine has no verified passive run evidence capability'};}
-  constructor(private options: { queueStore?:QueueStore;runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
+  constructor(private options: { turnInstructions?:HostSessionOptions['turnInstructions'];queueStore?:QueueStore;runStatuses?:()=>Promise<Map<string,Pick<SessionSummary,"runStatus"|"completionId"|"completedAt"|"readCompletionId">>>; runnerGuidance?:HostSessionOptions['runnerGuidance']; onCommand?:HostSessionOptions["onCommand"]; onEvent?:HostSessionOptions["onEvent"]; onRun?:HostSessionOptions["onRun"]; onHistory?:(id:string,history:PiHistory)=>Promise<void>; factory: PiSessionFactory; eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number }) {
     this.factory = options.factory;
     this.eventBufferSize = options.eventBufferSize ?? 256;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 10 * 60 * 1000;
@@ -701,7 +704,7 @@ export class HostSessionRegistry {
       ...(id === undefined ? {} : { id }),
       factory: this.factory,
       queueStore:this.options.queueStore,
-      runnerGuidance:this.options.runnerGuidance,
+      turnInstructions:this.options.turnInstructions,runnerGuidance:this.options.runnerGuidance,
       eventBufferSize: this.eventBufferSize,
       idleTimeoutMs: this.idleTimeoutMs,
       ...(this.externalPollMs === undefined ? {} : { externalPollMs: this.externalPollMs }),

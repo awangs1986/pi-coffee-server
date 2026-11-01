@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 await mkdir(resolve(root, "dist/public"), { recursive: true });
+await mkdir(resolve(root,'public/plugins/completion-speech'),{recursive:true});
+await cp(resolve(root,'packages/completion-speech/browser.js'),resolve(root,'public/plugins/completion-speech/browser.js'));
 await cp(resolve(root, "public"), resolve(root, "dist/public"), { recursive: true });
 
 // Browser-side libraries the shell imports as flat ES modules. They are copied

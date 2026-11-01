@@ -18,3 +18,7 @@ await cp(resolve(root, 'src/shared/release-version.mjs'), resolve(root, 'dist/sr
 await mkdir(resolve(root,'dist/maintenance'),{recursive:true});
 await cp(resolve(root,'scripts/restart-worker.py'),resolve(root,'dist/maintenance/restart-worker.py'));
 await cp(resolve(root,'deploy/restart'),resolve(root,'dist/maintenance/restart'),{recursive:true});
+
+// Versioned cross-engine feature assets stay alongside their compiled policy.
+await mkdir(resolve(root,'dist/packages/completion-speech'),{recursive:true});
+for(const name of ['package.json','SKILL.md','README.md','LICENSE.upstream','browser.js'])await cp(resolve(root,'packages/completion-speech',name),resolve(root,'dist/packages/completion-speech',name));

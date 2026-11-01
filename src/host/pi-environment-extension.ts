@@ -1,3 +1,4 @@
+import {SPEECH_PROFILE,PROFILE_VERSION} from '../../packages/completion-speech/profile.js';
 import {createHash,randomUUID} from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HOST_ENVIRONMENT_INSTRUCTION as instruction } from "./session-instructions.js";
@@ -56,6 +57,12 @@ export function withHostEnvironment(payload: unknown, api?: string,required=inst
 
 export default function hostEnvironment(pi: ExtensionAPI): void {
   const accountGuidance=process.env.PI_COFFEE_ACCOUNT_GUIDANCE?.trim();
+  let speechInstructions:string|undefined;
+  pi.registerCommand('coffee-speech-control',{description:'Host private speech instruction slot',handler:async(args,ctx)=>{
+    const [token,version,...extra]=args.trim().split(/\s+/);
+    if(!process.env.PI_COFFEE_DISPATCH_CONTROL||token!==process.env.PI_COFFEE_DISPATCH_CONTROL||extra.length||!ctx.isIdle()||![PROFILE_VERSION,'off'].includes(version))throw Error('Invalid speech instruction control');
+    speechInstructions=version==='off'?undefined:SPEECH_PROFILE;
+  }});
   let runId:string|undefined,nextDispatch:{id:string;hash:string}|undefined;
   pi.registerCommand("coffee-dispatch-control",{description:"Host private dispatch correlation",handler:async(args,ctx)=>{
     const [token,id,hash,...extra]=args.trim().split(/\s+/);
@@ -115,14 +122,14 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
     if(runId){try{pi.appendEntry('coffee-native-settled',{version:1,runId,...(typeof event.aborted==='boolean'?{aborted:event.aborted}:{})});}catch{/* Missing audit remains uncertain; observation never interrupts native work. */}runId=undefined;}reportOnly=false;
   });
   pi.on("before_agent_start", event => {
-    if(process.env.PI_COFFEE_INITIAL_MODE==='chat')return {systemPrompt:''};
+    if(process.env.PI_COFFEE_INITIAL_MODE==='chat')return {systemPrompt:speechInstructions??''};
     let prompt=event.systemPrompt;
-    for(const required of [instruction,accountGuidance])if(required&&!contains(prompt,required))prompt=append(prompt,required);
+    for(const required of [instruction,accountGuidance,speechInstructions])if(required&&!contains(prompt,required))prompt=append(prompt,required);
     return {systemPrompt:prompt};
   });
   pi.on("before_provider_request", (event, ctx) => {
-    if(process.env.PI_COFFEE_INITIAL_MODE==='chat')return withoutSystemContext(event.payload);
+    if(process.env.PI_COFFEE_INITIAL_MODE==='chat'){const payload=withoutSystemContext(event.payload);return speechInstructions?withHostEnvironment(payload,ctx.model?.api,speechInstructions):payload;}
     const payload=withHostEnvironment(event.payload,ctx.model?.api);
-    return accountGuidance?withHostEnvironment(payload,ctx.model?.api,accountGuidance):payload;
+    const scoped=accountGuidance?withHostEnvironment(payload,ctx.model?.api,accountGuidance):payload;return speechInstructions?withHostEnvironment(scoped,ctx.model?.api,speechInstructions):scoped;
   });
 }
