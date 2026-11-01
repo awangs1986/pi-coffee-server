@@ -576,6 +576,7 @@ const ASSET_TYPES: Record<string, string> = {
  * else never reach the filesystem.
  */
 function resolveAsset(path: string): { file: string; contentType: string } | undefined {
+  if(path === '/plugins/completion-speech/browser.js' || path === '/plugins/completion-speech/presentation.js')return {file:path.slice(1),contentType:ASSET_TYPES.js};
   if(path === "/workers/conversation-sync.js")return {file:"workers/conversation-sync.js",contentType:ASSET_TYPES.js};
   if (isShellPath(path)) return { file: "index.html", contentType: ASSET_TYPES.html };
   const vendor = /^\/vendor\/([A-Za-z0-9_-]+)\.js$/.exec(path);
