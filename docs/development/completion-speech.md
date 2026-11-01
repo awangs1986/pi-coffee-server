@@ -89,6 +89,27 @@ download bytes are verified. Evidence contains screenshots, HTTP contracts,
 criterion results, native input counts, page errors and request cancellations.
 Every created service/browser is closed and temporary fixture files are reclaimed.
 
+Observed candidate evidence (behavior commit `f80b197`, 2026-11-01):
+
+- `/tmp/verify-completion-speech-final-v1/result.json`: protocol 1, fourteen
+  observed criteria passed, four explicit user/native prompts, no extra summary
+  prompt and no page errors. Screenshots and HTTP contracts share that directory.
+- `/tmp/verify-completion-speech-final-v2/result.json`: the same fourteen criteria
+  passed through indexed protocol 2, with four explicit native prompts and zero
+  page errors. Request cancellations were navigation-related `ERR_ABORTED` only.
+- `/tmp/verify-completion-speech-package-final/standalone.json`: final tarball
+  installed in a separate consumer and accepted a brief with a fake authorized
+  adapter, without Coffee/MISHU/native CLIs or model calls. Artifact SHA256:
+  `a5b7602648006432d10d7fb178f903c357be72ff5ab3240c8d8e785060dd99bd`.
+- `/tmp/coffee-speech-native-slot-evidence.json`: separate installed Codex CLI
+  0.159.1 no-model instruction-slot smoke preserved model/thinking, zero messages
+  and model calls. This is protocol compatibility, not model-summary-quality proof.
+
+The local fresh-clone check uses the identical source commit and a read-only
+symlink to the existing lock-matched dependency installation. This verifies clean
+source/build/check behavior, not a second network dependency installation. Its
+retained output is `/tmp/verify-completion-speech-final-fresh-check.log`.
+
 The configured check timeout avoids the baseline five-second Git fixture limit
 on a shared busy VM; it does not permit live parallel model sessions. A fresh
 local clone of the candidate must run the same documented check before release.
