@@ -18,6 +18,8 @@ it('persists explicit speech opt-in and browser ownership independently under ea
   expect((await call('alice',{action:'select',id:'same-id',enabled:true})).data.selected['same-id']).toMatchObject({profileVersion:'0.1.0'});
   expect((await call('alice',{action:'designate',browserId:'browser-alice'})).data.browserId).toBe('browser-alice');
   expect((await call('bob',{action:'status'})).data).toMatchObject({enabled:false,selected:{},browserId:null});
+  expect((await call('bob',{action:'summaries',id:'same-id'})).data).toEqual({items:[]});
+  expect((await call('bob',{action:'summaries',id:'not-in-scope'})).status).toBe(409);
   expect((await call('alice',{action:'select',id:'unknown',enabled:true})).status).toBe(409);
   expect((await call('alice',{action:'configure',enabled:true,user:'bob'})).status).toBe(409);
   await server!.close();await start();
