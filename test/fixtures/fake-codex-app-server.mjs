@@ -192,7 +192,7 @@ async function runTurn(thread, input, options) {
     notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
     return;
   }
-  const reply = text==='report planning mode' ? `mode=${options.collaborationMode?.mode??'unset'}` : (text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('Prepare a handoff for manual Codex')) ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : (text.startsWith('[PI Coffee Handoff Fork]')||text.startsWith('[PI Coffee manual Codex handoff')) ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
+  const reply = text==='report speech instructions' ? JSON.stringify({threadId:thread.id,mode:options.collaborationMode.mode,model:thread.model,effort:thread.effort,instructions:options.collaborationMode.settings.developer_instructions??(options.collaborationMode.mode==='plan'?'NATIVE_PLAN':'NATIVE_DEFAULT'),acquisitions:thread.modeAcquisitions??0}) : text==='report planning mode' ? `mode=${options.collaborationMode?.mode??'unset'}` : (text.startsWith('Prepare a handoff for a NEW independent fork')||text.startsWith('Prepare a handoff for manual Codex')) ? 'Goal: finish the patch. Pending: run tests; preserve the user question.\n[FORK_HANDOFF_READY]' : (text.startsWith('[PI Coffee Handoff Fork]')||text.startsWith('[PI Coffee manual Codex handoff')) ? 'Ready; waiting for the user.\n[FORK_READY]' : text === 'report model settings' ? `model=${thread.model};effort=${thread.effort}` : `echo: ${text}${questionAnswer}${images > 0 ? ` (+${images} image)` : ""}`;
   const message = { type: "agentMessage", id: uid("item"), text: reply, phase: text.startsWith('run delayed final tracking')?'final_answer':null, memoryCitation: null, delivery: null, questions: null };
   notify("item/started", { item: { ...message, text: "" }, threadId: thread.id, turnId, startedAtMs: Date.now() });
   const half = Math.ceil(reply.length / 2);
@@ -349,6 +349,16 @@ rl.on("line", (line) => {
       const thread=threads[params.threadId];if(!thread)return fail('no such thread');
       reply({turn:{id:uid('review'),status:'inProgress'},reviewThreadId:thread.id});
       void runTurn(thread,[{type:'text',text:'NATIVE_REVIEW:'+params.target.type+':'+thread.model}],{});return;
+    }
+    case 'thread/settings/update': {
+      const thread=threads[params.threadId];if(!thread)return fail('no such thread');
+      const mode=params.collaborationMode;
+      if(mode){
+        thread.modeAcquisitions=(thread.modeAcquisitions??0)+1;save(thread.id);
+        const instructions=mode.settings.developer_instructions??(mode.mode==='plan'?'NATIVE_PLAN':'NATIVE_DEFAULT');
+        notify('thread/settings/updated',{threadId:thread.id,threadSettings:{collaborationMode:{...mode,settings:{...mode.settings,developer_instructions:instructions}}}});
+      }
+      return reply({});
     }
     case "turn/start": {
       if (params.collaborationMode && !experimentalApi) return fail("turn/start.collaborationMode requires experimentalApi capability");

@@ -598,6 +598,10 @@ class CodexSession implements PiSession {
   private preset:ContextPreset;
   private speed:CodexSpeed;
   private planMode=false;
+  private turnInstructions?:string;
+  private readonly nativeModeInstructions=new Map<string,string>();
+  private nativeInstructionWaiter?:{mode:string;resolve:(text:string)=>void};
+
   private model?: string;
   private effort?: string;
   private preferenceWrites:Promise<void>=Promise.resolve();
@@ -657,11 +661,42 @@ class CodexSession implements PiSession {
     for (const listener of this.listeners) listener(event);
   }
 
+  /** Keep the optional output profile in the native mode slot, without replacing native instructions. */
+  async setTurnInstructions(instructions?:string):Promise<void> {
+    if(this.streaming)throw Error('Cannot change turn instructions during a running Codex turn');
+    if(instructions)await this.ensureNativeModeInstructions();
+    this.turnInstructions=instructions;
+  }
+
+  private nativeModeKey():string {return `${this.model}:${this.planMode?'plan':'default'}`;}
+
+  private async ensureNativeModeInstructions():Promise<void> {
+    const key=this.nativeModeKey();if(this.nativeModeInstructions.has(key))return;
+    if(!this.model)throw Error('Native Codex model unavailable for optional turn instructions');
+    const mode=this.planMode?'plan':'default';
+    const settings={model:this.model,reasoning_effort:this.effort??null};
+    // settings/update emits the resolved native template through settings/updated.
+    // No user turn runs between these two updates; model, mode and effort stay fixed.
+    // A no-op update emits no notification, so first clear only this mode's slot.
+    await this.server.request('thread/settings/update',{threadId:this.threadId,collaborationMode:{mode,settings:{...settings,developer_instructions:''}}},2500);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const resolved=new Promise<string>((resolve,reject)=>{
+      timer=setTimeout(()=>reject(Error('Native Codex mode instructions unavailable')),2500);
+      this.nativeInstructionWaiter={mode,resolve};
+    });
+    // Attach a rejection observer before waiting on the RPC response.
+    resolved.catch(()=>undefined);
+    try {
+      await this.server.request('thread/settings/update',{threadId:this.threadId,collaborationMode:{mode,settings:{...settings,developer_instructions:null}}},2500);
+      this.nativeModeInstructions.set(key,await resolved);
+    }finally{clearTimeout(timer);this.nativeInstructionWaiter=undefined;}
+  }
+
   private turnOverrides(): Obj {
     return {
       // Explicit standard clears any native/global Fast default for this task.
       serviceTier:this.speed==='fast'?'fast':'default',
-      ...(this.model?{collaborationMode:{mode:this.planMode?'plan':'default',settings:{model:this.model,reasoning_effort:this.effort??null,developer_instructions:null}}}:{}),
+      ...(this.model?{collaborationMode:{mode:this.planMode?'plan':'default',settings:{model:this.model,reasoning_effort:this.effort??null,developer_instructions:this.turnInstructions?this.nativeModeInstructions.get(this.nativeModeKey())+'\n\n'+this.turnInstructions:null}}}:{}),
       ...(this.model === undefined ? {} : { model: this.model }),
       ...(this.effort === undefined ? {} : { effort: this.effort }),
     };
@@ -718,6 +753,7 @@ class CodexSession implements PiSession {
 
     if(this.asyncQuestion&&!this.asyncQuestion.resuming)throw new Error('Answer or cancel the pending question before continuing');
     const sourceOverrides=await this.refreshMishuContext();
+    if(this.turnInstructions)await this.ensureNativeModeInstructions();
     this.nativeInputSeen=true;
     await this.updatePreferences({});
     if(command?.[1]==='review')await this.server.request('thread/resume',{threadId:this.threadId,excludeTurns:true,cwd:this.cwd,model:this.model??null,serviceTier:this.speed==='fast'?'fast':'default',approvalPolicy:this.settings.approvalPolicy,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{}),config:{...nativeThreadConfig(this.preset),...(this.effort?{model_reasoning_effort:this.effort}:{})}});
@@ -994,6 +1030,13 @@ class CodexSession implements PiSession {
 
   private onNotification(method: string, params: Obj): void {
     switch (method) {
+      case 'thread/settings/updated': {
+        const mode=(params.threadSettings as Obj|undefined)?.collaborationMode as Obj|undefined;
+        const text=(mode?.settings as Obj|undefined)?.developer_instructions;
+        if(mode?.mode===this.nativeInstructionWaiter?.mode&&typeof text==='string'&&text.length>0)this.nativeInstructionWaiter?.resolve(text);
+        return;
+      }
+
       case "turn/started": {
         const turn = params.turn as Obj | undefined;
         if (turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
@@ -1075,7 +1118,7 @@ class CodexSession implements PiSession {
         this.streamedItems.clear();
         this.toolNames.clear();
         this.toolOutput.clear();
-        this.emit({ type: "agent_settled" });
+        this.emit({ type: "agent_settled", aborted:turn?.status==="interrupted" });
         const next = this.followUps.shift();
         if (next) {
           this.emit({ type: "queue_update", steering: [], followUp: this.followUps.map((item) => item.text) });
