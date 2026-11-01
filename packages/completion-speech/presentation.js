@@ -9,19 +9,20 @@ export function createSpeechPresentation({request,context,digest,storage=globalT
   const key=scope();if(closed||!key)return;
   if(pending?.key===key)return pending.work;
   const token=++generation,id=context().id;
-  const work=(async()=>{try{const result=await request({action:'summaries',id});if(closed||token!==generation||scope()!==key)return;
+  const work=Promise.resolve().then(async()=>{try{const result=await request({action:'summaries',id});if(closed||token!==generation||scope()!==key)return;
    const items=Array.isArray(result.items)?result.items.filter(item=>typeof item?.answerDigest==='string'&&/^[a-f0-9]{64}$/.test(item.answerDigest)&&typeof item.summary==='string'&&item.summary.length>0&&item.summary.length<=1000&&typeof item.completionId==='string').slice(-100):[];
    cache.delete(key);cache.set(key,items);while(cache.size>5)cache.delete(cache.keys().next().value);onChange();
-  }catch{/* Plugin absence/failure leaves ordinary full replies intact. */}finally{if(pending?.work===work)pending=null;}})();pending={key,work};return work;
+  }catch{/* Plugin absence/failure leaves ordinary full replies intact. */}finally{if(pending?.work===work)pending=null;}});pending={key,work};return work;
  }
  function apply(entries){
   const key=scope();if(closed||!key)return;
   const items=cache.get(key);if(!items?.length)return;
   for(const entry of entries){
-   const node=entry.node;if((entry.k??entry.kind)!=='assistant'||!node?.isConnected||node.dataset.speechCompletionId||entry.status==='inProgress')continue;
+   const node=entry.node;if((entry.k??entry.kind)!=='assistant'||!node?.isConnected||entry.status==='inProgress')continue;
    if(node.dataset.messageComplete!=='true'&&entry.status!=='completed')continue;
    const hash=entry.contentDigest??(!entry.contentTruncated?digest(entry.text||''):null);
    const item=items.find(candidate=>candidate.answerDigest===hash);if(!item)continue;
+   if(node.dataset.speechCompletionId){node.dataset.speechCompletionId=item.completionId;const existing=node.querySelector('.speech-summary');if(existing)existing.textContent=item.summary;continue;}
    const scroller=node.closest('[data-speech-scroller]'),top=scroller?.scrollTop,atTail=scroller&&scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;
    const expansionKey=JSON.stringify([key,item.answerDigest]);
    // Strip only the authenticated envelope of an untruncated complete answer.
@@ -35,12 +36,14 @@ export function createSpeechPresentation({request,context,digest,storage=globalT
    details.addEventListener('toggle',()=>{remember(expansionKey,details.open);onChange();});
    if(scroller)scroller.scrollTop=atTail?scroller.scrollHeight:top;
   }
-  onChange();
  }
  return {refresh,apply,close(){closed=true;generation++;cache.clear();pending=null;}};
 }
 // The Coffee read controller adds source/revision, visibility and viewport proof.
 export function summaryReadProof(entry,completionId){
  const node=entry?.node,summary=node?.querySelector('.speech-summary');
- return Boolean(completionId&&node?.isConnected&&node.dataset.speechCompletionId===completionId&&summary?.isConnected&&!summary.closest('[hidden]'));
+ if(!completionId||!node?.isConnected||node.dataset.speechCompletionId!==completionId||!summary?.isConnected||summary.closest('[hidden]'))return false;
+ const scroller=node.closest('[data-speech-scroller]');if(!scroller)return true;
+ const rect=summary.getBoundingClientRect(),viewport=scroller.getBoundingClientRect();
+ return rect.bottom>=viewport.top&&rect.top<=viewport.bottom;
 }

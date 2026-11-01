@@ -88,6 +88,8 @@ const ui = {
   userBtn: $('#user-btn'), userName: $('#user-name'),
 };
 
+ui.scroller.dataset.speechScroller='';
+
 // ---------- state ----------
 let socket, reconnectTimer, connectionEpoch=0;
 let connectionDeadline=null, connectionExpiresAt=0, connectionAbort=null;
@@ -114,7 +116,7 @@ const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{i
 let displayMode="compact",displaySaving=false,displayAnchor=null,displayRequest=null,displayTimer=null;
 const conversationRepository=new ConversationRepository({displayMode,onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
-  onRendered:(visible,state)=>{restoreDisplayAnchor();entries=visible;refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
+  onRendered:(visible,state)=>{restoreDisplayAnchor();entries=visible;completionSpeech?.project(visible);refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
 function requestConversationSync(){
   if(!activeId||!currentUser)return;
@@ -851,8 +853,9 @@ function pushUser(text, images, imageCount, files) {
   currentActivity = undefined;
   return entry;
 }
-function pushAssistant(text) {
-  const entry = { k: 'assistant', text: text || '' };
+function speechAssistantNode(item){const node=assistantNode(item,{done:true});queueMicrotask(()=>{completionSpeech?.project([{...item,k:'assistant',node}]);refreshToolDownloadLinks();});return node;}
+function pushAssistant(text,projection={}) {
+  const entry = {...projection,k: 'assistant', text: text || '' };
   entry.node = assistantNode(entry,{done:Boolean(historyBatch)});
   entries.push(entry);
   appendNode(entry.node);
@@ -895,6 +898,7 @@ function scheduleEntryRender(entry,tool=false,done=false){
     if(!entry.node.isConnected)return;
     const stick=nearBottom();
     if(tool)fillToolCard(entry.node,entry);else updateAssistant(entry.node,entry.text,{done});
+    if(done)completionSpeech?.project(entries);
     if(stick)scrollToEnd();
     maybeReadCompletion();
   }});
@@ -926,7 +930,7 @@ function renderHistory(frame) {
   const pageId=activeId,pageUser=currentUser,pageSelection=taskSelectionEpoch,pageMode=displayMode;
   const pageCurrent=()=>activeId===pageId&&currentUser===pageUser&&taskSelectionEpoch===pageSelection&&displayMode===pageMode;
   if(frame.recentPage)historyBatch.append(recentHistoryPanel({id:pageId,cursor:frame.recentPage.olderCursor,mode:pageMode,isCurrent:pageCurrent,
-    renderEntry:item=>item.kind==='user'?userBubble(item):item.kind==='assistant'?assistantNode(item,{done:true}):item.kind==='tool'?toolCard({...item,done:true}):noteNode(item)}));
+    renderEntry:item=>item.kind==='user'?userBubble(item):item.kind==='assistant'?speechAssistantNode(item):item.kind==='tool'?toolCard({...item,done:true}):noteNode(item)}));
   lastUserText='';
   for(let index=source.length-1;index>=0;index--)if(source[index].kind==='user'){lastUserText=splitUploadedFilesText(source[index].text||'').text;break;}
   historyPrefix=source.slice(0,-40).map(item=>({k:item.kind,text:item.text,name:item.name,result:item.result}));
@@ -958,7 +962,7 @@ function renderHistory(frame) {
       }
       lastUserText = parsed.text || lastUserText;
     }
-    else if (item.kind === 'assistant') nativeItems.set(item.id,pushAssistant(item.text || ''));
+    else if (item.kind === 'assistant') nativeItems.set(item.id,pushAssistant(item.text || '',item));
     else if (item.kind === 'tool') nativeItems.set(item.id,pushTool({ name: item.name, args: item.args, result: item.result || '', done: true, error: Boolean(item.isError), details: item.diff ? { patch: item.diff } : undefined }));
     else if (item.kind === 'note') pushNote(item.text || '');
     if(frame.recentPage&&entries.length>beforeCount)addHistoryDownload(entries.at(-1).node,{id:pageId,token:item.contentToken,isCurrent:pageCurrent});
@@ -972,6 +976,7 @@ function renderHistory(frame) {
   if (uploadLog.length) renderUploadLogCard();
   if (entries.length === 0&&!frame.recentPage?.olderCursor) renderHero();
   if (streaming) showThinking(true);
+  completionSpeech?.project(entries);
   scrollToEnd();
   addRegenerateButton();
 }
@@ -1007,7 +1012,8 @@ function maybeReadCompletion(){
     if(session.completedAt && !((typeof state.lastSourceCheckAt==='number'?state.lastSourceCheckAt:Date.parse(state.lastSourceCheckAt))>=Date.parse(session.completedAt)))return;
     if(!state.entries?.length||!state.entries.every(item=>{const rendered=syncedView.nodes.get(item.id);return rendered?.node.isConnected&&rendered.revision===String(item.entityRevision??state.appliedRevision??state.baseRevision??'0');}))return;
     const reply=state.entries.findLast(item=>item.kind==='assistant'),renderedReply=reply&&syncedView.nodes.get(reply.id);
-    if(reply?.contentTruncated && (renderedReply.displayedContentEnd??((reply.contentOffset||0)+(renderedReply.text?.length||0)))<reply.contentLength)return;
+    if(renderedReply?.node.dataset.speechCompletionId&&!completionSpeech?.summaryProof(renderedReply,key))return;
+    if(reply?.contentTruncated && !completionSpeech?.summaryProof(renderedReply,key) && (renderedReply.displayedContentEnd??((reply.contentOffset||0)+(renderedReply.text?.length||0)))<reply.contentLength)return;
     proof=key;
   }else if(liveCompletionSettled && key!==liveCompletionStart){
     // A fence follows pending native message renders, including fair-scheduler
@@ -1929,6 +1935,7 @@ function handleFrame(frame, ws) {
     case 'sessions':
       void loadWorkspace();
       sessions = Array.isArray(frame.sessions) ? frame.sessions : [];
+      void completionSpeech?.refresh();
       syncCompletionReads();
       maybeReadCompletion();
       renderSessionList();
@@ -3267,7 +3274,7 @@ function submitPrompt(text, images) {
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
 void import('./completion-speech.js').then(({initCompletionSpeech})=>{
- completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),taskButton:$('#speech-task'),takeoverButton:$('#speech-browser'),toast});
+ completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),taskButton:$('#speech-task'),takeoverButton:$('#speech-browser'),toast,onPresentation:()=>{completionSpeech?.project(entries);refreshToolDownloadLinks();maybeReadCompletion();}});
  void completionSpeech.refresh();
 }).catch(()=>{for(const id of ['speech-master','speech-task','speech-browser']){const node=document.getElementById(id);if(node)node.hidden=true;}});
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
