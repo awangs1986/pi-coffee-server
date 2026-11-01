@@ -4,7 +4,7 @@ export function browserSpeech({synthesis=globalThis.speechSynthesis,Utterance=gl
  return {voices:()=>synthesis?.getVoices?.()??[],setVoice:value=>{voiceURI=value??'';},available:()=>Boolean(synthesis&&Utterance),cancel(){synthesis?.cancel();settle?.();},speak:text=>new Promise((resolve,reject)=>{
   if(!synthesis||!Utterance){reject(Error('当前浏览器无法语音播报'));return;}
   settle?.();const utterance=new Utterance(text);utterance.lang=/[\u3400-\u9fff]/u.test(text)?'zh-CN':'en-US';
-  const voices=synthesis.getVoices?.()??[];utterance.voice=voices.find(v=>v.voiceURI===voiceURI)||voices.find(v=>v.lang?.split('-')[0]===utterance.lang.split('-')[0])||null;
+  const voices=synthesis.getVoices?.()??[];if(synthesis.getVoices&&!voices.length){reject(Error('系统暂未提供声音，请点击启用后重试'));return;}utterance.voice=voices.find(v=>v.voiceURI===voiceURI)||voices.find(v=>v.lang?.split('-')[0]===utterance.lang.split('-')[0])||null;
   let timer,finished=false;const finish=error=>{if(finished)return;finished=true;clearTimeout(timer);utterance.onend=null;utterance.onerror=null;if(settle===finish)settle=undefined;error?reject(error):resolve();};settle=finish;
   utterance.onend=()=>finish();utterance.onerror=()=>finish(Error('语音未能播放，请点击启用后重试'));
   timer=setTimeout(()=>{synthesis.cancel();finish(Error('语音播放超时'));},60000);try{synthesis.speak(utterance);}catch{finish(Error('语音未能播放，请点击启用后重试'));}
@@ -12,7 +12,7 @@ export function browserSpeech({synthesis=globalThis.speechSynthesis,Utterance=gl
 }
 export function createSpeechController({request,context,browserId,speech=browserSpeech(),onStatus=()=>{},onError=()=>{}}){
  let closed=false,polling=false,draining=false,scope=null,generation=0,active=null,release,paused=false,failedItem=null;
- function cancel(){generation++;speech.cancel();release?.();release=undefined;active=null;}
+ function cancel(){generation++;speech.cancel();release?.();release=undefined;active=null;failedItem=null;}
  async function finish(item){try{await request({action:'finish',browserId,id:item.id,completionId:item.completionId});}catch{/* Durable attempt remains consumed when offline. */}}
  const current=(epoch,user)=>!closed&&epoch===generation&&context()?.user===user;
  async function drain(items,epoch,user){
@@ -51,5 +51,5 @@ export function createSpeechController({request,context,browserId,speech=browser
   paused=false;failedItem=null;draining=true;active=claim.item;const cancelled=new Promise(resolve=>{release=resolve;});
   try{await Promise.race([speech.speak(claim.item.text),cancelled]);return true;}catch(error){if(current(epoch,user)){paused=true;onError(error);}return false;}finally{active=null;release=undefined;draining=false;if(context()?.user===user)await finish({id,completionId});}
  }
- return {poll,cancel,replay,retry(){paused=false;const item=failedItem;failedItem=null;return item?replay(item.id,item.completionId):poll();},close(){closed=true;cancel();}};
+ return {poll,cancel,pause(){paused=true;cancel();},replay,retry(){paused=false;const item=failedItem;failedItem=null;return item?replay(item.id,item.completionId):poll();},close(){closed=true;cancel();}};
 }

@@ -42,7 +42,7 @@ export class CompletionSpeech {
   }
   items.sort((a,b)=>a.completedAt.localeCompare(b.completedAt));
   for(const dropped of items.splice(0,Math.max(0,items.length-10)))s.attempts[dropped.id]=dropped.completionId;
-  if(s.active){const t=await this.adapter.task(s.active.id);if(!s.enabled||s.browserId!==s.active.browserId||!s.selected[s.active.id]?.enabled||!t||t.archived||t.runStatus!=='settled'||t.completionId!==s.active.completionId||(!s.active.replay&&t.readCompletionId===s.active.completionId)||this.now()-s.active.startedAt>60000)delete s.active;}
+  if(s.active){const t=await this.adapter.task(s.active.id);if(!s.enabled||s.browserId!==s.active.browserId||!t||t.archived||(!s.active.replay&&(!s.selected[s.active.id]?.enabled||t.runStatus!=='settled'||t.completionId!==s.active.completionId||t.readCompletionId===s.active.completionId))||this.now()-s.active.startedAt>60000)delete s.active;}
   // Reclaim only brief text. Durable delivery identities are not cache entries.
   let count=0;for(const brief of Object.values(s.completions).sort((a,b)=>b.completedAt.localeCompare(a.completedAt))){if(brief.summary&&(this.now()-Date.parse(brief.completedAt)>86400000||count++>=100))delete brief.summary;}
   this.prunePresentation(s);return items;
@@ -59,9 +59,9 @@ export class CompletionSpeech {
   if(action==='voice'){if(typeof input.voiceURI!=='string'||input.voiceURI.length>256||/[\u0000-\u001f]/.test(input.voiceURI))throw Error('Invalid speech voice');s.voiceURI=input.voiceURI;}
   if(action==='replay'){
    if(typeof input.id!=='string'||typeof input.completionId!=='string'||typeof input.browserId!=='string')throw Error('Invalid replay request');
-   await this.eligible(s);const brief=s.completions[input.id],task=await this.adapter.task(input.id);
-   if(!s.enabled||s.browserId!==input.browserId||s.active||!brief?.summary||brief.completionId!==input.completionId||!task||task.archived||task.completionId!==input.completionId){await this.adapter.save(s);return {claimed:false};}
-   s.attempts[brief.id]=brief.completionId;s.active={id:brief.id,completionId:brief.completionId,browserId:input.browserId,startedAt:this.now(),replay:true};await this.adapter.save(s);return {claimed:true,item:{...brief,title:task.title,text:task.title+'。'+brief.summary}};
+   await this.eligible(s);this.prunePresentation(s);const latest=s.completions[input.id],brief=latest?.completionId===input.completionId?latest:s.projections?.[input.id]?.find(v=>v.completionId===input.completionId),task=await this.adapter.task(input.id);
+   if(!s.enabled||s.browserId!==input.browserId||s.active||!brief?.summary||brief.completionId!==input.completionId||!task||task.archived){await this.adapter.save(s);return {claimed:false};}
+   if(latest?.completionId===brief.completionId)s.attempts[input.id]=brief.completionId;s.active={id:input.id,completionId:brief.completionId,browserId:input.browserId,startedAt:this.now(),replay:true};await this.adapter.save(s);return {claimed:true,item:{...brief,id:input.id,title:task.title,text:task.title+'。'+brief.summary}};
   }
   if(action==='configure'){if(typeof input.enabled!=='boolean')throw Error('Invalid speech switch');s.enabled=input.enabled;if(!s.enabled){for(const b of Object.values(s.completions))s.attempts[b.id]=b.completionId;delete s.active;}}
   if(action==='select'){
