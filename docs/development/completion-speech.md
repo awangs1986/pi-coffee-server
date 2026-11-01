@@ -114,6 +114,15 @@ symlink to the existing lock-matched dependency installation. This verifies clea
 source/build/check behavior, not a second network dependency installation. Its
 retained output is `/tmp/verify-completion-speech-final-fresh-check.log`.
 
+The final fresh-clone command `PI_COFFEE_TEST_TIMEOUT_MS=20000 npm run check`
+exited **0**: ESLint and the TypeScript/build pipeline passed; Vitest passed
+1,342 tests in 183 files plus three isolated runtime-reclamation tests in one
+file (**1,345 tests / 184 files total**); all **17 registered Chromium probes**
+passed, including the new completion-speech journey. The fresh-clone source was
+`f5a061b`; subsequent T5 changes document that evidence without changing behavior.
+Separately, the final asset-boundary/documentation checks passed three tests in
+two files. No production restart or deployment was performed.
+
 The configured check timeout avoids the baseline five-second Git fixture limit
 on a shared busy VM; it does not permit live parallel model sessions. A fresh
 local clone of the candidate must run the same documented check before release.
