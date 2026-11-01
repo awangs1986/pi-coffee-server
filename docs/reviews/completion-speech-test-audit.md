@@ -1,0 +1,72 @@
+# Completion speech test audit
+
+Scope: Server #152 and T1–T5 (#153–#157). The public seams are the authenticated
+Host HTTP/WS, native submission/provider boundaries and browser controllers.
+This report distinguishes controlled request/DOM behavior from audible voice
+quality and provider cache metrics, which require actual platform observations.
+
+## Claims
+
+The claims are written in the owner's language for review. Each describes what
+an assertion protects, rather than restating an implementation method name.
+
+1. 播报前只领取当前结果一次；播放不会发送已读回执或新的模型请求。
+2. 非指定浏览器不会领取或播放结果。
+3. 播放权转移时立即取消音频，即使浏览器没有发送结束回调。
+4. 主动取消语音会结束等待，不依赖原生结束事件。
+5. 默认选择匹配语言的声音，可指定声音；超时后释放等待和计时器。
+6. 语音失败后暂停自动播放，直到用户显式恢复；重播只读取已有摘要。
+7. 归档或取消选中正在播放的对话会立即停止该对话的语音。
+8. 待播超过十条时丢弃最旧项，播完其余项后不会重新出现；不会因此标记已读。
+9. 领取时重新检查已读、结果替换、播放浏览器和并发占用，重启也保留尝试记录。
+10. 关闭总开关后不补播旧队列；摘要文本过期不删除已尝试的结果身份。
+11. 五分钟边界内可补播，超过边界不可补播；删除和归档会撤销对应结果。
+12. 延迟的上一轮回调不能把旧摘要附加到新结果。
+13. 即使查询任务时正在等待 I/O，新一轮开始也能使旧回调失效。
+14. 已读摘要可显式重播，但不改变已读状态或原生提示词；其他浏览器不能领取。
+15. 声音偏好能够恢复并受长度限制，改变声音不改变任务的提示词。
+16. 历史摘要可手动重播，归档或不属于当前账号的任务不可重播。
+17. HTTP 设置、任务选择和浏览器归属按账号独立持久化，非法或越界输入被拒绝。
+18. Pi 和 Codex 只在开启的原回合使用同一固定摘要提示词；关闭后停止注入。
+19. HTTP 并发领取和 Host 重启不会重复播报，也不启动额外 Agent。
+20. 原生 Pi 的连续回合保持固定系统提示位置、工具和模型，用户历史不堆积 Skill。
+21. 可选插件加载失败时，Host 和普通原生任务仍能运行。
+22. 独立插件可使用合成 Host 适配器；工具消息不能冒充本轮摘要。
+23. 只有已记录且匹配原回答的摘要可折叠，代码、下载链接和展开状态保留。
+24. 摘要已读证明要求匹配的结果身份和可见内容，分页完整回答的控件仍可用。
+25. 其他账号的延迟元数据不会用于当前界面；展开和渲染不会发送模型输入。
+26. 点击摘要重播使用记录的结果身份，不创建新的原生输入。
+27. 超过原截断长度的回答仍按整体内容绑定摘要；摘要存储不复制完整回答。
+28. 展示摘要缓存过期会回收文本，但保留已尝试的播报身份。
+29. 首次授权失败后可以恢复控件，试听不调用 Agent；账号切换会取消音频并清理监听器。
+30. 关闭总开关先同步停止音频，再保存设置；对话开关位于对话操作菜单。
+31. 原生 Codex 保留默认和计划模式的原有指令，同一提示词复用不重建线程或改变模型及思考强度。
+32. 准备原生提示词不枚举会话；每次播报操作只读取一次标题快照，下一次领取会读取重命名后的标题。
+33. 相同内容对应多个结果时不猜测历史身份；出现歧义后恢复完整回答，撤销错误重播和已读证明。
+
+Read these as business rules. Is any of them wrong?
+
+## Coverage and mutation probe
+
+Initial probe: ten independently chosen business-rule mutations on the integrated
+T1–T4 candidate. Eight were killed and two survived. Every mutant was restored
+before the next probe; mutation runs used a separate audit worktree.
+
+| Rule deliberately broken | Initial result | Repair disposition |
+| --- | --- | --- |
+| Ignore profile-version mismatch | Survived | Add current-turn result and waiting-envelope rejection cases |
+| Admit a completion beyond the five-minute boundary | Killed | Boundary assertion protects admission |
+| Allow eleven pending results | Killed | Overflow/durable-drop assertion protects the bound |
+| Allow a non-designated browser to claim | Killed | Scoped HTTP claim assertion protects ownership |
+| Allow an already-read result | Killed | Late-read assertion protects delivery eligibility |
+| Allow concurrent active claims | Killed | Concurrent-claim assertion protects serial playback |
+| Omit durable attempt receipt | Killed | Restart/backlog assertion protects deduplication |
+| Ignore answer digest | Killed | Exact-answer presentation assertion protects binding |
+| Omit admission recheck after eligibility I/O | Survived | Add a race after initial admission but before commit |
+| Reacquire Codex instructions on every turn | Killed | Native request evidence protects stable reuse |
+
+Final probe and post-review claims are recorded after repair integration below.
+Audible platform voice quality, closed-browser behavior and unavailable provider
+cache counters cannot be proved by these assertions. Browser synthesis is a
+replaceable effect in automated checks; the real Browser/Web/Host/Transfer path
+is verified separately in the T5 acceptance record.
