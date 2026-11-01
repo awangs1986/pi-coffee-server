@@ -1,3 +1,4 @@
+import {createCompletionSpeech} from './completion-speech.js';
 import {QueueStore} from './queue-store.js';
 import {isTranscriptEvent} from '../../public/display-events.js';
 import {parseRequestTarget} from '../shared/http.js';
@@ -108,6 +109,7 @@ export interface HostServerOptions {
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  speech?:ReturnType<typeof createCompletionSpeech>;
   mishu?:MishuCoordinator;
   user: string | undefined;
   workdir?: string;
@@ -258,6 +260,11 @@ export class HostServer {
     if ((rawUser!==undefined && !user) || (!user && this.requireUser)) {json(res,400,{error:"Valid user identity required"});return;}
     let slot:UserSlot;
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
+    if(req.url==='/api/completion-speech'){
+      if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
+      if(!slot.speech){json(res,503,{error:'Completion speech unavailable'});return;}
+      try{json(res,200,await slot.speech.handle(await readJson(req,32768)));}catch(error){json(res,409,{error:error instanceof Error?error.message:'Speech operation failed'});}return;
+    }
     if(req.url==='/api/mishu'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
       if(!slot.mishu||!this.mishuExtension()){json(res,503,{error:'MISHU plugin is not installed on this Host'});return;}
@@ -632,16 +639,18 @@ export class HostServer {
         : { factory: this.factory, githubAccounts:this.githubAccounts, workspaces: this.workspaces, skills: this.skillsOptions, runners: this.runners, sshme: this.sshme };
       const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
+      const speech=scope.workspaces?createCompletionSpeech(join(scope.workspaces.root,'.coffee','completion-speech'),scope.workspaces,()=>scope.factory.list()):undefined;
       const lifecycleLocks=new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
-      const registry = new HostSessionRegistry({queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues')):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+      const registry = new HostSessionRegistry({turnInstructions:speech? id=>speech.prepare(id):undefined,queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues')):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
+        const admit=speech?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
-        if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(()=>this.broadcastSessions(slot),()=>console.warn('Run status could not be saved'));
+        if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(async()=>{await admit?.().catch(()=>undefined);this.broadcastSessions(slot);},()=>console.warn('Run status could not be saved'));
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, speech, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);

@@ -70,6 +70,8 @@ export interface AgentSession {
   /** Reads already observed live evidence without starting or querying a native runtime. */
   readRunEvidence?(runId?:string):AgentRunEvidence|Promise<AgentRunEvidence>;
   backgroundState?(): Promise<{known:boolean;active:number}>;
+  /** Stable opt-in instruction slot; never appends another historical message. */
+  setTurnInstructions?(instructions:string|undefined):Promise<void>;
   prompt(text: string, images?: ImageInput[], correlation?:{runId:string}): Promise<void>;
   /** Interrupt a running turn after its current tool calls. */
   steer(text: string, images?: ImageInput[]): Promise<void>;

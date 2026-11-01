@@ -1,0 +1,1 @@
+{"name":"@pi-coffee/completion-speech","version":"0.1.0","private":true,"type":"module","description":"Independent opt-in completion speech policy and browser components","exports":{".":"./index.ts","./profile":"./profile.ts","./browser":"./browser.js"}}
