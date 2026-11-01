@@ -15,7 +15,7 @@ The owner confirmed a standalone PI Coffee plugin with no MISHU integration in
 this scope. Preserve the current Coffee structure: reuse existing seams and add
 only narrowly required adapters, without a new daemon or plugin framework. Keep
 speech policy inside the plugin and authorization/native execution inside Coffee.
-Disabling or removing speech must preserve ordinary execution and full replies.
+Disabling or removing speech must preserve ordinary execution and complete replies.
 Missing extension hooks must be identified before implementation; zero core edits
 are not assumed.
 

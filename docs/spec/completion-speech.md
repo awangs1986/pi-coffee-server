@@ -14,7 +14,7 @@ must not duplicate, cross account boundaries or create additional Agent sessions
 
 Provide an optional, independently versioned PI Coffee plugin that announces a
 short brief of each selected conversation's new unread result using browser/system
-voices. Preserve full answers behind an expansion control. The original Agent
+voices. Preserve complete answers behind an expansion control. The original Agent
 produces the brief within its existing turn. MISHU is not involved.
 
 ## User Stories
@@ -74,7 +74,7 @@ produces the brief within its existing turn. MISHU is not involved.
   Missing/invalid briefs fall back to a truthful title/status notice.
 - Playback alone does not mark the result read. The coffee indicator remains.
 - For speech-enabled turns, show the summary first in Web history and provide
-  **Show full information** to expand the intact answer. Other conversations keep
+  **Show complete information** to expand the intact answer. Other conversations keep
   their existing presentation. Actively viewing the latest summary counts as read.
 
 A settled run is not proof that an entire project passed acceptance. Speech must
@@ -108,8 +108,8 @@ Existing Web/Host services host the integration. Source location and publication
 mechanism remain implementation decisions; native adapters stay in Server and
 this cross-engine feature is not automatically a Pi-only package.
 
-When disabled or unavailable, ordinary conversation execution and full-answer
-rendering continue. Uninstalling must not delete native history or full replies;
+When disabled or unavailable, ordinary conversation execution and complete-answer
+rendering continue. Uninstalling must not delete native history or complete replies;
 audio and extra Skill injection stop. Plugin errors must not block a user turn,
 completion delivery, conversation switching or the existing read-receipt path.
 
@@ -136,7 +136,7 @@ commands, logs and raw URLs from speech. Do not infer success from the cup icon.
 
 Produce a separate, structured brief associated with the exact original turn.
 The adapter validates the expected turn identity/profile version and separates
-that brief from the full answer. Treat user/tool text and earlier transcript
+that brief from the complete answer. Treat user/tool text and earlier transcript
 examples as data, not valid current-turn brief envelopes. The concrete envelope
 must be verified across adapters during implementation; no new write-file tool
 is required in Chat merely to deliver a brief.
@@ -200,18 +200,18 @@ callbacks establish playback status, not proof that a person heard it.
 ### Summary-first presentation and read receipts
 
 Apply summary-first presentation to completed replies generated under explicit
-speech opt-in. Native history and the full reply remain intact. Code blocks,
+speech opt-in. Native history and the complete reply remain intact. Code blocks,
 attachments and downloads must remain available when expanded. Ordinary live
 streaming and the existing compact/detailed tool-process preference are separate
 from completed-answer folding.
 
-Where a validated brief is absent, retain the ordinary full-answer/error view;
+Where a validated brief is absent, retain the ordinary complete-answer/error view;
 the generic speech fallback is not a substitute summary for viewed-proof checks.
 
 Only an attached, visible, current conversation showing the latest reconciled
 summary at the relevant viewport tail may acknowledge that result. A hidden tab,
 old cached summary, stale revision or audio playback may not do so. This extends
-the existing viewed-proof contract for this presentation: expanding the full
+the existing viewed-proof contract for this presentation: expanding the complete
 answer is no longer necessary to clear its cup. A result read before playback is
 skipped. Rendering and late metadata must preserve scroll position and any
 explicit expansion choice.
@@ -219,7 +219,7 @@ explicit expansion choice.
 ### MVP defaults
 
 - Put speech settings/master switch in the top-left Logo menu; put the per-task
-  toggle in the existing conversation actions menu. Keep summary and full-answer
+  toggle in the existing conversation actions menu. Keep summary and complete-answer
   controls in the reply, with an explicit replay action.
 - Default voice follows the user's available language-matching system voice;
   offer voice selection and a preview. Browser speech may use platform network
@@ -233,7 +233,7 @@ explicit expansion choice.
 - If permission, voice availability or browser policy prevents speech, show a
   concise enable/retry control. Avoid retry loops and replay storms after resume.
   A bounded playback timeout releases a stuck queue item.
-- Cache at most 100 short briefs for 24 hours per account. Keep full answers only
+- Cache at most 100 short briefs for 24 hours per account. Keep complete answers only
   in the existing history system. Durable latest delivery identities survive text
   cache expiry, and are removed with their scoped task records.
 - Explicit manual replay is separate from automatic unread delivery and may be
@@ -257,7 +257,7 @@ executed evidence.
    turns; running-turn enablement starts next turn; disabling stops audio without
    cancelling native task execution.
 2. Generation: each native adapter preserves original model/settings, produces
-   and validates the current-turn brief, retains full answer/history, and never
+   and validates the current-turn brief, retains complete answer/history, and never
    starts a follow-up/native session for summarization. Missing, malformed,
    conflicting and overlong briefs fall back safely.
 3. Delivery: one task completion yields at most one automatic claimant; replayed
@@ -292,7 +292,7 @@ records a design and planned evidence, not a claim that speech works today.
 - Auxiliary summarizer models, extra summary turns or new native conversations.
 - Hosted TTS services, a new daemon or a general-purpose plugin framework.
 - Guaranteed playback with the browser closed or device locked.
-- Native-history compaction, removal of full replies or global Chat prompt changes.
+- Native-history compaction, removal of complete replies or global Chat prompt changes.
 - An ADHD diagnosis or permanent application of the referenced Skill to all tasks.
 
 ## Further Notes

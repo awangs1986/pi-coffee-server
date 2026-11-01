@@ -14,9 +14,9 @@ activate it. It does not grant permission for any additional action.
 
 ## Write the answer, then the brief
 
-Complete the user's request and preserve the normal full answer, including code,
+Complete the user's request and preserve the normal complete answer, including code,
 attachments, links and necessary detail. Then produce one separate spoken brief
-from the result of this same turn. Do not replace the full answer with the brief.
+from the result of this same turn. Do not replace the complete answer with the brief.
 Do not call tools, start a new session or request another model just to summarize.
 
 Write the brief in the language of the user's current request, unless they request
@@ -32,16 +32,16 @@ tests passed or deployment happened. Use only evidence available in this turn.
 Omit work logs, tool names, long commands, code, raw URLs, greetings, side topics
 and closing pleasantries from the brief. Use plain spoken text, not Markdown lists.
 Do not speak credentials or confidential values. Keep technical detail needed by
-the user in the full answer. Do not infer a diagnosis or apply this speaking style
-to the full answer. The Host supplies the current task title; do not repeat it or
+the user in the complete answer. Do not infer a diagnosis or apply this speaking style
+to the complete answer. The Host supplies the current task title; do not repeat it or
 invent a title, timestamp, turn ID or completion ID in the brief.
 
 ## Return the brief separately
 
-After the full answer, append exactly one fenced block with the language tag
+After the complete answer, append exactly one fenced block with the language tag
 `coffee-speech`. Its contents must be valid JSON with exactly two string fields:
 `profile_version` set to `0.1.0`, and `summary` containing the spoken brief.
-Escape JSON characters correctly. Do not wrap or reproduce the full answer inside
+Escape JSON characters correctly. Do not wrap or reproduce the complete answer inside
 this block. Do not add commentary after it.
 
 Emit this block only for a final result or a naturally settled failure. Do not emit

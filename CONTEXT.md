@@ -161,7 +161,7 @@ conversation's new unread results are eligible for speech when speech is enabled
 listening, distinct from the original written answer.
 
 **Speech Delivery**: the playback status of a spoken brief. Completing playback
-does not establish that the full written result has been read.
+does not establish that the complete written result has been read.
 
 **Playback Browser**: the browser explicitly designated by a user to play that
 user's automatic completion speech.

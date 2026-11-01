@@ -136,7 +136,7 @@ has been made.
 ## Round 4 — owner answers
 
 - One explicitly designated browser owns automatic playback.
-- Successful playback does not mark the full result read or remove the coffee
+- Successful playback does not mark the complete result read or remove the coffee
   icon. Speech delivery and viewed receipts are separate facts.
 - Use serial playback. Check eligibility again before speaking; skip already-read
   or stale queued results, and replace an unplayed result with a newer result
@@ -178,7 +178,7 @@ abstract native Skill integration and brief extraction. It should not silently
 replace the owner's chosen task model with an auxiliary model. The decoupled
 plugin can consume an optional spoken brief without knowing native engine APIs.
 
-Adapting upstream style rules must preserve the full answer and truthful failure/
+Adapting upstream style rules must preserve the complete answer and truthful failure/
 unverified information. Do not inherit diagnosis claims or global session-wide
 style persistence from the upstream Skill. Timing, output envelope and fallback
 for absent/malformed briefs remain unresolved.
@@ -211,7 +211,7 @@ permanent-session style rule.
 - Enabling speech during an in-flight turn takes effect from the next turn only;
   the current turn is not spoken retroactively.
 - The owner rejected hidden/menu-only briefs: the Web transcript should show the
-  summary first, with an explicit Show full information control to expand the
+  summary first, with an explicit Show complete information control to expand the
   original answer. This is a presentation proposal, not native-history compaction.
 - Missing or malformed briefs use a short truthful title/status announcement;
   do not generate an additional summary turn.
@@ -222,7 +222,7 @@ permanent-session style rule.
   conversations? Recommendation: only selected tasks/results with an eligible
   brief; avoid expanding Skill injection to unrelated conversations.
 - Q20: Does actively viewing a current summary acknowledge the result, or must
-  the full answer be expanded first? Recommendation: viewing the current summary
+  the complete answer be expanded first? Recommendation: viewing the current summary
   counts, while audio playback alone still does not. This changes viewed-proof
   semantics for this presentation and requires explicit agreement.
 

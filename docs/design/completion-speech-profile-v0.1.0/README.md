@@ -25,7 +25,7 @@ malformed or incompatible blocks as unavailable, preserve the original answer
 and apply truthful status fallback. A marker alone never establishes settlement.
 Only remove a validated metadata block from the display projection; never rewrite
 native history. Validate native output-schema compatibility before adopting this
-format for each adapter. Keep metadata out of spoken text and the full-answer UI.
+format for each adapter. Keep metadata out of spoken text and the complete-answer UI.
 
 The Host prepends the current title once for playback. Character/word ranges in
 the profile approximate a short brief; actual time depends on voice and language.
