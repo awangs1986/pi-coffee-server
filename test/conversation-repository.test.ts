@@ -215,3 +215,22 @@ it('promotes a selected repository sync that was already queued behind backgroun
  try{await vi.waitFor(()=>expect(r.peek('b')?.entries[0].text).toBe('a'),{timeout:150});expect(foreground).toBe(b);}
  finally{r.setScope('v');release(new Response('{}'));await Promise.all([a,b,foreground]);r.dispose();}
 });
+
+it('preserves validated native reply provenance through snapshots, replacement changes and persistent browser cache',async()=>{
+ const indexedDB=new IDBFactory(),r=repo({indexedDB});r.setScope('u');const native={sourceMessageKey:'native-message:answer',contentDigest:'a'.repeat(64)};
+ await r.acceptSnapshot('a',{...page(),entries:[{...entry(),...native}]});expect(r.peek('a').entries[0]).toMatchObject(native);
+ const next={sourceMessageKey:'native-message:next',contentDigest:'b'.repeat(64)};
+ await r.acceptChanges('a',{...batch(),operations:[{opId:'provenance2',revision:'2',entityId:'a',entityRevision:'2',type:'replaceText',payload:{entry:{...entry('new','2'),...next}}}]});expect(r.peek('a').entries[0]).toMatchObject(next);
+ const reloaded=repo({indexedDB});reloaded.setScope('u');expect((await reloaded.getLocal('a')).entries[0]).toMatchObject(next);r.dispose();reloaded.dispose();
+});
+
+it('drops invalid or oversized provenance fields without discarding the complete answer',async()=>{
+ const r=repo();r.setScope('u');await r.acceptSnapshot('a',{...page(),entries:[{...entry('answer'),sourceMessageKey:'x'.repeat(1101),contentDigest:'not-a-sha256'}]});
+ const value=r.peek('a').entries[0];expect(value.text).toBe('answer');expect(value.sourceMessageKey).toBeUndefined();expect(value.contentDigest).toBeUndefined();r.dispose();
+});
+
+it('invalidates a completed body digest when a text delta changes its native message',async()=>{
+ const r=repo();r.setScope('u');await r.acceptSnapshot('a',{...page(),entries:[{...entry(),sourceMessageKey:'native-message:answer',contentDigest:'a'.repeat(64)}]});
+ await r.acceptChanges('a',{...batch(),operations:[{opId:'append-provenance',revision:'2',entityId:'a',entityRevision:'2',type:'appendText',payload:{text:'more',baseEntityRevision:'1',baseLength:1,encoding:'utf-16'}}]});
+ expect(r.peek('a').entries[0].sourceMessageKey).toBe('native-message:answer');expect(r.peek('a').entries[0].contentDigest).toBeUndefined();r.dispose();
+});
