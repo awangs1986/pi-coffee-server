@@ -1006,6 +1006,8 @@ function maybeReadCompletion(){
   if(!key||!completionReads.unread(session))return;
   if(!conversationDisplay.indexed&&receivedEventCursor<openedEventCursor&&completionProof!==key)return;
   let proof=completionProof;
+  const shownReply=entries.findLast(item=>item.k==='assistant');
+  if(shownReply?.node.dataset.speechCompletionId&&!completionSpeech?.summaryProof(shownReply,key))return;
   if(conversationDisplay.indexed){
     const state=completionIndexState;
     if(!state||state.conversationId!==activeId||state.status!=='current'||state.sourceFreshness!=='current'||state.runState!=='settled'||syncedView.readingOlder)return;
