@@ -25,11 +25,16 @@ export class CompletionSpeech {
    delete this.state.active;
   }return this.state;
  }
+ private prunePresentation(s:SpeechState){
+  const cached=Object.entries(s.projections??{}).flatMap(([key,values])=>values.map(value=>({key,value}))).filter(({value})=>Number.isFinite(Date.parse(value.completedAt))&&this.now()-Date.parse(value.completedAt)<=86400000).sort((a,b)=>b.value.completedAt.localeCompare(a.value.completedAt)).slice(0,100);
+  s.projections={};const retained=new Set<string>();for(const {key,value} of cached){(s.projections[key]??=[]).push(value);retained.add(JSON.stringify([key,value.completionId]));}
+  if(this.adapter.digest)for(const brief of Object.values(s.completions))if(brief.summary&&!retained.has(JSON.stringify([brief.id,brief.completionId])))delete brief.summary;
+ }
  private async eligible(s:SpeechState){
   const items:Array<SpeechBrief&{title:string;text:string}>=[];
   for(const brief of Object.values(s.completions)){
    const task=await this.adapter.task(brief.id);
-   if(!task){delete s.completions[brief.id];delete s.attempts[brief.id];delete s.selected[brief.id];continue;}
+   if(!task){delete s.completions[brief.id];delete s.attempts[brief.id];delete s.selected[brief.id];if(s.projections)delete s.projections[brief.id];continue;}
    const age=this.now()-Date.parse(brief.completedAt);
    if(task.archived||!s.selected[brief.id]?.enabled||task.readCompletionId===brief.completionId||task.completionId!==brief.completionId)s.attempts[brief.id]=brief.completionId;
    if(!s.enabled||task.archived||!s.selected[brief.id]?.enabled||task.runStatus!=='settled'||task.completionId!==brief.completionId||task.readCompletionId===brief.completionId||s.attempts[brief.id]===brief.completionId||!Number.isFinite(age)||age<0||age>300000)continue;
@@ -40,7 +45,7 @@ export class CompletionSpeech {
   if(s.active){const t=await this.adapter.task(s.active.id);if(!s.enabled||s.browserId!==s.active.browserId||!s.selected[s.active.id]?.enabled||!t||t.archived||t.runStatus!=='settled'||t.completionId!==s.active.completionId||t.readCompletionId===s.active.completionId||this.now()-s.active.startedAt>60000)delete s.active;}
   // Reclaim only brief text. Durable delivery identities are not cache entries.
   let count=0;for(const brief of Object.values(s.completions).sort((a,b)=>b.completedAt.localeCompare(a.completedAt))){if(brief.summary&&(this.now()-Date.parse(brief.completedAt)>86400000||count++>=100))delete brief.summary;}
-  return items;
+  this.prunePresentation(s);return items;
  }
 
  private serial<T>(run:()=>Promise<T>):Promise<T>{const next=this.tail.then(run);this.tail=next.catch(()=>undefined);return next;}
@@ -49,7 +54,7 @@ export class CompletionSpeech {
   const s=await this.loaded(),action=input.action;
   const allowed:Record<string,string[]>={summaries:['action','id'],status:['action'],configure:['action','enabled'],select:['action','id','enabled'],designate:['action','browserId'],pending:['action','browserId'],claim:['action','browserId','id','completionId'],finish:['action','browserId','id','completionId']};
   if(typeof action!=='string'||!allowed[action]||Object.keys(input).some(k=>!allowed[action].includes(k)))throw Error('Invalid speech request');
-  if(action==='summaries'){if(typeof input.id!=='string'||!await this.adapter.task(input.id))throw Error('Conversation unavailable');return {items:structuredClone((s.projections?.[input.id]??[]).filter(v=>this.now()-Date.parse(v.completedAt)<=86400000))};}
+  if(action==='summaries'){if(typeof input.id!=='string'||!await this.adapter.task(input.id))throw Error('Conversation unavailable');this.prunePresentation(s);await this.adapter.save(s);return {items:structuredClone(s.projections?.[input.id]??[])};}
   if(action==='status')return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,selected:structuredClone(s.selected)};
   if(action==='configure'){if(typeof input.enabled!=='boolean')throw Error('Invalid speech switch');s.enabled=input.enabled;if(!s.enabled){for(const b of Object.values(s.completions))s.attempts[b.id]=b.completionId;delete s.active;}}
   if(action==='select'){
