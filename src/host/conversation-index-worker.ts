@@ -53,7 +53,7 @@ function contentText(value:any):string {if(typeof value==='string')return value;
 function boundedEntry(entry: any, revision: string, budget = BLOCK_BYTES): any {
   const fields: Record<string, string> = {};
   const result: any = { kind: entry.kind, id: entry.id, entityRevision: revision, contentOffset:0 };
-  if (entry.kind === 'assistant') result.status = entry.status ?? 'completed';
+  if (entry.kind === 'assistant') {result.status = entry.status ?? 'completed';result.contentDigest=createHash('sha256').update(String(entry.text??'')).digest('hex');}
   if (entry.at) result.at = String(entry.at).slice(0, 80);
   if (entry.kind === 'tool') { result.name = String(entry.name || 'tool').slice(0, 200); result.isError = !!entry.isError; result.status = entry.status ?? 'completed'; result.args = {}; fields.args = JSON.stringify(entry.args ?? {}); fields.result = String(entry.result ?? ''); if (entry.diff) fields.diff = entry.diff; }
   else { fields.text = String(entry.text ?? ''); if (entry.imageCount) result.imageCount = entry.imageCount; }
