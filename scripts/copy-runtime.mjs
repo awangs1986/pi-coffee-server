@@ -21,4 +21,4 @@ await cp(resolve(root,'deploy/restart'),resolve(root,'dist/maintenance/restart')
 
 // Versioned cross-engine feature assets stay alongside their compiled policy.
 await mkdir(resolve(root,'dist/packages/completion-speech'),{recursive:true});
-for(const name of ['package.json','SKILL.md','README.md','LICENSE.upstream','browser.js','presentation.js'])await cp(resolve(root,'packages/completion-speech',name),resolve(root,'dist/packages/completion-speech',name));
+for(const name of ['package.json','SKILL.md','README.md','LICENSE.upstream','browser.js','browser.d.ts','presentation.js'])await cp(resolve(root,'packages/completion-speech',name),resolve(root,'dist/packages/completion-speech',name));
