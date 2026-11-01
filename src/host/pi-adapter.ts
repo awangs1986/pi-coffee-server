@@ -386,6 +386,7 @@ export function extensionPathsFromArgs(args: readonly string[]): string[] {
 }
 
 class RpcPiSession implements PiSession {
+  private turnInstructionVersion='off';
   private readonly client: RpcClient;
   private readonly configuredExtensions: readonly string[];
   private readonly listeners = new Set<(event: unknown) => void>();
@@ -458,8 +459,10 @@ class RpcPiSession implements PiSession {
     if(!this.dispatchToken){if(instructions)throw Error('Native speech instruction slot unavailable');return;}
     const version=instructions===undefined?'off':(await import('../../packages/completion-speech/profile.js')).speechProfileVersion(instructions);
     if(!version)throw Error('Unsupported speech instruction profile');
+    if(version===this.turnInstructionVersion)return;
     const disposition=await this.client.prompt(`/coffee-speech-control ${this.dispatchToken} ${version}`);
     if(disposition!=='handled')throw Error('Native speech instruction slot unavailable');
+    this.turnInstructionVersion=version;
   }
 
   async prompt(text: string, images?: ImageInput[],correlation?:{runId:string}): Promise<void> {
