@@ -74,13 +74,16 @@ before the next probe; mutation runs used a separate audit worktree.
 | Omit admission recheck after eligibility I/O | Survived | Add a race after initial admission but before commit |
 | Reacquire Codex instructions on every turn | Killed | Native request evidence protects stable reuse |
 
-Final re-probe after review repair integration: **10 mutants, 0 survivors**.
+Final re-probe after review repair integration: **11 mutants, 0 survivors**.
 The version mismatch mutant is killed by both the wrong-version summary and
 wrong-version waiting tests. The final-admission mutant is killed by a race that
 blocks after the first admission check, then starts a new submission before commit.
+The additional native-message-identity bypass is killed by the historical-answer
+identity assertion (claims 23 and 33), independently of digest validation.
 All source bytes were restored and the audit worktree remained clean. Logs:
-`/tmp/coffee-speech-final-mutant-01.log` through `-10.log`; machine-readable
-results: `/tmp/coffee-speech-final-mutations.json`.
+`/tmp/coffee-speech-accepted-mutant-01.log` through `-11.log`; machine-readable
+results: `/tmp/coffee-speech-accepted-mutations.json`. This bounded probe is not
+exhaustive mutation coverage.
 
 | Scope / acceptance requirements | Claims | Evidence boundary |
 | --- | --- | --- |

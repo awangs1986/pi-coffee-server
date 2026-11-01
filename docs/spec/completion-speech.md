@@ -1,6 +1,9 @@
 # Completion speech and summary-first replies
 
-Status: approved MVP specification, 2026-11-01; ready for implementation.
+Status: implemented source candidate, 2026-11-01; production activation pending.
+Acceptance evidence and explicit manual limitations are recorded in the
+[integration guide](../development/completion-speech.md) and
+[review record](../reviews/completion-speech-review.md).
 Implementation is being accepted on the integration branch; production deployment
 has not been performed.
 Tracking: [Server #152](https://github.com/awangs1986/pi-coffee-server/issues/152).
