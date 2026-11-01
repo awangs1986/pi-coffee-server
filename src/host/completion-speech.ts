@@ -21,7 +21,7 @@ export function createCompletionSpeech(root:string,workspaces:Workspaces,titles?
   handle:async(input:Record<string,unknown>)=>(await load()).policy.handle(input),
   status:async()=>(await load()).policy.status(),
   prepare:async(id:string)=>(await load()).capture.prepare(id),
-  event:(id:string,event:unknown)=>ready?.capture.event(id,event),
+  event:(id:string,event:unknown)=>{try{return ready?.capture.event(id,event);}catch{return undefined;}},
  };
 }
 

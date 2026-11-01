@@ -13,7 +13,8 @@
       "types": "./profile.d.ts",
       "import": "./profile.js"
     },
-    "./browser": "./browser.js"
+    "./browser": "./browser.js",
+    "./presentation": "./presentation.js"
   },
   "files": [
     "*.js",
