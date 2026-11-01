@@ -48,3 +48,13 @@ it.each([
  const capture=new SpeechTurnCapture(policy);await capture.prepare('task');capture.event('task',{type:'message_end',message:{role:'assistant',content:'Original answer.\n\n'+envelope}});await capture.event('task',{type:'agent_settled'})?.();
  const result:any=await policy.handle({action:'pending',browserId:'browser-one'});expect(result.items).toHaveLength(1);expect(result.items[0].summary).toBeUndefined();expect(result.items[0].text).toBe('Task。本轮已结束，请查看对话确认结果。');
 });
+
+it('discards a settled brief if a newer submission starts while final playback eligibility is suspended',async()=>{
+ const {createHash}=await import('node:crypto');let state:any;let blocked=false,reads=0;let release:()=>void=()=>{},reached:()=>void=()=>{};const gate=new Promise<void>(r=>{release=r;}),atGate=new Promise<void>(r=>{reached=r;});
+ const task={id:'task',title:'Task',engine:'pi',runStatus:'settled',completionId:'old-completion',completedAt:new Date().toISOString()};
+ const policy=new CompletionSpeech({load:async()=>state,save:async value=>{state=structuredClone(value);},task:async()=>{if(blocked&&++reads===2){reached();await gate;}return task;},digest:async text=>createHash('sha256').update(text).digest('hex')});
+ await policy.handle({action:'configure',enabled:true});await policy.handle({action:'select',id:'task',enabled:true});await policy.handle({action:'designate',browserId:'browser-one'});
+ const capture=new SpeechTurnCapture(policy);await capture.prepare('task');capture.event('task',{type:'message_end',message:{role:'assistant',content:'Old answer.\n\n```coffee-speech\n{"profile_version":"0.1.0","summary":"OLD_RESULT"}\n```'}});const settle=capture.event('task',{type:'agent_settled'})!;
+ blocked=true;const saving=settle();await atGate;const nextSubmission=capture.prepare('task');release();await saving;await nextSubmission;
+ expect(await policy.handle({action:'summaries',id:'task'})).toEqual({items:[]});expect(await policy.handle({action:'pending',browserId:'browser-one'})).toEqual({items:[]});expect(JSON.stringify(state)).not.toContain('OLD_RESULT');
+});
