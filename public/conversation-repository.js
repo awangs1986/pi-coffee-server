@@ -41,6 +41,10 @@ export function displayEntity(entry) {
   const contentOffset = initialOffset + text.length - short.length;
   const value = { id: entry.id, kind: entry.kind, entityRevision, text: short, contentOffset,
     contentTruncated: entry.contentTruncated === true || contentOffset > 0 || contentOffset + short.length < contentLength, contentLength };
+  if(entry.kind==='assistant'){
+    if(typeof entry.sourceMessageKey==='string'&&entry.sourceMessageKey.length>0&&entry.sourceMessageKey.length<=1100&&!/[\u0000-\u001f\u007f]/.test(entry.sourceMessageKey))value.sourceMessageKey=entry.sourceMessageKey;
+    if(typeof entry.contentDigest==='string'&&/^[a-f0-9]{64}$/.test(entry.contentDigest))value.contentDigest=entry.contentDigest;
+  }
   if (entry.kind === 'tool') { value.name = prefix(typeof entry.name === 'string' ? entry.name : '', 512); value.result = short; value.isError = entry.isError === true; }
   if (entry.contentLengths && typeof entry.contentLengths === 'object') value.contentLengths = Object.fromEntries(['text', 'result', 'args', 'diff'].filter(field => Number.isSafeInteger(entry.contentLengths[field]) && entry.contentLengths[field] >= 0).map(field => [field, entry.contentLengths[field]]));
   if (typeof entry.status === 'string') value.status = entry.status.slice(0, 64);
@@ -110,6 +114,7 @@ export function applyOperations(state, batch, receipts = new Map()) {
         const text = suffix(old.text + patch.text), contentLength = old.contentLength + patch.text.length;
         const value = { ...old, entityRevision: op.entityRevision, text, contentLength, contentOffset: contentLength - text.length,
           contentTruncated: text.length < contentLength };
+        delete value.contentDigest;
         if (old.kind === 'tool') value.result = text;
         entries.set(op.entityId, value); changed.set(op.entityId, value);
       } else {
