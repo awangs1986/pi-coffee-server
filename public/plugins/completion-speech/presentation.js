@@ -1,6 +1,6 @@
 // Optional view policy. The host supplies only scoped, captured briefs; envelope
 // text in a transcript is never sufficient authorization to fold an answer.
-export function createSpeechPresentation({request,context,digest,storage=globalThis.sessionStorage,onChange=()=>{},renderAnswer=()=>{}}){
+export function createSpeechPresentation({request,context,digest,storage=globalThis.sessionStorage,onChange=()=>{},onReplay=()=>{},renderAnswer=()=>{}}){
  const cache=new Map(),expanded=new Map();let closed=false,pending=null,generation=0;
  const scope=()=>{const value=context();return value?.user&&value?.id?JSON.stringify([value.user,value.id]):null;};
  const remember=(key,value)=>{expanded.delete(key);expanded.set(key,value);while(expanded.size>100)expanded.delete(expanded.keys().next().value);try{storage?.setItem('coffee.speech-expansion.v1',JSON.stringify([...expanded]));}catch{/* Optional disposable UI state. */}};
@@ -30,9 +30,10 @@ export function createSpeechPresentation({request,context,digest,storage=globalT
     const match=/\n?\n?```coffee-speech\s*\n([\s\S]*?)\n```\s*$/.exec(entry.text);
     try{const envelope=match&&JSON.parse(match[1]);if(envelope?.profile_version===item.profileVersion&&envelope.summary?.trim()===item.summary)renderAnswer(node,entry.text.slice(0,match.index).trimEnd());}catch{/* Invalid envelopes stay intact. */}
    }
-   const summary=document.createElement('div');summary.className='speech-summary';summary.textContent=item.summary;
+   const summary=document.createElement('div');summary.className='speech-summary';summary.style.whiteSpace='pre-wrap';summary.textContent=item.summary;
+   const replay=document.createElement('button');replay.type='button';replay.className='msg-tool speech-replay';replay.textContent='重播摘要';const replayId=context().id;replay.onclick=event=>{event.stopPropagation();if(scope()===key&&node.isConnected)onReplay(replayId,item.completionId);};
    const details=document.createElement('details');details.className='speech-full-information';details.open=expanded.get(expansionKey)===true;
-   const toggle=document.createElement('summary');toggle.textContent='显示完整信息';details.append(toggle,...node.childNodes);node.append(summary,details);node.dataset.speechCompletionId=item.completionId;
+   const toggle=document.createElement('summary');toggle.textContent='显示完整信息';toggle.style.cursor='pointer';details.append(toggle,...node.childNodes);node.append(summary,replay,details);node.dataset.speechCompletionId=item.completionId;
    details.addEventListener('toggle',()=>{remember(expansionKey,details.open);onChange();});
    if(scroller)scroller.scrollTop=atTail?scroller.scrollHeight:top;
   }
