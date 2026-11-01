@@ -3,7 +3,7 @@ export {PROFILE_VERSION,SPEECH_PROFILE};
 export const PLUGIN_VERSION='0.1.0';
 export interface SpeechSelection {enabled:boolean;profileVersion:string;}
 export interface SpeechBrief {id:string;completionId:string;profileVersion:string;summary?:string;completedAt:string;outcome:'result'|'failure';}
-export interface SpeechProjection {completionId:string;profileVersion:string;summary?:string;status?:'awaiting_user';answerDigest:string;completedAt:string;}
+export interface SpeechProjection {sourceMessageKey?:string;completionId:string;profileVersion:string;summary?:string;status?:'awaiting_user';answerDigest:string;completedAt:string;}
 export interface SpeechState {projections?:Record<string,SpeechProjection[]>;enabled:boolean;browserId:string|null;voiceURI?:string;selected:Record<string,SpeechSelection>;completions:Record<string,SpeechBrief>;attempts:Record<string,string>;active?:{id:string;completionId:string;browserId:string;startedAt:number;replay?:boolean};}
 export interface SpeechTask {id:string;title:string;engine:string;archived?:boolean;completionId?:string;completedAt?:string;readCompletionId?:string;runStatus?:string;}
 export interface SpeechAdapter {load():Promise<SpeechState|undefined>;save(state:SpeechState):Promise<void>;task(id:string):Promise<SpeechTask|undefined>;now?():number;digest?(text:string):Promise<string>;}
@@ -91,10 +91,10 @@ export class CompletionSpeech {
   await this.adapter.save(s);return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:this.selections(s)};
  });}
  async prepare(id:string):Promise<{profileVersion:string;instructions:string}|undefined>{await this.tail;const s=await this.loaded(),selection=s.selected[id];if(!s.enabled||!selection?.enabled)return;const task=await this.adapter.task(id);if(!task||task.archived||!['pi','codex'].includes(task.engine))return;const instructions=resolveSpeechProfile(selection.profileVersion);if(!instructions)return;return {profileVersion:selection.profileVersion,instructions};}
- async settled(id:string,profileVersion:string,text:string,failure:boolean,admit:()=>boolean=()=>true){return this.serial(async()=>{
+ async settled(id:string,profileVersion:string,text:string,failure:boolean,admit:()=>boolean=()=>true,sourceMessageKey?:string){return this.serial(async()=>{
   const s=structuredClone(await this.loaded()),task=await this.adapter.task(id);if(!resolveSpeechProfile(profileVersion)||!admit()||!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
   const envelope=parseSpeechEnvelope(text,profileVersion),brief=envelope?.kind==='summary'?envelope:undefined;
-  if(envelope&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,...(brief?{summary:brief.summary}:{status:'awaiting_user' as const}),answerDigest,completedAt:task.completedAt}];
+  if(envelope&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,...(sourceMessageKey?{sourceMessageKey}:{}),...(brief?{summary:brief.summary}:{status:'awaiting_user' as const}),answerDigest,completedAt:task.completedAt}];
 
   }
   if(envelope?.kind==='awaiting_user'){delete s.completions[id];s.attempts[id]=task.completionId;this.prunePresentation(s);if(!admit())return;this.state=s;await this.adapter.save(s);return;}
@@ -106,7 +106,7 @@ export class CompletionSpeech {
 
 /** Capture only live assistant final messages belonging to the explicitly submitted turn. */
 export class SpeechTurnCapture {
- private turns=new Map<string,{version:string;text:string;failure:boolean;waiting:boolean}>();
+ private turns=new Map<string,{version:string;text:string;failure:boolean;waiting:boolean;sourceMessageKey?:string}>();
  private generations=new Map<string,number>();
  constructor(readonly policy:CompletionSpeech){}
  async prepare(id:string){const generation=(this.generations.get(id)??0)+1;this.generations.set(id,generation);this.turns.delete(id);const choice=await this.policy.prepare(id);if(this.generations.get(id)!==generation)return;if(choice)this.turns.set(id,{version:choice.profileVersion,text:'',failure:false,waiting:false});return choice?.instructions;}
@@ -116,13 +116,14 @@ export class SpeechTurnCapture {
   if(['extension_ui_request','native_request'].includes(value.type)&&['select','confirm','input','editor'].includes(value.method))run.waiting=true;
   if(value.type==='message_end'&&value.message?.role==='assistant'){
    const content=value.message.content;
+   run.sourceMessageKey=typeof value.message.timestamp==='number'&&Number.isSafeInteger(value.message.timestamp)?'pi-message:'+value.message.timestamp:typeof value.id==='string'&&value.id.length>0&&value.id.length<=1024?'native-message:'+value.id:undefined;
    run.text=typeof value.text==='string'?value.text:typeof content==='string'?content:Array.isArray(content)?content.filter((p:Record<string,unknown>)=>p.type==='text'&&typeof p.text==='string').map((p:Record<string,unknown>)=>p.text).join(''):'';
    run.waiting=false;run.failure=value.message.stopReason==='error'||Boolean(value.message.errorMessage);
   }
   if(['agent_interrupted','run_interrupted'].includes(value.type)){this.turns.delete(id);return;}
   if(['agent_settled','run_completed'].includes(value.type)){
    this.turns.delete(id);if(value.aborted===true||run.waiting)return;
-   const generation=this.generations.get(id);return ()=>this.policy.settled(id,run.version,run.text,run.failure,()=>this.generations.get(id)===generation);
+   const generation=this.generations.get(id);return ()=>this.policy.settled(id,run.version,run.text,run.failure,()=>this.generations.get(id)===generation,run.sourceMessageKey);
   }
  }
 }

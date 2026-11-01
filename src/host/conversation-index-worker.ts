@@ -53,7 +53,7 @@ function contentText(value:any):string {if(typeof value==='string')return value;
 function boundedEntry(entry: any, revision: string, budget = BLOCK_BYTES): any {
   const fields: Record<string, string> = {};
   const result: any = { kind: entry.kind, id: entry.id, entityRevision: revision, contentOffset:0 };
-  if (entry.kind === 'assistant') {result.status = entry.status ?? 'completed';result.contentDigest=createHash('sha256').update(String(entry.text??'')).digest('hex');}
+  if (entry.kind === 'assistant') {result.status = entry.status ?? 'completed';if(typeof entry.sourceMessageKey==='string')result.sourceMessageKey=entry.sourceMessageKey;result.contentDigest=createHash('sha256').update(String(entry.text??'')).digest('hex');}
   if (entry.at) result.at = String(entry.at).slice(0, 80);
   if (entry.kind === 'tool') { result.name = String(entry.name || 'tool').slice(0, 200); result.isError = !!entry.isError; result.status = entry.status ?? 'completed'; result.args = {}; fields.args = JSON.stringify(entry.args ?? {}); fields.result = String(entry.result ?? ''); if (entry.diff) fields.diff = entry.diff; }
   else { fields.text = String(entry.text ?? ''); if (entry.imageCount) result.imageCount = entry.imageCount; }
@@ -200,7 +200,7 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
       } else if (e.type === 'message_end') {
         const role=e.message?.role;
         if(role==='user'&&(e.id||current.liveUser))upsert(db,current,{kind:'user',id:e.id??current.liveUser,text:contentText(e.message.content)});
-        else if(role==='assistant'&&(e.id||current.liveMessage)&&(e.text!==undefined||e.message?.content))upsert(db,current,{kind:'assistant',id:e.id??current.liveMessage,text:e.text??contentText(e.message.content)});
+        else if(role==='assistant'&&(e.id||current.liveMessage)&&(e.text!==undefined||e.message?.content))upsert(db,current,{kind:'assistant',id:e.id??current.liveMessage,...(typeof e.message?.timestamp==='number'&&Number.isSafeInteger(e.message.timestamp)?{sourceMessageKey:'pi-message:'+e.message.timestamp}:typeof e.id==='string'?{sourceMessageKey:'native-message:'+e.id}:{}),text:e.text??contentText(e.message.content)});
         current.liveMessage=null;
       }
       else if ((e.type === 'native_request' || e.type === 'extension_ui_request') && typeof e.id === 'string') {
