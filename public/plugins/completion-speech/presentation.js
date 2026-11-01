@@ -10,7 +10,7 @@ export function createSpeechPresentation({request,context,digest,storage=globalT
   if(pending?.key===key)return pending.work;
   const token=++generation,id=context().id;
   const work=Promise.resolve().then(async()=>{try{const result=await request({action:'summaries',id});if(closed||token!==generation||scope()!==key)return;
-   const items=Array.isArray(result.items)?result.items.filter(item=>typeof item?.answerDigest==='string'&&/^[a-f0-9]{64}$/.test(item.answerDigest)&&typeof item.summary==='string'&&item.summary.length>0&&item.summary.length<=1000&&typeof item.completionId==='string').slice(-100):[];
+   const items=Array.isArray(result.items)?result.items.filter(item=>typeof item?.answerDigest==='string'&&/^[a-f0-9]{64}$/.test(item.answerDigest)&&(item.status==='awaiting_user'||typeof item.summary==='string'&&item.summary.length>0&&item.summary.length<=1000)&&typeof item.completionId==='string').slice(-100):[];
    cache.delete(key);cache.set(key,items);while(cache.size>5)cache.delete(cache.keys().next().value);onChange();
   }catch{/* Plugin absence/failure leaves ordinary full replies intact. */}finally{if(pending?.work===work)pending=null;}});pending={key,work};return work;
  }
@@ -21,7 +21,21 @@ export function createSpeechPresentation({request,context,digest,storage=globalT
    const node=entry.node;if((entry.k??entry.kind)!=='assistant'||!node?.isConnected||entry.status==='inProgress')continue;
    if(node.dataset.messageComplete!=='true'&&entry.status!=='completed')continue;
    const hash=entry.contentDigest??(!entry.contentTruncated?digest(entry.text||''):null);
-   const item=items.find(candidate=>candidate.answerDigest===hash);if(!item)continue;
+   const matches=items.filter(candidate=>candidate.answerDigest===hash);
+   if(matches.length!==1){
+    // Equal content cannot identify a native turn. Late metadata can reveal a
+    // second identical result after this node was folded; restore its full view.
+    if(node.dataset.speechCompletionId){const details=node.querySelector('.speech-full-information');if(details){const children=[...details.childNodes].filter(child=>child.nodeName!=='SUMMARY');node.replaceChildren(...children);}delete node.dataset.speechCompletionId;}
+    continue;
+   }
+   const item=matches[0];
+   if(item.status==='awaiting_user'){
+    if(!entry.contentTruncated&&typeof entry.text==='string'){
+     const match=/\n?\n?```coffee-speech\s*\n([\s\S]*?)\n```\s*$/.exec(entry.text);
+     try{const envelope=match&&JSON.parse(match[1]);if(envelope&&Object.keys(envelope).sort().join(',')==='profile_version,status'&&envelope.profile_version===item.profileVersion&&envelope.status==='awaiting_user')renderAnswer(node,entry.text.slice(0,match.index).trimEnd());}catch{/* Forged or malformed waiting metadata remains ordinary text. */}
+    }
+    continue;
+   }
    if(node.dataset.speechCompletionId){node.dataset.speechCompletionId=item.completionId;const existing=node.querySelector('.speech-summary');if(existing)existing.textContent=item.summary;continue;}
    const scroller=node.closest('[data-speech-scroller]'),top=scroller?.scrollTop,atTail=scroller&&scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;
    const expansionKey=JSON.stringify([key,item.answerDigest]);
