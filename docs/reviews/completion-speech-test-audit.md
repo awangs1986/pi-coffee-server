@@ -44,6 +44,12 @@ an assertion protects, rather than restating an implementation method name.
 32. 准备原生提示词不枚举会话；每次播报操作只读取一次标题快照，下一次领取会读取重命名后的标题。
 33. 相同内容对应多个结果时不猜测历史身份；出现歧义后恢复完整回答，撤销错误重播和已读证明。
 
+34. 最终追问带有明确等待用户的标记时不播报；界面只移除已授权元数据，保留问题正文。
+35. 错误版本的摘要或等待标记，以及损坏、冲突、过长或重复标记，只能触发真实状态回退，不能冒充有效摘要。
+36. 对话保留已固定的提示词版本；不支持的版本明确报告且不自动替换，也不阻止普通任务。
+37. 即使旧结果已经通过首次校验，在最终资格检查等待 I/O 时开始新一轮，旧摘要也不能写入持久状态。
+38. Web 只提供两项明确允许的插件浏览器资源，任意其他插件路径不能借此读取文件。
+
 Read these as business rules. Is any of them wrong?
 
 ## Coverage and mutation probe
@@ -65,7 +71,27 @@ before the next probe; mutation runs used a separate audit worktree.
 | Omit admission recheck after eligibility I/O | Survived | Add a race after initial admission but before commit |
 | Reacquire Codex instructions on every turn | Killed | Native request evidence protects stable reuse |
 
-Final probe and post-review claims are recorded after repair integration below.
+Final re-probe after review repair integration: **10 mutants, 0 survivors**.
+The version mismatch mutant is killed by both the wrong-version summary and
+wrong-version waiting tests. The final-admission mutant is killed by a race that
+blocks after the first admission check, then starts a new submission before commit.
+All source bytes were restored and the audit worktree remained clean. Logs:
+`/tmp/coffee-speech-final-mutant-01.log` through `-10.log`; machine-readable
+results: `/tmp/coffee-speech-final-mutations.json`.
+
+| Scope / acceptance requirements | Claims | Evidence boundary |
+| --- | --- | --- |
+| T1 opt-in, native settings, profile pin, provenance/fallback, optional failure | 17–22, 27, 31–32, 34–36 | Authenticated Host, native submission and provider requests |
+| T2 exact authorized projections, original answers, read proof and replay identity | 23–28, 33–34 | Browser controller and scoped projection API |
+| T3 bounded queue, deduplication, freshness, lifecycle and delayed captures | 8–13, 19, 28, 37 | HTTP, controlled clock, persistence/restart and browser effect |
+| T4 voices, user controls, recovery and no model/read side effects | 1–7, 14–16, 29–30 | Voice boundary, account-scoped API and UI controls |
+| T5 real browser integration, installation and served resources | 38 and all integrated journeys | Actual Chromium/Web/Host/Transfer path; candidate acceptance record |
+
+The original two coverage gaps were repaired with red tests and the focused suites
+returned green. No mutation survivor remains. Native-envelope quality on a hosted
+model, actual speaker audibility and provider cache-hit statistics are outside the
+claims of synthetic provider and speech-effect tests; they are explicitly disclosed
+rather than inferred from green tests.
 Audible platform voice quality, closed-browser behavior and unavailable provider
 cache counters cannot be proved by these assertions. Browser synthesis is a
 replaceable effect in automated checks; the real Browser/Web/Host/Transfer path
