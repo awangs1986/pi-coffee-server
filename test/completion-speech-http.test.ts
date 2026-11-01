@@ -15,15 +15,17 @@ it('persists explicit speech opt-in and browser ownership independently under ea
   await start();
   expect(await call('alice',{action:'status'})).toMatchObject({status:200,data:{enabled:false,selected:{},browserId:null,pluginVersion:'0.1.0'}});
   expect((await call('alice',{action:'configure',enabled:true})).status).toBe(200);
+  expect((await call('alice',{action:'voice',voiceURI:'Chinese voice'})).data.voiceURI).toBe('Chinese voice');
+  expect((await call('alice',{action:'voice',voiceURI:'x'.repeat(257)})).status).toBe(409);
   expect((await call('alice',{action:'select',id:'same-id',enabled:true})).data.selected['same-id']).toMatchObject({profileVersion:'0.1.0'});
   expect((await call('alice',{action:'designate',browserId:'browser-alice'})).data.browserId).toBe('browser-alice');
-  expect((await call('bob',{action:'status'})).data).toMatchObject({enabled:false,selected:{},browserId:null});
+  expect((await call('bob',{action:'status'})).data).toMatchObject({enabled:false,selected:{},browserId:null,voiceURI:''});
   expect((await call('bob',{action:'summaries',id:'same-id'})).data).toEqual({items:[]});
   expect((await call('bob',{action:'summaries',id:'not-in-scope'})).status).toBe(409);
   expect((await call('alice',{action:'select',id:'unknown',enabled:true})).status).toBe(409);
   expect((await call('alice',{action:'configure',enabled:true,user:'bob'})).status).toBe(409);
   await server!.close();await start();
-  expect((await call('alice',{action:'status'})).data).toMatchObject({enabled:true,browserId:'browser-alice',selected:{'same-id':{profileVersion:'0.1.0'}}});
+  expect((await call('alice',{action:'status'})).data).toMatchObject({enabled:true,browserId:'browser-alice',voiceURI:'Chinese voice',selected:{'same-id':{profileVersion:'0.1.0'}}});
  }finally{await server?.close();await rm(root,{recursive:true,force:true});}
 });
 
