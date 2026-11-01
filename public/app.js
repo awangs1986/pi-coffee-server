@@ -1260,6 +1260,7 @@ function openSessionMenu(session, anchor) {
   pin.disabled=!workspaceState||archived||sidebarSaving;
   pin.addEventListener('click',()=>{const pinned=!workspaceState?.sidebar?.pinned?.includes(session.id);closeMenu();void saveSidebar({action:'sidebar_pin',id:session.id,pinned});});
   menuNode.append(pin,rename, fork, del);
+  if(completionSpeech)menuNode.append(completionSpeech.taskAction({id:session.id,engine:taskEngine,archived}));
   const groups=sidebarGroups(workspaceState?.projects,workspaceState?.sidebar);
   if(workspaceState && groups.length){
     const label=el('label','sidebar-move-label','移至侧栏分组');
@@ -1579,7 +1580,7 @@ async function whoAmI(epoch, signal) {
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1604,7 +1605,7 @@ function revokeCachedIdentity(){
   connectionEpoch++;taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
-  opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
+  opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;completionSpeech?.scopeChanged();activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
 window.addEventListener('storage',event=>{
@@ -3274,9 +3275,9 @@ function submitPrompt(text, images) {
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
 void import('./completion-speech.js').then(({initCompletionSpeech})=>{
- completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),taskButton:$('#speech-task'),takeoverButton:$('#speech-browser'),toast,onPresentation:()=>{completionSpeech?.project(entries);refreshToolDownloadLinks();maybeReadCompletion();}});
+ completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),settingsButton:$('#speech-settings'),takeoverButton:$('#speech-browser'),toast,onPresentation:()=>{completionSpeech?.project(entries);refreshToolDownloadLinks();maybeReadCompletion();}});
  void completionSpeech.refresh();
-}).catch(()=>{for(const id of ['speech-master','speech-task','speech-browser']){const node=document.getElementById(id);if(node)node.hidden=true;}});
+}).catch(()=>{for(const id of ['speech-master','speech-settings','speech-browser']){const node=document.getElementById(id);if(node)node.hidden=true;}});
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
 const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.className='brand-menu-item';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
 mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});

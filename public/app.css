@@ -1206,3 +1206,10 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .mishu-submenu { position:fixed; z-index:100; width:min(240px,calc(100vw - 16px)); max-height:min(420px,70vh); overflow:auto; padding:5px; background:var(--bg); border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow-soft); }
 .mishu-submenu > button { width:100%; }
 .group-manager { max-height:calc(100dvh - 24px); max-width:calc(100vw - 16px); overflow:auto; }
+
+/* Optional completion speech controls stay compact and keyboard reachable. */
+.speech-settings { width:min(28rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto; }
+.speech-settings label { display:block;margin:.75rem 0; }
+.speech-settings select { display:block;width:100%;max-width:100%;margin-top:.35rem; }
+.speech-settings button { margin:.25rem .4rem .25rem 0; }
+.speech-settings p { font-size:.85rem;line-height:1.45; }
