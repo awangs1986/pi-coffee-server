@@ -456,7 +456,8 @@ class RpcPiSession implements PiSession {
 
   async setTurnInstructions(instructions:string|undefined):Promise<void>{
     if(!this.dispatchToken){if(instructions)throw Error('Native speech instruction slot unavailable');return;}
-    const version=instructions?'0.1.0':'off';
+    const version=instructions===undefined?'off':(await import('../../packages/completion-speech/profile.js')).speechProfileVersion(instructions);
+    if(!version)throw Error('Unsupported speech instruction profile');
     const disposition=await this.client.prompt(`/coffee-speech-control ${this.dispatchToken} ${version}`);
     if(disposition!=='handled')throw Error('Native speech instruction slot unavailable');
   }

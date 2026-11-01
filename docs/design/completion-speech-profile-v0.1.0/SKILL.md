@@ -44,9 +44,13 @@ After the complete answer, append exactly one fenced block with the language tag
 Escape JSON characters correctly. Do not wrap or reproduce the complete answer inside
 this block. Do not add commentary after it.
 
-Emit this block only for a final result or a naturally settled failure. Do not emit
-it for progress updates, approval requests, questions awaiting the user's answer,
-or deliberate cancellation. Do not claim that a block makes the task complete:
+Use the summary envelope only for a final result or a naturally settled failure.
+If your final answer instead asks the user a question or requests approval and you
+must wait for their answer before continuing, append the same terminal fenced
+block with exactly two string fields: `profile_version` set to `0.1.0`, and
+`status` set to `awaiting_user`. Do not include `summary` in this waiting envelope.
+It suppresses completion speech; preserve the actual question in the answer.
+Do not emit either envelope for progress updates or deliberate cancellation. Do not claim that a block makes the task complete:
 the Host independently determines settlement and eligibility for playback.
 
 If an exact-output requirement or a higher-priority response schema forbids an

@@ -59,8 +59,10 @@ export default function hostEnvironment(pi: ExtensionAPI): void {
   let speechInstructions:string|undefined;
   pi.registerCommand('coffee-speech-control',{description:'Host private speech instruction slot',handler:async(args,ctx)=>{
     const [token,version,...extra]=args.trim().split(/\s+/);
-    if(!process.env.PI_COFFEE_DISPATCH_CONTROL||token!==process.env.PI_COFFEE_DISPATCH_CONTROL||extra.length||!ctx.isIdle()||!['0.1.0','off'].includes(version))throw Error('Invalid speech instruction control');
-    speechInstructions=version==='off'?undefined:(await import('../../packages/completion-speech/profile.js')).SPEECH_PROFILE;
+    if(!process.env.PI_COFFEE_DISPATCH_CONTROL||token!==process.env.PI_COFFEE_DISPATCH_CONTROL||extra.length||!ctx.isIdle())throw Error('Invalid speech instruction control');
+    const instructions=version==='off'?undefined:(await import('../../packages/completion-speech/profile.js')).resolveSpeechProfile(version);
+    if(version!=='off'&&instructions===undefined)throw Error('Unsupported speech instruction profile');
+    speechInstructions=instructions;
   }});
   let runId:string|undefined,nextDispatch:{id:string;hash:string}|undefined;
   pi.registerCommand("coffee-dispatch-control",{description:"Host private dispatch correlation",handler:async(args,ctx)=>{
