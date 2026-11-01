@@ -51,5 +51,5 @@ export function createSpeechController({request,context,browserId,speech=browser
   paused=false;failedItem=null;draining=true;active=claim.item;const cancelled=new Promise(resolve=>{release=resolve;});
   try{await Promise.race([speech.speak(claim.item.text),cancelled]);return true;}catch(error){if(current(epoch,user)){paused=true;onError(error);}return false;}finally{active=null;release=undefined;draining=false;if(context()?.user===user)await finish({id,completionId});}
  }
- return {poll,cancel,pause(){paused=true;cancel();},replay,retry(){paused=false;const item=failedItem;failedItem=null;return item?replay(item.id,item.completionId):poll();},close(){closed=true;cancel();}};
+ return {poll,cancel,revoke(id){if(active?.id===id)cancel();},pause(){paused=true;cancel();},replay,retry(){paused=false;const item=failedItem;failedItem=null;return item?replay(item.id,item.completionId):poll();},close(){closed=true;cancel();}};
 }

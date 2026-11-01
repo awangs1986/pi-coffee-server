@@ -1241,7 +1241,7 @@ function openSessionMenu(session, anchor) {
   del.addEventListener('click', async () => {
     closeMenu();
     if(workspaceState) {
-      try {await workspaceApi({action:archived ? 'restore' : 'archive',id:session.id});await loadWorkspace();if(!archived && activeId===session.id)newSession(false);} catch(e) {toast(e.message);}return;
+      try {if(!archived)completionSpeech?.revoke(session.id);await workspaceApi({action:archived ? 'restore' : 'archive',id:session.id});await loadWorkspace();if(!archived && activeId===session.id)newSession(false);} catch(e) {toast(e.message);}return;
     }
     await deleteSession(session);
   });
@@ -1249,7 +1249,7 @@ function openSessionMenu(session, anchor) {
     const remove=el('button','popitem danger','永久删除…');remove.addEventListener('click',async()=> {
       closeMenu();const confirmation=await askModal({title:'永久删除归档对话',text:`将永久删除原生对话历史和本地目录（包括附件、搜索结果、图片及产物）：\n${workspaceState.conversations.find(c=>c.id===session.id)?.cwd || '旧对话历史；旧目录保留'}\nChat 本地文件没有 Git 备份。Work 未提交/未推送代码会阻止删除；远端分支、PR、仓库和旧全局数据保留。运行中的任务须先结束。输入 ID 确认：${session.id}`,input:'',okLabel:'永久删除',danger:true});
       if(confirmation!==session.id)return;
-      try {await workspaceApi({action:'delete',id:session.id,confirmation,includeLocalFiles:true});await loadWorkspace();send({v:1,type:'list_sessions'});}catch(e){toast(e.message);}
+      try {completionSpeech?.revoke(session.id);await workspaceApi({action:'delete',id:session.id,confirmation,includeLocalFiles:true});await loadWorkspace();send({v:1,type:'list_sessions'});}catch(e){toast(e.message);}
     });menuNode.append(remove);
   }
   rename.disabled ||= forkControls.busy(session.id);del.disabled ||= forkControls.busy(session.id);
@@ -1354,7 +1354,7 @@ async function renameSession(session) {
 async function deleteSession(session) {
   const ok = await askModal({ title: '删除这个对话？', text: '会从 User VM 的会话存储中永久删除「' + sessionTitle(session) + '」，不可恢复。', okLabel: '删除', danger: true });
   if (!ok) return;
-  invalidatePreview(session.id);if(session.id===activeId)historyReady=false;
+  completionSpeech?.revoke(session.id);invalidatePreview(session.id);if(session.id===activeId)historyReady=false;
   send({ v: 1, type: 'delete_session', requestId: requestId('delete'), sessionId: session.id });
   if (session.id === activeId) newSession(false);
   toast('已删除');
