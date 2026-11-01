@@ -3,9 +3,10 @@ export {PROFILE_VERSION,SPEECH_PROFILE};
 export const PLUGIN_VERSION='0.1.0';
 export interface SpeechSelection {enabled:boolean;profileVersion:string;}
 export interface SpeechBrief {id:string;completionId:string;profileVersion:string;summary?:string;completedAt:string;outcome:'result'|'failure';}
-export interface SpeechState {enabled:boolean;browserId:string|null;selected:Record<string,SpeechSelection>;completions:Record<string,SpeechBrief>;attempts:Record<string,string>;}
+export interface SpeechProjection {completionId:string;profileVersion:string;summary:string;answerDigest:string;completedAt:string;}
+export interface SpeechState {projections?:Record<string,SpeechProjection[]>;enabled:boolean;browserId:string|null;selected:Record<string,SpeechSelection>;completions:Record<string,SpeechBrief>;attempts:Record<string,string>;}
 export interface SpeechTask {id:string;title:string;engine:string;archived?:boolean;completionId?:string;completedAt?:string;readCompletionId?:string;runStatus?:string;}
-export interface SpeechAdapter {load():Promise<SpeechState|undefined>;save(state:SpeechState):Promise<void>;task(id:string):Promise<SpeechTask|undefined>;now?():number;}
+export interface SpeechAdapter {load():Promise<SpeechState|undefined>;save(state:SpeechState):Promise<void>;task(id:string):Promise<SpeechTask|undefined>;now?():number;digest?(text:string):Promise<string>;}
 export function parseBrief(text:string,version=PROFILE_VERSION):{summary:string;fullText:string}|undefined {
  const matches=[...text.matchAll(/^```coffee-speech\s*\n([\s\S]*?)\n```\s*$/gm)];
  if(matches.length!==1)return;
@@ -23,8 +24,9 @@ export class CompletionSpeech {
  async status(){await this.tail;const s=await this.loaded();return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,selected:structuredClone(s.selected)};}
  async handle(input:Record<string,unknown>){return this.serial(async()=>{
   const s=await this.loaded(),action=input.action;
-  const allowed:Record<string,string[]>={status:['action'],configure:['action','enabled'],select:['action','id','enabled'],designate:['action','browserId'],pending:['action','browserId'],claim:['action','browserId','id','completionId']};
+  const allowed:Record<string,string[]>={summaries:['action','id'],status:['action'],configure:['action','enabled'],select:['action','id','enabled'],designate:['action','browserId'],pending:['action','browserId'],claim:['action','browserId','id','completionId']};
   if(typeof action!=='string'||!allowed[action]||Object.keys(input).some(k=>!allowed[action].includes(k)))throw Error('Invalid speech request');
+  if(action==='summaries'){if(typeof input.id!=='string'||!await this.adapter.task(input.id))throw Error('Conversation unavailable');return {items:structuredClone((s.projections?.[input.id]??[]).filter(v=>this.now()-Date.parse(v.completedAt)<=86400000))};}
   if(action==='status')return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,selected:structuredClone(s.selected)};
   if(action==='configure'){if(typeof input.enabled!=='boolean')throw Error('Invalid speech switch');s.enabled=input.enabled;}
   if(action==='select'){
@@ -51,6 +53,11 @@ export class CompletionSpeech {
  async prepare(id:string):Promise<{profileVersion:string;instructions:string}|undefined>{await this.tail;const s=await this.loaded(),task=await this.adapter.task(id),selection=s.selected[id];if(!s.enabled||!selection?.enabled||!task||task.archived||!['pi','codex'].includes(task.engine)||selection.profileVersion!==PROFILE_VERSION)return;return {profileVersion:selection.profileVersion,instructions:SPEECH_PROFILE};}
  async settled(id:string,profileVersion:string,text:string,failure:boolean){return this.serial(async()=>{
   const s=await this.loaded(),task=await this.adapter.task(id);if(!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
+  const brief=parseBrief(text,profileVersion);
+  if(brief&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,summary:brief.summary,answerDigest,completedAt:task.completedAt}];
+   const cached=Object.entries(s.projections).flatMap(([key,values])=>values.map(value=>({key,value}))).filter(({value})=>this.now()-Date.parse(value.completedAt)<=86400000).sort((a,b)=>b.value.completedAt.localeCompare(a.value.completedAt)).slice(0,100);
+   s.projections={};for(const {key,value} of cached)(s.projections[key]??=[]).push(value);
+  }
   s.completions[id]={id,completionId:task.completionId,profileVersion,completedAt:task.completedAt,outcome:failure?'failure':'result',...(parseBrief(text,profileVersion)?{summary:parseBrief(text,profileVersion)!.summary}:{})};
   const entries=Object.values(s.completions).sort((a,b)=>b.completedAt.localeCompare(a.completedAt));s.completions=Object.fromEntries(entries.filter(v=>this.now()-Date.parse(v.completedAt)<=86400000).slice(0,100).map(v=>[v.id,v]));await this.adapter.save(s);
  });}
@@ -68,7 +75,7 @@ export class SpeechTurnCapture {
   if(value.type==='message_end'&&value.message?.role==='assistant'){
    const content=value.message.content;
    run.text=typeof value.text==='string'?value.text:typeof content==='string'?content:Array.isArray(content)?content.filter((p:Record<string,unknown>)=>p.type==='text'&&typeof p.text==='string').map((p:Record<string,unknown>)=>p.text).join(''):'';
-   run.waiting=false;run.text=run.text.slice(-32000);run.failure=value.message.stopReason==='error'||Boolean(value.message.errorMessage);
+   run.waiting=false;run.failure=value.message.stopReason==='error'||Boolean(value.message.errorMessage);
   }
   if(['agent_interrupted','run_interrupted'].includes(value.type)){this.turns.delete(id);return;}
   if(['agent_settled','run_completed'].includes(value.type)){
