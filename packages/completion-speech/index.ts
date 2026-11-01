@@ -1,19 +1,24 @@
-import {PROFILE_VERSION,SPEECH_PROFILE} from './profile.js';
+import {PROFILE_VERSION,SPEECH_PROFILE,resolveSpeechProfile} from './profile.js';
 export {PROFILE_VERSION,SPEECH_PROFILE};
 export const PLUGIN_VERSION='0.1.0';
 export interface SpeechSelection {enabled:boolean;profileVersion:string;}
 export interface SpeechBrief {id:string;completionId:string;profileVersion:string;summary?:string;completedAt:string;outcome:'result'|'failure';}
-export interface SpeechProjection {completionId:string;profileVersion:string;summary:string;answerDigest:string;completedAt:string;}
+export interface SpeechProjection {completionId:string;profileVersion:string;summary?:string;status?:'awaiting_user';answerDigest:string;completedAt:string;}
 export interface SpeechState {projections?:Record<string,SpeechProjection[]>;enabled:boolean;browserId:string|null;voiceURI?:string;selected:Record<string,SpeechSelection>;completions:Record<string,SpeechBrief>;attempts:Record<string,string>;active?:{id:string;completionId:string;browserId:string;startedAt:number;replay?:boolean};}
 export interface SpeechTask {id:string;title:string;engine:string;archived?:boolean;completionId?:string;completedAt?:string;readCompletionId?:string;runStatus?:string;}
 export interface SpeechAdapter {load():Promise<SpeechState|undefined>;save(state:SpeechState):Promise<void>;task(id:string):Promise<SpeechTask|undefined>;now?():number;digest?(text:string):Promise<string>;}
-export function parseBrief(text:string,version=PROFILE_VERSION):{summary:string;fullText:string}|undefined {
+export type SpeechEnvelope={kind:'summary';summary:string;fullText:string}|{kind:'awaiting_user';fullText:string};
+export function parseSpeechEnvelope(text:string,version=PROFILE_VERSION):SpeechEnvelope|undefined {
  const matches=[...text.matchAll(/^```coffee-speech\s*\n([\s\S]*?)\n```\s*$/gm)];
  if(matches.length!==1)return;
  const match=matches[0];if(text.slice(match.index!+match[0].length).trim())return;
- try{const data=JSON.parse(match[1]);if(!data||Object.keys(data).sort().join(',')!=='profile_version,summary'||data.profile_version!==version||typeof data.summary!=='string'||!data.summary.trim()||data.summary.length>1000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(data.summary))return;
- return {summary:data.summary.trim(),fullText:text.slice(0,match.index).trimEnd()};}catch{return;}
+ try{const data=JSON.parse(match[1]);if(!data||data.profile_version!==version)return;const fullText=text.slice(0,match.index).trimEnd();
+  if(Object.keys(data).sort().join(',')==='profile_version,status'&&data.status==='awaiting_user')return {kind:'awaiting_user',fullText};
+  if(Object.keys(data).sort().join(',')!=='profile_version,summary'||typeof data.summary!=='string'||!data.summary.trim()||data.summary.length>1000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(data.summary))return;
+  return {kind:'summary',summary:data.summary.trim(),fullText};
+ }catch{return;}
 }
+export function parseBrief(text:string,version=PROFILE_VERSION):{summary:string;fullText:string}|undefined {const envelope=parseSpeechEnvelope(text,version);return envelope?.kind==='summary'?{summary:envelope.summary,fullText:envelope.fullText}:undefined;}
 /** Owns only authorized IDs supplied by its adapter; never discovers native accounts. */
 export class CompletionSpeech {
  private state?:SpeechState;private tail:Promise<unknown>=Promise.resolve();
@@ -48,14 +53,15 @@ export class CompletionSpeech {
   this.prunePresentation(s);return items;
  }
 
+ private selections(s:SpeechState){return Object.fromEntries(Object.entries(s.selected).map(([id,choice])=>[id,{...choice,...(!resolveSpeechProfile(choice.profileVersion)?{profileStatus:'unsupported' as const}:{})}]));}
  private serial<T>(run:()=>Promise<T>):Promise<T>{const next=this.tail.then(run);this.tail=next.catch(()=>undefined);return next;}
- async status(){await this.tail;const s=await this.loaded();return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:structuredClone(s.selected)};}
+ async status(){await this.tail;const s=await this.loaded();return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:this.selections(s)};}
  async handle(input:Record<string,unknown>){return this.serial(async()=>{
   const s=await this.loaded(),action=input.action;
   const allowed:Record<string,string[]>={summaries:['action','id'],status:['action'],configure:['action','enabled'],select:['action','id','enabled'],designate:['action','browserId'],pending:['action','browserId'],claim:['action','browserId','id','completionId'],finish:['action','browserId','id','completionId'],voice:['action','voiceURI'],replay:['action','browserId','id','completionId']};
   if(typeof action!=='string'||!allowed[action]||Object.keys(input).some(k=>!allowed[action].includes(k)))throw Error('Invalid speech request');
   if(action==='summaries'){if(typeof input.id!=='string'||!await this.adapter.task(input.id))throw Error('Conversation unavailable');this.prunePresentation(s);await this.adapter.save(s);return {items:structuredClone(s.projections?.[input.id]??[])};}
-  if(action==='status')return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:structuredClone(s.selected)};
+  if(action==='status')return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:this.selections(s)};
   if(action==='voice'){if(typeof input.voiceURI!=='string'||input.voiceURI.length>256||/[\u0000-\u001f]/.test(input.voiceURI))throw Error('Invalid speech voice');s.voiceURI=input.voiceURI;}
   if(action==='replay'){
    if(typeof input.id!=='string'||typeof input.completionId!=='string'||typeof input.browserId!=='string')throw Error('Invalid replay request');
@@ -82,18 +88,18 @@ export class CompletionSpeech {
    s.attempts[item.id]=item.completionId;s.active={id:item.id,completionId:item.completionId,browserId:input.browserId,startedAt:this.now()};await this.adapter.save(s);return {claimed:true,item};
   }
 
-  await this.adapter.save(s);return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:structuredClone(s.selected)};
+  await this.adapter.save(s);return {pluginVersion:PLUGIN_VERSION,enabled:s.enabled,browserId:s.browserId,voiceURI:s.voiceURI??'',selected:this.selections(s)};
  });}
- async prepare(id:string):Promise<{profileVersion:string;instructions:string}|undefined>{await this.tail;const s=await this.loaded(),selection=s.selected[id];if(!s.enabled||!selection?.enabled)return;const task=await this.adapter.task(id);if(!task||task.archived||!['pi','codex'].includes(task.engine)||selection.profileVersion!==PROFILE_VERSION)return;return {profileVersion:selection.profileVersion,instructions:SPEECH_PROFILE};}
+ async prepare(id:string):Promise<{profileVersion:string;instructions:string}|undefined>{await this.tail;const s=await this.loaded(),selection=s.selected[id];if(!s.enabled||!selection?.enabled)return;const task=await this.adapter.task(id);if(!task||task.archived||!['pi','codex'].includes(task.engine))return;const instructions=resolveSpeechProfile(selection.profileVersion);if(!instructions)return;return {profileVersion:selection.profileVersion,instructions};}
  async settled(id:string,profileVersion:string,text:string,failure:boolean,admit:()=>boolean=()=>true){return this.serial(async()=>{
-  const s=structuredClone(await this.loaded()),task=await this.adapter.task(id);if(!admit()||!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
-  const brief=parseBrief(text,profileVersion);
-  if(brief&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,summary:brief.summary,answerDigest,completedAt:task.completedAt}];
-   const cached=Object.entries(s.projections).flatMap(([key,values])=>values.map(value=>({key,value}))).filter(({value})=>this.now()-Date.parse(value.completedAt)<=86400000).sort((a,b)=>b.value.completedAt.localeCompare(a.value.completedAt)).slice(0,100);
-   s.projections={};for(const {key,value} of cached)(s.projections[key]??=[]).push(value);
+  const s=structuredClone(await this.loaded()),task=await this.adapter.task(id);if(!resolveSpeechProfile(profileVersion)||!admit()||!task||task.archived||task.runStatus!=='settled'||!task.completionId||!task.completedAt)return;
+  const envelope=parseSpeechEnvelope(text,profileVersion),brief=envelope?.kind==='summary'?envelope:undefined;
+  if(envelope&&this.adapter.digest){const answerDigest=await this.adapter.digest(text);s.projections??={};s.projections[id]=[...(s.projections[id]??[]).filter(v=>v.completionId!==task.completionId),{completionId:task.completionId,profileVersion,...(brief?{summary:brief.summary}:{status:'awaiting_user' as const}),answerDigest,completedAt:task.completedAt}];
+
   }
+  if(envelope?.kind==='awaiting_user'){delete s.completions[id];s.attempts[id]=task.completionId;this.prunePresentation(s);if(!admit())return;this.state=s;await this.adapter.save(s);return;}
   if(!s.enabled||!s.selected[id]?.enabled)s.attempts[id]=task.completionId;
-  s.completions[id]={id,completionId:task.completionId,profileVersion,completedAt:task.completedAt,outcome:failure?'failure':'result',...(parseBrief(text,profileVersion)?{summary:parseBrief(text,profileVersion)!.summary}:{})};
+  s.completions[id]={id,completionId:task.completionId,profileVersion,completedAt:task.completedAt,outcome:failure?'failure':'result',...(brief?{summary:brief.summary}:{})};
   await this.eligible(s);if(!admit())return;this.state=s;await this.adapter.save(s);
  });}
 }

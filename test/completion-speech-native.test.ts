@@ -15,6 +15,7 @@ it('keeps the opted-in Pi profile in one stable provider instruction slot while 
  let session:Awaited<ReturnType<typeof factory.create>>|undefined;let settled=0;
  try{
   session=await factory.create({sessionId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'});session.onEvent((event:any)=>{if(event.type==='agent_settled')settled++;});
+  await expect(session.setTurnInstructions?.('unregistered custom instruction')).rejects.toThrow('Unsupported speech instruction profile');
   for(let turn=0;turn<3;turn++){await session.setTurnInstructions?.(turn===2?undefined:SPEECH_PROFILE);await session.prompt('request '+turn);await expect.poll(()=>settled,{timeout:10000}).toBe(turn+1);}
   expect(requests).toHaveLength(3);
   const system=(request:any)=>request.messages.filter((v:any)=>v.role==='system');
