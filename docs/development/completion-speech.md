@@ -14,6 +14,10 @@ owns account authorization, task persistence, current completion/read identities
 native instruction slots and UI mounting. No daemon, general plugin framework,
 auxiliary summary conversation or MISHU role was added.
 
+Projection requires both an immutable native message key and the digest of the
+entire answer, preserved across raw history, bounded index pages and disposable
+browser caches. Legacy answers without that binding retain their complete view.
+
 Only **Pi and Codex** advertise this feature. Claude, Cursor and Grok task switches
 are disabled; they are not accepted as supporting the brief protocol. The host
 accepts one terminal `coffee-speech` JSON fence from the current opted-in
@@ -89,18 +93,18 @@ download bytes are verified. Evidence contains screenshots, HTTP contracts,
 criterion results, native input counts, page errors and request cancellations.
 Every created service/browser is closed and temporary fixture files are reclaimed.
 
-Observed candidate evidence (behavior commit `f80b197`, 2026-11-01):
+Observed candidate evidence (behavior commit `f5a061b`, 2026-11-01):
 
-- `/tmp/verify-completion-speech-final-v1/result.json`: protocol 1, fourteen
+- `/tmp/verify-completion-speech-cache-v1/result.json`: protocol 1, fourteen
   observed criteria passed, four explicit user/native prompts, no extra summary
   prompt and no page errors. Screenshots and HTTP contracts share that directory.
-- `/tmp/verify-completion-speech-final-v2/result.json`: the same fourteen criteria
+- `/tmp/verify-completion-speech-cache-v2/result.json`: the same fourteen criteria
   passed through indexed protocol 2, with four explicit native prompts and zero
   page errors. Request cancellations were navigation-related `ERR_ABORTED` only.
-- `/tmp/verify-completion-speech-package-final/standalone.json`: final tarball
+- `/tmp/verify-completion-speech-package-mvp/standalone.json`: final tarball
   installed in a separate consumer and accepted a brief with a fake authorized
   adapter, without Coffee/MISHU/native CLIs or model calls. Artifact SHA256:
-  `a5b7602648006432d10d7fb178f903c357be72ff5ab3240c8d8e785060dd99bd`.
+  `e7b96c73cb056631a798c06441b49a1659462215a66301aa46a9a16fd0fac93b`.
 - `/tmp/coffee-speech-native-slot-evidence.json`: separate installed Codex CLI
   0.159.1 no-model instruction-slot smoke preserved model/thinking, zero messages
   and model calls. This is protocol compatibility, not model-summary-quality proof.
