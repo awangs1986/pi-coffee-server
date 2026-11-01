@@ -22,3 +22,11 @@ it('preserves native source identity and whole-answer digest through bounded nat
  const pager=new RecentHistoryPager({getHistoryBinding:()=> 'synthetic-native',getHistoryPage:async()=>({entries:[{kind:'assistant',id:'native',sourceMessageKey:'native-message:native',text}],leafId:'native'})} as any);
  try{const page=await pager.page('compact');expect(page.entries[0]).toMatchObject({sourceMessageKey:'native-message:native',contentDigest:createHash('sha256').update(text).digest('hex')});expect((page.entries[0] as any).text.length).toBeLessThan(text.length);}finally{pager.close();}
 });
+
+it('binds Pi multi-block assistant text to the same complete body used by native history and browser rendering',async()=>{
+ const content=[{type:'text',text:'Complete.'},{type:'text',text:'```coffee-speech\n{"profile_version":"0.1.0","summary":"Done."}\n```'}],message={role:'assistant',timestamp:1793534400001,content};
+ const task={id:'task',engine:'pi',title:'Task',runStatus:'settled',completionId:'c',completedAt:new Date().toISOString()};
+ const policy=new CompletionSpeech({load:async()=>undefined,save:async()=>{},task:async()=>task,digest:async value=>createHash('sha256').update(value).digest('hex')});await policy.handle({action:'configure',enabled:true});await policy.handle({action:'select',id:'task',enabled:true});
+ const capture=new SpeechTurnCapture(policy);await capture.prepare('task');capture.event('task',{type:'message_end',message});await capture.event('task',{type:'agent_settled'})?.();
+ const history=projectHistory([{type:'message',id:'native-entry',message}],null);const brief=(await policy.handle({action:'summaries',id:'task'}) as any).items[0];expect(brief?.answerDigest).toBe(createHash('sha256').update((history.entries[0] as any).text).digest('hex'));
+});
