@@ -156,10 +156,17 @@ provenance. Waiting metadata may be stripped only from the authenticated exact
 answer projection; the complete question stays visible, with no speech summary,
 replay action or summary-read proof. Native history is never rewritten.
 
-When multiple recorded results share an identical answer digest and there is no
-trustworthy entry identity, retain the ordinary complete answer instead of guessing
-which completion its summary or replay belongs to. Repeated content must not
-acknowledge or replay a different result.
+Bind each captured presentation record to both an immutable native message key
+and the complete answer digest. Pi supplies its native assistant-message timestamp;
+Codex supplies its native item ID. Preserve that key through native history,
+indexed/recent pages, live rendering and the bounded browser display cache. It is
+Host/display metadata and must never be added to the fixed Skill prompt.
+
+An answer digest alone cannot identify a turn, including after cache expiry or
+when viewing only an older history page. Missing, mismatched or ambiguous native
+identity retains the ordinary complete answer instead of guessing a summary or
+replay completion. Repeated content must never acknowledge or replay a different
+result. Canonical text joining must match native history for multi-block replies.
 
 ### Cache-stable summary Skill injection
 
