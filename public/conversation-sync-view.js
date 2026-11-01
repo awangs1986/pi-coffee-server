@@ -101,7 +101,7 @@ export class ConversationSyncView {
           else if(op.type==='appendText'){
             const item=target.get(op.entityId),total=op.payload.baseLength+op.payload.text.length;
             const text=boundedTextSlice((item.text??item.result??'')+op.payload.text,{tail:true,maxBytes:MAX_ENTRY}).text;
-            target.set(op.entityId,{...item,text,...(item.kind==='tool'?{result:text}:{}),entityRevision:op.entityRevision,contentLength:total,contentOffset:total-text.length,contentTruncated:text.length<total});changed=true;
+            target.set(op.entityId,{...item,text,contentDigest:undefined,...(item.kind==='tool'?{result:text}:{}),entityRevision:op.entityRevision,contentLength:total,contentOffset:total-text.length,contentTruncated:text.length<total});changed=true;
           }
         }
         this.olderBuffer=[...buffered.values()];
