@@ -26,4 +26,6 @@ notification concerns. This decision preserves the existing Server/Pi-only sourc
 boundary; it does not move native adapters into a speech package.
 
 The owner accepted the MVP and requested the formal [specification](../spec/completion-speech.md).
-No implementation or deployment is included.
+The Server 0.67.0 candidate implements independently versioned package 0.1.0.
+See the [integration and acceptance guide](../development/completion-speech.md).
+Source delivery is distinct from production activation and actual device listening.

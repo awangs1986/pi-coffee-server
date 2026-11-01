@@ -12,6 +12,7 @@ for dated runtime evidence.
 | Change | Source | Mirror | Entry |
 | --- | --- | --- | --- |
 | Web UI, gateway, Host, Relay, native Pi/Codex/Claude/Cursor/Grok adapters | [pi-coffee-server](https://github.com/awangs1986/pi-coffee-server) | [awangs/pi-coffee-server](http://gitea:3000/awangs/pi-coffee-server) | This repository's AGENTS.md and docs/index.md |
+| Independent cross-engine completion speech | This Server repository, `packages/completion-speech` | Same path in Server mirror | [Package and acceptance guide](docs/development/completion-speech.md), package.json, fixed Skill |
 | Pi plugins and releases | [pi-coffee](https://github.com/awangs1986/pi-coffee) | [awangs/pi-coffee](http://gitea:3000/awangs/pi-coffee) | [Canonical package map](https://github.com/awangs1986/pi-coffee/blob/main/REPOSITORIES.md) |
 | Harness prompts, Chat/Work, Git, discovery | [packages/harness](https://github.com/awangs1986/pi-coffee/tree/main/packages/harness) | Same path in Pi mirror | README, package.json, CHANGELOG.md |
 | LSP tool, diagnostics, CLI and Skill | [packages/lsp](https://github.com/awangs1986/pi-coffee/tree/main/packages/lsp) | Same path in Pi mirror | README, package.json, CHANGELOG.md |
