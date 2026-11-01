@@ -46,6 +46,7 @@ export class RecentHistoryPager {
    const original=JSON.parse(b.records[index-1]),field=original.kind==='tool'?'result':'text';
    const text=String(original[field]??'');let short=text.slice(0,8192);
    const entry:any={id:original.id,kind:original.kind,[field]:short,...(original.at?{at:original.at}:{}),...(original.imageCount?{imageCount:original.imageCount}:{}),...(original.kind==='tool'?{name:String(original.name??'').slice(0,256),isError:Boolean(original.isError)}:{})};
+   if(original.kind==='assistant'&&typeof original.sourceMessageKey==='string')entry.sourceMessageKey=original.sourceMessageKey;
    if(original.kind==='assistant')entry.contentDigest=createHash('sha256').update(text).digest('hex');
    if(typeof entry.id!=='string'||!entry.id||entry.id.length>1024||!['user','assistant','tool','note'].includes(entry.kind))throw Error('invalid_history_entry');
    if(original.kind==='tool'&&original.args!==undefined){const encoded=JSON.stringify(original.args);entry.args=Buffer.byteLength(encoded)<=1024?original.args:{preview:encoded.slice(0,256)};}

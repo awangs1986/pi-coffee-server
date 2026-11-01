@@ -794,7 +794,7 @@ export function projectHistory(rawEntries: unknown[], leafId: string | null, opt
         out.push({ kind: "user", id, ...stamp, text: textOf(content), ...imageCount(content) });
       } else if (message.role === "assistant") {
         const text = textOf(content);
-        if (text.length > 0) out.push({ kind: "assistant", id, ...stamp, text });
+        if (text.length > 0) out.push({ kind: "assistant", id, ...stamp, ...(typeof message.timestamp==='number'&&Number.isSafeInteger(message.timestamp)?{sourceMessageKey:`pi-message:${message.timestamp}`} : {}),text });
         for (const block of blocksOf(content)) {
           if (block.type !== "toolCall" && block.type !== "tool_call") continue;
           const callId = stringOr(block.toolCallId, stringOr(block.id, `${id}-tool-${toolsByCallId.size}`));

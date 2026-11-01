@@ -2234,7 +2234,7 @@ function handleEvent(event,{replayed=false}={}) {
   if (type === 'transfer_progress' || type === 'transfer_complete' || type === 'transfer_failed') { handleTransferEvent(event); return; }
   if(type==='message_end'&&event.message?.role==='assistant'&&event.message.stopReason!=='error'){
     const text=typeof event.text==='string'?event.text:customMessageText(event.message.content);
-    if(text){const entry=currentAssistant||pushAssistant('');entry.text=text;scheduleEntryRender(entry,false,true);currentAssistant=undefined;}
+    if(text){const entry=currentAssistant||pushAssistant('');entry.text=text;entry.sourceMessageKey=typeof event.message.timestamp==='number'&&Number.isSafeInteger(event.message.timestamp)?'pi-message:'+event.message.timestamp:typeof event.id==='string'?'native-message:'+event.id:undefined;scheduleEntryRender(entry,false,true);currentAssistant=undefined;}
     return;
   }
   if (type === 'message_end' && event.message && event.message.stopReason === 'error') { pushNote('模型调用失败：' + (event.message.errorMessage || '未知错误'), true); offerContextRecovery(event.message.errorMessage); return; }

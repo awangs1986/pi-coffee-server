@@ -241,8 +241,8 @@ describe('legacy snapshot handoff regression',()=>{
 it('provides a revision-bound whole-answer digest with bounded assistant pages without reading a native session',async()=>{
  const {createHash}=await import('node:crypto');const {factory}=fake();const answer='A'.repeat(20000)+' END';
  const host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});servers.push(host);await host.start();
- await primeV2(host,factory,[{id:'answer',kind:'assistant',text:answer}]);
+ await primeV2(host,factory,[{id:'answer',kind:'assistant',sourceMessageKey:'native-message:answer',text:answer}]);
  const response=await fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/page`,{headers:{authorization:'Bearer secret'}});const page=await response.json();
- expect(page.entries[0]).toMatchObject({contentTruncated:true,contentDigest:createHash('sha256').update(answer).digest('hex')});expect(page.entries[0].text.length).toBeLessThan(8192);
+ expect(page.entries[0]).toMatchObject({sourceMessageKey:'native-message:answer',contentTruncated:true,contentDigest:createHash('sha256').update(answer).digest('hex')});expect(page.entries[0].text.length).toBeLessThan(8192);
  expect(factory.create).not.toHaveBeenCalled();
 });

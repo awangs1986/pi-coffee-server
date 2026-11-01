@@ -82,7 +82,7 @@ export interface SessionSummary {
  */
 export type HistoryEntry =
   | { kind: "user"; id: string; at?: string; text: string; imageCount?: number }
-  | { kind: "assistant"; id: string; at?: string; text: string }
+  | { kind: "assistant"; id: string; sourceMessageKey?: string; at?: string; text: string }
   | { kind: "tool"; id: string; at?: string; name: string; args: JsonValue; result?: string; isError?: boolean; diff?: string }
   | { kind: "note"; id: string; at?: string; text: string };
 

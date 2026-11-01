@@ -15,15 +15,15 @@ it('publishes only captured opted-in briefs bound to the entire answer, and reta
  try{
   await speech.handle({action:'configure',enabled:true});await speech.handle({action:'select',id:'task',enabled:true});
   await store.markRun('task','running');await speech.prepare('task');
-  speech.event('task',{type:'message_end',text:answer,message:{role:'assistant'}});
+  speech.event('task',{type:'message_end',id:'captured-native-answer',text:answer,message:{role:'assistant'}});
   const done=speech.event('task',{type:'agent_settled'});await store.recordRunStatus('task','settled');await done?.();
   const value=await speech.handle({action:'summaries',id:'task'}) as any;
-  expect(value.items).toHaveLength(1);expect(value.items[0]).toMatchObject({summary,answerDigest:createHash('sha256').update(answer).digest('hex')});
+  expect(value.items).toHaveLength(1);expect(value.items[0]).toMatchObject({summary,sourceMessageKey:'native-message:captured-native-answer',answerDigest:createHash('sha256').update(answer).digest('hex')});
   expect(JSON.stringify(value)).not.toContain('private body');
   await speech.handle({action:'configure',enabled:false});
   expect((await speech.handle({action:'summaries',id:'task'}) as any).items).toEqual(value.items);
   await expect(speech.handle({action:'summaries',id:'not-in-scope'})).rejects.toThrow();
-  await store.markRun('task','running');await speech.prepare('task');speech.event('task',{type:'message_end',text:answer,message:{role:'assistant'}});const off=speech.event('task',{type:'agent_settled'});await store.recordRunStatus('task','settled');await off?.();
+  await store.markRun('task','running');await speech.prepare('task');speech.event('task',{type:'message_end',id:'captured-native-answer',text:answer,message:{role:'assistant'}});const off=speech.event('task',{type:'agent_settled'});await store.recordRunStatus('task','settled');await off?.();
   expect((await speech.handle({action:'summaries',id:'task'}) as any).items).toEqual(value.items);
  }finally{await rm(root,{recursive:true,force:true});}
 });

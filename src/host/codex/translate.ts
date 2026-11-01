@@ -112,7 +112,7 @@ export function projectTurns(turns: Obj[]): HistoryEntry[] {
           break;
         }
         case "agentMessage":
-          entries.push({ kind: "assistant", id, ...stamp, text: String(item.text ?? "") });
+          entries.push({ kind: "assistant", id, sourceMessageKey:`native-message:${id}`, ...stamp, text: String(item.text ?? "") });
           break;
         case "plan": {
           const text = String(item.text ?? "");
