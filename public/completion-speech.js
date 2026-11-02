@@ -17,7 +17,7 @@ export function initCompletionSpeech({request,context,masterButton,settingsButto
  const preview=node('button','试听'),retry=node('button','启用或重试语音'),done=node('button','关闭');for(const b of [preview,retry,done])b.type='button';
  const recoveryList=node('div');recoveryList.className='speech-recovery-list';const login=node('a','重新登录');login.href='/auth/login';login.hidden=true;dialog.append(title,label,preview,retry,errorText,recoveryList,login,notice,done);document.body.append(dialog);
  const showDialog=()=>{if(!dialog.open){if(dialog.showModal)dialog.showModal();else dialog.setAttribute('open','');}};
- const error=err=>{if(err.kind==='cancelled')return;failed=true;errorText.textContent=err.message;login.hidden=err.kind!=='authentication';takeoverButton.hidden=false;takeoverButton.textContent=err.kind==='audio'?'启用或重试语音':err.kind==='authentication'?'播报需要重新登录':err.kind==='compatibility'?'更新播报组件':'播报连接恢复中';};
+ const error=err=>{if(err.kind==='cancelled')return;failed=true;errorText.textContent=err.message;login.hidden=err.kind!=='authentication';takeoverButton.hidden=false;takeoverButton.textContent=({audio:'启用或重试语音',authentication:'播报需要重新登录',authorization:'播报权限不足',unavailable:'播报组件不可用',compatibility:'更新播报组件'})[err.kind]??'播报连接恢复中';};
  const connection=value=>{
   if(value.diagnostics){
    const latest=new Map();for(const d of value.diagnostics)latest.set(JSON.stringify([d.id,d.completionId]),d);recoveryList.replaceChildren();

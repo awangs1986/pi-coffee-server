@@ -10,3 +10,7 @@ it('offers explicit replay for an uncertain generic result without any summary o
  const ui=mount({request:(body:any)=>f.request(body)});
  try{await ui.mounted.refresh();const replay=document.querySelector<HTMLButtonElement>('.speech-recovery-replay');expect(replay).not.toBeNull();replay!.click();await vi.waitFor(()=>expect(ui.speech.speak).toHaveBeenCalledTimes(1));expect(ui.speech.speak).toHaveBeenCalledWith(expect.stringContaining('确认结果'));}finally{ui.mounted.close();}
 });
+it.each([[403,'播报权限不足'],[503,'播报组件不可用']])('distinguishes permanent HTTP %s failures from a network reconnection',async(status,label)=>{
+ const ui=mount({request:async()=>{throw Object.assign(Error('Denied'),{status,...(status===503?{code:'plugin_unavailable'}:{})});}});
+ try{await ui.mounted.refresh();expect(ui.takeoverButton.textContent).toBe(label);expect(document.querySelector<HTMLAnchorElement>('dialog a')!.hidden).toBe(true);}finally{ui.mounted.close();}
+});
