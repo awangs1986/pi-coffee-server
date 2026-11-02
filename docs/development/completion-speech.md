@@ -1,10 +1,14 @@
 # Completion speech MVP: integration and acceptance
 
-Candidate: Server 0.69.0 and `@pi-coffee/completion-speech` 0.1.1, profile
+Current candidate: Server 0.70.0 and `@pi-coffee/completion-speech` 0.1.2, delivery
+protocol 2, profile
 0.1.0. Source is in this Server repository because this plugin crosses native
 engines. It is independent of MISHU and the Pi-only plugin repository.
 Tracking: [spec #152](https://github.com/awangs1986/pi-coffee-server/issues/152),
-execution tickets #153–#157. Source completion does not mean production activation.
+execution tickets #153–#157 and [recovery #159](https://github.com/awangs1986/pi-coffee-server/issues/159).
+Recovery acceptance: [source review](../reviews/completion-speech-recovery.md).
+The original matrix below is dated MVP evidence; #159 supersedes its five-minute
+retention and immediate-consumption semantics. Source completion does not mean production activation.
 
 ## Delivery boundary
 
@@ -46,7 +50,7 @@ Build the selected Server commit and package its independent plugin:
 npm ci
 npm run build
 node scripts/pack-completion-speech.mjs /tmp/coffee-speech-package
-sha256sum /tmp/coffee-speech-package/pi-coffee-completion-speech-0.1.1.tgz
+sha256sum /tmp/coffee-speech-package/pi-coffee-completion-speech-0.1.2.tgz
 ```
 
 Record the Server commit and artifact SHA256 together. The build ships compiled
@@ -68,7 +72,9 @@ set `PI_COFFEE_COMPLETION_SPEECH=off`. Ordinary sends, model controls, native
 history and complete answers remain available. If removing the optional package,
 remove its public modules as part of the same release; do not delete task/native
 history or account state. Restore the previous immutable Server release to roll
-back implementation. Do not mix plugin browser assets from one commit with Host
+back implementation. A pre-protocol-2 rollback must disable optional speech with
+`PI_COFFEE_COMPLETION_SPEECH=off` before activation, retaining the newer state ledger.
+Never restore `state.json.v1-backup` over newer attempts. Do not mix plugin browser assets from one commit with Host
 policy from another. Production restarts require the normal deployment process.
 
 ## Reproducible verification

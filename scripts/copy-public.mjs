@@ -1,3 +1,4 @@
+import {build} from 'esbuild';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {checkedReleaseVersion} from './lib/release-version.mjs';
@@ -10,6 +11,7 @@ const root = resolve(here, "..");
 await mkdir(resolve(root, "dist/public"), { recursive: true });
 await mkdir(resolve(root,'public/plugins/completion-speech'),{recursive:true});
 for(const name of ['browser.js','presentation.js'])await cp(resolve(root,'packages/completion-speech',name),resolve(root,'public/plugins/completion-speech',name));
+await build({entryPoints:[resolve(root,'public/completion-speech.js')],outfile:resolve(root,'public/completion-speech-module.js'),bundle:true,format:'esm',platform:'browser',external:['./render.js','./sync-digest.js','./ids.js']});
 await cp(resolve(root, "public"), resolve(root, "dist/public"), { recursive: true });
 
 // Browser-side libraries the shell imports as flat ES modules. They are copied

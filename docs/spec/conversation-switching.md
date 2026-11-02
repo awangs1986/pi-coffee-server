@@ -450,7 +450,7 @@ across a background clock jump, then verify recovery without sidebar navigation.
 These identify reproducible recovery gaps, not the sole cause of a production
 browser's network interruption. Source fixes are not deployment evidence.
 
-## Independent speech recovery (accepted 2026-11-02; pending)
+## Independent speech recovery (2026-11-02 source candidate)
 
 [Completion speech recovery](completion-speech-recovery.md) uses the existing
 authenticated HTTP boundary independently of the conversation socket and history

@@ -262,8 +262,16 @@ export class HostServer {
     try {slot=await this.slotFor(user);} catch {json(res,503,{error:"User scope unavailable"});return;}
     if(req.url==='/api/completion-speech'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
-      if(!slot.speech){json(res,503,{error:'Completion speech unavailable'});return;}
-      try{json(res,200,await slot.speech.handle(await readJson(req,32768)));}catch(error){json(res,409,{error:error instanceof Error?error.message:'Speech operation failed'});}return;
+      if(!slot.speech){json(res,503,{code:'plugin_unavailable',error:'Completion speech unavailable'});return;}
+      try{
+        const input=await readJson(req,32768);
+        if(input.protocol!==2&&input.action!=='status'){json(res,426,{code:'protocol_mismatch',error:'播报组件已更新，请更新页面'});return;}
+        json(res,200,await slot.speech.handle(input));
+      }catch(error){
+        const known=error as {code?:string;message?:string};
+        if(['protocol_mismatch','invalid_request','operation_conflict','unavailable'].includes(known.code??''))json(res,known.code==='protocol_mismatch'?426:409,{code:known.code,error:known.message});
+        else json(res,503,{code:'speech_unavailable',error:'播报状态暂不可用，请稍后重试'});
+      }return;
     }
     if(req.url==='/api/mishu'){
       if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}

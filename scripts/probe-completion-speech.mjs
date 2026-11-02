@@ -16,7 +16,7 @@ const evidence=process.env.EVIDENCE_DIR||join(tmpdir(),'verify-completion-speech
 await mkdir(evidence,{recursive:true});
 const root=await mkdtemp(join(evidence,'fixture-')),scopes=new Map(),requests=[],errors=[],network=[],contractResponses=[],criteria=[];
 const protocol=Number(process.env.SPEECH_SYNC_PROTOCOL||2);
-let browser,host,web,oauth,transfer,base;
+let browser,host,web,oauth,transfer,base,injectAssetFailure=true;
 const downloadBytes=Buffer.from('Synthetic downloadable result.\n');
 const fullAnswer=(text,enabled)=>`## 完整结果\n\n任务已完成：${text}\n\n\`\`\`bash\nprintf 'speech-fixture\\n'\n\`\`\`\n\n[下载结果](../attachments/result.txt)${enabled?'\n\n```coffee-speech\n'+JSON.stringify({profile_version:'0.1.0',summary:'文件已经生成，脚本可供复制，附件可以下载。这里只是合成验收结果，尚未执行真实项目测试。'})+'\n```':''}`;
 const pass=(id,details)=>criteria.push({id,verdict:'PASS',details});
@@ -47,7 +47,9 @@ async function login(context,user){
 }
 async function preparePage(context,protocol){
  const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));page.on('requestfailed',request=>network.push({url:new URL(request.url()).pathname,error:request.failure()?.errorText}));page.on('response',async response=>{if(response.url().endsWith('/api/completion-speech')&&response.request().postDataJSON()?.action!=='status')contractResponses.push({action:response.request().postDataJSON(),status:response.status(),body:await response.json().catch(()=>null)});});
+ if(injectAssetFailure){injectAssetFailure=false;let failed=false;await page.route('**/completion-speech-module.js*',route=>{if(!failed){failed=true;return route.abort();}return route.continue();});}
  await page.addInitScript(()=>{
+  const NativeSocket=window.WebSocket;window.fixtureSockets=[];window.WebSocket=class extends NativeSocket{constructor(...args){super(...args);window.fixtureSockets.push(this);}};
   let visibility='visible';Object.defineProperty(document,'visibilityState',{get:()=>visibility,configurable:true});window.fixtureVisibility=value=>{visibility=value;document.dispatchEvent(new Event('visibilitychange'));};
   window.fixtureSpeech={calls:[],active:null,cancels:0,fail:false};class Utterance{constructor(text){this.text=text;}}
   const synthesis=new EventTarget();synthesis.getVoices=()=>[{name:'Synthetic Chinese',voiceURI:'fixture-zh',lang:'zh-CN'},{name:'Synthetic English',voiceURI:'fixture-en',lang:'en-US'}];synthesis.speak=utterance=>{window.fixtureSpeech.calls.push({text:utterance.text,voice:utterance.voice?.voiceURI});window.fixtureSpeech.active=utterance;if(window.fixtureSpeech.fail)queueMicrotask(()=>utterance.onerror?.({error:'not-allowed'}));};synthesis.cancel=()=>{window.fixtureSpeech.cancels++;window.fixtureSpeech.active=null;};
@@ -74,8 +76,15 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})});
  const context=await browser.newContext({viewport:{width:1280,height:900},permissions:['clipboard-read','clipboard-write']});await login(context,'alice');const page=await preparePage(context,protocol);
  assert.equal((await status(page)).enabled,false);await enable(page);await select(page,'shared-task');await capture(page,'01-opt-in');
- const otherContext=await browser.newContext({viewport:{width:1280,height:900}});await login(otherContext,'bob');const bob=await preparePage(otherContext,protocol);assert.equal((await status(bob)).enabled,false);assert.deepEqual((await status(bob)).selected,{});pass('T1.scope','Real fake-OAuth cookies + same task ID retain isolated settings');
- await page.evaluate(()=>window.fixtureVisibility('hidden'));await send(page,'首轮合成结果');await page.locator('.speech-summary').last().waitFor();await wake(page);await calls(page,1);assert.match(await page.evaluate(()=>window.fixtureSpeech.calls[0].text),/文件已经生成/);
+ const otherContext=await browser.newContext({viewport:{width:1280,height:900}});await login(otherContext,'bob');const bob=await preparePage(otherContext,protocol);assert.equal((await status(bob)).enabled,false);assert.deepEqual((await status(bob)).selected,{});pass('T6.bootstrap','First optional component fetch failed; one recovered mount became available without reload');pass('T1.scope','Real fake-OAuth cookies + same task ID retain isolated settings');
+ let chatBlocked=true,reserveFailures=0,releaseSpeechNetwork;const outage=new Promise(resolve=>{releaseSpeechNetwork=resolve;});
+ await page.routeWebSocket('**/ws',socket=>{if(chatBlocked)socket.close();else socket.connectToServer();});
+ await page.route('**/api/completion-speech',async route=>{if(route.request().postDataJSON()?.action==='reserve'&&reserveFailures++===0){await outage;return route.abort();}return route.continue();});
+ await page.evaluate(()=>window.fixtureVisibility('hidden'));await send(page,'首轮合成结果');await page.locator('.speech-summary').last().waitFor();
+ await page.evaluate(()=>{for(const socket of window.fixtureSockets)socket.close();for(const event of ['focus','online','pageshow'])window.dispatchEvent(new Event(event));document.dispatchEvent(new Event('resume'));});releaseSpeechNetwork();
+ await calls(page,1);assert.equal(await page.evaluate(()=>window.fixtureSockets.some(socket=>socket.readyState===1)),false);assert.ok(reserveFailures>=1);
+ chatBlocked=false;await page.unroute('**/api/completion-speech');pass('T6.transport','Chat socket held closed and one reservation request failed; independent HTTP retry still spoke without reload');
+assert.match(await page.evaluate(()=>window.fixtureSpeech.calls[0].text),/文件已经生成/);
  assert.equal((await page.request.get(base+'/api/workspace').then(r=>r.json())).conversations.find(t=>t.id==='shared-task').readCompletionId,undefined);pass('T1.original-turn','One opted-in native prompt produced complete answer and brief; fake audio left unread receipt absent');
  await capture(page,'02-summary-unread');await page.evaluate(()=>window.fixtureFinishSpeech());await page.evaluate(()=>window.fixtureVisibility('visible'));await page.locator('[data-session-id="shared-task"] .finished-coffee').waitFor({state:'detached'});pass('T2.visible-read','Latest visible summary cleared cup; hidden summary/audio did not');
  await page.locator('.speech-full-information summary').click();await page.locator('.speech-full-information pre').waitFor();assert.match(await page.locator('.speech-full-information').innerText(),/printf/);

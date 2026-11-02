@@ -1,4 +1,4 @@
-# Completion speech 0.1.1
+# Completion speech 0.1.2
 
 Optional PI Coffee plugin: speech policy, versioned brief Skill, validation and
 browser/system playback. No MISHU, native CLI, Gitea, daemon or Agent dependency.
@@ -38,3 +38,16 @@ reuse is observed only when metrics exist, not inferred from stable instructions
 Automatic delivery applies to foreground and background completions. Viewing a
 result controls the coffee indicator only; it neither skips nor cancels speech.
 The durable delivery identity still prevents automatic replay after restart.
+
+
+Delivery protocol 2 separates a 30-second reservation from a durable one-time
+permission to invoke audio. Pending results survive disconnection for 24 hours;
+unknown committed outcomes require explicit replay. The Browser polls over HTTP
+independently of the Conversation socket, applies ten-second request deadlines,
+and retries transport failures with bounded backoff and page-wake recovery.
+Network recovery never requires clicking an audio-permission button.
+
+Never restore a v1 state backup over a newer delivery ledger. A rollback to a
+pre-protocol-2 runtime must set `PI_COFFEE_COMPLETION_SPEECH=off` before activation.
+The private `.v1-backup` file is for investigation, not an automatic rollback input.
+Keep matching Browser/Host artifacts; profile 0.1.0 and native history are unchanged.

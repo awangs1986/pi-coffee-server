@@ -1,26 +1,29 @@
 // @vitest-environment jsdom
 import {expect,it,vi} from 'vitest';
 import {createSpeechController} from '../packages/completion-speech/browser.js';
-it('claims a completion once before speaking and never sends a viewed receipt or model request',async()=>{
- const spoken:string[]=[],requests:any[]=[];let claim=true;let task={user:'alice'};
- const item={id:'a',completionId:'c1',text:'Task. Completed.'};
- const request=async(body:any)=>{requests.push(body);if(body.action==='status')return {enabled:true,browserId:'browser-a'};if(body.action==='pending')return {items:[item]};if(body.action==='claim'){const claimed=claim;claim=false;return {claimed,item};}return {};};
- const controller=createSpeechController({request,context:()=>task,browserId:'browser-a',speech:{cancel:vi.fn(),speak:async text=>{spoken.push(text);}}});
- await controller.poll();await controller.poll();expect(spoken).toEqual(['Task. Completed.']);expect(requests.every(r=>['status','pending','claim','finish'].includes(r.action))).toBe(true);
- task={user:'bob'};await controller.poll();expect(spoken).toHaveLength(1);controller.close();
+import {speechPolicy} from './helpers/speech-policy.js';
+async function fixture(speech:any){const f=speechPolicy();await f.init();await f.complete();const requests:any[]=[];const controller=createSpeechController({request:body=>{requests.push(body);return f.request(body);},context:()=>({user:'alice'}),browserId:'browser-one',speech});return {...f,controller,requests};}
+it('commits once before speaking and never sends a viewed receipt or model request',async()=>{
+ const speech={cancel:vi.fn(),speak:vi.fn(async()=>{})},f=await fixture(speech);
+ try{await f.controller.poll();await f.controller.poll();expect(speech.speak).toHaveBeenCalledTimes(1);expect(f.requests.every(r=>['status','pending','reserve','commit','finish'].includes(r.action))).toBe(true);expect(f.tasks.get('task')?.readCompletionId).toBeUndefined();}finally{f.controller.close();}
 });
-it('cancels when disabled and never claims or speaks from a non-designated browser',async()=>{
- const speak=vi.fn(),cancel=vi.fn();const request=vi.fn(async()=>({enabled:true,browserId:'another-browser'}));
- const controller=createSpeechController({request,context:()=>({user:'alice'}),browserId:'browser-a',speech:{cancel,speak}});await controller.poll();expect(speak).not.toHaveBeenCalled();expect(request).toHaveBeenCalledTimes(1);controller.close();expect(cancel).toHaveBeenCalled();
+it('never reserves or speaks from a non-designated browser',async()=>{
+ const speech={cancel:vi.fn(),speak:vi.fn()},f=await fixture(speech);await f.request({action:'designate',browserId:'other-browser'});try{await f.controller.poll();expect(speech.speak).not.toHaveBeenCalled();expect(f.requests).toHaveLength(1);}finally{f.controller.close();}
 });
-it('revokes in-flight audio immediately on ownership loss even when cancel omits native callbacks',async()=>{
- let owner='browser-a',resolveSpeech:()=>void=()=>{};const cancel=vi.fn();const speech={cancel,speak:vi.fn(()=>new Promise<void>(r=>{resolveSpeech=r;}))};let claimed=false;
- const request=async(body:any)=>body.action==='status'?{enabled:true,browserId:owner}:body.action==='pending'?{items:[{id:'a',completionId:'c1'}],...(claimed?{active:{id:'a',completionId:'c1',browserId:'browser-a'}}:{})}:body.action==='claim'?{claimed:!claimed&&(claimed=true),item:{id:'a',completionId:'c1',text:'Done'}}:{finished:true};
- const controller=createSpeechController({request,context:()=>({user:'alice'}),browserId:'browser-a',speech});const draining=controller.poll();await vi.waitFor(()=>expect(speech.speak).toHaveBeenCalledTimes(1));owner='browser-b';await controller.poll();expect(cancel).toHaveBeenCalledTimes(2);await draining;resolveSpeech();controller.close();
+it('revokes in-flight audio on ownership loss even when native cancel omits callbacks',async()=>{
+ const speech={cancel:vi.fn(),speak:vi.fn(()=>new Promise(()=>{}))},f=await fixture(speech);const playing=f.controller.poll();
+ try{await vi.waitFor(()=>expect(speech.speak).toHaveBeenCalledTimes(1));const count=speech.cancel.mock.calls.length;await f.request({action:'designate',browserId:'another-browser'});await f.controller.poll();expect(speech.cancel.mock.calls.length).toBeGreaterThan(count);await playing;}finally{f.controller.close();}
 });
 it('native browser cancellation settles the speech promise without relying on end callbacks',async()=>{
  const {browserSpeech}=await import('../packages/completion-speech/browser.js');const synthesis={cancel:vi.fn(),speak:vi.fn()} as any;class Utterance {constructor(readonly text:string){}}const boundary=browserSpeech({synthesis,Utterance:Utterance as any});const done=boundary.speak('Result');boundary.cancel();await done;expect(synthesis.cancel).toHaveBeenCalled();
 });
 it('selects matching voices, previews and releases a timed-out utterance',async()=>{vi.useFakeTimers();try{const {browserSpeech}=await import('../packages/completion-speech/browser.js');let utterance:any;const voices=[{voiceURI:'en',lang:'en-US'},{voiceURI:'zh',lang:'zh-CN'}];const synthesis={getVoices:()=>voices,cancel:vi.fn(),speak:vi.fn(u=>{utterance=u;})};class Utterance{constructor(readonly text:string){}}const boundary=browserSpeech({synthesis,Utterance});const playing=boundary.speak('测试');expect(utterance.voice).toBe(voices[1]);utterance.onend();await playing;boundary.setVoice('en');const preview=boundary.speak('测试');expect(utterance.voice).toBe(voices[0]);const timed=expect(preview).rejects.toThrow('超时');await vi.advanceTimersByTimeAsync(60000);await timed;expect(vi.getTimerCount()).toBe(0);}finally{vi.useRealTimers();}});
-it('pauses on synthesis errors until explicit recovery and manual replay does not send model/read requests',async()=>{const requests:any[]=[];let claimed=false;const item={id:'a',completionId:'c1',text:'Done'};const speech={cancel:vi.fn(),speak:vi.fn().mockRejectedValueOnce(Error('blocked')).mockResolvedValue(undefined)};const request=async(body:any)=>{requests.push(body);if(body.action==='status')return {enabled:true,browserId:'browser-a'};if(body.action==='pending')return {items:claimed?[]:[item]};if(body.action==='claim'){claimed=true;return {claimed:true,item};}if(body.action==='replay')return {claimed:true,item};return {};};const error=vi.fn(),controller=createSpeechController({request,context:()=>({user:'alice'}),browserId:'browser-a',speech,onError:error});await controller.poll();await controller.poll();expect(error).toHaveBeenCalledTimes(1);expect(speech.speak).toHaveBeenCalledTimes(1);await controller.replay('a','c1');expect(speech.speak).toHaveBeenCalledTimes(2);expect(requests.every(r=>['status','pending','claim','replay','finish'].includes(r.action))).toBe(true);controller.close();});
-it('immediately cancels only the archived or deselected speaking conversation without waiting for native callbacks',async()=>{let claimed=false;const item={id:'a',completionId:'c1',text:'Done'};const speech={cancel:vi.fn(),speak:vi.fn(()=>new Promise<void>(()=>{}))};const request=async(body:any)=>body.action==='status'?{enabled:true,browserId:'browser-a'}:body.action==='pending'?{items:claimed?[]:[item],...(claimed?{active:item}:{})}:body.action==='claim'?(claimed=true,{claimed:true,item}):{};const controller=createSpeechController({request,context:()=>({user:'alice'}),browserId:'browser-a',speech});const playing=controller.poll();await vi.waitFor(()=>expect(speech.speak).toHaveBeenCalled());const baseline=speech.cancel.mock.calls.length;controller.revoke('another-task');expect(speech.cancel).toHaveBeenCalledTimes(baseline);controller.revoke('a');expect(speech.cancel).toHaveBeenCalledTimes(baseline+1);await playing;controller.close();});
+
+it('pauses actual audio errors until explicit retry without model or read requests',async()=>{
+ const speech={cancel:vi.fn(),speak:vi.fn().mockRejectedValueOnce(Error('blocked')).mockResolvedValue(undefined)},f=await fixture(speech);
+ try{await f.controller.poll();await f.controller.poll();expect(speech.speak).toHaveBeenCalledTimes(1);await f.controller.retry();expect(speech.speak).toHaveBeenCalledTimes(2);expect(f.requests.every(r=>['status','pending','reserve','commit','replay','finish'].includes(r.action))).toBe(true);}finally{f.controller.close();}
+});
+it('immediately cancels only the archived or deselected speaking conversation',async()=>{
+ const speech={cancel:vi.fn(),speak:vi.fn(()=>new Promise(()=>{}))},f=await fixture(speech);const playing=f.controller.poll();
+ try{await vi.waitFor(()=>expect(speech.speak).toHaveBeenCalled());const count=speech.cancel.mock.calls.length;f.controller.revoke('unrelated');expect(speech.cancel).toHaveBeenCalledTimes(count);f.controller.revoke('task');expect(speech.cancel).toHaveBeenCalledTimes(count+1);await playing;}finally{f.controller.close();}
+});

@@ -170,5 +170,5 @@ user's automatic completion speech.
 **Speech Reservation**: a temporary, retryable claim that grants no permission to
 invoke audio. **Committed Speech Delivery**: a durable automatic sound permission;
 an unknown outcome requires explicit replay rather than automatic repetition.
-These are accepted recovery terms, pending implementation in the
+These are implemented source-candidate terms (Server 0.70 / plugin 0.1.2) in the
 [disconnect-recovery contract](docs/spec/completion-speech-recovery.md).

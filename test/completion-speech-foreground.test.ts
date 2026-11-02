@@ -1,3 +1,4 @@
+import {speechCall,speechClient} from './helpers/speech-client.js';
 import {expect,it} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -18,14 +19,14 @@ it.each([true,false])('speaks exactly once when foreground marks read before cla
   const done=speech.event(task.id,{type:'agent_settled'});await workspaces.recordRunStatus(task.id,'settled');await done?.();
   return (await workspaces.runStatuses()).get(task.id)!.completionId!;
  };
- await speech.handle({action:'configure',enabled:true});await speech.handle({action:'select',id:task.id,enabled:true});await speech.handle({action:'designate',browserId:'foreground-browser'});
+ await speechCall(speech,{action:'configure',enabled:true});await speechCall(speech,{action:'select',id:task.id,enabled:true});await speechCall(speech,{action:'designate',browserId:'foreground-browser'});
  const first=await capture();
  let server=new HostServer({port:0,token:'synthetic-foreground',factory,workspaces});await server.start();
  const call=async(path:string,body:unknown)=>{
   const response=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{method:'POST',headers:{authorization:'Bearer synthetic-foreground','content-type':'application/json'},body:JSON.stringify(body)});
   expect(response.status).toBe(200);return response.json();
  };
- const playback=(action:string,completionId?:string)=>call('/api/completion-speech',{action,browserId:'foreground-browser',...(completionId?{id:task.id,completionId}:{})});
+ const client=speechClient(body=>call('/api/completion-speech',body));const playback=(action:string,completionId?:string)=>client({action,browserId:'foreground-browser',...(completionId?{id:task.id,completionId}:{})});
  const read=(completionId:string)=>call('/api/workspace',{action:'completion_read',reads:[{id:task.id,completionId}]});
  try{
   if(readBeforeClaim)await read(first);

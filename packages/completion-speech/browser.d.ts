@@ -1,3 +1,5 @@
-export interface SpeechBoundary {available?():boolean;cancel():void;speak(text:string):Promise<unknown>;}
+export interface SpeechBoundary {available?():boolean;voices?():Array<{voiceURI:string;lang:string;name?:string}>;setVoice?(value:string):void;cancel():void;speak(text:string):Promise<unknown>;}
+export type SpeechRequest=(body:Record<string,unknown>,options?:{signal:AbortSignal})=>Promise<any>;
 export function browserSpeech(options?:{synthesis?:SpeechSynthesis;Utterance?:typeof SpeechSynthesisUtterance}):SpeechBoundary;
-export function createSpeechController(options:{request:(body:Record<string,unknown>)=>Promise<any>;context:()=>{user?:string|null};browserId:string;speech?:SpeechBoundary;onStatus?:(status:any)=>void;onError?:(error:unknown)=>void}):{poll():Promise<void>;cancel():void;close():void};
+export function createSpeechTransport(request:SpeechRequest):{call:SpeechRequest;expire():void;cancel():void;close():void};
+export function createSpeechController(options:{request:SpeechRequest;context:()=>{user?:string|null};browserId:string;speech?:SpeechBoundary;onStatus?:(status:any)=>void;onState?:(state:any)=>void;onError?:(error:any)=>void}):{poll():Promise<void>;wake():void;start():void;suspend():void;resetScope():void;cancel():void;revoke(id:string):void;pause():void;replay(id:string,completionId:string):Promise<boolean>;retry():Promise<void|boolean>;close():void};

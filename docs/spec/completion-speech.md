@@ -1,8 +1,8 @@
 # Completion speech and summary-first replies
 
 Status: foreground delivery is deployed in Server 0.69 / plugin 0.1.1.
-The [accepted disconnect-recovery design](completion-speech-recovery.md) is pending
-implementation. Its 24-hour retention and reservation protocol supersede the
+The [disconnect-recovery source candidate](completion-speech-recovery.md) is
+implemented in Server 0.70 / plugin 0.1.2 / delivery protocol 2. Its 24-hour retention and reservation protocol supersede the
 previous five-minute catch-up/consume-on-claim design; runtime remains at the old
 recovery behavior until that follow-up is delivered.
 Acceptance evidence and explicit manual limitations are recorded in the

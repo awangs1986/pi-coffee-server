@@ -17,3 +17,6 @@ __pycache__/
 # Local verification and release receipts
 .coffee-verification/
 .coffee-release/
+
+# Generated optional speech bundle (two bounded import identities).
+public/completion-speech-module.js

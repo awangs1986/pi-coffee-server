@@ -1,3 +1,4 @@
+import {mountOptionalSpeech} from './speech-bootstrap.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
@@ -3276,10 +3277,20 @@ function submitPrompt(text, images) {
 }
 ui.stop.addEventListener('click', () => { if (opened && send({ v: 1, type: 'abort' })) pushNote('已请求停止当前任务。'); });
 
-void import('./completion-speech.js').then(({initCompletionSpeech})=>{
- completionSpeech=initCompletionSpeech({request:async body=>{const response=await fetch('/api/completion-speech',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'播报设置失败');return value;},context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),settingsButton:$('#speech-settings'),takeoverButton:$('#speech-browser'),toast,onPresentation:()=>{completionSpeech?.project(entries);refreshToolDownloadLinks();maybeReadCompletion();}});
- void completionSpeech.refresh();
-}).catch(()=>{for(const id of ['speech-master','speech-settings','speech-browser']){const node=document.getElementById(id);if(node)node.hidden=true;}});
+let speechModuleFailures=0;
+mountOptionalSpeech({
+ load:async({signal})=>{
+  const url=new URL('./completion-speech-module.js'+(speechModuleFailures?'?recovery=1':''),import.meta.url).href;
+  const response=await fetch(url,{signal,cache:'no-cache'});if(!response.ok)throw Error('播报组件暂不可用，将自动重试');await response.text();
+  try{const module=await import(url);if(typeof module.initCompletionSpeech!=='function')throw Object.assign(Error('播报组件不兼容，请更新页面'),{kind:'compatibility'});return module;}catch(error){speechModuleFailures=Math.min(1,speechModuleFailures+1);throw error;}
+ },
+ mount:({initCompletionSpeech})=>initCompletionSpeech({request:async(body,{signal}={})=>{
+  const response=await fetch('/api/completion-speech',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const value=await response.json().catch(()=>{if(!response.ok)return {};throw Object.assign(Error('播报响应格式不兼容，请更新页面'),{kind:'compatibility'});});if(!response.ok){const retry=response.headers.get('retry-after');const seconds=retry===null?NaN:Number(retry);const retryAfterMs=Number.isFinite(seconds)?seconds*1000:Date.parse(retry)-Date.now();throw Object.assign(Error(value.error||'播报设置失败'),{status:response.status,code:value.code,retryAfterMs});}return value;
+ },context:()=>({...currentTask(),user:currentUser}),masterButton:$('#speech-master'),settingsButton:$('#speech-settings'),takeoverButton:$('#speech-browser'),toast,onPresentation:()=>{completionSpeech?.project(entries);refreshToolDownloadLinks();maybeReadCompletion();}}),
+ onReady:instance=>{completionSpeech=instance;void instance.refresh();},
+ onError:error=>{const button=$('#speech-master');button.disabled=true;button.hidden=false;button.textContent=error.kind==='compatibility'?'完成播报（组件不兼容，请更新页面）':'完成播报（组件暂不可用，自动重试中）';}
+});
 const mishuRequest=async(body,signal)=>{const response=await fetch('/api/mishu',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(!response.ok)throw Error(value.error||'MISHU 设置失败');return value;};
 const mishuCollaborationButton=document.createElement('button');mishuCollaborationButton.type='button';mishuCollaborationButton.className='brand-menu-item';mishuCollaborationButton.textContent='MISHU 协作与待决定事项';mishuCollaborationButton.id='mishu-collaboration';$('#mishu-toggle')?.after(mishuCollaborationButton);
 mishuCollaborationButton.addEventListener('click',()=>{closeBrandMenu();closeSidebarOnMobile();});

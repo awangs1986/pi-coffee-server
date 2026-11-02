@@ -1,6 +1,8 @@
 # Completion speech recovery after disconnects
 
-Status: accepted design, 2026-11-02; implementation and deployment pending.
+Status: implemented source candidate, 2026-11-02: Server 0.70 / speech plugin
+0.1.2 / delivery protocol 2. Production activation and target-device listening
+remain separate gates. See [review and acceptance](../reviews/completion-speech-recovery.md).
 Baseline: Server 0.69 / speech plugin 0.1.1 / profile 0.1.0, source
 `1fa5bebb331d33b451a0d26c0e7f963b9be90c66`.
 Tracking: [Server #159](https://github.com/awangs1986/pi-coffee-server/issues/159).
@@ -393,8 +395,8 @@ and sequential if it is later needed for brief quality.
 This design supersedes the five-minute speech catch-up rule and immediate durable
 consumption at claim time. It preserves the approved foreground/background rule,
 original-turn briefs, coffee read semantics, explicit opt-in and account isolation.
-The current five-minute behavior remains an implementation gap until the recovery
-protocol is delivered and its runtime version verified.
+The deployed 0.69 baseline retains its earlier recovery behavior until the 0.70
+Browser and Host artifacts are activated together and their runtime versions verified.
 
 The existing public HTTP and Browser seams were already accepted for this feature;
 this follow-up requires no additional testing seam. The independent-plugin
