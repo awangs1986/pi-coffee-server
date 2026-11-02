@@ -65,3 +65,20 @@ summary model, automatic task replay or retry loop is added.
 
 Canonical fresh-clone release verification, remote publication and runtime
 activation are separate release gates and are recorded in the Issue receipt.
+
+## Fresh-clone verification follow-up
+
+The first canonical run passed all speech checks but hit the unchanged MISHU
+budget fixture's 30-second deadline. Its isolated execution passed in 20.52
+seconds. Repeating the complete main suite with memory-backed bounded scratch
+passed all 1,344 tests. The separate runtime-temp negative test then failed: it
+assumed `tmpdir()` was ordinary disk, while the selected scratch was a valid
+16-GiB private tmpfs. Consequently it advanced beyond the intended configuration
+rejection and reached a listener conflict instead.
+
+The negative fixture now uses the checkout's ignored `.scratch` directory on
+disk. It still requires nonzero exit and the original memory-cap rejection.
+No runtime code, deadline or assertion is weakened. The other temp lifetime and
+recovery fixtures continue to use the check-owned scratch directory and cleanup.
+The source change is test-only and requires a new exact-SHA fresh-clone check;
+no failed receipt is promoted or combined into a successful release verdict.

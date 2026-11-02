@@ -49,7 +49,10 @@ it('reclaims a crashed Host directory on restart without deleting a live Host di
 
 // Exercise the configuration boundary without requiring mount privileges in CI.
 it('refuses memory mode on an ordinary disk rather than silently claiming a RAM cap',async()=>{
- const root=await mkdtemp(join(tmpdir(),'coffee-temp-cap-'));
+ // This negative fixture must stay on disk even when the check's other scratch
+ // directories use the correctly capped production tmpfs.
+ const disk=join(process.cwd(),'.scratch');await mkdir(disk,{recursive:true});
+ const root=await mkdtemp(join(disk,'coffee-temp-cap-'));
  const child=spawn(process.execPath,['dist/src/main.js','host'],{env:{PATH:process.env.PATH,HOME:root,PI_COFFEE_TMP_ROOT:root,PI_COFFEE_TMP_STORAGE:'memory'},stdio:['ignore','pipe','pipe']});let error='';child.stderr.on('data',d=>error+=String(d));
  try{const [code]=await once(child,'exit');expect(code).not.toBe(0);expect(error).toContain('private tmpfs capped at 16 GiB');}finally{await rm(root,{recursive:true,force:true});}
 },10000);
