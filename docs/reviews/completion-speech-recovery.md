@@ -21,7 +21,8 @@ Red tests reproduced and then passed for permanent pause after network failure,
 hung requests, missing scheduler/wake recovery, legacy protocol admission,
 missing migration receipts/backup, duplicate completion resurrection, loss of a
 concurrent opt-in during first state read, and missing generic uncertain replay, and a lost commit blocking explicit replay
-until its lease elapsed.
+until its lease elapsed, and missing uncertainty receipts for interrupted
+historical replay.
 The earlier MVP tests were adapted through a test-side v2 client that performs
 real reserve/commit operations; no legacy translation exists in production.
 Browser controller tests now use the real policy instead of a mock claim ledger.
@@ -48,6 +49,7 @@ not a permission gate; the accepted specification remains authoritative.
 | C13 | 缺失摘要使用诚实提示，提问不播为完成；原生提示词与完整结果不变 | plugin, provenance, native, browser probe |
 | C14 | 组件首次加载失败可恢复；聊天连接关闭时播报仍可恢复，无需刷新 | bootstrap, extended browser probe |
 | C16 | 当前页面丢失许可响应后可确认“不确定”，随即可手动重播 | recovery-http |
+| C17 | 历史摘要的手动重播被超时、重启、接管或关闭中断时保留不确定回执，且不消费较新的结果 | recovery-state |
 | C15 | 重复完成事件不重复入队，首次读取时发生的设置更新不会丢失 | recovery-state |
 
 Every modified test retains a public claim: HTTP tests enforce scoped settings,

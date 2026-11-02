@@ -43,7 +43,7 @@ export class CompletionSpeech {
     if(d.state==='reserved'){d.state='pending';delete d.reservation;}
     if(d.state==='committed')this.terminal(s,d,'uncertain','host-restart');
    }
-   if(s.active){const d=s.deliveries[s.active.id];if(d?.completionId===s.active.completionId)this.terminal(s,d,'uncertain','host-restart');delete s.active;}
+   if(s.active){const d=s.deliveries[s.active.id];if(d?.completionId===s.active.completionId)this.terminal(s,d,'uncertain','host-restart');this.retireActive(s,'host-restart');}
    await this.eligible(s);await this.adapter.save(s);this.state=s;
   }return this.state;
  }
@@ -53,6 +53,10 @@ export class CompletionSpeech {
   d.state=state;d.reason=reason;delete d.reservation;s.attempts[d.id]=d.completionId;
   if(s.active?.id===d.id&&s.active.completionId===d.completionId)delete s.active;
   (s.diagnostics??=[]).push({id:d.id,completionId:d.completionId,state,...(reason?{reason}:{}),at:this.now()});
+ }
+ private retireActive(s:SpeechState,reason:string){
+  const active=s.active;if(!active)return;
+  (s.diagnostics??=[]).push({id:active.id,completionId:active.completionId,state:'uncertain',reason,at:this.now()});delete s.active;
  }
  private prunePresentation(s:SpeechState){
   const cached=Object.entries(s.projections??{}).flatMap(([key,values])=>values.map(value=>({key,value}))).filter(({value})=>Number.isFinite(Date.parse(value.completedAt))&&this.now()-Date.parse(value.completedAt)<=86400000).sort((a,b)=>b.value.completedAt.localeCompare(a.value.completedAt)).slice(0,100);
@@ -92,7 +96,7 @@ export class CompletionSpeech {
   }
   items.sort((a,b)=>a.completedAt.localeCompare(b.completedAt)||a.id.localeCompare(b.id));
   for(const dropped of items.splice(0,Math.max(0,items.length-10)))this.terminal(s,s.deliveries![dropped.id],'skipped','overflow');
-  if(s.active?.replay){const task=await this.adapter.task(s.active.id);if(!s.enabled||!task||task.archived||s.active.ownerEpoch!==s.ownerEpoch||this.now()-s.active.startedAt>60000)delete s.active;}
+  if(s.active?.replay){const task=await this.adapter.task(s.active.id),reason=!s.enabled?'disabled':!task?'deleted':task.archived?'archived':s.active.ownerEpoch!==s.ownerEpoch?'browser-takeover':this.now()-s.active.startedAt>60000?'replay-ended-without-receipt':undefined;if(reason){if(reason==='deleted')delete s.active;else this.retireActive(s,reason);}}
   this.prunePresentation(s);return items;
  }
  async handle(input:Record<string,unknown>){return this.serial(async()=>{
@@ -104,18 +108,18 @@ export class CompletionSpeech {
   if(action==='summaries'){if(typeof input.id!=='string'||!await this.adapter.task(input.id))throw new SpeechRequestError('unavailable','对话不可用');await this.eligible(s);await this.persist(s);return {items:structuredClone(s.projections?.[input.id]??[])};}
   if(action==='configure'){
    if(typeof input.enabled!=='boolean')throw new SpeechRequestError('invalid_request','无效的播报开关');s.enabled=input.enabled;
-   if(!s.enabled){for(const d of Object.values(s.deliveries??{}))if(['pending','reserved','committed'].includes(d.state))this.terminal(s,d,'skipped','disabled');delete s.active;}
+   if(!s.enabled){for(const d of Object.values(s.deliveries??{}))if(['pending','reserved','committed'].includes(d.state))this.terminal(s,d,'skipped','disabled');this.retireActive(s,'disabled');}
   }
   if(action==='select'){
    const id=input.id;if(typeof id!=='string'||typeof input.enabled!=='boolean')throw new SpeechRequestError('invalid_request','无效的播报选择');
    const task=await this.adapter.task(id);if(!task||task.archived||!['pi','codex'].includes(task.engine))throw new SpeechRequestError('unavailable','请选择有效的 Pi 或 Codex 对话');
-   s.selected[id]={enabled:input.enabled,profileVersion:s.selected[id]?.profileVersion??PROFILE_VERSION};if(!input.enabled&&s.deliveries?.[id])this.terminal(s,s.deliveries[id],'skipped','deselected');if(!input.enabled&&s.active?.id===id)delete s.active;
+   s.selected[id]={enabled:input.enabled,profileVersion:s.selected[id]?.profileVersion??PROFILE_VERSION};if(!input.enabled&&s.deliveries?.[id])this.terminal(s,s.deliveries[id],'skipped','deselected');if(!input.enabled&&s.active?.id===id)this.retireActive(s,'deselected');
   }
   if(action==='voice'){if(typeof input.voiceURI!=='string'||input.voiceURI.length>256||/[\u0000-\u001f]/.test(input.voiceURI))throw new SpeechRequestError('invalid_request','无效的系统声音');s.voiceURI=input.voiceURI;}
   if(action==='designate'){
    if(typeof input.browserId!=='string'||!/^[A-Za-z0-9_-]{8,128}$/.test(input.browserId))throw new SpeechRequestError('invalid_request','无效的播放浏览器');
    s.browserId=input.browserId;s.ownerEpoch=(s.ownerEpoch??0)+1;
-   for(const d of Object.values(s.deliveries??{})){if(d.state==='reserved'){d.state='pending';delete d.reservation;}if(d.state==='committed')this.terminal(s,d,'uncertain','browser-takeover');}delete s.active;
+   for(const d of Object.values(s.deliveries??{})){if(d.state==='reserved'){d.state='pending';delete d.reservation;}if(d.state==='committed')this.terminal(s,d,'uncertain','browser-takeover');}this.retireActive(s,'browser-takeover');
   }
   const items=await this.eligible(s);
   if(['pending','reserve','commit','release','finish','replay'].includes(action)){

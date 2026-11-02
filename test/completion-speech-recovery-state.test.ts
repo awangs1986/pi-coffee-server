@@ -75,3 +75,14 @@ it('bounds retained queue and diagnostic history while preserving durable overfl
  const pending=await f.request({action:'pending'});expect(pending.items.map((item:any)=>item.id)).toEqual(Array.from({length:10},(_,n)=>'task-'+(105+n)));expect(pending.diagnostics).toHaveLength(100);
  await f.request({action:'configure',enabled:false});await f.request({action:'configure',enabled:true});f.restart();expect((await f.request({action:'pending'})).items).toEqual([]);
 });
+it.each(['deadline','restart','takeover','disabled'])('records uncertainty when a historical manual replay ends by %s, preserving the latest automatic result',async(reason)=>{
+ const f=speechPolicy();await f.init();await f.complete('task','c1','Answer\n\n```coffee-speech\n{"profile_version":"0.1.0","summary":"Historical brief."}\n```');await f.complete('task','c2');
+ const replay=await f.request({action:'replay',id:'task',completionId:'c1'});expect(replay.claimed).toBe(true);
+ if(reason==='deadline')f.advance(60001);
+ if(reason==='restart')f.restart();
+ if(reason==='takeover')await f.request({action:'designate',browserId:'browser-two'});
+ if(reason==='disabled'){await f.request({action:'configure',enabled:false});await f.request({action:'configure',enabled:true});}
+ const result=await f.request({action:'pending',...(reason==='takeover'?{browserId:'browser-two'}:{})});
+ expect(result.active).toBeUndefined();expect(result.diagnostics).toContainEqual(expect.objectContaining({id:'task',completionId:'c1',state:'uncertain'}));
+ expect(result.items.map((item:any)=>item.completionId)).toEqual(reason==='disabled'?[]:['c2']);
+});
