@@ -72,3 +72,10 @@ requirements remain unchanged. There is no production runtime or dependency
 change. The focused test passed in 103.40 seconds. The original failing log and
 focused result are retained in the operator's private deployment evidence; a new
 review-bound canonical release check is required before publishing this candidate.
+
+The subsequent published-main clone exposed two existing Fork tests exhausting
+Vitest's separate one-second polling deadline while still preparing a Git clone.
+The configured test-body override did not apply to those polling assertions.
+The follow-up applies the same bounded opt-in override to polling, retaining the
+default when the variable is absent and preserving explicit per-assertion limits.
+No Fork behavior, native invocation, assertion or production deadline changes.

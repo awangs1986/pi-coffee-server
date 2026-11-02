@@ -1,6 +1,6 @@
 # Completion speech MVP: integration and acceptance
 
-Candidate: Server 0.67.0 and `@pi-coffee/completion-speech` 0.1.0, profile
+Candidate: Server 0.68.0 and `@pi-coffee/completion-speech` 0.1.0, profile
 0.1.0. Source is in this Server repository because this plugin crosses native
 engines. It is independent of MISHU and the Pi-only plugin repository.
 Tracking: [spec #152](https://github.com/awangs1986/pi-coffee-server/issues/152),
@@ -123,7 +123,8 @@ passed, including the new completion-speech journey. The fresh-clone source was
 Separately, the final asset-boundary/documentation checks passed three tests in
 two files. No production restart or deployment was performed.
 
-The configured check timeout avoids the baseline five-second Git fixture limit
+The configured check timeout covers both test bodies and asynchronous polling,
+avoiding the baseline five-second test and one-second poll Git fixture limits
 on a shared busy VM; it does not permit live parallel model sessions. A fresh
 local clone of the candidate must run the same documented check before release.
 The actual final commit, command result and retained logs are recorded in the
