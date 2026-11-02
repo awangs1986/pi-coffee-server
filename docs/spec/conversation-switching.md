@@ -449,3 +449,12 @@ Controller regressions inject a suspended identity request and a silent handshak
 across a background clock jump, then verify recovery without sidebar navigation.
 These identify reproducible recovery gaps, not the sole cause of a production
 browser's network interruption. Source fixes are not deployment evidence.
+
+## Independent speech recovery (accepted 2026-11-02; pending)
+
+[Completion speech recovery](completion-speech-recovery.md) uses the existing
+authenticated HTTP boundary independently of the conversation socket and history
+subscription. Lifecycle signals initiate both recoveries without sharing a stuck
+request guard. Speech recovery never refreshes the page, changes the selected
+Conversation, replays a user prompt or alters native execution. The contract
+does not establish the original cause of every idle conversation disconnect.

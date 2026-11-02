@@ -1,6 +1,10 @@
 # Completion speech and summary-first replies
 
-Status: 0.68 activated 2026-11-02; foreground delivery correction is a 0.69 source candidate.
+Status: foreground delivery is deployed in Server 0.69 / plugin 0.1.1.
+The [accepted disconnect-recovery design](completion-speech-recovery.md) is pending
+implementation. Its 24-hour retention and reservation protocol supersede the
+previous five-minute catch-up/consume-on-claim design; runtime remains at the old
+recovery behavior until that follow-up is delivered.
 Acceptance evidence and explicit manual limitations are recorded in the
 [integration guide](../development/completion-speech.md) and
 [review record](../reviews/completion-speech-review.md).
@@ -73,8 +77,10 @@ produces the brief within its existing turn. MISHU is not involved.
 - Play serially. Recheck eligibility before playback; skip stale or superseded
   results. Read receipts never consume automatic delivery or cancel active audio; they control only the coffee indicator.
   A newer completion replaces an unplayed older result from that conversation.
-- On reconnect, catch up only eligible completions from the last five minutes
-  that occurred while speech was enabled. First enablement never reads old cups.
+- The accepted recovery contract retains eligible pending completions for up to
+  24 hours while speech was enabled, through independent HTTP reconciliation.
+  First enablement never reads old cups. This replaces the deployed five-minute
+  limit and is pending implementation; see the recovery specification.
 - Target 15–30 seconds: task title, concise outcome and any required user action.
   Missing/invalid briefs fall back to a truthful title/status notice.
 - Playback alone does not mark the result read. The coffee indicator remains.
@@ -109,9 +115,9 @@ supports installation without any core edits. Do not restructure unrelated code.
 The package must not depend on Gitea, Pi/Codex APIs, Coffee native transcript paths
 or MISHU. The adapter supplies authorized data and abstract persistence; the
 plugin must not enumerate accounts or discover arbitrary conversations itself.
-Existing Web/Host services host the integration. Source location and publication
-mechanism remain implementation decisions; native adapters stay in Server and
-this cross-engine feature is not automatically a Pi-only package.
+Existing Web/Host services host the integration. The cross-engine package is
+maintained in Server and ships in its immutable release bundle with an independent
+plugin version. Native adapters remain in Server; this is not a Pi-only package.
 
 When disabled or unavailable, ordinary conversation execution and complete-answer
 rendering continue. Uninstalling must not delete native history or complete replies;
@@ -219,16 +225,19 @@ list replays do not create completions.
 Publish a speech-eligible completion only after final-answer and brief extraction
 has settled. Pending indexing is not evidence of a missing brief.
 
-Revalidate scope, selection, master switch, current completion/revision, read
-status, browser ownership and freshness before claiming playback. A rename uses
-the current title; title is a separate presentation field from the brief body.
-Archive, deletion, logout and account changes revoke corresponding queued work.
+Revalidate scope, selection, master switch, current completion/revision,
+browser ownership and freshness before granting playback. Read status affects
+only the coffee indicator. A rename uses the current title; title is a separate presentation field from the brief body.
+Archive and deletion invalidate affected queued results. Logout and account
+changes revoke local playback and in-flight permissions; the recovery design
+retains still-eligible uncommitted work for its original account after login.
 An account must never see or play another account's task or brief.
 
-Speech delivery is distinct from the existing viewed receipt. Retain a durable
-latest delivery/attempt identity per scoped conversation, separate from an
-expiring text cache. Cache eviction or browser reload must not resurrect an old
-announcement. On uncertain playback after a crash/disconnect, do not automatically
+Speech delivery is distinct from the existing viewed receipt. The accepted
+recovery design separates a retryable reservation from durable permission to
+invoke audio. Retain a durable latest delivery identity per scoped Conversation,
+separate from expiring text and reservation state. Cache eviction or browser
+reload must not resurrect an old announcement. On uncertain playback after a crash/disconnect, do not automatically
 replay a possibly spoken brief. Allow explicit replay instead. Browser audio
 callbacks establish playback status, not proof that a person heard it.
 
@@ -261,11 +270,14 @@ scroll position and any explicit expansion choice.
   offer voice selection and a preview. Browser speech may use platform network
   services; do not promise offline synthesis or identical voices across devices.
 - One playing item and at most ten pending items per user. Overflow drops the
-  oldest queued item without changing its coffee/read state. Apply the five-minute
-  freshness bound again before playback, not just when enqueuing.
+  oldest queued item without changing its coffee/read state and records the reason.
+  The accepted recovery design applies a 24-hour bound before playback and pins
+  pending payloads independently of the presentation cache; implementation is pending.
 - Closing the master switch cancels current audio and clears queued automatic
   delivery while retaining individual task selections. Historical briefs remain
   expandable; later non-opted-in turns return to normal presentation.
+- Transient HTTP failure uses automatic bounded retry and lifecycle reconciliation
+  under the accepted recovery design. It must not set the audio-permission pause.
 - If permission, voice availability or browser policy prevents speech, show a
   concise enable/retry control. Avoid retry loops and replay storms after resume.
   A bounded playback timeout releases a stuck queue item.
@@ -295,7 +307,7 @@ No new general-purpose test framework is required. Executed evidence and remaini
    and validates the current-turn brief, retains complete answer/history, and never
    starts a follow-up/native session for summarization. Missing, malformed,
    conflicting and overlong briefs fall back safely.
-3. Delivery: one task completion yields at most one automatic claimant; replayed
+3. Delivery: one task completion yields at most one committed automatic sound permission; replayed
    lists, reconnects and multiple tabs/devices do not duplicate announcements.
    Recent catch-up, stale/superseded skips, foreground read independence, bounded queues and failure notices
    behave as specified. Crash uncertainty does not cause blind replay.
@@ -339,5 +351,6 @@ during implementation and validate them across supported native adapters. The
 reference Skill is a style source, not a TTS implementation. Live model verification
 must be explicitly bounded and sequential. Source publication is not deployment.
 
-Prompt candidate: [profile 0.1.0](../design/completion-speech-profile-v0.1.0/README.md).
-The proposed output envelope still requires adapter validation; it is not deployed.
+Pinned profile: [profile 0.1.0](../design/completion-speech-profile-v0.1.0/README.md).
+The envelope integration is deployed; actual device listening and hosted-model
+brief quality remain the separately recorded manual acceptance gates.

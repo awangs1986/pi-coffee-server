@@ -150,12 +150,13 @@ Host/Web crash. See [watchdog](docs/deployment/watchdog.md).
 ## Completion speech
 
 **Completion Speech**: an explicitly enabled spoken notification of a newly
-unread conversation result. It is distinct from reading the original answer.
+settled Conversation result, whether foreground or background. It is distinct
+from reading the original answer.
 An independently versioned PI Coffee plugin owns speech policy, with no MISHU
 dependency. See the [approved specification](docs/spec/completion-speech.md).
 
 **Conversation Speech Selection**: a user's explicit choice that a particular
-conversation's new unread results are eligible for speech when speech is enabled.
+Conversation's new settled results are eligible for speech when speech is enabled.
 
 **Spoken Brief**: a concise rendition of one completed conversation's result for
 listening, distinct from the original written answer.
@@ -165,3 +166,9 @@ does not establish that the complete written result has been read.
 
 **Playback Browser**: the browser explicitly designated by a user to play that
 user's automatic completion speech.
+
+**Speech Reservation**: a temporary, retryable claim that grants no permission to
+invoke audio. **Committed Speech Delivery**: a durable automatic sound permission;
+an unknown outcome requires explicit replay rather than automatic repetition.
+These are accepted recovery terms, pending implementation in the
+[disconnect-recovery contract](docs/spec/completion-speech-recovery.md).

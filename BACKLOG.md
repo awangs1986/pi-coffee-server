@@ -1,3 +1,5 @@
+> Accepted completion-speech recovery (2026-11-02), implementation pending: [independent HTTP recovery, 24-hour pending retention and safe playback receipts](docs/spec/completion-speech-recovery.md). [Server #159](https://github.com/awangs1986/pi-coffee-server/issues/159). Foreground delivery remains deployed at Server 0.69 / plugin 0.1.1; this follow-up is not a runtime upgrade.
+
 > Current deployment topology (2026-10-26): [one VM and one OS account for Web, primary Host and native CLIs](docs/architecture/topology.md), with separate services and authenticated user scopes. Historical multi-VM milestones below are not current deployment prerequisites. [Audit and remaining operational cleanup](docs/reviews/topology-freshness-20261026.md).
 
 > Recent-first Codex display (2026-10-20): [contract](docs/spec/recent-native-history.md), tracked with [Server #128](https://github.com/awangs1986/pi-coffee-server/issues/128). New Browser capability avoids complete-history fallback; publication and activation evidence are separate.
