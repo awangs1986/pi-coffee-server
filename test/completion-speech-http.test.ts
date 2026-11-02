@@ -13,7 +13,7 @@ it('persists explicit speech opt-in and browser ownership independently under ea
  try{
   for(const user of ['alice','bob']){const store=new Workspaces(join(root,user,'projects'),{chatRoot:join(root,user,'chats')});stores.set(user,store);await store.createChatConversation('same-id');}
   await start();
-  expect(await call('alice',{action:'status'})).toMatchObject({status:200,data:{enabled:false,selected:{},browserId:null,pluginVersion:'0.1.0'}});
+  expect(await call('alice',{action:'status'})).toMatchObject({status:200,data:{enabled:false,selected:{},browserId:null,pluginVersion:'0.1.1'}});
   expect((await call('alice',{action:'configure',enabled:true})).status).toBe(200);
   expect((await call('alice',{action:'voice',voiceURI:'Chinese voice'})).data.voiceURI).toBe('Chinese voice');
   expect((await call('alice',{action:'voice',voiceURI:'x'.repeat(257)})).status).toBe(409);

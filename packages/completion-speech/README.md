@@ -1,4 +1,4 @@
-# Completion speech 0.1.0
+# Completion speech 0.1.1
 
 Optional PI Coffee plugin: speech policy, versioned brief Skill, validation and
 browser/system playback. No MISHU, native CLI, Gitea, daemon or Agent dependency.
@@ -34,3 +34,7 @@ Profile 0.1.0 stays pinned per Conversation. Future releases changing a profile
 must retain the previous pinned profiles or explicitly report an unsupported
 profile; they must never silently repin active Conversations. Provider cache
 reuse is observed only when metrics exist, not inferred from stable instructions.
+
+Automatic delivery applies to foreground and background completions. Viewing a
+result controls the coffee indicator only; it neither skips nor cancels speech.
+The durable delivery identity still prevents automatic replay after restart.

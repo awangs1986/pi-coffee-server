@@ -1,6 +1,6 @@
 import {PROFILE_VERSION,SPEECH_PROFILE,resolveSpeechProfile} from './profile.js';
 export {PROFILE_VERSION,SPEECH_PROFILE};
-export const PLUGIN_VERSION='0.1.0';
+export const PLUGIN_VERSION='0.1.1';
 export interface SpeechSelection {enabled:boolean;profileVersion:string;}
 export interface SpeechBrief {id:string;completionId:string;profileVersion:string;summary?:string;completedAt:string;outcome:'result'|'failure';}
 export interface SpeechProjection {sourceMessageKey?:string;completionId:string;profileVersion:string;summary?:string;status?:'awaiting_user';answerDigest:string;completedAt:string;}
@@ -35,19 +35,20 @@ export class CompletionSpeech {
   s.projections={};const retained=new Set<string>();for(const {key,value} of cached){(s.projections[key]??=[]).push(value);retained.add(JSON.stringify([key,value.completionId]));}
   if(this.adapter.digest)for(const brief of Object.values(s.completions))if(brief.summary&&!retained.has(JSON.stringify([brief.id,brief.completionId])))delete brief.summary;
  }
+ // Viewing acknowledges the coffee indicator only; it never consumes or cancels speech.
  private async eligible(s:SpeechState){
   const items:Array<SpeechBrief&{title:string;text:string}>=[];
   for(const brief of Object.values(s.completions)){
    const task=await this.adapter.task(brief.id);
    if(!task){delete s.completions[brief.id];delete s.attempts[brief.id];delete s.selected[brief.id];if(s.projections)delete s.projections[brief.id];continue;}
    const age=this.now()-Date.parse(brief.completedAt);
-   if(task.archived||!s.selected[brief.id]?.enabled||task.readCompletionId===brief.completionId||task.completionId!==brief.completionId)s.attempts[brief.id]=brief.completionId;
-   if(!s.enabled||task.archived||!s.selected[brief.id]?.enabled||task.runStatus!=='settled'||task.completionId!==brief.completionId||task.readCompletionId===brief.completionId||s.attempts[brief.id]===brief.completionId||!Number.isFinite(age)||age<0||age>300000)continue;
+   if(task.archived||!s.selected[brief.id]?.enabled||task.completionId!==brief.completionId)s.attempts[brief.id]=brief.completionId;
+   if(!s.enabled||task.archived||!s.selected[brief.id]?.enabled||task.runStatus!=='settled'||task.completionId!==brief.completionId||s.attempts[brief.id]===brief.completionId||!Number.isFinite(age)||age<0||age>300000)continue;
    items.push({...brief,title:task.title,text:task.title+'。'+(brief.summary??(brief.outcome==='failure'?'任务出现错误，请查看对话。':'本轮已结束，请查看对话确认结果。'))});
   }
   items.sort((a,b)=>a.completedAt.localeCompare(b.completedAt));
   for(const dropped of items.splice(0,Math.max(0,items.length-10)))s.attempts[dropped.id]=dropped.completionId;
-  if(s.active){const t=await this.adapter.task(s.active.id);if(!s.enabled||s.browserId!==s.active.browserId||!t||t.archived||(!s.active.replay&&(!s.selected[s.active.id]?.enabled||t.runStatus!=='settled'||t.completionId!==s.active.completionId||t.readCompletionId===s.active.completionId))||this.now()-s.active.startedAt>60000)delete s.active;}
+  if(s.active){const t=await this.adapter.task(s.active.id);if(!s.enabled||s.browserId!==s.active.browserId||!t||t.archived||(!s.active.replay&&(!s.selected[s.active.id]?.enabled||t.runStatus!=='settled'||t.completionId!==s.active.completionId))||this.now()-s.active.startedAt>60000)delete s.active;}
   // Reclaim only brief text. Durable delivery identities are not cache entries.
   let count=0;for(const brief of Object.values(s.completions).sort((a,b)=>b.completedAt.localeCompare(a.completedAt))){if(brief.summary&&(this.now()-Date.parse(brief.completedAt)>86400000||count++>=100))delete brief.summary;}
   this.prunePresentation(s);return items;

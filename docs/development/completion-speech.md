@@ -1,6 +1,6 @@
 # Completion speech MVP: integration and acceptance
 
-Candidate: Server 0.68.0 and `@pi-coffee/completion-speech` 0.1.0, profile
+Candidate: Server 0.69.0 and `@pi-coffee/completion-speech` 0.1.1, profile
 0.1.0. Source is in this Server repository because this plugin crosses native
 engines. It is independent of MISHU and the Pi-only plugin repository.
 Tracking: [spec #152](https://github.com/awangs1986/pi-coffee-server/issues/152),
@@ -46,7 +46,7 @@ Build the selected Server commit and package its independent plugin:
 npm ci
 npm run build
 node scripts/pack-completion-speech.mjs /tmp/coffee-speech-package
-sha256sum /tmp/coffee-speech-package/pi-coffee-completion-speech-0.1.0.tgz
+sha256sum /tmp/coffee-speech-package/pi-coffee-completion-speech-0.1.1.tgz
 ```
 
 Record the Server commit and artifact SHA256 together. The build ships compiled
@@ -96,10 +96,10 @@ Every created service/browser is closed and temporary fixture files are reclaime
 Observed candidate evidence (behavior commit `f5a061b`, 2026-11-01):
 
 - `/tmp/verify-completion-speech-cache-v1/result.json`: protocol 1, fourteen
-  observed criteria passed, four explicit user/native prompts, no extra summary
+  observed criteria passed, five explicit user/native prompts, no extra summary
   prompt and no page errors. Screenshots and HTTP contracts share that directory.
 - `/tmp/verify-completion-speech-cache-v2/result.json`: the same fourteen criteria
-  passed through indexed protocol 2, with four explicit native prompts and zero
+  passed through indexed protocol 2, with five explicit native prompts and zero
   page errors. Request cancellations were navigation-related `ERR_ABORTED` only.
 - `/tmp/verify-completion-speech-package-mvp/standalone.json`: final tarball
   installed in a separate consumer and accepted a brief with a fake authorized
@@ -142,7 +142,7 @@ policy/controller tests remain necessary for controlled-time and crash cases.
 | 1 | Authenticated account/task opt-in in complete browser journey and scoped HTTP tests |
 | 2 | Default-off selections in HTTP tests; existing new/fork task IDs do not inherit a selection |
 | 3 | Original-turn fixed brief displayed/spoken in browser; duration/quality by hand |
-| 4 | Four explicit browser sends yield exactly four native prompts; no summary turn |
+| 4 | Five explicit browser sends yield exactly four native prompts; no summary turn |
 | 5 | Submission captures sample current settings; running turn is not steered |
 | 6 | Error/fallback policy tests retain failure/unverified wording |
 | 7 | Cancelled/tool-only results rejected by plugin; approval/question waits never settle eligible result |
@@ -190,7 +190,7 @@ this matrix must not be used to substitute planned tests for executed evidence.
 | T2.1 | Exact authenticated answer digest projection; invalid/unselected answer ordinary complete view |
 | T2.2 | Actual browser expansion, clipboard and transfer download; raw native answer retained |
 | T2.3 | Hidden/audio-only unread then latest visible summary clears; stale digest/revision and viewport proof tests |
-| T2.4 | Browser reload expansion and switch tests; existing latest-history/busy-switch probes; read-before-play claim rejection |
+| T2.4 | Browser reload expansion and switch tests; existing latest-history/busy-switch probes; foreground read-before-claim delivery and read-during-playback retention |
 | T2.5 | Projection retained on disable, future normal view; absent-plugin execution/complete reply |
 | T2.6 | Browser complete journey + scoped HTTP and presentation controller tests with synthetic accounts |
 | T2.7 | Public UI presentation/replay/voice actions leave native invocation count and subsequent profile unchanged |
@@ -240,3 +240,13 @@ the repair allowlists exactly the two public plugin modules, leaving arbitrary
 nested/package paths at 404. Real Chromium then mounted the plugin and traversed
 the end-to-end journey. This illustrates why passing controller tests alone was
 not sufficient release evidence.
+
+## Foreground policy correction (2026-11-02)
+
+The owner confirmed automatic playback for both foreground and background results.
+Read receipts affect only the coffee indicator, not delivery or active audio.
+`completion-speech-foreground.test.ts` covers both read timings through public
+Host HTTP, duplicate claims and a fresh Host instance over the same durable state.
+The complete-app browser probe also keeps the foreground conversation visible,
+observes its read receipt and verifies audio remains active exactly once.
+No production attempts are reset, and old results are not replayed for testing.

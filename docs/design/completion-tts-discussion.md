@@ -1,3 +1,7 @@
+> Policy update 2026-11-02: the owner confirmed foreground and background playback.
+> Earlier unread-only recommendations below are historical; read receipts now
+> control only the coffee indicator. See the current completion-speech spec.
+
 # Completion speech — design interview
 
 Status: proposed, awaiting owner decisions. No implementation or deployment is authorized by this discussion.

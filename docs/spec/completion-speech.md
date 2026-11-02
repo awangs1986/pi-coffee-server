@@ -1,11 +1,11 @@
 # Completion speech and summary-first replies
 
-Status: implemented source candidate, 2026-11-01; production activation pending.
+Status: 0.68 activated 2026-11-02; foreground delivery correction is a 0.69 source candidate.
 Acceptance evidence and explicit manual limitations are recorded in the
 [integration guide](../development/completion-speech.md) and
 [review record](../reviews/completion-speech-review.md).
-Implementation is being accepted on the integration branch; production deployment
-has not been performed.
+Production activation and device listening acceptance are separate. The foreground
+policy below supersedes the original unread-only rule, confirmed 2026-11-02.
 Tracking: [Server #152](https://github.com/awangs1986/pi-coffee-server/issues/152).
 
 ## Problem Statement
@@ -17,7 +17,7 @@ must not duplicate, cross account boundaries or create additional Agent sessions
 ## Solution
 
 Provide an optional, independently versioned PI Coffee plugin that announces a
-short brief of each selected conversation's new unread result using browser/system
+short brief of each selected conversation's new settled result using browser/system
 voices. Preserve complete answers behind an expansion control. The original Agent
 produces the brief within its existing turn. MISHU is not involved.
 
@@ -32,7 +32,7 @@ produces the brief within its existing turn. MISHU is not involved.
 7. As a user, I want to avoid announcements for questions, approval waits and cancellations, so that speech reflects actual settled results.
 8. As a user, I want to designate one browser and explicitly transfer playback, so that multiple devices do not speak at once.
 9. As a user, I want to hear results serially with bounded pending work, so that announcements do not overlap or accumulate indefinitely.
-10. As a user, I want to skip already-read, stale and superseded results, so that speech remains relevant.
+10. As a user, I want to hear new completions while reading or in the background, and skip stale or superseded results, so that speech remains relevant.
 11. As a user, I want to catch up only recent eligible missed results after reconnect, so that recovery does not replay old history.
 12. As a user, I want to keep the coffee indicator after listening, so that audio does not falsely acknowledge reading.
 13. As a user, I want to see a brief first and expand the intact answer, so that code and downloadable attachments remain accessible.
@@ -63,14 +63,15 @@ produces the brief within its existing turn. MISHU is not involved.
   There is no extra summary turn, separate summary model or new native session.
 - If enabled during a running turn, both brief generation and automatic speech
   start with the next turn. Do not steer or rewrite the current request.
-- Speech waits for a new, unread settled result. Normal results and naturally
-  settled failures are eligible; user questions, approval waits and deliberate
+- Speech waits for a new settled result, whether the task is foreground or
+  background. Normal results and naturally settled failures are eligible; user questions, approval waits and deliberate
   cancellation are not completion announcements.
 - Use browser/system speech synthesis. The Web page must remain open; other tabs
   are in scope, subject to actual browser suspension and audio restrictions.
 - Only one explicitly designated browser per user plays automatically. Another
   browser takes over only through an explicit user action.
-- Play serially. Recheck eligibility before playback; skip read or stale results.
+- Play serially. Recheck eligibility before playback; skip stale or superseded
+  results. Read receipts never consume automatic delivery or cancel active audio; they control only the coffee indicator.
   A newer completion replaces an unplayed older result from that conversation.
 - On reconnect, catch up only eligible completions from the last five minutes
   that occurred while speech was enabled. First enablement never reads old cups.
@@ -246,9 +247,10 @@ Only an attached, visible, current conversation showing the latest reconciled
 summary at the relevant viewport tail may acknowledge that result. A hidden tab,
 old cached summary, stale revision or audio playback may not do so. This extends
 the existing viewed-proof contract for this presentation: expanding the complete
-answer is no longer necessary to clear its cup. A result read before playback is
-skipped. Rendering and late metadata must preserve scroll position and any
-explicit expansion choice.
+answer is no longer necessary to clear its cup. Reading before playback does not
+skip speech, and reading during playback does not cancel it. Delivery attempts
+remain a separate durable identity. Rendering and late metadata must preserve
+scroll position and any explicit expansion choice.
 
 ### MVP defaults
 
@@ -270,7 +272,7 @@ explicit expansion choice.
 - Cache at most 100 short briefs for 24 hours per account. Keep complete answers only
   in the existing history system. Durable latest delivery identities survive text
   cache expiry, and are removed with their scoped task records.
-- Explicit manual replay is separate from automatic unread delivery and may be
+- Explicit manual replay is separate from automatic once-per-completion delivery and may be
   used after a result was read. It requires the designated playback browser or
   an explicit takeover, and never starts another Agent/model request.
 
@@ -282,8 +284,7 @@ controller tests. Assert observable behavior, not internal helper calls or DOM
 structure. Use synthetic users, fake native adapters, a controllable clock and a
 replaceable browser speech boundary; do not create real parallel Agent sessions.
 The plugin must also accept a fake authorized host adapter for independence tests.
-No new general-purpose test framework is required. These are planned checks, not
-executed evidence.
+No new general-purpose test framework is required. Executed evidence and remaining device/model gates are linked in the integration guide.
 
 ### Acceptance criteria
 
@@ -296,7 +297,7 @@ executed evidence.
    conflicting and overlong briefs fall back safely.
 3. Delivery: one task completion yields at most one automatic claimant; replayed
    lists, reconnects and multiple tabs/devices do not duplicate announcements.
-   Recent catch-up, stale/read/superseded skips, bounded queues and failure notices
+   Recent catch-up, stale/superseded skips, foreground read independence, bounded queues and failure notices
    behave as specified. Crash uncertainty does not cause blind replay.
 4. Presentation: summary-first only for opted-in results; expansion preserves
    Markdown, code, attachments/downloads and scroll; latest visible summary may
@@ -318,7 +319,7 @@ executed evidence.
    absent metrics unavailable. Prefix stability is not proof of provider cache hits.
 
 Real model tests must remain explicitly bounded and sequential. This document
-records a design and planned evidence, not a claim that speech works today.
+records the current contract; source checks do not establish audible quality on every device.
 
 ## Out of Scope
 
