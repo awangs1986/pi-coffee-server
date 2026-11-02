@@ -85,8 +85,9 @@ try{
  const oversized=await store(join(work,'oversized','projects','.coffee','mishu'));await truncate(join(oversized,'state.json'),512*1024*1024+1);excluded.push(oversized);
  for(let i=0;i<260;i++)await store(join(work,'z-future-'+String(i).padStart(3,'0'),'projects','.coffee','mishu'),'{"version":999,"chats":{}}');
  // Recovery initializes up to 256 isolated scopes serially; retain every limit
- // assertion while allowing this disk-bound phase within the outer 90s probe.
- await launch();await wait(()=>childLog.includes('scope capacity reached'),'Scope discovery limit was not enforced',60000);
+ // assertion while allowing this disk-bound phase within the outer 180s probe.
+ // Slow disk-backed SQLite initialization can exceed 60s even without other tests.
+ await launch();await wait(()=>childLog.includes('scope capacity reached'),'Scope discovery limit was not enforced',120000);
  if(!childLog.includes('store capacity exceeded'))throw Error('Oversized state not diagnosed');
  if(reportScopes.length!==2||targetCalls.length!==3)throw Error('Subsequent discovery replayed native work');
  const recoveryFailures=(childLog.match(/MISHU saved-scope recovery unavailable/g)??[]).length;if(recoveryFailures>256)throw Error('Too many scopes recovered');

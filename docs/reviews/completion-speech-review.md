@@ -56,3 +56,19 @@ model sessions. Browser speech is a controlled effect; the following remain
 manual or unobservable here: actual audible system voice quality, hosted-model
 brief quality and upstream cache-hit metrics. No live services were restarted
 and no production user state was modified.
+
+## Release preparation follow-up (2026-11-02)
+
+A fresh dependency installation reproduced a timing-only failure in the existing
+MISHU startup fixture: its process exceeded the 90-second deadline. Isolated
+execution recovered both authorized reports, then reached approximately 241 of
+the fixture's 256 SQLite scope initializations at the 60-second discovery limit.
+No provider or business assertion failed before those deadlines.
+
+The follow-up changes only finite fixture budgets: discovery gets 120 seconds,
+the subprocess 180 seconds and the enclosing test 190 seconds. All assertions,
+scope limits, disabled-scope checks, preserved corrupt state and no-replay
+requirements remain unchanged. There is no production runtime or dependency
+change. The focused test passed in 103.40 seconds. The original failing log and
+focused result are retained in the operator's private deployment evidence; a new
+review-bound canonical release check is required before publishing this candidate.
