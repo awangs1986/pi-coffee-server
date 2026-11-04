@@ -493,7 +493,17 @@ it.each(['normal','race','commit-failure'])('observes direct native Pi work with
  await expect.poll(()=>nextFrames.some(f=>f.type==='opened'),{timeout:10000}).toBe(true);
  nextSocket.send(JSON.stringify({v:1,type:'prompt',requestId:'unrelated-user-work',text:'Unrelated next work'}));await expect.poll(()=>calls,{timeout:10000}).toBe(2);reply();
  await expect.poll(()=>nextFrames.some(f=>f.event?.type==='agent_settled'),{timeout:10000}).toBe(true);nextSocket.close();
- expect(await(await req(get)).json()).toEqual(result);
+ // An append can temporarily make passive history unknown, advancing audit
+ // metadata. The original run and every business fact must remain unchanged.
+ const afterUnrelated=await(await req(get)).json();
+ const {revision,updatedAt,notification,...facts}=afterUnrelated.task;
+ const {revision:priorRevision,updatedAt:priorUpdatedAt,notification:priorNotification,...priorFacts}=result.task;
+ expect({...afterUnrelated,task:facts}).toEqual({...result,task:priorFacts});
+ expect(revision).toBeGreaterThanOrEqual(priorRevision);
+ expect(Date.parse(updatedAt)).toBeGreaterThanOrEqual(Date.parse(priorUpdatedAt));
+ expect(notification).toEqual({...priorNotification,revision:notification.revision});
+ expect(notification.revision).toBeGreaterThanOrEqual(priorNotification.revision);
+ expect(notification.revision).toBe(revision);expect(calls).toBe(2);
  if(mode==='normal'){
   const reportSocket=new WebSocket(`ws://127.0.0.1:${app.host.address().port}/host`,{headers:{authorization:'Bearer host-test','x-pi-coffee-user':'owner'}}),reportFrames:any[]=[];
   reportSocket.on('message',raw=>reportFrames.push(JSON.parse(String(raw))));

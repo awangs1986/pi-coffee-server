@@ -44,7 +44,16 @@ it('hides the synthetic broker secret, control socket and host process root from
  }finally{await close(f);}
 },30000);
 
-it('uses the kernel client UID even when the request claims a permitted administrator',async()=>{const f=await fixture(process.getuid!()+1);try{const client=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'awangs',authorityRevision:7});await expect(client.status()).rejects.toMatchObject({code:'peer_identity_mismatch'});}finally{await close(f);}},30000);
+it('uses the kernel client UID even when the request claims a permitted administrator',async()=>{const f=await fixture(process.getuid!()+1);try{const client=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'awangs',authorityRevision:7});for(let attempt=0;attempt<100;attempt++)await expect(client.status()).rejects.toMatchObject({code:'peer_identity_mismatch'});}finally{await close(f);}},30000);
+
+it('denies a rejected slow sender within a total deadline',async()=>{
+ const f=await fixture(process.getuid!()+1);const {createConnection}=await import('node:net');
+ const socket=createConnection(f.socket);let timer:ReturnType<typeof setInterval>|undefined;
+ try{
+  const denial=new Promise<string>((resolve,reject)=>{let data='';socket.on('data',chunk=>{data+=chunk;if(data.includes('\n'))resolve(data);});socket.on('error',reject);socket.on('connect',()=>{socket.write('{');timer=setInterval(()=>socket.write(' '),100);});});
+  await expect(Promise.race([denial,new Promise((_,reject)=>setTimeout(()=>reject(Error('Rejected sender exceeded total deadline')),2500))])).resolves.toContain('peer_identity_mismatch');
+ }finally{clearInterval(timer);socket.destroy();await close(f);}
+},10000);
 
 it('rechecks current administrator revocation independently of routed data scope',async()=>{const f=await fixture();try{
  const admin=new BackupRepositoryClient({socket:f.socket,serviceUid:process.getuid!(),actor:'awangs',dataScope:'bob',authorityRevision:7});expect(await admin.status('bob')).toMatchObject({configured:false});

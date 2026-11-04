@@ -1,6 +1,6 @@
 # Personal backup integration on current main — 2026-11-04
 
-Release candidate: Server 0.80. Base: `ac5a4185ac5d52232a9b36dc4f6fa6b21ae8fde8`.
+Release candidate: Server 0.81 (the initial 0.80 integration was published but not activated). Base: `ac5a4185ac5d52232a9b36dc4f6fa6b21ae8fde8`.
 Normal merge includes PR #151 (`257ee0d24ee4af8d3df6ddfe294c46805228a75f`),
 retaining completion-speech 0.1.2/protocol 2 and current Pi 1.4 native adapters.
 The backup branch's 0.58 version does not replace the current release number.
@@ -70,3 +70,32 @@ same three custody tests pass with the pinned Node + system-binary PATH. Canonic
 source/fresh-clone checks use that neutral environment and short disk root.
 Optional real-engine backup HTTP/restore and browser probes are run separately;
 the canonical check's actual skipped cases are reported without claiming coverage.
+
+## Exact-clone repairs in 0.81
+
+The 0.80 primary canonical check passed 1,685 tests plus all 17 Browser probes;
+the additional actual Browser/Web/Host/Restic probe passed. Its independent GitHub
+clone exposed two intermittent assertions and was **not** activated.
+
+A real peer-denial transport race was minimized to 100 local rejected calls:
+89 returned `peer_identity_mismatch`, 11 incorrectly returned `transport_unavailable`.
+Private instrumentation confirmed Node `socket.write` EPIPE after the server had
+already closed. Unauthorized callers were never admitted. The server now checks
+SO_PEERCRED first, drains at most one existing 1 MiB frame with a one-second
+deadline without parsing/dispatching it, then sends the same denial. The four
+existing service slots still bound resources. Incremental review caught an
+inactivity timeout that could be prolonged by trickle input; the final drain
+uses a monotonic total deadline and a slow-sender regression, red before repair. A 100-call regression went red
+before the fix; all seven broker tests pass after it. No retry or weaker identity
+check was introduced.
+
+MISHU replay testing reproduced a file-append read being temporarily unknown,
+then re-proving the exact original run. Only task revision/time and notification
+revision changed; obligation, watermark, original entry IDs/content and facts
+remained exact. The observation spec explicitly permits uncertain-with-last-facts.
+The test retains stable repeated-get equality and compares every field after an
+unrelated turn except those three audit metadata fields, which must be monotonic
+and internally consistent. The independent Spec reviewer confirmed this matches
+the existing no-future-run-adoption requirement. MISHU product code is unchanged.
+Temporary debug instrumentation was removed. The final 0.81 source and exact-clone
+canonical checks must pass and are reported separately from 0.80's historical gate.

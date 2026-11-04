@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 LIMIT = 1024 * 1024
@@ -111,6 +112,25 @@ def serve(config_path):
         try:
             credentials = peer(connection)
             if credentials['uid'] not in config.get('allowedUids', [config['hostUid']]):
+                # Closing before the caller writes can turn this denial into
+                # EPIPE. Drain one bounded frame without parsing or dispatching
+                # it, then send the denial. The deadline bounds total time,
+                # including send, even if an unauthorized peer trickles bytes.
+                deadline = time.monotonic() + 1
+                received = 0
+                try:
+                    while received < LIMIT:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        connection.settimeout(remaining)
+                        chunk = connection.recv(min(4096, LIMIT - received))
+                        received += len(chunk)
+                        if not chunk or b'\n' in chunk:
+                            break
+                except OSError:
+                    pass
+                connection.settimeout(max(0.001, deadline - time.monotonic()))
                 connection.sendall(fail('peer_identity_mismatch'))
                 return
             if config.get('trustModel') == 'host-root':
