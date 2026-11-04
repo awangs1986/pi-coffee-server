@@ -8,7 +8,7 @@ import { readClaudeHistory } from "../src/host/native/claude.js";
 import { NativeAgentFactory } from "../src/host/native/factory.js";
 import { sourceHash, unknownHistory } from "../src/host/native/history-source.js";
 import type { AgentSessionFactory } from "../src/host/agent-adapter.js";
-import type { Workspaces } from "../src/host/workspaces.js";
+import { Workspaces } from "../src/host/workspaces.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -149,4 +149,22 @@ it.each(['cursor','grok'] as const)('does not start %s merely to audit passive b
  const factory=new NativeAgentFactory({pi,workspaces,cursor:{command:'/no-executable-allowed'}});
  expect(await factory.readHistory('task')).toMatchObject({sourceFreshness:'unknown',binding:`${engine}:cursor-native:original`});
  expect(await factory.readRunEvidence('task','missing-run')).toMatchObject({supported:false,freshness:'unknown',state:'uncertain',capabilities:{restartRecovery:'unknown',passiveHistory:'unknown',detachedWriters:'unknown'}});expect(forbidden).not.toHaveBeenCalled();
+});
+
+it('reads and lists a restored Pi task under its public task ID while retaining a different native identity',async()=>{
+ const directory=await root(),sessionDir=join(directory,'sessions');await mkdir(sessionDir);const workspaces=new Workspaces(join(directory,'projects')),task=await workspaces.createChatConversation('coffee-task','pi'),nativeId='original-native-history';await workspaces.setNativeBinding(task.id,{state:'bound',id:nativeId});
+ const rows=piRows(nativeId);rows[0]={...rows[0],cwd:task.cwd};await writeFile(join(sessionDir,'2026-10-03_'+nativeId+'.jsonl'),jsonl(rows));const pi=new RpcPiSessionFactory({sessionDir,cliPath:'/no-runtime-allowed'}),factory=new NativeAgentFactory({pi,workspaces});
+ expect(await factory.readHistory(task.id)).toMatchObject({sourceFreshness:'current',history:{entries:[{id:'user-1'},{id:'assistant-1',text:'answer-a'}]}});
+ expect((await factory.list()).map(item=>item.id)).toEqual([task.id]);
+});
+it('refuses to replace restored Pi history with a new empty native session when its file is missing',async()=>{
+ const sessionDir=await root(),task={id:'coffee-task',engine:'pi',cwd:sessionDir,nativeBinding:{state:'bound',id:'original-native-history'},recoveryReceipt:{operationId:'restored-task',digest:'a'.repeat(64)}};
+ const pi=new RpcPiSessionFactory({sessionDir,cliPath:'/no-runtime-allowed'}),factory=new NativeAgentFactory({pi,workspaces:{lookup:async()=>task} as unknown as Workspaces});
+ await expect(factory.create({sessionId:task.id})).rejects.toThrow('Native Pi history is missing; restore its original store before reopening this task');
+});
+
+it('deletes only the restored Pi native history selected by its durable binding',async()=>{
+ const directory=await root(),sessionDir=join(directory,'sessions');await mkdir(sessionDir);const workspaces=new Workspaces(join(directory,'projects')),task=await workspaces.createChatConversation('coffee-task','pi'),neighbor=await workspaces.createChatConversation('other-task','pi'),nativeId='original-native-history';await workspaces.setNativeBinding(task.id,{state:'bound',id:nativeId});await workspaces.setNativeBinding(neighbor.id,{state:'bound',id:task.id});
+ const selected=join(sessionDir,'2026-10-03_'+nativeId+'.jsonl'),other=join(sessionDir,'2026-10-03_'+task.id+'.jsonl');const rows=piRows(nativeId);rows[0]={...rows[0],cwd:task.cwd};await writeFile(selected,jsonl(rows));const otherRows=piRows(task.id);otherRows[0]={...otherRows[0],cwd:neighbor.cwd};const otherBytes=jsonl(otherRows);await writeFile(other,otherBytes);
+ const factory=new NativeAgentFactory({pi:new RpcPiSessionFactory({sessionDir,cliPath:'/no-runtime-allowed'}),workspaces});expect(await factory.delete(task.id)).toBe(true);expect(await stat(selected).then(()=>true,()=>false)).toBe(false);expect(await readFile(other,'utf8')).toBe(otherBytes);
 });

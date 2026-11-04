@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "administrator": "awangs",
+  "scopes": ["awangs", "second-account"],
+  "actors": {
+    "awangs": {"role": "administrator", "scopes": ["awangs", "second-account"]},
+    "second-account": {"role": "reader", "scopes": ["second-account"]}
+  }
+}

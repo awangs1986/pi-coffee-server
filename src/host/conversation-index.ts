@@ -54,6 +54,8 @@ export class ConversationIndex {
   private closed=false;
   private closePromise?:Promise<void>;
   private pending=new Set<Promise<unknown>>();
+  private recoveryOperations=new Map<string,string>();
+  private recoveryJobs=new Map<string,Promise<void>>();
   private ownerGeneration=randomUUID();
   private auditing=0;
   constructor(private options:ConversationIndexOptions) {
@@ -121,6 +123,17 @@ export class ConversationIndex {
       if(source.sourceFreshness!=='current'){await this.request(id,'freshness',{freshness:'unknown'});return;}
       await this.write(id,'reconcile',{entries:source.history.entries,binding:source.binding,sourceGeneration:source.sourceGeneration,sourceFreshness:source.sourceFreshness,checkedAt:source.checkedAt,expectedEpoch:before.bindingEpoch,expectedRevision:before.headRevision},0,false);
     })().catch(async()=>{if(!this.closing&&!this.closed&&!actor.deleted)await this.request(id,'freshness',{freshness:'unknown'}).catch(()=>undefined);}).finally(()=>{actor.audit=undefined;this.auditing--;});
+  }
+  /** Trusted recovery receipt invalidates old display/command epochs, including
+   * a previously deleted task. Idempotent for the same durable operation. */
+  async recover(id:string,operationId:string):Promise<void>{
+    if(this.recoveryOperations.get(id)===operationId)return;
+    const pending=this.recoveryJobs.get(id);if(pending){await pending;return this.recover(id,operationId);}
+    const work=(async()=>{
+      const previous=this.actors.get(id);if(previous){previous.deleted=true;await previous.audit?.catch(()=>undefined);await previous.tail.catch(()=>undefined);this.actors.delete(id);}
+      const actor=this.actor(id);actor.auditsSuspended=true;
+      const update=this.request(id,'recover',{operationId});actor.tail=update.catch(()=>undefined);try{const meta=await update;this.recoveryOperations.set(id,operationId);this.options.onChange?.(meta);}finally{actor.auditsSuspended=false;}
+    })();this.recoveryJobs.set(id,work);try{await work;}finally{if(this.recoveryJobs.get(id)===work)this.recoveryJobs.delete(id);}
   }
   async reconcile(id:string,entries:any[],options:any={}) {return this.write(id,'reconcile',{entries,...options});}
   async remove(id:string) {const actor=this.actor(id);actor.deleted=true;return this.track(actor.tail.then(()=>this.request(id,'delete')));}

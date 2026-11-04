@@ -1,4 +1,5 @@
 import {mountOptionalSpeech} from './speech-bootstrap.js';
+import {initBackupControls} from './backup.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
@@ -101,6 +102,7 @@ let modelsRequestEpoch=0, modelsSyncTimer=null;
 let retryNote;
 let finishedWhileHidden = false;
 const pendingToolFills = new Set();
+let activeRecoveryGeneration=null;
 let connected = false, opened = false, streaming = false, compacting = false, modelPending = null;
 let activeId = null;
 let currentUser = null;
@@ -175,6 +177,8 @@ function captureSelection({task=true}={}){
 }
 let statusRequest=null,changesRequest=null,detailRequestSeq=0;
 const dialogs=createDialogManager(ui.app,ui.prompt);
+const backupControls=initBackupControls({context:()=>({user:currentUser}),onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
+$('#backup-btn')?.addEventListener('click',()=>void backupControls.open());
 let draftFiles = [];
 const decodingFiles=new Map();
 const imagesDecoding=()=>draftFiles.some(file=>decodingFiles.has(file));
@@ -372,6 +376,7 @@ function toast(text, ms = 1800) {
   toast.timer = setTimeout(() => ui.toast.classList.add('hidden'), ms);
 }
 function send(frame) {
+  if(frame.type==='queue_action'&&activeRecoveryGeneration)frame={...frame,recoveryGeneration:activeRecoveryGeneration};
   if(opened&&activeBindingEpoch&&activeId&&frame.type!=='open')frame={...frame,conversationId:activeId,bindingEpoch:activeBindingEpoch};
   if(takeoverBusy() && !['list_sessions','get_state','get_queue'].includes(frame.type))return false;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -1582,6 +1587,7 @@ async function whoAmI(epoch, signal) {
     const info = await response.json();
     if(epoch!==connectionEpoch)return false;
     const previousUser=currentUser;
+    backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
     if(previousUser!==currentUser){completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
@@ -1608,6 +1614,7 @@ function revokeCachedIdentity(){
   connectionEpoch++;taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
   loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
+  backupControls.close();
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;completionSpeech?.scopeChanged();activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
 }
@@ -1867,6 +1874,7 @@ function restoreQueuedPrompt() {
   if(!opened){setStreaming(false);showThinking(false);}
 }
 async function openSession(id) {
+  if(!id)activeRecoveryGeneration=null;
   if(!connected){restoreQueuedPrompt();toast('等待 VM 连接就绪');return;}
   if (pendingOpenId) return;            // an open is already in flight on this socket
   if (opened) { connect(); return; }    // one socket owns one Session: start over
@@ -1956,6 +1964,8 @@ function handleFrame(frame, ws) {
       opened = true;
       pendingOpenId = null;
       activeId = frame.sessionId;
+      activeRecoveryGeneration=frame.recoveryGeneration||null;
+      if(activeRecoveryGeneration){restoreQueuedPrompt();abandonPromptDelivery('任务已恢复；旧请求只保留为草稿，请核查历史后重新明确发送');}
       void mishuControls?.refresh().then(refreshComposer);
       restoreModelPreview();
       if(modelPreview&&modelPreview.engine!==engine){conversationModels.delete(activeId);modelPreview=null;}
@@ -3242,7 +3252,7 @@ function submitPrompt(text, images) {
   const wireText = files.length
     ? text + '\n\n[已上传到工作目录的文件]\n' + files.map((f) => `- ${f.path} (${formatBytes(f.size)})`).join('\n')
     : text;
-  const frame = { v: 1, type: 'prompt', requestId: requestId('web'), text: wireText };
+  const frame = { v: 1, type: 'prompt', requestId: requestId('web'), text: wireText,...(activeRecoveryGeneration?{recoveryGeneration:activeRecoveryGeneration}:{}) };
   if (images && images.length && supports("images")) frame.images = images;
   if (mode !== 'prompt') frame.mode = mode;
   const bytes=new TextEncoder().encode(JSON.stringify(frame)).byteLength;

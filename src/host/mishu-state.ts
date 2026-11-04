@@ -41,10 +41,10 @@ export function validateMishuState(v:unknown):asserts v is {version:1|2;chats:Re
  if(row(v)&&v.version!==1&&v.version!==2)throw new MishuStateError('unsupported-version');
  object(v,['version','chats']);check(row(v.chats));
  for(const [id,c] of Object.entries(v.chats)){
-  check(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id));object(c,['selected','enabled','allowInstructions','sourceBinding','targets','messages'],['followups','clarifications','coordinationGeneration','notificationError','notificationBudget','notifications','notificationGeneration','taskJournal','assignments','notes','manager','userInstructions']);
+  check(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id));object(c,['selected','enabled','allowInstructions','sourceBinding','targets','messages'],['recoveryOperationId','followups','clarifications','coordinationGeneration','notificationError','notificationBudget','notifications','notificationGeneration','taskJournal','assignments','notes','manager','userInstructions']);
   for(const k of ['selected','enabled','allowInstructions'])check(typeof c[k]==='boolean');check(text(c.sourceBinding));optional(c,'notifications',x=>typeof x==='boolean');optional(c,'notificationGeneration',num);optional(c,'notificationError',text);
   if(c.followups!==undefined){try{validateFollowups(c.followups);}catch{throw new MishuStateError('invalid-state');}}
-  optional(c,'coordinationGeneration',num);if(c.clarifications!==undefined){try{validateClarifications(c.clarifications);}catch{throw new MishuStateError('invalid-state');}}
+  optional(c,'recoveryOperationId',text);optional(c,'coordinationGeneration',num);if(c.clarifications!==undefined){try{validateClarifications(c.clarifications);}catch{throw new MishuStateError('invalid-state');}}
   if(c.notificationBudget!==undefined){object(c.notificationBudget,['startedAt','used']);check(num(c.notificationBudget.startedAt)&&num(c.notificationBudget.used));}
   if(c.userInstructions!==undefined)array(c.userInstructions,200,value=>{object(value,['requestId','text']);check(text(value.requestId)&&text(value.text,4000));});
   if(c.manager!==undefined){object(c.manager,['sourceBinding','viewAll','watchCursor']);check(text(c.manager.sourceBinding)&&typeof c.manager.viewAll==='boolean'&&num(c.manager.watchCursor));}

@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "serviceUid": 943,
+  "sourceUid": 941,
+  "socket": "/run/pi-coffee-provider-awangs-codex/provider.sock",
+  "provider": "openai",
+  "models": ["gpt-6.1-sol"],
+  "api": "openai-responses",
+  "baseUrl": "https://chatgpt.com/backend-api/codex",
+  "auth": {
+    "kind": "codex",
+    "home": "/var/lib/pi-coffee-provider-awangs/codex",
+    "cli": "/opt/pi-coffee-runtimes/codex-0.159.1/node_modules/@openai/codex/bin/codex.js",
+    "version": "0.159.1",
+    "mode": "chatgpt"
+  }
+}

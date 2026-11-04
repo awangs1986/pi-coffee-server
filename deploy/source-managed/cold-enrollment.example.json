@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "actor": "awangs",
+  "root": "/srv/pi-coffee-source/authority/cold-enrollment",
+  "exportDirectory": "/srv/pi-coffee-frozen-export/sealed/00000000-0000-4000-8000-000000000001",
+  "legacy": {"socket": "/run/pi-coffee-legacy/admission.sock", "uid": 21001},
+  "mappings": [
+    {"scope": "awangs", "taskId": "example-task", "roots": [
+      {"from": "/srv/pi-coffee-legacy/awangs", "to": "/srv/pi-coffee-source/scopes/awangs"}
+    ]}
+  ]
+}

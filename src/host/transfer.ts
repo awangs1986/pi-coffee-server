@@ -309,7 +309,9 @@ export class TransferServer {
     return this.tokens.get(scope) === token && (!this.workspaceFor(scope) || (this.tokenExpiry.get(scope) ?? 0)>Date.now()) ? scope : null;
   }
 
-  private async prepareUpload(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+  private async prepareUpload(request: IncomingMessage, response: ServerResponse, url: URL,admitted=false): Promise<void> {
+    const writeScope=this.scopeOf(url),fence=writeScope?this.workspaceFor(writeScope)?.backupWriterFence:undefined;
+    if(fence&&!admitted)return fence.runWriter('platform',()=>this.prepareUpload(request,response,url,true));
     const scope = this.scopeOf(url);
     if (scope === null) { sendJson(response, 401, { message: "Invalid scope token" }); return; }
     let body: unknown;
@@ -358,7 +360,10 @@ export class TransferServer {
     sendJson(response, 200, { sessionId: session.id, files: tokens });
   }
 
-  private async upload(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+  private async upload(request: IncomingMessage, response: ServerResponse, url: URL,admitted=false): Promise<void> {
+    const uploadId=url.searchParams.get('sessionId'),upload=uploadId?this.uploads.get(uploadId):undefined;
+    const fence=upload?this.workspaceFor(upload.scope)?.backupWriterFence:undefined;
+    if(fence&&!admitted)return fence.runWriter('platform',()=>this.upload(request,response,url,true));
     const sessionId = url.searchParams.get("sessionId");
     const fileId = url.searchParams.get("fileId");
     const token = url.searchParams.get("token");

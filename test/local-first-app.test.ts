@@ -982,3 +982,16 @@ it('hides empty sidebar folders without removing them from move destinations',as
  expect(document.querySelector('.sidebar-move-select')?.textContent).toContain('Empty Folder');
  expect(app.conversations).toHaveLength(3);
 });
+
+describe('recovery generation at the real browser controller',()=>{
+ it('keeps a queued pre-recovery input as a draft and marks only an explicit new submission with the observed generation',async()=>{
+  const app=await setup('pi');const socket=await app.select('a');
+  draft('uncertain old text');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await tick();
+  const before=allFrames.filter(f=>f.type==='prompt').length;
+  socket.close();socket.onclose?.({code:1006});window.dispatchEvent(new Event('focus'));await tick();
+  const fresh=app.sockets.at(-1)!;fresh.receive({type:'opened',sessionId:'a',engine:'pi',capabilities,state:{isStreaming:false},recoveryGeneration:'restored-operation'});fresh.receive({type:'history',sessionId:'a',entries:[{kind:'user',text:'restored historical turn'}]});await tick(150);
+  expect(allFrames.filter(f=>f.type==='prompt')).toHaveLength(before);expect(thread().textContent).toContain('不会自动重发');
+  draft('new explicit instruction');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await tick();
+  expect(allFrames.filter(f=>f.type==='prompt').at(-1)).toMatchObject({text:'new explicit instruction',recoveryGeneration:'restored-operation'});
+ });
+});

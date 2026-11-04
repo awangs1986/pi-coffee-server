@@ -9,6 +9,8 @@ import {promisify} from 'node:util';
 const exec=promisify(execFile);
 const quote=(value:string)=>"'"+value.replace(/'/g,"'\\''")+"'";
 import {GitHubClient} from './github.js';
+import {verifyGiteaIdentity} from './gitea-identity.mjs';
+import type {WorkspaceGitTransport} from './workspace-git-transport.js';
 import type {GiteaTransport} from './gitea-identity.mjs';
 export interface GitHubAccount {id:string;githubId:string;login:string;connectedAt:string;}
 interface StoredAccount extends GitHubAccount,GitHubCredentials {credentialVersion?:string;reconnectRequired?:boolean;}
@@ -71,6 +73,25 @@ export class GitHubAccounts {
       if(reconnect){current.reconnectRequired=true;await this.write(accounts);throw Error('github_reconnect_required');}
       this.retryAfter.set(snapshot.id+':'+(snapshot.credentialVersion??snapshot.token),this.now()+30000);throw Error('github_refresh_unavailable');
     });this.tail=run.catch(()=>undefined);await run;
+  }
+  async workspaceGitIdentity():Promise<{name:string;email:string}|undefined>{
+    if(this.options.gitIdentity)return {...this.options.gitIdentity};
+    await this.environment(undefined);
+    const value=JSON.parse(await readFile(join(this.root,'transport.json'),'utf8')).identity;
+    return typeof value?.['user.name']==='string'&&typeof value?.['user.email']==='string'?{name:value['user.name'],email:value['user.email']}:undefined;
+  }
+  /** Host-only transport authority; neither credentials nor private helper paths
+   * enter a managed workspace command. Recheck live binding for each request. */
+  async workspaceGitTransport(repository:string,id:unknown):Promise<WorkspaceGitTransport>{
+    const target=new URL(repository);
+    if(!['http:','https:'].includes(target.protocol)||target.username||target.password||target.search||target.hash)throw Error('Unsupported managed Git repository');
+    if(target.origin==='https://github.com'){
+      await this.resolve(id);
+      return {repository,credentials:async()=>({authorization:'Basic '+Buffer.from('x-access-token:'+await this.token(id)).toString('base64')})};
+    }
+    const gitea=this.options.gitea,base=gitea?new URL(gitea.url):undefined;
+    if(!gitea||!base||target.origin!==base.origin||!target.pathname.startsWith(base.pathname.replace(/\/$/,'')+'/'))throw Error('Managed Git repository has no account-bound transport');
+    return {repository,credentials:async()=>{await verifyGiteaIdentity(gitea);return {authorization:'Basic '+Buffer.from(gitea.owner+':'+gitea.token).toString('base64')};}};
   }
   async close(){await Promise.allSettled([...this.renewals.values()]);await this.tail;await this.broker?.close();}
   async environment(id:unknown,ghProgram?:string):Promise<Record<string,string>> {

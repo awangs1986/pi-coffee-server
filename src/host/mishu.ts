@@ -1,3 +1,5 @@
+import {BackupError,type RecoveryPublication} from './backup.js';
+import {syncDir} from './restore-files.js';
 import {followupOperation,followupEvidence,followupScope,type Followups,type FollowupPlan} from './mishu-followups.js';
 import {collaborationItem} from './mishu-collaboration.js';
 import {MishuUsage,type UsageRecord,type UsagePurpose} from './mishu-usage.js';
@@ -32,7 +34,7 @@ import type {ConversationIndex} from './conversation-index.js';
 
 interface Target {id:string;binding:string;title:string;engine:string}
 interface Receipt {followupPlanId?:string;followupGeneration?:number;taskId?:string;messageId:string;targetId:string;binding:string;kind:string;state:string;requestId:string;fingerprint:string;text:string;authorizationRef?:string;result?:string;truncated?:boolean;error?:string;createdAt:string}
-interface Config {followups?:Followups;clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
+interface Config {recoveryOperationId?:string;followups?:Followups;clarifications?:Clarifications;coordinationGeneration?:number;userInstructions?:{requestId:string;text:string}[];manager?:ManagerChat;notes?:HistoricalNote[];notificationError?:string;notificationBudget?:{startedAt:number;used:number};notifications?:boolean;notificationGeneration?:number;selected:boolean;enabled:boolean;allowInstructions:boolean;sourceBinding:string;targets:Target[];messages:Receipt[];taskJournal?:TaskJournal;assignments?:Assignment[]}
 interface State {version:2;chats:Record<string,Config>}
 /** Authorization and contacts share the same state.json transaction. */
 interface ManagerChat {sourceBinding:string;viewAll:boolean;watchCursor:number}
@@ -175,8 +177,8 @@ export class MishuCoordinator {
  endTodo(id:string,requestId:string){if(this.todoWindows.get(id)===requestId)this.todoWindows.delete(id);}
  private quickWindows=new Map<string,{requestId:string;text:string}>();
  constructor(private root:string,private workspaces:Workspaces,private locks:Set<string>,capabilitiesOrOptions?:((id:string)=>Promise<MishuSourceCapabilities>)|MishuCoordinatorOptions,options:MishuCoordinatorOptions={}){
-  this.memory=new MishuMemory(root);
-  this.consolidation=new MishuConsolidation(root,{
+  this.memory=new MishuMemory(root,()=>workspaces.backupWriterFence);
+  this.consolidation=new MishuConsolidation(root,{writerFence:()=>workspaces.backupWriterFence,
    memory:this.memory,
    authority:async id=>{const source=await this.source(id),status=await this.status(id),live=this.registry?.get(id),models=await live?.getModels().catch(()=>undefined);return {binding:binding(source),generation:this.state.chats[id]?.coordinationGeneration??0,enabled:status.selected&&status.enabled,idle:!live?.isBusy&&live?.attention!=='waiting',manualCommand:Boolean(this.memoryWindows.get(id)&&this.memoryWindows.get(id)===live?.currentRequestId&&!live?.isReportRun),...(models?.current&&this.memoryExtractor?{model:models.current}:{}),project:source.projectId};},
    evidence:async(id,input)=>await this.evidence(id,input) as unknown as ConsolidationEvidence,
@@ -225,7 +227,7 @@ export class MishuCoordinator {
  private persistedBytes=0;
  private transactionCheckpoint?:State;
  private migration?:{bytes:Buffer;name:string};
- private async load(){await (this.loaded??= (async()=>{
+ private async load(admitted=false){await (this.loaded??= (async()=>{
   await mkdir(this.root,{recursive:true,mode:0o700});
   const writer=new DatabaseSync(join(this.root,'writer.sqlite'));
   try{writer.exec('BEGIN EXCLUSIVE');this.writer=writer;}catch{writer.close();throw Error('Another Host owns MISHU coordination; no state was read or changed');}
@@ -237,6 +239,7 @@ export class MishuCoordinator {
    let retired=false;
    for(const [id,c] of Object.entries(this.state.chats)){
     const task=await this.workspaces.lookup(id);
+    if(task?.recoveryReceipt&&c.recoveryOperationId!==task.recoveryReceipt.operationId){c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.targets=[];c.userInstructions=[];if(c.manager)c.manager.viewAll=false;c.notificationGeneration=(c.notificationGeneration??0)+1;this.cancelObservations(c);this.revokeQuick(id);c.recoveryOperationId=task.recoveryReceipt.operationId;retired=true;}
     if(task&&(task.engine??'pi')!=='pi'&&(c.selected||c.enabled||c.notifications)){
      c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.notificationGeneration=(c.notificationGeneration??0)+1;
      this.cancelObservations(c);retired=true;
@@ -244,18 +247,23 @@ export class MishuCoordinator {
    }
    if(retired){
     this.migration??={bytes:loaded.bytes,name:'state.before-pi-only.'+createHash('sha256').update(loaded.bytes).digest('hex')+'.json'};
-    await this.save(true);
+    try{await this.save(true,admitted);}catch(error){
+     // A pending restore may boot before its exact publication capability exists.
+     // Authority is already retired in memory; the approved job persists it under
+     // its cut. Ordinary mutations remain fenced and cannot reactivate it.
+     if(!(this.workspaces.backupWriterFence&&error instanceof BackupError&&error.code==='writers_active'))throw error;
+    }
    }
   }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw await diagnoseMishuState(this.root,e);}
  })());}
- private async save(revocation=false){for(const [id,c] of Object.entries(this.state.chats)){const epoch=this.coordinationEpoch.get(id);if(epoch!==undefined&&(c.coordinationGeneration??0)<epoch)c.coordinationGeneration=epoch;}await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
+ private async save(revocation=false,admitted=false):Promise<void>{if(this.workspaces.backupWriterFence&&!admitted)return this.workspaces.backupWriterFence.runWriter('platform',()=>this.save(revocation,true));for(const [id,c] of Object.entries(this.state.chats)){const epoch=this.coordinationEpoch.get(id);if(epoch!==undefined&&(c.coordinationGeneration??0)<epoch)c.coordinationGeneration=epoch;}await mkdir(this.root,{recursive:true,mode:0o700});validateMishuState(this.state);const serialized=JSON.stringify(this.state);if(Buffer.byteLength(serialized)>(revocation?MAX_MISHU_STATE_BYTES:Math.max(MAX_MISHU_STATE_BYTES-32*1024*1024,this.persistedBytes)))throw await diagnoseMishuState(this.root,new MishuStateError('storage-capacity'));if(this.migration){const backup=join(this.root,this.migration.name);try{await writeFile(backup,this.migration.bytes,{mode:0o600,flag:'wx',flush:true});}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST'||!Buffer.from(await readFile(backup)).equals(this.migration.bytes))throw e;}}const file=join(this.root,'state.json'),temp=file+'.tmp';await writeFile(temp,serialized,{mode:0o600,flush:true});await rename(temp,file);await syncDir(this.root);this.persistedBytes=Buffer.byteLength(serialized);this.migration=undefined;if(this.transactionCheckpoint)this.transactionCheckpoint=structuredClone(this.state);
   // Queue cancellation is a side effect of committed revocation, never a staged edit.
   for(const [id,queued] of this.notificationQueued){
    const report=this.state.chats[id]?.taskJournal?.tasks.flatMap(t=>t.reports??[]).find(r=>r.id===queued.reportId);
    if(report?.state==='cancelled')this.cancelNotificationQueue(id);
   }
  }
- private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false):Promise<T>{const next=this.tail.then(async()=>{await this.load();this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>{this.scheduleNotifications();this.scheduleFollowups();this.scheduleClarifications();}).catch(()=>undefined);return next;}
+ private change<T>(fn:()=>Promise<T>,schedule=true,revocation=false,admitted=false):Promise<T>{if(this.workspaces.backupWriterFence&&!admitted)return this.workspaces.backupWriterFence.runWriter('platform',()=>this.change(fn,schedule,revocation,true));const next=this.tail.then(async()=>{await this.load(admitted);this.transactionCheckpoint=structuredClone(this.state);try{const value=await fn();await this.checkCodexInvocation();await this.save(revocation,admitted);return value;}catch(error){const before=this.transactionCheckpoint;this.state=before;for(const [target,active] of this.active){const receipt=before.chats[active.source]?.messages.find(m=>m.messageId===active.receipt.messageId);if(receipt)this.active.set(target,{source:active.source,receipt});else this.active.delete(target);}throw error;}finally{this.transactionCheckpoint=undefined;}});this.tail=next.catch(()=>undefined);if(schedule)void next.then(()=>{this.scheduleNotifications();this.scheduleFollowups();this.scheduleClarifications();}).catch(()=>undefined);return next;}
  private async source(id:string){await this.checkCodexInvocation();const c=await this.workspaces.lookup(id);if(!c||!visible(c)||c.workspaceKind!=='chat'||(c.engine??'pi')!=='pi')throw Error('MISHU requires an active Pi Chat belonging to this user; other Agents may be targets only');return c;}
  private config(id:string,task:Conversation){return this.state.chats[id]??{selected:false,enabled:false,allowInstructions:false,sourceBinding:binding(task),targets:[],messages:[]};}
  async status(id:string){await this.tail;await this.load();const task=await this.source(id),c=this.config(id,task);
@@ -273,7 +281,7 @@ export class MishuCoordinator {
   const task=await this.source(id);if(this.locks.has(id)||this.registry?.get(id)?.isBusy||this.registry?.get(id)?.attention==='waiting')throw Error('Wait for this Chat to finish before changing MISHU');
   if(selected&&task.engine==='codex'&&(!task.nativeBinding?.id||!(this.registry?.get(id)?.currentState.messageCount||task.nativeContextEmpty===false||(await this.registry!.list()).some(row=>row.id===id&&row.messageCount>0))))throw Error('先向 Codex 发一条消息建立原生记录，再勾选 MISHU；不会创建替代线程');
   this.locks.add(id);try {
-  const c=this.config(id,task),live=this.registry?.get(id);if(live){const background=await live.backgroundState();if(!background.known||background.active>0)throw Error('Wait for this Chat background tasks to finish before changing MISHU');}
+  const c=this.config(id,task);c.recoveryOperationId=task.recoveryReceipt?.operationId;const live=this.registry?.get(id);if(live){const background=await live.backgroundState();if(!background.known||background.active>0)throw Error('Wait for this Chat background tasks to finish before changing MISHU');}
   await this.registry?.stopIdle(id);this.revokeCodexTokens(id);this.foreground.delete(id);
   for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
   this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);if(this.state.chats[id])this.state.chats[id].userInstructions=[];if(this.state.chats[id]?.manager)this.state.chats[id].manager!.viewAll=false;
@@ -788,6 +796,17 @@ export class MishuCoordinator {
    for(const report of task.reports??[])if(report.state!=='committed')report.state='cancelled';
    task.obligation.state='cancelled';task.obligation.generation++;task.observation='stopped';task.revision++;task.updatedAt=new Date().toISOString();task.notification=undefined;
   }
+ }
+ /** Restore must retire surviving authority even when the task record is missing.
+  * This operation does not stop or replay any neighboring native run. */
+ async retireRecoveryAuthority(id:string,publication?:RecoveryPublication){
+  const retire=()=>this.change(async()=>{
+   this.revokeQuick(id);this.revokeSetupTickets(id);this.grants.revokeChat(id);this.revokeCodexTokens(id);this.foreground.delete(id);for(const [token,source] of this.tokens)if(source===id)this.tokens.delete(token);
+   const c=this.state.chats[id];if(c&&(!publication||c.recoveryOperationId!==publication.operationId)){this.cancelObservations(c);c.selected=false;c.enabled=false;c.allowInstructions=false;c.notifications=false;c.targets=[];c.userInstructions=[];if(c.manager)c.manager.viewAll=false;c.notificationGeneration=(c.notificationGeneration??0)+1;if(publication)c.recoveryOperationId=publication.operationId;else delete c.recoveryOperationId;}
+  },false,true,Boolean(publication));
+  if(!publication)return retire();
+  const fence=this.workspaces.backupWriterFence;if(!fence)throw new BackupError('recovery_publication_required','Recovery authority retirement requires a verified publication lease');
+  return fence.runRecoveryPublication(publication,retire);
  }
  async revokeConversation(id:string){
   for(const [source,c] of Object.entries(this.state.chats))if(source===id||c.targets.some(t=>t.id===id))this.revokeQuick(source);

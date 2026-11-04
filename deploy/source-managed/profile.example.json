@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "executorUid": 941,
+  "legacyHostUid": 1000,
+  "keyUid": 942,
+  "sourceParent": "/var/lib/pi-coffee-source",
+  "sourceSocket": "/run/pi-coffee-source/source.sock",
+  "legacyAdmissionSocket": "/run/pi-coffee-legacy/admission.sock",
+  "runtimeRoots": [
+    "/opt/pi-coffee-node",
+    "/opt/pi-coffee-runtimes/codex-0.159.1",
+    "/opt/pi-coffee-release/node_modules",
+    "/opt/pi-coffee-release/dist"
+  ],
+  "scopeProviderTransports": {
+    "awangs": {
+      "pi": {"provider":"openai","models":["gpt-6.1-sol"],"socket":"/run/pi-coffee-provider-awangs-pi/provider.sock","serviceUid":943,"port":17321},
+      "codex": {"provider":"openai","models":["gpt-6.1-sol"],"socket":"/run/pi-coffee-provider-awangs-codex/provider.sock","serviceUid":943,"port":17321}
+    }
+  }
+}

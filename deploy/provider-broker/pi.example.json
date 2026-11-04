@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "serviceUid": 943,
+  "sourceUid": 941,
+  "socket": "/run/pi-coffee-provider-awangs-pi/provider.sock",
+  "provider": "openai",
+  "models": ["gpt-6.1-sol"],
+  "api": "openai-responses",
+  "baseUrl": "https://api.openai.com/v1",
+  "auth": {
+    "kind": "pi",
+    "authPath": "/var/lib/pi-coffee-provider-awangs/pi/auth.json",
+    "modelsPath": "/var/lib/pi-coffee-provider-awangs/pi/models.json"
+  }
+}

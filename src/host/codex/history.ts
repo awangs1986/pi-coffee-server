@@ -27,6 +27,27 @@ async function rolloutPath(home: string, id: string): Promise<string | undefined
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+/** Native paginated forks inherit an immutable, byte-bounded prefix. Follow
+ * physical rollout IDs, detect cycles, and audit every source again after the
+ * graph read. A later parent turn must never appear in the child's history. */
+async function readLineage(home:string,path:string,cwd:string){
+ const sources=new Map<string,Awaited<ReturnType<typeof readStableSource>>>(),ids=new Set<string>();let bytes=0;
+ async function visit(file:string,end?:{end_byte_offset:number;end_ordinal_exclusive:number},seen=new Set<string>()):Promise<Record<string,any>[]>{
+  if(seen.has(file)||seen.size>=32)throw Error('Native lineage cycle or limit');seen.add(file);
+  const source=await readStableSource(file);sources.set(file,source);bytes+=Buffer.byteLength(source.text);if(bytes>64*1024*1024)throw Error('Native lineage audit limit');
+  const raw=Buffer.from(source.text);let text=source.text;
+  if(end){if(!Number.isSafeInteger(end.end_byte_offset)||end.end_byte_offset<1||end.end_byte_offset>raw.length||raw[end.end_byte_offset-1]!==10||!Number.isSafeInteger(end.end_ordinal_exclusive)||end.end_ordinal_exclusive<1)throw Error('Native lineage cutoff is invalid');text=new TextDecoder('utf-8',{fatal:true}).decode(raw.subarray(0,end.end_byte_offset));}
+  const rows=await parseSourceLines(text),meta=rows[0];if(meta?.type!=='session_meta'||typeof meta.payload?.id!=='string'||resolve(meta.payload.cwd)!==resolve(cwd))throw Error('Native lineage ownership unavailable');ids.add(meta.payload.id);
+  const base=meta.payload.history_base;
+  if(base||end){if(meta.payload.history_mode!=='paginated')throw Error('Native lineage schema unavailable');let ordinal=-1;for(const row of rows){if(!Number.isSafeInteger(row.ordinal)||row.ordinal<=ordinal)throw Error('Native lineage ordinal unavailable');ordinal=row.ordinal;}if(end&&rows.some(row=>row.type!=='session_meta'&&row.ordinal>=end.end_ordinal_exclusive))throw Error('Native lineage cutoff mismatch');}
+  let prefix:Record<string,any>[]=[];
+  if(base){if(typeof base.thread_id!=='string'||!/^[a-zA-Z0-9-]+$/.test(base.thread_id))throw Error('Native lineage identity unavailable');const parent=await rolloutPath(home,base.thread_id);if(!parent)throw Error('Native lineage source unavailable');prefix=(await visit(parent,base,seen)).slice(1);}
+  return [meta,...prefix,...rows.slice(1)];
+ }
+ const rows=await visit(path);for(const [file,source]of sources)if((await readStableSource(file)).generation!==source.generation)throw Error('Native lineage changed during audit');
+ return {rows,ids,source:{identity:sourceHash(JSON.stringify([...sources].map(([file,source])=>[file,source.identity]))),generation:sourceHash(JSON.stringify([...sources].map(([file,source])=>[file,source.generation])))}};
+}
+
 function normalizeItem(item: Record<string, any>): Obj | undefined {
   const type = String(item.type ?? "");
   const lower = type.charAt(0).toLowerCase() + type.slice(1);
@@ -68,7 +89,7 @@ export async function readCodexHistory(options: { cwd: string; codexHome?: strin
   try {
     const path = await rolloutPath(options.codexHome ?? options.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"), nativeId);
     if (!path) return unknownHistory(binding);
-    const source = await readStableSource(path), rows = await parseSourceLines(source.text);
+    const {source,rows,ids:lineageIds} = await readLineage(options.codexHome ?? options.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? join(homedir(), ".codex"),path,options.cwd);
     const meta = rows[0];
     if (meta?.type !== "session_meta" || meta.payload?.id !== nativeId || typeof meta.payload.cwd !== "string" || resolve(meta.payload.cwd) !== resolve(options.cwd)) return unknownHistory(binding);
     const items = new Map<string, { item: Obj; turn: string; at?: string }>();
@@ -100,7 +121,7 @@ export async function readCodexHistory(options: { cwd: string; codexHome?: strin
         legacyItems.push(event.type.endsWith("_message") ? { turn, role: event.type === "user_message" ? "user" : "assistant", text: event.message } : { turn, id: event.call_id });
       }
       if (!["item_started", "item_completed"].includes(event.type)) continue;
-      if (event.thread_id && event.thread_id !== nativeId) throw new Error("Native thread identity changed");
+      if (event.thread_id && !lineageIds.has(event.thread_id)) throw new Error("Native thread identity changed");
       const turnId = event.turn_id;
       if (typeof turnId !== "string" || !event.item || typeof event.item !== "object") throw new Error("Native item identity is missing");
       turn = turnId; canonicalTurns.add(turnId);

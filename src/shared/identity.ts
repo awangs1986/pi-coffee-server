@@ -8,6 +8,8 @@ import { createHash } from "node:crypto";
  * normalised and validated identically on both sides.
  */
 export const USER_HEADER = "x-pi-coffee-user";
+/** Authenticated actor, forwarded only by the trusted Web gateway. */
+export const ACTOR_HEADER = "x-pi-coffee-actor";
 
 /** Gitea login names: letters, digits, `.`, `-`, `_`; lowercased for stable paths. */
 const USERNAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
