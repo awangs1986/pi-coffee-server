@@ -151,7 +151,7 @@ it('blocks takeover while a foreground turn and pending follow-up exist',async()
 });
 it('reopens a round-trip task after Host restart with both boundaries and no extra model call',async()=>{
  const app=await setup();for(const [from,to] of [['pi','codex'],['codex','pi']]){const response=await app.request({action:'takeover',id:app.task.id,engine:to,expectedEngine:from,acceptDrift:true});
-  expect(response.status,await response.clone().text()).toBe(202);await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');}
+  expect(response.status,await response.clone().text()).toBe(202);await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');await waitForTakeoverIdle(app.host,app.task.id);}
  const host=await app.restart();const socket=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer test'}});cleanup.push(async()=>socket.close());const frames:any[]=[];socket.on('message',raw=>frames.push(JSON.parse(String(raw))));await new Promise(r=>socket.once('open',r));socket.send(JSON.stringify({v:1,type:'open',sessionId:app.task.id,nativeProtocol:1}));
  await expect.poll(()=>frames.some(f=>f.type==='history')).toBe(true);const history=frames.find(f=>f.type==='history').entries;
  expect(frames.find(f=>f.type==='opened').engine).toBe('pi');expect(history.filter((e:any)=>e.kind==='user')).toEqual([expect.objectContaining({text:'Keep the uncommitted fix. Continue testing.'})]);expect(history.filter((e:any)=>e.kind==='note'&&e.text.startsWith('Agent 交接：'))).toHaveLength(2);expect(app.calls).toHaveLength(2);

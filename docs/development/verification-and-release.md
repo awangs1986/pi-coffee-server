@@ -43,6 +43,12 @@ accept a plan uploaded by a Web user. Alternative targeted plans use
 `node scripts/verify.mjs --plan /private/targeted.json --receipt /private/targeted-receipt.json`.
 A targeted receipt does not replace the canonical final publication plan.
 
+Backup/native isolation fixtures require a short, private **disk-backed** check
+root (for example `PI_COFFEE_CHECK_TMP_ROOT=/home/awang/tmp/ck`). Their managed
+source grants deliberately reject `/run`, and Linux Unix sockets have a short
+pathname limit; long nested checkout/check roots can fail before a fixture starts.
+This does not change the capped memory storage used for production native scratch.
+
 Fresh-clone verification:
 
 ```bash

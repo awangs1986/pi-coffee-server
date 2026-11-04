@@ -52,3 +52,14 @@ remains usable for normal tasks but its backup capture is explicitly unavailable
 no version guard is weakened and no native CLI is downgraded. Gitea capture needs
 its actual backend/paths qualified and an explicit service profile. Deployment
 must not claim complete Pi/Codex/Gitea protection while these gates remain open.
+
+## Integration verification repairs
+
+The first broad check used `/run` and correctly hit managed-source grant refusal.
+A disk retry under a long cache prefix hit the Unix socket pathname limit
+(`provider.sock` chmod ENOENT after truncated binding). A short private disk root
+is required; both failed logs are retained in the release evidence. No production
+service changed. The round-trip takeover test also observed persisted completion
+before lifecycle adoption/unlock and immediately issued another mutation; it now
+uses the existing public `list_sessions` idle helper between takeovers, retaining
+the original history/model-call assertions. No product behavior was relaxed.
