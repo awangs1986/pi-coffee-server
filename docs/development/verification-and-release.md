@@ -48,6 +48,9 @@ root (for example `PI_COFFEE_CHECK_TMP_ROOT=/home/awang/tmp/ck`). Their managed
 source grants deliberately reject `/run`, and Linux Unix sockets have a short
 pathname limit; long nested checkout/check roots can fail before a fixture starts.
 This does not change the capped memory storage used for production native scratch.
+Use a neutral PATH containing the pinned Node directory and system tools, rather
+than a live account-scoped Git wrapper: those wrappers intentionally change HOME
+and credentials, which is unrelated to synthetic fixture environment assertions.
 
 Fresh-clone verification:
 

@@ -63,3 +63,10 @@ service changed. The round-trip takeover test also observed persisted completion
 before lifecycle adoption/unlock and immediately issued another mutation; it now
 uses the existing public `list_sessions` idle helper between takeovers, retaining
 the original history/model-call assertions. No product behavior was relaxed.
+
+A current-account Git wrapper in the inherited PATH also intentionally changed
+HOME, conflicting with an ordinary Git fixture's original-HOME assertion. The
+same three custody tests pass with the pinned Node + system-binary PATH. Canonical
+source/fresh-clone checks use that neutral environment and short disk root.
+Optional real-engine backup HTTP/restore and browser probes are run separately;
+the canonical check's actual skipped cases are reported without claiming coverage.
