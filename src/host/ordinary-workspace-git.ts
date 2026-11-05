@@ -1,3 +1,4 @@
+import {WORKSPACE_GIT_MAX_OUTPUT_BYTES} from './workspace-git-limits.js';
 import {spawn} from 'node:child_process';
 import {constants} from 'node:fs';
 import {mkdtemp,writeFile,open,rm} from 'node:fs/promises';
@@ -30,7 +31,7 @@ export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:stri
  try{
   if(options.input&&options.input.length>1024*1024)throw Error('Workspace Git input exceeds its resource budget');
   const request=JSON.stringify({args,input:options.input?.toString('base64'),timeout:options.timeout,maxBuffer:options.maxBuffer});
-  if(!Number.isSafeInteger(options.maxBuffer)||options.maxBuffer<1||options.maxBuffer>16*1024*1024||!Number.isSafeInteger(options.timeout)||options.timeout<1||Buffer.byteLength(request)>8*1024*1024)throw Error('Workspace Git request exceeds its resource budget');
+  if(!Number.isSafeInteger(options.maxBuffer)||options.maxBuffer<1||options.maxBuffer>WORKSPACE_GIT_MAX_OUTPUT_BYTES||!Number.isSafeInteger(options.timeout)||options.timeout<1||Buffer.byteLength(request)>8*1024*1024)throw Error('Workspace Git request exceeds its resource budget');
   await writeFile(join(root,'request.json'),request,{flag:'wx',mode:0o600});
   const launch=await custody.prepare({executable:process.execPath,args:['-e',commandProgram,root]});
   child=spawn(process.execPath,[launch.cliPath],{cwd:options.cwd,env:{...options.env,...launch.env},stdio:'ignore'});child.unref();let launchFailure:Error|undefined;

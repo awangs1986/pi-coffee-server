@@ -1,3 +1,5 @@
+- Fork preparation under ordinary writer custody: [bounded 32 MiB patch and durable failure display](spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05), Server 0.83 / #39.
+
 - Per-conversation GitHub access for Gitea Work: [selection, runtime recreation and isolation](spec/github-accounts.md#github-access-for-a-gitea-work-conversation-2026-10-26).
 - Create a private Gitea repository directly in the Work repository picker: [creation flow](spec/gitea-workspaces.md#create-a-gitea-repository-from-the-picker-2026-10-25).
 - Empty Gitea/GitHub repository Work creation: [initialization and concurrency contract](spec/gitea-workspaces.md#empty-repository-work-creation-2026-10-25).

@@ -1,3 +1,4 @@
+import {WORKSPACE_GIT_MAX_OUTPUT_BYTES} from './workspace-git-limits.js';
 import {isEmailPrivacyRejection,githubPrivateEmail,repairGitEmailPrivacy,anonymousGitCommit,type GitEmailRepair} from './git-email-privacy.mjs';
 import type {NativeWriterCustody} from './native-custody.js';
 import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
@@ -673,7 +674,8 @@ export class Workspaces {
     if(!chat){
       if(await this.git(source.cwd,['ls-files','--unmerged']))throw new Error('Resolve merge conflicts before Fork');
       const head=await this.git(source.cwd,['rev-parse','HEAD']);target.startSha=head;target.startBranch=source.branch;
-      staged=await this.git(source.cwd,['diff','--cached','--binary','--no-ext-diff','--no-textconv'],32*1024*1024,undefined,true);
+      try{staged=await this.git(source.cwd,['diff','--cached','--binary','--no-ext-diff','--no-textconv'],WORKSPACE_GIT_MAX_OUTPUT_BYTES,undefined,true);}
+      catch(error){if((error as NodeJS.ErrnoException).code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER')throw new Error('Fork staged patch exceeds 32 MiB; reduce staged changes before retrying. Source and failed copy are retained.');throw error;}
       await mkdir(dirname(target.cwd),{recursive:true});
       await this.git(this.root,['clone','--no-hardlinks','--no-checkout','--',source.cwd,target.cwd],2*1024*1024,target.githubAccountId);
       await this.git(target.cwd,['symbolic-ref','HEAD','refs/heads/'+target.branch]);

@@ -1,3 +1,5 @@
+- [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39): Server 0.83 Fork writer-custody budget repair and persistent failure display; [contract](docs/spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05). Source acceptance and activation remain separate.
+
 - [Server #160](https://github.com/awangs1986/pi-coffee-server/issues/160): GitHub GH007 task creation/push repair; [contract](docs/spec/github-accounts.md#github-email-privacy-repair--2026-11-05-server-160). Source acceptance and production activation are recorded separately.
 
 > Current integration candidate (2026-11-04): [personal backup on Server 0.81](docs/reviews/backup-current-main-20261104.md), preserving speech recovery and Pi 1.4. Installation does not imply encrypted production backups or daily scheduling are configured.

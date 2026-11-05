@@ -10,7 +10,7 @@ export function initForkControls({task,modes,request,refresh,changed,complete,se
   if(target.fork.status==='completed'){dialog.close();complete(operation.targetId,operation.selection);toast('Fork 已创建，原对话保留');}
   else {$('fork-status').textContent=target.fork.error||'Fork 失败，原对话保留。副本文件已保留供检查。';toast('Fork 未完成，请检查保留的副本');}
  }
- function open(session){if(pending&&pending.sourceId!==session.id){toast('请先核对正在准备的 Fork');return;}source=session;const available=modes(task(session.id)?.engine??'pi');$('fork-source').textContent=session.name||session.preview||'当前对话';$('fork-status').textContent='';
+ function open(session){if(pending&&pending.sourceId!==session.id){toast('请先核对正在准备的 Fork');return;}source=session;const available=modes(task(session.id)?.engine??'pi');$('fork-source').textContent=session.name||session.preview||'当前对话';const previous=task(session.id)?.forking;$('fork-status').textContent=previous?.status==='failed'?(previous.error||'Fork 失败，原对话及副本已保留。'):previous?.status==='preparing'?'正在准备独立副本…关闭此窗口不会取消操作。':'';
   for(const c of choices()){c.disabled=!available.includes(c.value)||Boolean(pending&&pending.mode!==c.value);c.checked=false;}
   const first=choices().find(c=>!c.disabled);if(first)first.checked=true;
   $('fork-native-unavailable').hidden=available.includes('native');update();dialog.showModal();

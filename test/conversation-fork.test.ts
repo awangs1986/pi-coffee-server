@@ -1,11 +1,13 @@
-import {it,expect,afterEach} from 'vitest';import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {randomUUID} from 'node:crypto';
+import {it,expect,afterEach} from 'vitest';import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {randomUUID,randomBytes} from 'node:crypto';
+import {PersonalBackup} from '../src/host/personal-backup.js';
 import {Workspaces} from '../src/host/workspaces.js';import {HostServer} from '../src/host/server.js';import type {AgentSessionFactory} from '../src/host/agent-adapter.js';
 const exec=promisify(execFile);const clean:Array<()=>Promise<unknown>>=[];afterEach(async()=>{for(const f of clean.reverse())await f();clean.length=0;});
-async function setup(){
+async function setup(ordinary=false){
  const root=await mkdtemp(join(tmpdir(),'coffee-fork-'));clean.push(()=>rm(root,{recursive:true,force:true}));const source=join(root,'repo');await mkdir(source);
  const git=(cwd:string,args:string[])=>exec('git',['-c','user.name=Test','-c','user.email=test@example.invalid',...args],{cwd});
  await git(source,['init','-b','main']);await writeFile(join(source,'file.txt'),'base');await git(source,['add','.']);await git(source,['commit','-m','base']);await git(source,['clone','--bare',source,join(root,'remote.git')]);
- const ws=new Workspaces(join(root,'projects'),{taskRoot:join(root,'tasks'),ownerId:'alice'});const p=await ws.registerProject('repo',join(root,'remote.git'));const c=await ws.createConversation(p.id);let busy=false,fail=false,calls=0;
+ const backup=ordinary?await PersonalBackup.open(join(root,'backup')):undefined;
+ const ws=new Workspaces(join(root,'projects'),{taskRoot:join(root,'tasks'),ownerId:'alice',gitCommandCustody:backup?.custody});if(backup)ws.setBackupWriterFence(backup.fence);const p=await ws.registerProject('repo',join(root,'remote.git'));const c=await ws.createConversation(p.id);let busy=false,fail=false,calls=0;
  const session={getState:async()=>({isStreaming:busy,messageCount:2}),getHistory:async()=>({entries:[{id:'u1',kind:'user',text:'Finish the patch'},{id:'a1',kind:'assistant',text:'Next: test'}],leafId:'a1'}),getModels:async()=>({models:[],current:{provider:'fake',id:'chosen'},thinkingLevel:'medium',thinkingLevels:['medium'],context:{preset:'272k'}}),getCommands:async()=>[],getExtensions:async()=>[],onEvent:()=>()=>{},stop:async()=>{},backgroundState:async()=>({known:true,active:busy?1:0})};
  const factory:AgentSessionFactory={list:async()=>[],delete:async()=>false,create:async()=>session as any,forkModes:()=>['native','handoff'],forkConversation:async()=>{calls++;if(fail)throw Error('fixture handoff failed');}};
  const host=new HostServer({port:0,token:'fixture',factory,workspaces:ws,scopeForUser:user=>({factory,workspaces:user==='alice'?ws:new Workspaces(join(root,user))})});await host.start();clean.push(()=>host.close());
@@ -39,3 +41,21 @@ it('marks an interrupted preparation failed on reload without retrying native wo
  const a=await setup();const id=randomUUID();await a.ws.beginFork(a.c.id,id,'handoff','Retained fork',{});await a.ws.copyForkWorkspace(id,{entries:[],leafId:null});
  const reopened=new Workspaces(a.ws.root,{taskRoot:join(a.root,'tasks'),ownerId:'alice'});const target=await reopened.lookup(id);expect(target?.fork?.status).toBe('failed');expect((await reopened.lookup(a.c.id))?.forking?.status).toBe('failed');expect(a.calls()).toBe(0);expect(await readFile(join(target!.cwd,'file.txt'),'utf8')).toBe('base');
 });
+
+it.each(['native','handoff'])('completes %s Work Fork under production writer custody',async mode=>{
+ const a=await setup(true);await writeFile(join(a.c.cwd,'file.txt'),'staged\n');await a.git(a.c.cwd,['add','file.txt']);await writeFile(join(a.c.cwd,'file.txt'),'working');
+ const id=randomUUID();expect((await a.call({action:'fork',id:a.c.id,targetId:id,mode,acceptDrift:true})).status).toBe(202);
+ await expect.poll(async()=>{const fork=(await a.ws.lookup(id))?.fork;return fork?.status==='failed'?fork.error:fork?.status;},{timeout:10000}).toBe('completed');
+ const target=(await a.ws.lookup(id))!;expect((await a.git(target.cwd,['show',':file.txt'])).stdout).toBe('staged\n');expect(await readFile(join(target.cwd,'file.txt'),'utf8')).toBe('working');expect(a.calls()).toBe(1);
+});
+
+it.each([14,27])('enforces the staged binary patch budget under writer custody (%s MiB file)',async megabytes=>{
+ const a=await setup(true),payload=randomBytes(megabytes*1024*1024);payload[0]=0;await writeFile(join(a.c.cwd,'binary.dat'),payload);await a.git(a.c.cwd,['add','binary.dat']);
+ const staged=(await exec('git',['diff','--cached','--binary','--no-ext-diff','--no-textconv'],{cwd:a.c.cwd,maxBuffer:64*1024*1024})).stdout;expect(Buffer.byteLength(staged)).toBeGreaterThan(16*1024*1024);
+ const id=randomUUID();expect((await a.call({action:'fork',id:a.c.id,targetId:id,mode:'native'})).status).toBe(202);
+ const expected=megabytes===14?'completed':'failed';await expect.poll(async()=>(await a.ws.lookup(id))?.fork?.status,{timeout:15000}).toBe(expected);
+ const target=(await a.ws.lookup(id))!;
+ if(expected==='completed'){expect(Buffer.byteLength(staged)).toBeLessThan(32*1024*1024);expect((await readFile(join(target.cwd,'binary.dat'))).equals(payload)).toBe(true);expect((await a.git(target.cwd,['rev-parse',':binary.dat'])).stdout).toBe((await a.git(a.c.cwd,['rev-parse',':binary.dat'])).stdout);expect(a.calls()).toBe(1);}
+ else{expect(target.fork?.error).toContain('exceeds 32 MiB');expect((await a.ws.lookup(a.c.id))?.forking?.status).toBe('failed');expect(a.calls()).toBe(0);}
+ expect((await readFile(join(a.c.cwd,'binary.dat'))).equals(payload)).toBe(true);
+},30000);

@@ -26,3 +26,11 @@ Claude native complete-context fork is not claimed without a verified native int
 ## Acceptance
 
 Verify HTTP/WS user scope, idle/question/queue gates, current code/attachment isolation, unchanged source history/branch, duplicate suppression, native-history continuity and settings, Handoff failure/restart retention and the two-choice browser dialog. Run npm run check and independent reviews before publication. Source publication and production activation are reported separately.
+
+## Bounded workspace copy under ordinary writer custody (2026-11-05)
+
+Server 0.83 aligns the ordinary Git executor with Fork's existing 32 MiB staged binary patch budget. The caller and executor share one maximum; ordinary commands keep their smaller per-call limits. A genuinely oversized staged patch fails with an actionable error, releases the source lifecycle lock, preserves source data and retains the failed destination record; it never invokes native handoff preparation. No unlimited buffers or model retries are introduced.
+
+The browser reconciles completion/failure through the existing workspace refresh path. Reopening the Fork dialog shows the persisted source preparation/failure status, including after a page reload, instead of erasing the failure. Closing the dialog does not cancel or repeat Fork. Existing uncertain-delivery retries retain the same operation ID. This fixes a preparation rejection, not arbitrary network disconnections or model-provider failures.
+
+Regression acceptance composes the real HTTP Fork endpoint with PersonalBackup's ordinary writer custody and physical fence for both modes, verifies staged/unstaged separation, verifies a binary patch between 16 and 32 MiB, and verifies bounded rejection above 32 MiB before native work. Browser-controller coverage checks durable error visibility without a new request. Synthetic adapters only; no live provider usage is required.

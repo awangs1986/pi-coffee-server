@@ -18,3 +18,9 @@ it('retains an uncertain operation and retries its original ID instead of chargi
  controls.open({id:'source'});document.getElementById('fork-confirm')!.click();await new Promise(r=>setTimeout(r,0));expect(controls.busy('source')).toBe(true);
  offline=false;document.getElementById('fork-confirm')!.click();await new Promise(r=>setTimeout(r,0));expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(controls.busy('source')).toBe(false);
 });
+
+it('shows durable failure after reopening the dialog without creating or retrying a Fork',()=>{
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');HTMLDialogElement.prototype.showModal=function(){};
+ const request=vi.fn();const controls=initForkControls({task:()=>({engine:'codex',forking:{status:'failed',error:'Workspace Git request exceeds its resource budget'}}),modes:()=>['native','handoff'],request,refresh:async()=>{},changed:()=>{},complete:()=>{},selection:()=>1,toast:()=>{}});
+ controls.open({id:'source'});expect(document.getElementById('fork-status')!.textContent).toContain('Workspace Git request exceeds its resource budget');expect(controls.busy('source')).toBe(false);expect(request).not.toHaveBeenCalled();
+});
