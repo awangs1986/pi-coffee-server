@@ -12,7 +12,8 @@ const commandProgram=String.raw`
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
 const root=process.argv[1],request=JSON.parse(fs.readFileSync(path.join(root,'request.json'),'utf8'));
 let out=[],err=[],outBytes=0,errBytes=0,failure,done=false;
-const child=cp.spawn('git',['-c','core.hooksPath=/dev/null',...request.args],{stdio:['ignore','pipe','pipe'],env:process.env});
+const child=cp.spawn('git',['-c','core.hooksPath=/dev/null',...request.args],{stdio:['pipe','pipe','pipe'],env:process.env});
+child.stdin.on('error',()=>{});child.stdin.end(request.input===undefined?undefined:Buffer.from(request.input,'base64'));
 const cancel=code=>{failure??=code;if(child.exitCode!==null||child.signalCode!==null)finish(child.exitCode,child.signalCode);else child.kill('SIGTERM');};
 for(const signal of ['SIGTERM','SIGINT','SIGHUP'])process.on(signal,()=>cancel('ETIMEDOUT'));
 const timer=setTimeout(()=>cancel('ETIMEDOUT'),request.timeout);
@@ -24,10 +25,11 @@ child.on('exit',(code,signal)=>{if(failure)finish(code,signal);});
 child.on('close',finish);
 `;
 
-export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:string[],options:{cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number}):Promise<{stdout:Buffer;stderr:Buffer}>{
+export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:string[],options:{input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number}):Promise<{stdout:Buffer;stderr:Buffer}>{
  const root=await mkdtemp(join(tmpdir(),'coffee-git-result-'));let child:ReturnType<typeof spawn>|undefined,completed=false;
  try{
-  const request=JSON.stringify({args,timeout:options.timeout,maxBuffer:options.maxBuffer});
+  if(options.input&&options.input.length>1024*1024)throw Error('Workspace Git input exceeds its resource budget');
+  const request=JSON.stringify({args,input:options.input?.toString('base64'),timeout:options.timeout,maxBuffer:options.maxBuffer});
   if(!Number.isSafeInteger(options.maxBuffer)||options.maxBuffer<1||options.maxBuffer>16*1024*1024||!Number.isSafeInteger(options.timeout)||options.timeout<1||Buffer.byteLength(request)>8*1024*1024)throw Error('Workspace Git request exceeds its resource budget');
   await writeFile(join(root,'request.json'),request,{flag:'wx',mode:0o600});
   const launch=await custody.prepare({executable:process.execPath,args:['-e',commandProgram,root]});

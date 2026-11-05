@@ -34,3 +34,5 @@ for(const name of ['codex-store.py','codex-schema-01591.json'])await cp(resolve(
 
 await cp(resolve(root, 'src/host/ordinary-backup-start.py'), resolve(root, 'dist/src/host/ordinary-backup-start.py'));
 await cp(resolve(root,'src/host/pi-native-audit.mjs'),resolve(root,'dist/src/host/pi-native-audit.mjs'));
+
+await cp(resolve(root, 'src/host/git-email-privacy.mjs'), resolve(root, 'dist/src/host/git-email-privacy.mjs'));

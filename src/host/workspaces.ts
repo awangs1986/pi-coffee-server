@@ -1,3 +1,4 @@
+import {isEmailPrivacyRejection,githubPrivateEmail,repairGitEmailPrivacy,anonymousGitCommit,type GitEmailRepair} from './git-email-privacy.mjs';
 import type {NativeWriterCustody} from './native-custody.js';
 import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
 import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
@@ -23,7 +24,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { gitEmailRepair?:GitEmailRepair; retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -210,11 +211,11 @@ export class Workspaces {
   private conversationLock(id:string) { return 'conversation:'+id; }
   private async gitEnvironment(cwd:string,accountId?:string) {
     if(this.options.managedGitCustody)return {GIT_LITERAL_PATHSPECS:'1'};
-    if(!this.githubAccounts)return {...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'};
+    if(!this.githubAccounts)return {...process.env,PI_COFFEE_HOST_GIT:'1',GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1'};
     const c=this.state.conversations.find(c=>samePath(c.cwd,cwd));
-    return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),GIT_LITERAL_PATHSPECS:'1'};
+    return {...process.env,...await this.githubAccounts.environment(accountId??c?.githubAccountId??this.pendingAccounts.get(cwd)),PI_COFFEE_HOST_GIT:'1',GIT_LITERAL_PATHSPECS:'1'};
   }
-  private async gitExec(cwd:string,args:string[],options:{maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={},admitted=false):Promise<{stdout:Buffer;stderr:Buffer}>{
+  private async gitExec(cwd:string,args:string[],options:{input?:Buffer;maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={},admitted=false):Promise<{stdout:Buffer;stderr:Buffer}>{
     if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.gitExec(cwd,args,options,true));
     let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
     if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
@@ -225,7 +226,7 @@ export class Workspaces {
         transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
       }
     }
-    return executeWorkspaceGit(args,{cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
+    return executeWorkspaceGit(args,{input:options.input,cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
   }
   private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
     const release=this.backupWriterFence?.beginWriter('platform');try {
@@ -251,7 +252,7 @@ export class Workspaces {
     const row=await this.git(cwd,['ls-remote','--heads',remote,`refs/heads/${branch}`]);
     return row ? row.split(/\s+/)[0] : undefined;
   }
-  private async pushAndConfirm(cwd:string,branch:string,localSha:string,args:string[]):Promise<string> {
+  private async pushAndConfirm(cwd:string,branch:string,localSha:string,args:string[],allowEmailRepair=true,task?:Conversation):Promise<string> {
     let pushError:unknown;
     try {await this.git(cwd,['push',...args]);} catch(error) {pushError=error;}
     let remoteSha:string|undefined,lastReadError:unknown;
@@ -260,9 +261,22 @@ export class Workspaces {
       try {remoteSha=await this.remoteBranchSha(cwd,branch);lastReadError=undefined;} catch(error) {lastReadError=error;}
       if(remoteSha===localSha)return remoteSha;
     }
+    if(allowEmailRepair&&pushError&&isEmailPrivacyRejection(pushError)) {
+      const c=task??this.state.conversations.find(row=>samePath(row.cwd,cwd)),p=c&&this.state.projects.find(row=>row.id===c.projectId);
+      if(c&&p?.forge==='github') {
+        c.gitEmailRepair=await repairGitEmailPrivacy({git:async(args,input)=>(await this.gitExec(cwd,args,{input})).stdout,branch,expectedHead:localSha,email:await this.githubAnonymousEmail(c.githubAccountId)});
+        await this.save();
+        return this.pushAndConfirm(cwd,branch,c.gitEmailRepair.head,args,false,c);
+      }
+    }
     if(pushError)throw pushError;
     if(lastReadError)throw lastReadError;
     throw new Error('Remote did not confirm the checkpoint SHA');
+  }
+  private async githubAnonymousEmail(accountId?:string) {
+    const account=this.githubAccounts?(await this.githubAccounts.list()).find(row=>row.id===accountId):undefined;
+    if(this.githubAccounts&&!account)throw new Error('Select the task GitHub account before anonymizing a rejected push');
+    return githubPrivateEmail(account);
   }
   private project(id:string|undefined) { const p=this.state.projects.find(p=>p.id===id);if(!p)throw new Error('Unknown project');return p; }
   private conversation(id:string) { const c=this.state.conversations.find(c=>c.id===id);if(!c)throw new Error('Unknown workspace');return c; }
@@ -512,7 +526,12 @@ export class Workspaces {
     try {
       await this.git(temporary,['init','-b',from],undefined,accountId);
       await this.git(temporary,['remote','add','origin',p.repoUrl!],undefined,accountId);
-      await this.git(temporary,['commit','--allow-empty','-m','Initialize project'],undefined,accountId);
+      if(p.forge==='github') {
+        const git=async(args:string[],input?:Buffer)=>(await this.gitExec(temporary,args,{input,accountId})).stdout;
+        const tree=(await git(['mktree'],Buffer.alloc(0))).toString().trim();
+        const head=await anonymousGitCommit(git,{tree,email:await this.githubAnonymousEmail(accountId),message:'Initialize project'});
+        await git(['update-ref','refs/heads/'+from,head,'0'.repeat(head.length)]);
+      } else await this.git(temporary,['commit','--allow-empty','-m','Initialize project'],undefined,accountId);
       // A concurrent task/user may initialize first. Never overwrite their commit.
       try {
         await this.git(temporary,['push',`--force-with-lease=refs/heads/${from}:`,'origin',`HEAD:refs/heads/${from}`],undefined,accountId);
@@ -733,15 +752,15 @@ export class Workspaces {
         if(await this.git(cwd,['status','--porcelain']))throw new Error('Failed creation contains local changes; preserve them before retrying');
       }
       const head=await this.git(cwd,['rev-parse','HEAD']);
-      if(c.startSha && c.startSha!==head)throw new Error('Failed creation HEAD changed; inspect before retrying');
-      c.startSha=head;
+      if(c.startSha && c.startSha!==head && c.gitEmailRepair?.head!==head)throw new Error('Failed creation HEAD changed; inspect before retrying');
+      c.startSha??=head;
       const remote=await this.remoteBranchSha(cwd,ownedBranch);
       if(remote && (!c.publishStarted || remote!==head))throw new Error('Conversation branch already exists on the remote; use a new Conversation ID');
       const current=await this.git(cwd,['symbolic-ref','--short','HEAD']);
       if(current!==ownedBranch){if(current!==from)throw new Error('Failed creation branch changed');await this.git(cwd,['checkout','-b',ownedBranch]);}
       c.publishStarted=true;await this.save();
-      await this.pushAndConfirm(cwd,ownedBranch,head,['--set-upstream',`--force-with-lease=refs/heads/${ownedBranch}:${remote ?? ''}`,'origin',`HEAD:refs/heads/${ownedBranch}`]);
-      c.lastRemoteSha=head;c.lastRemoteAt=new Date().toISOString();c.baseline={};
+      const publishedHead=await this.pushAndConfirm(cwd,ownedBranch,head,['--set-upstream',`--force-with-lease=refs/heads/${ownedBranch}:${remote ?? ''}`,'origin',`HEAD:refs/heads/${ownedBranch}`]);
+      c.lastRemoteSha=publishedHead;c.lastRemoteAt=new Date().toISOString();c.baseline={};
       for(const path of (await this.git(cwd,['ls-files','-z'])).split('\0').filter(Boolean).slice(0,5000)) {
         if(!/\.(png|jpe?g|gif|webp|svg|md|pdf)$/i.test(path))continue;
         try {const info=await stat(join(cwd,path));c.baseline[path]=`${info.mtimeMs}:${info.size}`;}catch{}
@@ -914,7 +933,7 @@ export class Workspaces {
       const remoteSha=await this.pushAndConfirm(c.cwd,c.branch,localSha,['--set-upstream','origin',`HEAD:refs/heads/${c.branch}`]);
       c.lastRemoteSha=remoteSha;c.lastRemoteAt=new Date().toISOString();delete c.syncError;await this.save();
       const dirty=Boolean(await this.git(c.cwd,['status','--porcelain=v1','--untracked-files=all']));
-      return {state:'synced' as const,dirty,localSha,remoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch};
+      return {state:'synced' as const,dirty,localSha:remoteSha,remoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch};
     } catch(error) {
       c.syncError=error instanceof Error ? error.message.slice(0,500) : 'Checkpoint push failed';await this.save();throw error;
     }
@@ -926,7 +945,7 @@ export class Workspaces {
     try {
       const remoteSha=await this.pushAndConfirm(c.cwd,c.branch,localSha,['origin',`HEAD:refs/heads/${c.branch}`]);
       c.lastRemoteSha=remoteSha;c.lastRemoteAt=new Date().toISOString();delete c.syncError;await this.save();
-      return {state:'synced' as const,dirty:Boolean(await this.git(c.cwd,['status','--porcelain=v1','--untracked-files=all'])),localSha,remoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch};
+      return {state:'synced' as const,dirty:Boolean(await this.git(c.cwd,['status','--porcelain=v1','--untracked-files=all'])),localSha:remoteSha,remoteSha,lastRemoteAt:c.lastRemoteAt,branch:c.branch};
     } catch(error) {c.syncError=error instanceof Error ? error.message.slice(0,500) : 'Checkpoint push failed';await this.save();throw error;}
   },()=>this.conversationLock(id));}
   private async assertCodeBranch(c:Conversation) {
@@ -967,8 +986,9 @@ export class Workspaces {
       const branch=`coffee/${this.ownerId}/${id}`;
       if(await this.remoteBranchSha(cwd,branch))throw new Error('Conversation branch already exists on the remote; use a new Conversation ID');
       await this.git(cwd,['checkout','-b',branch]);
-      await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`]);
-      const c:Conversation={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
+      const c:Conversation={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,creationState:'ready',startBranch:sourceBranch,cwd,branch,archived:false,createdAt:new Date().toISOString(),startSha:head,lastRemoteSha:head,lastRemoteAt:new Date().toISOString()};
+      c.lastRemoteSha=await this.pushAndConfirm(cwd,branch,head,['--set-upstream',`--force-with-lease=refs/heads/${branch}:`,'origin',`HEAD:refs/heads/${branch}`],true,c);
+      this.state.conversations.push(c);await this.dataRoot(id);await this.save();return c;
     } catch(error) {await rm(cwd,{recursive:true,force:true});if(taskRoot){await checkedTaskRoot(taskRoot);await rm(taskRoot,{recursive:true});}throw error;}finally{this.pendingAccounts.delete(cwd);this.pendingRepositories.delete(cwd);}
   },()=>`conversation:${id}`);}
   /** Read-only change view against the last fetched target branch. */

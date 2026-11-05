@@ -1,3 +1,5 @@
+- [Server #160](https://github.com/awangs1986/pi-coffee-server/issues/160): GitHub GH007 task creation/push repair; [contract](docs/spec/github-accounts.md#github-email-privacy-repair--2026-11-05-server-160). Source acceptance and production activation are recorded separately.
+
 > Current integration candidate (2026-11-04): [personal backup on Server 0.81](docs/reviews/backup-current-main-20261104.md), preserving speech recovery and Pi 1.4. Installation does not imply encrypted production backups or daily scheduling are configured.
 
 > Completion-speech recovery source candidate (2026-11-02), Server 0.70 / plugin 0.1.2: [independent HTTP recovery, 24-hour pending retention and safe playback receipts](docs/spec/completion-speech-recovery.md). [Server #159](https://github.com/awangs1986/pi-coffee-server/issues/159). Foreground delivery remains deployed at Server 0.69 / plugin 0.1.1; source implementation is not production activation; see [acceptance](docs/reviews/completion-speech-recovery.md).

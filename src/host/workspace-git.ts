@@ -7,14 +7,14 @@ import type {ManagedNativeCustody} from './managed-native.js';
 
 const exec=promisify(execFile);
 export function workspaceGitCommand(args:string[]){let index=0;while(args[index]==='-c')index+=2;return args[index];}
-interface GitOptions {cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;ordinaryCustody?:NativeWriterCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
+interface GitOptions {input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;ordinaryCustody?:NativeWriterCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
 type Files={kind:'copy-index'|'remove-index';index:string}|{kind:'exclude'};
 
 // This program is passed as argv to an immutable interpreter inside the same
 // mandatory namespace as native writers. Repository checks are defense in depth:
 // a concurrent config/symlink replacement still cannot gain Host authority.
 const managedProgram=String.raw`
-import json,os,re,stat,subprocess,sys,shutil
+import json,os,re,stat,subprocess,sys,shutil,base64
 from urllib.parse import urlparse
 from pathlib import Path
 request=json.loads(sys.argv[1]); cwd=Path.cwd(); gitdir=cwd/'.git'
@@ -85,6 +85,10 @@ if operation:
             with path.open('a') as file:file.write('\n/.pi-coffee/\n')
     else:deny()
     sys.exit(0)
+if request.get('input') is not None:
+    payload=base64.b64decode(request['input'],validate=True)
+    if len(payload)>1048576:deny()
+    sys.exit(subprocess.run(command+request['args'],env=env,input=payload).returncode)
 os.execve('/usr/bin/git',command+request['args'],env)
 `;
 
@@ -100,11 +104,12 @@ async function managed(custody:ManagedNativeCustody,options:GitOptions,request:R
 /** Host Git never evaluates workspace state with greater authority than the
  * native writer that supplied it. Legacy account wrappers remain unchanged. */
 export async function executeWorkspaceGit(args:string[],options:GitOptions):Promise<{stdout:Buffer;stderr:Buffer}>{
+  if(options.input&&options.input.length>1024*1024)throw Error('Workspace Git input exceeds its resource budget');
   if(options.managedRequired&&!options.custody)throw Error('Managed workspace Git executor is unavailable');
   try {
-    if(options.custody)return await managed(options.custody,options,{args,literal:options.env.GIT_LITERAL_PATHSPECS,index:options.env.GIT_INDEX_FILE});
+    if(options.custody)return await managed(options.custody,options,{args,input:options.input?.toString('base64'),literal:options.env.GIT_LITERAL_PATHSPECS,index:options.env.GIT_INDEX_FILE});
     if(options.ordinaryCustody)return await ordinaryWorkspaceGit(options.ordinaryCustody,args,options);
-    return await exec('git',['-c','core.hooksPath=/dev/null',...args],{cwd:options.cwd,env:options.env,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'});
+    return await new Promise<{stdout:Buffer;stderr:Buffer}>((resolve,reject)=>{const child=execFile('git',['-c','core.hooksPath=/dev/null',...args],{cwd:options.cwd,env:options.env,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'},(error,stdout,stderr)=>error?reject(Object.assign(error,{stdout,stderr})):resolve({stdout,stderr}));child.stdin?.on('error',()=>{});child.stdin?.end(options.input);});
   } catch(error){
     const failure=error as Error & {stdout?:Buffer|string;stderr?:Buffer|string;code?:number|string};
     // Policy failures must not become an empty successful bounded diff/result.

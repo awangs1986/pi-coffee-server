@@ -1,3 +1,4 @@
+import {isEmailPrivacyRejection,githubPrivateEmail,repairGitEmailPrivacy} from './git-email-privacy.mjs';
 import {githubToken} from './github-token.mjs';
 import {verifyGiteaIdentity} from './gitea-identity.mjs';
 // Invoked only by task-local Git/gh wrappers. Read credentials afresh on each call.
@@ -100,14 +101,46 @@ try {
     const identity=Object.entries(transport.identity??{}).flatMap(([k,v])=>['-c',k+'='+v]);
     const env={...process.env,HOME:process.env.GH_CONFIG_DIR,XDG_CONFIG_HOME:process.env.GH_CONFIG_DIR};
     const {prefix,urls}=gitNetworkTargets(program,args,env);
+    let account;
     if(urls.some(isGitHub)){
       const state=JSON.parse(readFileSync(file,'utf8'));
-      if(state.version!==1||!state.accounts.some(a=>a.id===id&&a.token))throw Error();
+      account=state.version===1?state.accounts.find(a=>a.id===id&&a.token):undefined;
+      if(!account)throw Error();
       // Reject legacy headers only for an actual GitHub destination.
       const local=spawnSync(program,[...prefix,'config','--local','--get-regexp','^http\\..*extraheader$'],{env:{...env,GIT_CONFIG_COUNT:'0'},encoding:'utf8'}).stdout??'';
       if(local.trim()){process.stderr.write('Remove legacy repository HTTP authentication headers before using managed GitHub authorization.\n');process.exit(1);}
     }
-    const result=spawnSync(program,[...identity,...args],{env,stdio:'inherit'});process.exit(result.status??1);
+    const managedPush=account&&urls.length===1&&args[prefix.length]==='push'&&process.env.PI_COFFEE_HOST_GIT!=='1';
+    const result=spawnSync(program,[...identity,...args],{env,stdio:managedPush?['inherit','inherit','pipe']:'inherit',maxBuffer:2*1024*1024});
+    if(managedPush&&result.status!==0&&isEmailPrivacyRejection({stderr:result.stderr?.toString()})) {
+      const run=async(argv,input)=>{
+        const response=spawnSync(program,[...identity,...prefix,...argv],{env,input,timeout:120000,maxBuffer:2*1024*1024});
+        if(response.error||response.status!==0)throw Error(response.stderr?.toString()||'Git privacy repair command failed');
+        return response.stdout;
+      };
+      try {
+        const branch=(await run(['symbolic-ref','--quiet','--short','HEAD'])).toString().trim();
+        const rest=args.slice(prefix.length+1),operands=[];let supported=true;
+        for(const value of rest) {
+          if(['-u','--set-upstream','--porcelain','--quiet','-q','--verbose','-v','--'].includes(value))continue;
+          if(value.startsWith('--force-with-lease=refs/heads/'+branch+':')){
+            const lease=value.slice(('--force-with-lease=refs/heads/'+branch+':').length);
+            if(!lease||/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(lease))continue;
+          }
+          if(value.startsWith('-'))supported=false;else operands.push(value);
+        }
+        if(supported&&operands.length===2&&operands[0]==='origin'&&['HEAD:refs/heads/'+branch,'HEAD:'+branch,branch+':'+branch,branch,'HEAD'].includes(operands[1])) {
+          const expectedHead=(await run(['rev-parse','HEAD'])).toString().trim();
+          const repaired=await repairGitEmailPrivacy({git:run,branch,expectedHead,email:githubPrivateEmail(account)});
+          process.stderr.write('GitHub email privacy: retrying with anonymous task commits; originals retained at '+repaired.backupRef+'\n');
+          const retried=spawnSync(program,[...identity,...args],{env,stdio:'inherit'});process.exit(retried.status??1);
+        }
+      } catch(error) {
+        process.stderr.write('Automatic email privacy repair stopped: '+(error instanceof Error?error.message:'Inspect the task branch')+'\n');
+      }
+    }
+    if(managedPush&&result.stderr)process.stderr.write(result.stderr);
+    process.exit(result.status??1);
   }
   const token=await githubToken(file,id);
   if(mode==='credential'||mode==='gitea'){

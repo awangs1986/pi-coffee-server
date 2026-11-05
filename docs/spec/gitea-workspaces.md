@@ -121,3 +121,15 @@ selects that project in the current Work draft while preserving message text and
 Agent/model settings; it does not start an Agent or send the message. Canceling
 keeps the draft intact. A response arriving after navigation must not change the
 new selection. The GitHub picker continues to select existing repositories only.
+
+
+## GitHub privacy rejection exception — 2026-11-05
+
+[Server #160](https://github.com/awangs1986/pi-coffee-server/issues/160) and the
+[GitHub email privacy contract](github-accounts.md#github-email-privacy-repair--2026-11-05-server-160)
+refine GW-07/GW-08 for explicit GH007 failures. Permit a same-tree anonymous task
+initialization commit when the source tip is already published, and bounded
+metadata-only rewriting of unpublished task commits with local recovery refs.
+No remote history rewrite or force push is added. Gitea behavior is unchanged;
+GitHub task readiness and synchronized status still require the remote to confirm
+the actual repaired head.

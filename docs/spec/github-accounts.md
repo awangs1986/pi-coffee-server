@@ -205,3 +205,55 @@ Host advertises `taskGitHubAccounts` in workspace capabilities; older Hosts do
 not expose the per-task selection controls. Unbound native GitHub tools explain
 that the conversation needs an account selection rather than suggesting expired
 credentials.
+
+
+## GitHub email privacy repair — 2026-11-05, Server #160
+
+A GitHub `GH007` rejection is a recoverable email-metadata failure, not an OAuth
+failure. Host creation, continuation, checkpoint and synchronization, and the
+managed native Git wrapper, retry a supported task-branch push once after repair.
+Other transport/authentication, protection, non-fast-forward and policy errors
+never trigger commit rewriting or a privacy-settings change.
+
+The selected authenticated GitHub account supplies
+`<numeric-id>+<login>@users.noreply.github.com`. Historical standalone GitHub
+adapters without an account store use `pi-coffee@users.noreply.github.com`.
+A missing/revoked scoped account never falls back to a different account. Empty
+GitHub repositories are initialized with anonymous metadata before the first push.
+Gitea identity and model-provider authentication are unchanged.
+
+Repair is limited to the currently checked-out, owned `coffee/<owner>/<task>`
+branch and the same origin fetch/push repository. Refresh origin heads and tags;
+rewrite at most 100 commits not reachable from those published references. Replace
+non-noreply author/committer email headers while preserving names, dates, exact
+message bytes, trees and parent order/topology. Signed unpublished commits or
+unsupported/oversized metadata stop with an explicit error; do not silently drop
+signatures. Existing remote main, tags and other task branches are never rewritten.
+
+When creating a branch at an already-published commit, keep that commit intact and
+add a same-tree anonymous initialization commit. This is an explicit exception to
+the usual no-empty-checkpoint rule: it makes the new task tip compatible with
+GitHub privacy checks without changing code or rewriting shared history.
+
+Before moving the local task ref, retain its old head under
+`refs/coffee/email-privacy/<old-head>` and use a compare-and-swap ref update.
+Keep staged, unstaged and untracked content intact. Retrying uses the original
+single-branch push semantics; never add a force push or publish recovery refs.
+The native wrapper supports explicit origin/current-task pushes, not bulk/tag/
+mirror/delete pushes, arbitrary refspecs or cross-branch publication.
+
+For registered tasks, Host persists the repaired head/recovery reference before
+the retry. A failed creation/checkpoint retry retains the checkout and original
+task ID for retry; the original selected
+`startSha` remains provenance. Read the actual remote branch before reporting
+success, including when the push response is lost. Return the repaired local and
+remote SHA rather than the rejected SHA. Ordinary creation still becomes runnable
+after remote confirmation; an email rejection is handled automatically rather
+than requiring the user to expose an email or manually change account settings.
+
+Acceptance uses public Host HTTP and actual Git/managed-tool subprocesses against
+local synthetic GitHub transports: existing and empty repositories, unpublished
+and merge commits, retry retention, metadata/content preservation, account-scoped
+noreply identity, signature refusal, non-email errors, and ordinary writer custody.
+No real provider/model turns are needed. Production recovery and activation are
+separate from source-test evidence.
