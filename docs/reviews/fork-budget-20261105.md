@@ -24,4 +24,6 @@ No blocking findings. Followed authenticated Host Fork dispatch through owned wo
 
 ## Release gates
 
-Full review-bound canonical check, independent published-source clone check, immutable staging and deployed health/asset identity evidence are recorded separately on #39. This source report does not assert production activation. Previous 0.82 deployment rolled back because an operator script incorrectly treated private release metadata as a public asset; the activation probe must use authenticated /api/release and actual public assets.
+Complete review-bound canonical check, independent published-source clone check, immutable staging and deployed health/asset identity evidence are recorded separately on #39. This source report does not assert production activation. Previous 0.82 deployment rolled back because an operator script incorrectly treated private release metadata as a public asset; the activation probe must use authenticated /api/release and actual public assets.
+
+Initial canonical run: 1697 tests passed, 136 optional tests skipped, one documentation-vocabulary failure in this report. Replaced the retired-mode word with “Complete”; final exact-source verification is recorded separately.
