@@ -5,6 +5,24 @@ import {join,resolve} from 'node:path';
 import {execFileSync,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const exec=promisify(execFile);
+it('runs the approved low-risk plan for the exact fresh commit without a conflicting custom plan',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-fresh-low-risk-'));
+ try{
+  const repo=join(root,'repo');await mkdir(repo);
+  const git=(...a:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test',...a],{cwd:repo,encoding:'utf8'}).trim();
+  git('init','-q','-b','main');await writeFile(join(repo,'README.md'),'before');
+  await writeFile(join(repo,'package.json'),JSON.stringify({scripts:{build:'node -e "process.exit(0)"'}}));
+  // A local forge supplies tiny stand-in commands; the CLI still chooses and runs its real plan.
+  for(const path of ['node_modules/eslint/bin/eslint.js','node_modules/vitest/vitest.mjs']){
+   await mkdir(join(repo,path,'..'),{recursive:true});await writeFile(join(repo,path),'process.exit(0);');
+  }
+  git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+  await writeFile(join(repo,'README.md'),'after');git('commit','-qam','docs');const commit=git('rev-parse','HEAD');
+  const receipt=join(root,'receipt.json');
+  await exec(process.execPath,[resolve('scripts/verify-fresh.mjs'),'--remote',repo,'--commit',commit,'--fixture','--risk','low','--base',base,'--receipt',receipt]);
+  expect(JSON.parse(await readFile(receipt,'utf8'))).toMatchObject({freshClone:true,commit,status:'passed',risk:'low',baseCommit:base,steps:[{name:'lint',exitCode:0},{name:'build',exitCode:0},{name:'documentation',exitCode:0}]});
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 it('verifies the requested committed source in a fresh clone rather than uncommitted local edits',async()=>{
  const root=await mkdtemp(join(tmpdir(),'coffee-fresh-'));
  try{

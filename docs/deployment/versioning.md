@@ -24,9 +24,14 @@ to npm `0.11.0`; `1.00` maps to `1.0.0`. This is a representation of one release
 not a second independently chosen version. Inconsistent metadata refuses the
 command and build/stage checks. Include all three files in the release commit.
 
-The native publisher compares VERSION with its expected remote ancestor. A new
-release must advance by exactly one or ten hundredths; the first formal release
-must be 0.11. Missing, unchanged, regressed or oversized increments are rejected.
+The native publisher compares VERSION with its expected remote ancestor. Each
+release transition on the first-parent ancestry must advance by exactly one or
+ten hundredths; the first formal release must be 0.11. Missing, unchanged,
+regressed or oversized increments are rejected. Reconciliation may preserve
+several already-versioned release commits in one fast-forward publication, for
+example 0.95 -> 0.96 -> 0.97, only when each transition is valid. A direct
+0.95 -> 0.97 jump is rejected; the batch rule is not permission to skip versions,
+rewrite deployed ancestry or bypass source-bound review and verification.
 Run the canonical check and accepted source-bound review before publishing. Push
 GitHub first, fast-forward Gitea to the identical SHA, then verify the fresh clone.
 

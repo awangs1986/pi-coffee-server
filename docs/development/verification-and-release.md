@@ -34,7 +34,7 @@ Playwright browser with `npx playwright install chromium`, or set
 `BROWSER_EXECUTABLE` to the matching installed browser.
 
 `npm run verify -- --reuse` runs the same plan and writes a private receipt under
-`.coffee-verification/`. Reuse requires unchanged source content, plan, Node
+`.coffee-verification/`. Reuse requires the same commit, source content, plan, Node
 version, successful steps, compiled artifact hashes and dependency closure hashes
 (including executable modes and internal relative symlinks). Changes invalidate it.
 Receipts contain hashes and command labels, not environment values or command
@@ -42,6 +42,42 @@ arguments. Verification plans are trusted local executable configuration; never
 accept a plan uploaded by a Web user. Alternative targeted plans use
 `node scripts/verify.mjs --plan /private/targeted.json --receipt /private/targeted-receipt.json`.
 A targeted receipt does not replace the canonical final publication plan.
+
+Each admitted attempt first replaces the current receipt with `running` and its
+own source/process identity, timestamps, active step and completed steps. The
+previous receipt is retained as `receipt.json.previous.json`. A handled stop
+records `interrupted`; failed commands record `failed`. Inspect a long check with:
+
+```bash
+node scripts/verify.mjs --status --receipt .coffee-verification/receipt.json
+```
+
+On Linux, status checks the PID, process birth and boot identity. A vanished
+process makes an abandoned running receipt `interrupted`; unobservable evidence
+stays `unknown`. This is observation, not automatic retry or permission to publish.
+Run maintenance checks under an independently managed process when they must
+survive a Web/Host restart. A preserved old pass cannot replace the current result.
+
+### Low-risk documentation and style releases
+
+Owner-approved on 2026-11-06. The default complete plan remains required for
+runtime, Browser JavaScript, authentication, dependencies, scripts, task data and
+unknown paths. `--risk low` admits only a clean committed diff against an exact
+ancestor: Markdown under `docs/`, README variants, BACKLOG/CONTEXT, top-level
+`public/*.css`, VERSION, and version-only package metadata. AGENTS and executable
+or dependency changes are excluded. Every admitted diff runs lint, build and the
+documentation contract; CSS also runs the no-model Chromium probes.
+
+```bash
+node scripts/verify.mjs --risk low --base <fetched-main-SHA> \
+  --require-review .coffee-verification/review.json
+```
+
+Custom `--plan` cannot be combined with low risk. Publication requires the same
+base as its expected remote main and revalidates the changed paths and approved
+plan. Staging revalidates that evidence. Arbitrary targeted checks still do not
+approve a release. `npm run check` remains the complete plan for this 0.97 runtime
+refactor. See [the maintenance contract](../spec/architecture-maintenance.md).
 
 Backup/native isolation fixtures require a short, private **disk-backed** check
 root (for example `PI_COFFEE_CHECK_TMP_ROOT=/home/awang/tmp/ck`). Their managed
@@ -65,6 +101,30 @@ artifacts before cleanup; `--role host` or `--role web` stages a backend candida
 without activating it. It does not use VM-wide Git credentials or native provider accounts. Local
 fixture mode exists only for isolated test forges. Never use fixture mode for a
 network destination or a production release claim.
+
+For an approved low-risk release, add `--risk low --base <same-base-SHA>` to
+`verify:fresh`. The fresh clone repeats that plan with a private `0077` umask;
+the default repeats the complete plan. Receipt or dependency reuse does not
+replace fresh-clone acceptance.
+
+## Read-only release reconciliation
+
+Use this before diagnosing a reported version mismatch or reporting activation:
+
+```bash
+node scripts/release-audit.mjs --repo . --config /private/release-audit.json \
+  --verification .coffee-verification/receipt.json
+```
+
+The private configuration names `webUnit`, `hostUnit` and `userUnit` (a boolean).
+The report compares the clean source, both remote main refs, the actual Linux
+process working directories and installed manifests, the frontend manifest, and
+the current verification attempt. Loaded systemd configuration alone does not
+prove which release is running. Missing or mismatched versions/commits, an inactive
+process, or interrupted/unknown verification cannot report `aligned: true`.
+Output omits process paths and credentials. This is explicitly
+`identity-observation-only`: it grants no publication/activation authority and
+does not replace `/api/release`, health, served-asset or user-flow probes.
 
 ## Automatic guardrails
 

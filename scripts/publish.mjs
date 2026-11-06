@@ -38,9 +38,14 @@ try{
  }
  const head=await git('rev-parse','HEAD');await git('merge-base','--is-ancestor',expected,head);
  const remoteHead=(await git('ls-remote',remote,'refs/heads/'+branch)).split(/\s+/)[0];if(remoteHead!==expected)refuse('remote_lease_changed');
+ if(verification.risk==='low'&&verification.baseCommit!==expected)refuse('verification_baseline_changed');
  if(head!==expected&&(!args.includes('--fixture')||args.includes('--check-version'))){
   const current=await checkedReleaseVersion(repo),previous=await git('show',expected+':VERSION').catch(()=>undefined);
-  try{assertReleaseIncrement(previous?.trim(),current);}catch{refuse('release_version_required');}
+  try{
+   const revisions=(await git('rev-list','--first-parent','--reverse',expected+'..'+head,'--','VERSION')).split('\n').filter(Boolean);
+   let version=previous?.trim();for(const revision of revisions){const next=(await git('show',revision+':VERSION')).trim();if(next!==version){assertReleaseIncrement(version,next);version=next;}}
+   if(version!==current||version===previous?.trim())throw Error('Missing release increment');
+  }catch{refuse('release_version_required');}
  }
  if(head!==identity.commit||(await sourceIdentity(repo)).sourceFingerprint!==identity.sourceFingerprint)refuse('source_changed');
  await git('push','--porcelain','--force-with-lease=refs/heads/'+branch+':'+expected,remote,head+':refs/heads/'+branch);
