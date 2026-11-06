@@ -1021,18 +1021,3 @@ it('bounds a stalled Fork acceptance request and reconciles its original operati
  expect(fork.disabled).toBe(false);fork.click();document.getElementById('fork-confirm')!.click();await tick(15100);
  expect(aborted).toBe(true);expect(calls.map(c=>c.action)).toEqual(['preparation_start','preparation_get']);expect(calls[1].operationId).toBe(calls[0].operationId);
 });
-
-it.each(['pi','codex'] as const)('handles /cross-user in the %s composer as an explicit read before one current-conversation prompt',async engine=>{
- const app=await setup(engine);await app.select('a');const original=vi.mocked(fetch).getMockImplementation()!;const reads:any[]=[];
- vi.mocked(fetch).mockImplementation(async(url:any,init:any)=>{if(url==='/api/cross-user'){reads.push(JSON.parse(init.body));return Response.json({sourceId:'shared-source',prompt:'Read-only historical reference: synthetic peer answer'});}return original(url,init);});
- draft('/cross-user shared-source');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();
- expect(reads).toEqual([{conversationId:'a',sourceId:'shared-source'}]);
- const sent=allFrames.filter(f=>f.type==='prompt');expect(sent).toHaveLength(1);expect(sent[0].text).toBe('Read-only historical reference: synthetic peer answer');
-});
-it('discards a delayed cross-user read after switching conversations and keeps the source command draft',async()=>{
- const app=await setup('codex');await app.select('a');const original=vi.mocked(fetch).getMockImplementation()!;let resolveRead!:(r:Response)=>void;
- vi.mocked(fetch).mockImplementation(async(url:any,init:any)=>url==='/api/cross-user'?new Promise<Response>(resolve=>{resolveRead=resolve;}):original(url,init));
- draft('/cross-user shared-source');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));await tick();await app.select('b');
- resolveRead(Response.json({prompt:'Must not enter B'}));await tick();expect(allFrames.filter(f=>f.type==='prompt')).toEqual([]);
- await app.select('a');expect(prompt().value).toBe('/cross-user shared-source');
-});

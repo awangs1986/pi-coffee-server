@@ -1,4 +1,3 @@
-import {crossUserReference,CrossUserError} from './cross-user.js';
 import {githubSecret} from '../shared/github-credentials.js';
 import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
@@ -213,20 +212,6 @@ export class WebServer {
     if (this.auth && !this.auth.principalOf(request) && (path.startsWith('/api/') || isShellPath(path))) {
       if(path.startsWith('/api/'))json(response,401,{error:"Login required"});
       else {response.writeHead(302,{location:loginDestination('/login',path)});response.end();}return;
-    }
-    if(path==='/api/cross-user'){
-      response.setHeader('cache-control','no-store');
-      const session=await this.identity?.authorize(request);
-      if(!session){json(response,401,{error:'Login required'});return;}
-      if(request.method!=='POST'){json(response,405,{error:'Use POST'});return;}
-      if(!this.identity!.originAllowed(request)){json(response,403,{error:'Invalid origin'});return;}
-      try{
-        const peers=this.identity!.referenceRoutes(session.id);
-        const value=await crossUserReference(session.route,peers,await readJson(request,1024,5000));
-        const current=await this.identity!.authorize(request);
-        if(current!==session||JSON.stringify(this.identity!.referenceRoutes(session.id))!==JSON.stringify(peers)){json(response,403,{error:'Authorization changed; reference discarded'});return;}
-        json(response,200,value);
-      }catch(error){json(response,error instanceof CrossUserError?error.status:503,{error:error instanceof CrossUserError?error.message:'跨用户读取失败；请稍后重试'});}return;
     }
     if(path === '/api/restart') {
       try{

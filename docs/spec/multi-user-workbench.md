@@ -115,3 +115,9 @@ operator-enabled `/cross-user <conversation-id>` exception. It imports a bounded
 dialogue snapshot into the caller’s Conversation without granting source task
 control, repository access, attachments or credentials. Ordinary HTTP/WS isolation
 remains unchanged. Source implementation and activation are separate.
+
+## Authorized Takeover replacement (2026-11-06)
+
+The owner withdrew the 0.95 `/cross-user` interface. Its earlier sharing contract
+is superseded by [authorized Takeover](cross-user-reference.md): explicit source
+account, task ID and read-only authorization, with no automatic cross-account API.

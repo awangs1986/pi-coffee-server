@@ -1,4 +1,3 @@
-import {referenceSnapshot} from './conversation-reference.js';
 import {TaskPreparation,type PreparationBudgets} from './task-preparation.js';
 import {createCompletionSpeech} from './completion-speech.js';
 import type {PersonalRecoveryCollection} from './personal-recovery-collection.js';
@@ -200,7 +199,6 @@ export class HostServer {
   private readonly registryOptions: { eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number };
   /** Key: normalised user name, or "" for identity-less connections. */
   private readonly slots = new Map<string, Promise<UserSlot>>();
-  private activeReferences=0;
   private preparationScopes=new WeakMap<Workspaces,{preparation:TaskPreparation;locks:Set<string>;registries:Set<HostSessionRegistry>;slots:Set<UserSlot>}>();
   private readonly taskPreparations = new Set<Promise<void>>();
   private readonly transferTargets = new Map<string, { slot: Promise<UserSlot>; sessionId: string }>();
@@ -561,24 +559,6 @@ export class HostServer {
         else throw Error('Use /mishu-setup explicitly inside the selected conversation');
         json(res,200,result);
       }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
-    }
-    if(req.url==='/api/conversation-reference'){
-      res.setHeader('cache-control','no-store');if(req.method!=='POST'){json(res,405,{error:'Use POST'});return;}
-      try{
-        const input=await readJson(req,1024,5000);
-        if(!['lookup','read'].includes(input.action)||typeof input.id!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/.test(input.id)){json(res,400,{error:'Invalid reference'});return;}
-        const task=await slot.workspaces?.lookup(input.id);
-        const available=(t:typeof task)=>Boolean(t&&!t.archived&&!t.cleanupStarted&&!t.workspaceRemoved&&t.creationState!=='failed'&&t.creationState!=='creating'&&!slot.lifecycleLocks.has(t.id));
-        if(input.action==='lookup'){json(res,200,{found:available(task)});return;}
-        if(!available(task)||!slot.factory.readHistory){json(res,404,{error:'Reference unavailable'});return;}
-        if(this.activeReferences>=2){json(res,429,{error:'Reference reads busy'});return;}
-        this.activeReferences++;
-        try{
-          const read=await slot.factory.readHistory(input.id),after=await slot.workspaces!.lookup(input.id);
-          if(!available(after)||JSON.stringify([after?.nativeBinding,after?.contextReset,after?.takeoverSegments])!==JSON.stringify([task?.nativeBinding,task?.contextReset,task?.takeoverSegments])||after?.engine!==task?.engine||after?.cwd!==task?.cwd)throw Error('Reference changed');
-          json(res,200,referenceSnapshot(read));
-        }finally{this.activeReferences--;}
-      }catch{json(res,409,{error:'Reference unavailable; no Agent was started'});}return;
     }
     const readUrl=new URL(req.url??'/', 'http://host');
     const exportRoute=/^\/api\/conversations\/([a-zA-Z0-9-]+)\/native-export$/.exec(readUrl.pathname);

@@ -617,3 +617,6 @@ separate gates; synthetic checks do not establish summary quality or zero drift.
 - 2026-10-22: New-task first-message readiness: remove post-create metadata/file-grant waits from the native-open path, bound creation confirmation, preserve drafts and idempotent retry. Source regressions and Browser probe cover the reproducible stall; original production network cause is unconfirmed. See the conversation-workspaces contract.
 
 - 2026-10-22: Server #36 follow-up: owner approved GitHub `workflow` scope for Actions-file pushes. Existing tokens require reconnection; account isolation and task bindings remain unchanged. See the GitHub account contract.
+
+- Server #162: replace `/cross-user` with explicitly authorized cross-account
+  context reconstruction through Cat Skills `takeover`; source candidate only.

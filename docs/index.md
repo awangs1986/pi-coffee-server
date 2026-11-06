@@ -1,4 +1,4 @@
-- Candidate: [explicit `/cross-user` read-only conversation references](spec/cross-user-reference.md), [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162), [candidate review](reviews/cross-user-reference-20261106.md).
+- Candidate: [authorized `/takeover` context reconstruction (replaces `/cross-user`)](spec/cross-user-reference.md), [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162), [candidate review](reviews/cross-user-reference-20261106.md).
 - Deployed 0.94 (`e256440`), live Fork acceptance pending: [durable task preparation](spec/task-preparation.md), [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). Unified creation/Fork lifecycle, recovery and five-stage migration; [candidate review](reviews/task-preparation-20261106.md).
 - Earlier recorded activation (2026-11-06): Server 0.84 / `eb34dde`; [release and one live Fork acceptance](spec/conversation-fork.md#activation-and-acceptance-update-2026-11-06). This is distinct from the planned refactor.
 
