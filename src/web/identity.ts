@@ -13,6 +13,8 @@ export interface IdentityOptions {
   fetch?: typeof fetch;
   sessionMs?: number;
   sharedHost?: boolean;
+  /** Operator-approved sharing between routed participants on this same Host only. */
+  crossUserRead?: boolean;
 }
 interface Login { id: string; login: string; token: string; expires: number; checked: number; route: UserRoute }
 const COOKIE = "coffee_session";
@@ -63,6 +65,11 @@ export class Identity {
       urls.add(url);tokens.add(route.hostToken);
     }
     return resolved;
+  }
+  referenceRoutes(accountId:string):{accountId:string;route:UserRoute}[]{
+    if(!this.options.sharedHost||!this.options.crossUserRead)return [];
+    const routes=this.routes(),current=routes[accountId];if(!current)return [];
+    return Object.entries(routes).filter(([id,r])=>id!==accountId&&new URL(r.hostUrl).href===new URL(current.hostUrl).href&&r.hostToken===current.hostToken).map(([id,route])=>({accountId:id,route}));
   }
   /** Service-only reverse OAuth exchange; no browser session can use this grant. */
   authorizesHost(req:IncomingMessage):boolean {

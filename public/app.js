@@ -1,3 +1,4 @@
+import {initCrossUser,CROSS_USER_COMMAND} from './cross-user.js';
 import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} from './task-preparation.js';
 import {mountOptionalSpeech} from './speech-bootstrap.js';
 import {initBackupControls} from './backup.js';
@@ -2708,7 +2709,7 @@ function slashItems() {
   const query = value.slice(1).toLowerCase();
   const mishuItems=currentTask()?.engine==='codex'?[{name:'mishu-setup',invocation:'/mishu-setup',description:'配置 MISHU 联系对象与权限',source:'web'},{name:'mishu-tasks',invocation:'/mishu-tasks',description:'查看 MISHU 跟踪事实',source:'web'},{name:'mishu',invocation:'/mishu',description:'查看秘书身份和当前状态',source:'web'},{name:'mishu-disable',invocation:'/mishu-disable',description:'停用秘书协调',source:'web'}]:[];
   const native=(opened?engine:draftModelEngine())==='codex'?CODEX_COMMANDS:[];
-  return [RESTART_COMMAND,SSHME_COMMAND,...mishuItems,...native,...commands.filter(c=>!['sshme','restart',...native.map(n=>n.name)].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^.*:/,'').toLowerCase().startsWith(query)));
+  return [RESTART_COMMAND,SSHME_COMMAND,CROSS_USER_COMMAND,...mishuItems,...native,...commands.filter(c=>!['sshme','restart','cross-user',...native.map(n=>n.name)].includes(c.name.toLowerCase()))].filter((c) => c.name.toLowerCase().startsWith(query) || (c.source==='skill' && c.name.replace(/^.*:/,'').toLowerCase().startsWith(query)));
 }
 function renderSlash() {
   const items = slashItems();
@@ -3188,6 +3189,10 @@ ui.prompt.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowUp' && ui.prompt.value === '' && lastUserText) { event.preventDefault(); ui.prompt.value = lastUserText; autoGrow(); refreshComposer(); return; }
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('#composer').requestSubmit(); }
 });
+const crossUserControls=initCrossUser({
+ context:()=>({id:activeId,user:currentUser,epoch:taskSelectionEpoch,text:ui.prompt.value,ready:opened&&connected&&historyReady&&!streaming&&!compacting&&!pendingOpenId&&!pendingDelivery&&!takeoverBusy()&&!agentSaveBusy&&!modelPending&&!thinkingPending&&!contextPending&&!speedPending,attachments:Boolean(draftFiles.length||attachments.length||uploads.length||filesAwaitingTransfer.length)}),
+ send:text=>submitPrompt(text,[]),toast:message=>toast(message)
+});
 $('#composer').addEventListener('submit', (event) => {
   event.preventDefault();
   if(restartControls.handle(ui.prompt.value))return;
@@ -3196,6 +3201,7 @@ $('#composer').addEventListener('submit', (event) => {
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
   if(!opened && draftModelEngine() && !models){toast('正在加载模型和思考强度，请稍后发送');return;}
   const text = ui.prompt.value.trim();
+  if(crossUserControls.handle(text))return;
   if(handleCodexSlash(text))return;
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;

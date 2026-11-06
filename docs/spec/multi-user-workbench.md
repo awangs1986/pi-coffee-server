@@ -107,3 +107,11 @@ Gitea's session cookie: explain that switching accounts requires signing out in
 Gitea, then returning to retry. Never render codes, tokens or provider error text.
 API authorization failures retain their machine-readable response contracts;
 recovery does not admit new accounts or alias their data to an existing user.
+
+## Explicit read-only reference exception (2026-11-06)
+
+[Cross-user references](cross-user-reference.md) define the owner-approved,
+operator-enabled `/cross-user <conversation-id>` exception. It imports a bounded
+dialogue snapshot into the caller’s Conversation without granting source task
+control, repository access, attachments or credentials. Ordinary HTTP/WS isolation
+remains unchanged. Source implementation and activation are separate.

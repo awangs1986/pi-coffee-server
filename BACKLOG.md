@@ -1,3 +1,5 @@
+- [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162): [explicit cross-user references](docs/spec/cross-user-reference.md), candidate command and scoped read endpoint; deployment/configuration pending.
+
 - [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161): [durable task preparation refactor](docs/spec/task-preparation.md), implemented candidate covering durable admission, bounded adapters, Chat/Work creation, Fork and Browser recovery. Final release matrix and deployed acceptance remain open; no deployment is claimed.
 
 - [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39): Server 0.83 Fork writer-custody budget repair and persistent failure display; [contract](docs/spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05). Source acceptance and activation remain separate.

@@ -326,6 +326,7 @@ async function run(selectedRole: Role): Promise<void> {
     };
     identity = {
       sharedHost: process.env.PI_COFFEE_SHARED_HOST === "1",
+      crossUserRead: process.env.PI_COFFEE_CROSS_USER_READ === "1",
       giteaUrl: required("PI_COFFEE_GITEA_URL"),
       clientId: required("PI_COFFEE_GITEA_CLIENT_ID"),
       clientSecret: required("PI_COFFEE_GITEA_CLIENT_SECRET"),
