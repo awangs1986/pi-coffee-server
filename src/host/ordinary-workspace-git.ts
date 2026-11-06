@@ -26,9 +26,10 @@ child.on('exit',(code,signal)=>{if(failure)finish(code,signal);});
 child.on('close',finish);
 `;
 
-export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:string[],options:{input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number}):Promise<{stdout:Buffer;stderr:Buffer}>{
+export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:string[],options:{signal?:AbortSignal;input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number}):Promise<{stdout:Buffer;stderr:Buffer}>{
  const root=await mkdtemp(join(tmpdir(),'coffee-git-result-'));let child:ReturnType<typeof spawn>|undefined,completed=false;
  try{
+  options.signal?.throwIfAborted();
   if(options.input&&options.input.length>1024*1024)throw Error('Workspace Git input exceeds its resource budget');
   const request=JSON.stringify({args,input:options.input?.toString('base64'),timeout:options.timeout,maxBuffer:options.maxBuffer});
   if(!Number.isSafeInteger(options.maxBuffer)||options.maxBuffer<1||options.maxBuffer>WORKSPACE_GIT_MAX_OUTPUT_BYTES||!Number.isSafeInteger(options.timeout)||options.timeout<1||Buffer.byteLength(request)>8*1024*1024)throw Error('Workspace Git request exceeds its resource budget');
@@ -38,6 +39,7 @@ export async function ordinaryWorkspaceGit(custody:NativeWriterCustody,args:stri
   child.once('error',error=>{launchFailure=error;});
   const deadline=Date.now()+options.timeout+5000,limit=Math.ceil(options.maxBuffer*8/3)+4096;
   for(;;){
+   options.signal?.throwIfAborted();
    if(launchFailure)throw launchFailure;
    let raw:Buffer|undefined;
    try{

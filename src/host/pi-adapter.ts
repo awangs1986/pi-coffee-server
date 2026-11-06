@@ -1,3 +1,4 @@
+import {bounded,preparationExecution,preparationBudget} from './preparation-execution.js';
 import {spawn} from 'node:child_process';
 import {ownedNativeAuditClose} from './native-audit-process.js';
 import {BackupError} from './backup.js';
@@ -246,7 +247,7 @@ export class RpcPiSessionFactory implements PiSessionFactory {
     });
     const session = new RpcPiSession(client, extensionPathsFromArgs(args), this.options.allowedModels, dispatchToken,this.options.providerOnly);
     try{
-      await session.start();
+      await bounded(()=>session.start(),preparationBudget(120000),preparationExecution.getStore()?.signal);
       // Pi applies defaults when resuming a branch with no messages. Restore the
       // native branch settings captured before startup, without injecting text.
       if(resumeContext&&!resumeContext.messages.length){

@@ -1,3 +1,4 @@
+import {TaskPreparation,type PreparationBudgets} from './task-preparation.js';
 import {createCompletionSpeech} from './completion-speech.js';
 import type {PersonalRecoveryCollection} from './personal-recovery-collection.js';
 import {withBackupRequestIdentity} from './backup-request-identity.js';
@@ -74,6 +75,7 @@ export interface UserScope {
 export type BackupScheduleAccess=Pick<BackupJobRunner,'status'|'configure'>;
 export type BackupRepositoryAccess=Pick<BackupRepository,'status'|'configure'|'exportRecoveryPackage'|'verifyRecoveryPackage'|'rotateRecoveryKey'|'backup'|'recoverInterruptedOperation'|'previewRetention'|'executeRetention'|'retentionPlans'|'recoveryPins'>&Partial<Pick<BackupRepository,'recoveryPoints'>>;
 export interface HostServerOptions {
+  preparationBudgets?:PreparationBudgets;
   /** Trusted source coordinator; omitted until native writer custody is verified. */
   backup?: {gitea?:GiteaBackupJob;giteaProfile?:string;collection?:PersonalRecoveryCollection;personal?:boolean;coordinator:BackupCoordinator; restore?:RestoreCoordinator; accountRecovery?:AccountRecoveryCoordinator; repository?:BackupRepositoryAccess; repositoryForActor?:(actor:string|undefined,dataScope:string)=>BackupRepositoryAccess|undefined; configureRepositoryForActor?:(actor:string|undefined,dataScope:string)=>Promise<void>; schedule?:BackupScheduleAccess; scheduleForActor?:(actor:string|undefined,dataScope:string)=>BackupScheduleAccess|undefined; scheduleConnection?:BackupInventoryConnection; binary?:string; activationUnavailable?:string; administrator?:string; scopes?:string[]};
 
@@ -145,6 +147,7 @@ async function scheduleStatus(schedule:BackupScheduleAccess,scope:string){try{re
 
 /** A user's registry plus the bookkeeping the server keeps beside it. */
 interface UserSlot {
+  preparation?:TaskPreparation;
   speech?:ReturnType<typeof createCompletionSpeech>;
   authenticatedActor?:string;
   backupAdministrator?:string;
@@ -196,6 +199,7 @@ export class HostServer {
   private readonly registryOptions: { eventBufferSize?: number; idleTimeoutMs?: number; externalPollMs?: number };
   /** Key: normalised user name, or "" for identity-less connections. */
   private readonly slots = new Map<string, Promise<UserSlot>>();
+  private preparationScopes=new WeakMap<Workspaces,{preparation:TaskPreparation;locks:Set<string>;registries:Set<HostSessionRegistry>;slots:Set<UserSlot>}>();
   private readonly taskPreparations = new Set<Promise<void>>();
   private readonly transferTargets = new Map<string, { slot: Promise<UserSlot>; sessionId: string }>();
   private readonly transfer?: TransferServer;
@@ -684,33 +688,14 @@ export class HostServer {
         for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
         json(res,200,changed);void this.broadcastSessions(slot);return;
       }
+      if(input.action==='preparation_start'){if(!slot.preparation)throw Error('Preparation unavailable');json(res,202,await slot.preparation.start(input));return;}
+      if(input.action==='preparation_cancel'){if(!slot.preparation)throw Error('Preparation unavailable');json(res,200,await slot.preparation.cancel(input.operationId,input.expectedRevision));return;}
+      if(input.action==='preparation_resume'){if(!slot.preparation)throw Error('Preparation unavailable');json(res,200,await slot.preparation.resume(input.operationId,input.expectedRevision));return;}
+      if(input.action==='preparation_get'){if(!slot.preparation)throw Error('Preparation unavailable');json(res,200,await slot.preparation.get(input.operationId));return;}
       if(input.action==='fork'){
-        const id=input.id,targetId=input.targetId,mode=input.mode;
-        if(typeof id!=='string'||typeof targetId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId)||!['native','handoff'].includes(mode))throw new Error('Invalid Fork request');
-        const source=await ws.lookup(id);if(!source||source.archived||source.workspaceRemoved||source.cleanupStarted)throw new Error('Unknown or unavailable source task');
-        const prior=await ws.lookup(targetId);
-        if(prior){if(prior.fork?.sourceId!==id||prior.fork.mode!==mode)throw new Error('Fork request ID belongs to another operation');json(res,200,prior);return;}
-        if(mode==='handoff'&&input.acceptDrift!==true)throw new Error('Confirm possible Handoff drift and model cost');
-        if(!slot.factory.forkConversation||!slot.factory.forkModes?.(source.engine??'pi').includes(mode))throw new Error('This Agent does not support the selected Fork mode');
-        if(slot.lifecycleLocks.has(id)||slot.lifecycleLocks.has(targetId))throw new Error('Task lifecycle operation in progress');
-        slot.lifecycleLocks.add(id);slot.lifecycleLocks.add(targetId);
-        try{
-          const session=(await slot.registry.open(id)).session;
-          const nativeState=await session.readNativeState();
-          if(session.isBusy||nativeState.isStreaming||nativeState.isCompacting||session.pendingUiRequests.length)throw new Error('Finish running work, queued input, compaction and questions before Fork');
-          const background=await session.backgroundState();if(!background.known||background.active)throw new Error('Background work is active or unknown');
-          const history=await session.getHistory(),models=await session.getModels();
-          const finalState=await session.readNativeState();if(session.isBusy||finalState.isStreaming||finalState.isCompacting||session.pendingUiRequests.length)throw new Error('Source resumed during Fork preparation');
-          const listing=(await slot.registry.list()).find(row=>row.id===id);
-          const title=((listing?.name||listing?.preview||history.entries.find(e=>e.kind==='user')?.text||'新对话').replace(/\s+/g,' ').trim().slice(0,140))+' · Fork';
-          const target=await ws.beginFork(id,targetId,mode,title,{...(models.current?{model:{provider:models.current.provider,id:models.current.id}}:{}),thinkingLevel:models.thinkingLevel,...(models.context?{contextPreset:models.context.preset}:{})});
-          const operation=(async()=>{
-            try {await ws.copyForkWorkspace(targetId,history);await slot.factory.forkConversation!(id,targetId,mode,history);await ws.finishFork(targetId);}
-            catch(error){await ws.finishFork(targetId,error instanceof Error?error.message:'Fork failed');}
-            finally{slot.lifecycleLocks.delete(id);slot.lifecycleLocks.delete(targetId);void this.broadcastSessions(slot);}
-          })();this.taskPreparations.add(operation);void operation.finally(()=>this.taskPreparations.delete(operation)).catch(()=>undefined);
-          json(res,202,target);return;
-        }catch(error){slot.lifecycleLocks.delete(id);slot.lifecycleLocks.delete(targetId);throw error;}
+        if(!slot.preparation||!['native','handoff'].includes(input.mode))throw Error('Invalid Fork request');
+        const operation=await slot.preparation.start({operationId:input.targetId,targetTaskId:input.targetId,sourceId:input.id,kind:input.mode==='native'?'native-fork':'handoff-fork',acceptDrift:input.acceptDrift});
+        json(res,operation.status==='accepted'?202:200,{...operation,id:operation.targetTaskId});return;
       }
       if(input.action==='github_task_bind'){
         const id=input.id;
@@ -906,7 +891,8 @@ export class HostServer {
       const indexRoot=scope.workspaces?join(scope.workspaces.root,'.coffee','conversation-index'):this.conversationIndexRoot;
       const index=indexRoot?new ConversationIndex({root:indexRoot,userScope:key,factory:scope.factory,onChange:meta=>{for(const socket of this.sockets)if(socket.user===user&&socket.sessionId===meta.conversationId)socket.send({v:1,type:'sync_changed',sessionId:meta.conversationId,conversationId:meta.conversationId,bindingEpoch:meta.bindingEpoch,headRevision:meta.headRevision,sourceFreshness:meta.sourceFreshness});}}):undefined;
       const speech=scope.workspaces&&process.env.PI_COFFEE_COMPLETION_SPEECH!=='off'?createCompletionSpeech(join(scope.workspaces.root,'.coffee','completion-speech'),scope.workspaces,()=>scope.factory.list()):undefined;
-      const lifecycleLocks=new Set<string>();
+      const sharedPreparation=scope.workspaces?this.preparationScopes.get(scope.workspaces):undefined;
+      const lifecycleLocks=sharedPreparation?.locks??new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
       const registry = new HostSessionRegistry({turnInstructions:speech? id=>speech.prepare(id):undefined,queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence,async id=>(await scope.workspaces!.lookup(id))?.recoveryReceipt?.operationId):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
         index?.event(id,event);mishu?.event(id,event);
@@ -917,6 +903,15 @@ export class HostServer {
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
       const slot: UserSlot = { user, speech, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      if(scope.workspaces){
+        if(sharedPreparation){sharedPreparation.registries.add(registry);sharedPreparation.slots.add(slot);slot.preparation=sharedPreparation.preparation;}
+        else{
+          const registries=new Set([registry]),owners=new Set([slot]);
+          const preparation=new TaskPreparation({sourceBusy:async id=>(await Promise.all([...registries].map(r=>r.preparationConflict(id)))).some(Boolean),budgets:this.options.preparationBudgets,workspaces:scope.workspaces,factory:scope.factory,locks:lifecycleLocks,changed:()=>{for(const owner of owners)this.broadcastSessions(owner);}});
+          this.preparationScopes.set(scope.workspaces,{preparation,locks:lifecycleLocks,registries,slots:owners});slot.preparation=preparation;
+        }
+      }
+      await slot.preparation?.ready();
       registry.onChange((session) => {
         if(this.closing)return;
         this.broadcastSessions(slot);
@@ -1062,6 +1057,7 @@ export class HostServer {
       // Cancel reconstruction before waiting for takeover recovery. The registry
       // remains owned until that recovery finishes, including a reopened source.
       await slot.value.factory.cancelTakeovers?.().catch(() => undefined);
+      await slot.value.preparation?.close();
     }
     await Promise.allSettled([...this.taskPreparations]);
     for (const slot of slots) {
@@ -1080,6 +1076,7 @@ export class HostServer {
       await slot.value.factory.close?.().catch(() => undefined);
       await slot.value.githubAccounts?.close();
     }
+    this.preparationScopes=new WeakMap();
     this.wsServer.close();
     await httpClosed;
     this.started = false;

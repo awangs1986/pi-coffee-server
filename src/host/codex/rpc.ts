@@ -1,3 +1,4 @@
+import {preparationExecution,preparationBudget} from '../preparation-execution.js';
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -37,7 +38,7 @@ export class CodexAppServer {
   private readonly options: CodexAppServerOptions;
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 1;
-  private readonly pending = new Map<number, { resolve: (value: Json) => void; reject: (error: Error) => void; timer?:ReturnType<typeof setTimeout> }>();
+  private readonly pending = new Map<number, { resolve: (value: Json) => void; reject: (error: Error) => void; timer?:ReturnType<typeof setTimeout>; detach?:()=>void }>();
   private readonly subscribers = new Map<string, Set<ThreadSubscriber>>();
   private readonly globalListeners = new Set<(method: string, params: Obj) => void>();
   private exited = false;
@@ -83,15 +84,21 @@ export class CodexAppServer {
   }
 
   request(method: string, params: Json, timeoutMs=0): Promise<Json> {
+    const context=preparationExecution.getStore();
+    if(context){try{timeoutMs=preparationBudget(timeoutMs||120000);}catch(error){return Promise.reject(error);}}
     const child = this.child;
     if (!child || this.exited) return Promise.reject(new Error("codex app-server is not running"));
     const id = this.nextId++;
     return new Promise<Json>((resolve, reject) => {
-      const timer=timeoutMs>0?setTimeout(()=>{this.pending.delete(id);reject(new Error(`Codex metadata request timed out: ${method}`));},timeoutMs):undefined;
-      this.pending.set(id, { resolve, reject, timer });
+      const detach=()=>context?.signal.removeEventListener('abort',abort);
+      const abort=()=>{this.pending.delete(id);clearTimeout(timer);detach();reject(context?.signal.reason??new Error('Preparation cancelled'));};
+      const timer=timeoutMs>0?setTimeout(()=>{this.pending.delete(id);detach();reject(new Error(`Codex metadata request timed out: ${method}`));},timeoutMs):undefined;
+      this.pending.set(id, { resolve, reject, timer, detach });
+      context?.signal.addEventListener('abort',abort,{once:true});
+      if(context?.signal.aborted){abort();return;}
       child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
         if (error) {
-          this.pending.delete(id);clearTimeout(timer);
+          this.pending.delete(id);clearTimeout(timer);detach();
           reject(new Error(`codex app-server input closed: ${error.message}`));
         }
       });
@@ -163,7 +170,7 @@ export class CodexAppServer {
     if (typeof id === "number") {
       const waiter = this.pending.get(id);
       if (!waiter) return;
-      this.pending.delete(id);clearTimeout(waiter.timer);
+      this.pending.delete(id);clearTimeout(waiter.timer);waiter.detach?.();
       if (message.error !== undefined && message.error !== null) {
         const error = message.error as Partial<RpcError>;
         waiter.reject(new Error(typeof error.message === "string" ? error.message : "Codex RPC error"));
@@ -208,7 +215,7 @@ export class CodexAppServer {
   private onExit(reason = "codex app-server exited"): void {
     if (this.exited) return;
     this.exited = true;
-    for (const waiter of this.pending.values()){clearTimeout(waiter.timer);waiter.reject(new Error(reason));}
+    for (const waiter of this.pending.values()){clearTimeout(waiter.timer);waiter.detach?.();waiter.reject(new Error(reason));}
     this.pending.clear();
     for (const set of this.subscribers.values()) for (const subscriber of set) {
       try { subscriber.exit(); } catch { /* ignore */ }

@@ -505,7 +505,7 @@ describe("Host WebSocket seam", () => {
       const result = await Promise.race([closing.then(() => "closed"), new Promise(resolve => setTimeout(() => resolve("waiting"), 100))]);
       expect(result).toBe("waiting");
       release(); await closing; server = undefined;
-      expect(await readdir(join(root, "projects/.coffee/locks"))).toEqual([]);
+      expect((await readdir(join(root, "projects/.coffee/locks"))).every(name=>name.endsWith(".lease"))).toBe(true);
       // A restarted owner can mutate the same workspace without operator unlock.
       await expect(new Workspaces(join(root, "projects")).displaySidebar(false)).resolves.toBeDefined();
     } finally {

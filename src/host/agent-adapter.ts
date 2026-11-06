@@ -120,8 +120,9 @@ export interface AgentSessionFactory {
   supportsDispatchCorrelation?(sessionId:string):Promise<boolean>;
  /** Passive exact native run audit; never starts a runtime or replays work. */
  readRunEvidence?(sessionId:string,runId?:string):Promise<AgentRunEvidence>;
+  inspectForkSource?(id:string):Promise<{history:AgentHistory;settings:import('./fork.js').ForkSettings;title?:string;binding:string}>;
   forkModes?(engine:"pi"|"codex"|"claude"|"cursor"|"grok"):import('./fork.js').ForkMode[];
-  forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory):Promise<void>;
+  forkConversation?(sourceId:string,targetId:string,mode:import('./fork.js').ForkMode,history:AgentHistory,control?:import('./fork.js').ForkPreparationControl):Promise<void>;
   resetNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;workspaceSessionId:string}):Promise<AgentSession>;
   prepareContextReset?(id:string,operation:{id:string;expectedNativeId:string;title:string},settings:AgentModels):Promise<{session:AgentSession;commit():Promise<void>;rollback():Promise<void>}>;
   forkNative?(sourceNativeId:string,options:{sessionId:string;cwd:string;sourceCwd:string}):Promise<AgentSession>;
@@ -136,6 +137,7 @@ export interface AgentSessionFactory {
   close?(): Promise<void>;
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
+  engineAvailability?(engine:AgentEngine):Promise<EngineAvailability>;
   /** Read native choices without creating a conversation or running a turn. */
   commandCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<CommandInfo[]>;
   modelCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<AgentModels>;

@@ -30,7 +30,7 @@ it('rejects foreign sources and missing Handoff consent, and preserves failed de
  await expect.poll(async()=>(await a.ws.lookup(id))?.fork?.status).toBe('failed');expect((await a.ws.lookup(a.c.id))?.archived).toBe(false);expect(await readFile(join((await a.ws.lookup(id))!.cwd,'file.txt'),'utf8')).toBe('base');
 });
 it('rejects a busy source before allocating a destination',async()=>{
- const a=await setup();a.setBusy(true);const first=randomUUID();expect((await a.call({action:'fork',id:a.c.id,targetId:first,mode:'native'})).status).toBe(409);expect(await a.ws.lookup(first)).toBeUndefined();
+ const a=await setup();a.setBusy(true);const first=randomUUID();expect((await a.call({action:'fork',id:a.c.id,targetId:first,mode:'native'})).status).toBe(202);await expect.poll(async()=>(await a.call({action:'preparation_get',operationId:first})).body.status).toBe('failed');expect(await a.ws.lookup(first)).toBeUndefined();
 });
 it('retains failure evidence when the source contains an external link instead of sharing its target',async()=>{
  const a=await setup();const {symlink}=await import('node:fs/promises');const outside=join(a.root,'outside');await mkdir(outside);await writeFile(join(outside,'private.txt'),'untouched');await symlink(outside,join(a.c.cwd,'external'));

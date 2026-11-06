@@ -7,7 +7,7 @@ import type {ManagedNativeCustody} from './managed-native.js';
 
 const exec=promisify(execFile);
 export function workspaceGitCommand(args:string[]){let index=0;while(args[index]==='-c')index+=2;return args[index];}
-interface GitOptions {input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;ordinaryCustody?:NativeWriterCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
+interface GitOptions {signal?:AbortSignal;input?:Buffer;cwd:string;env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;custody?:ManagedNativeCustody;ordinaryCustody?:NativeWriterCustody;managedRequired:boolean;transport?:WorkspaceGitTransport;identity?:{name:string;email:string}}
 type Files={kind:'copy-index'|'remove-index';index:string}|{kind:'exclude'};
 
 // This program is passed as argv to an immutable interpreter inside the same
@@ -97,19 +97,20 @@ async function managed(custody:ManagedNativeCustody,options:GitOptions,request:R
   const relay=options.transport?await workspaceGitTransport(custody.profile.lock,options.transport,args?workspaceGitCommand(args)==='push':false,custody.profile.sources.map(source=>source.path)):undefined;
   try {
     const prepared=await custody.prepare({executable:'/usr/bin/python3',cwd:options.cwd,httpTransport:relay,args:['-c',managedProgram,JSON.stringify({...request,identity:options.identity,...(relay?{transport:{repository:relay.repository,port:relay.port}}:{}),sources:custody.profile.sources.map(source=>source.destination)})]});
-    return await exec(process.execPath,[prepared.cliPath],{cwd:options.cwd,env:{PATH:'/usr/bin:/bin',...prepared.env},timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'});
+    return await exec(process.execPath,[prepared.cliPath],{cwd:options.cwd,env:{PATH:'/usr/bin:/bin',...prepared.env},signal:options.signal,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'});
   } finally {await relay?.close();}
 }
 
 /** Host Git never evaluates workspace state with greater authority than the
  * native writer that supplied it. Legacy account wrappers remain unchanged. */
 export async function executeWorkspaceGit(args:string[],options:GitOptions):Promise<{stdout:Buffer;stderr:Buffer}>{
+  options.signal?.throwIfAborted();
   if(options.input&&options.input.length>1024*1024)throw Error('Workspace Git input exceeds its resource budget');
   if(options.managedRequired&&!options.custody)throw Error('Managed workspace Git executor is unavailable');
   try {
     if(options.custody)return await managed(options.custody,options,{args,input:options.input?.toString('base64'),literal:options.env.GIT_LITERAL_PATHSPECS,index:options.env.GIT_INDEX_FILE});
     if(options.ordinaryCustody)return await ordinaryWorkspaceGit(options.ordinaryCustody,args,options);
-    return await new Promise<{stdout:Buffer;stderr:Buffer}>((resolve,reject)=>{const child=execFile('git',['-c','core.hooksPath=/dev/null',...args],{cwd:options.cwd,env:options.env,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'},(error,stdout,stderr)=>error?reject(Object.assign(error,{stdout,stderr})):resolve({stdout,stderr}));child.stdin?.on('error',()=>{});child.stdin?.end(options.input);});
+    return await new Promise<{stdout:Buffer;stderr:Buffer}>((resolve,reject)=>{const child=execFile('git',['-c','core.hooksPath=/dev/null',...args],{cwd:options.cwd,env:options.env,signal:options.signal,timeout:options.timeout,maxBuffer:options.maxBuffer,encoding:'buffer'},(error,stdout,stderr)=>error?reject(Object.assign(error,{stdout,stderr})):resolve({stdout,stderr}));child.stdin?.on('error',()=>{});child.stdin?.end(options.input);});
   } catch(error){
     const failure=error as Error & {stdout?:Buffer|string;stderr?:Buffer|string;code?:number|string};
     // Policy failures must not become an empty successful bounded diff/result.

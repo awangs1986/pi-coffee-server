@@ -1,7 +1,9 @@
+import {acquireFileLease} from './linux-file-lease.js';
+import {preparationBudget,preparationExecution,checkPreparation} from './preparation-execution.js';
 import {WORKSPACE_GIT_MAX_OUTPUT_BYTES} from './workspace-git-limits.js';
 import {isEmailPrivacyRejection,githubPrivateEmail,repairGitEmailPrivacy,anonymousGitCommit,type GitEmailRepair} from './git-email-privacy.mjs';
 import type {NativeWriterCustody} from './native-custody.js';
-import {durableJson,restoreFail,sha,privateDir} from './restore-files.js';
+import {durableJson,restoreFail,sha,privateDir,readJson,syncDir} from './restore-files.js';
 import type {WriterAdmissionFence,RecoveryPublication} from './backup.js';
 import {ManagedWriterFence} from './managed-writer-fence.js';
 import type {ManagedNativeCustody} from './managed-native.js';
@@ -25,7 +27,7 @@ const exec = promisify(execFile);
 export type ProjectForge = "gitea" | "github";
 export interface Project { githubAccountId?:string; id: string; name: string; path: string; branch: string; repoUrl?: string; repoId?: string; webUrl?: string; forge?: ProjectForge }
 export interface NativeBinding { writers?:"idle"|"unknown";state:"prepared"|"starting"|"bound";id?:string;requestedId?:string}
-export interface Conversation { gitEmailRepair?:GitEmailRepair; retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
+export interface Conversation { preparationId?:string;rootReservation?:{dev:number;ino:number}; gitEmailRepair?:GitEmailRepair; retainedNativeBindings?:{engine:AgentEngine;nativeId:string}[];retiredOperationIds?:string[]; recoveryReceipt?:{operationId:string;digest:string}; readCompletionId?:string; completionId?:string;completedAt?:string; lastRunStatus?:SessionSummary["runStatus"]; lastActivityAt?:string; nativeContextEmpty?:boolean; contextReset?:{id:string;at:string;title?:string}; fork?:ForkState;forking?:ForkProgress; githubAccountId?:string;takeoverTitle?:string; retainedNativeIds?:string[]; takeover?:TakeoverState; takeoverSegments?:TakeoverSegment[]; taskRoot?:string; id: string; engine?: AgentEngine; nativeBinding?: NativeBinding; acceptedRequestIds?:string[]; projectId?: string; workspaceKind?: "chat" | "project"; vmId?:string; creationState?:"creating"|"ready"|"failed"; creationError?:string; startBranch?:string; publishStarted?:boolean; directoryCreated?:boolean; cwd: string; branch: string; archived: boolean; createdAt: string; startSha?: string; lastRemoteSha?: string; lastRemoteAt?: string; syncError?: string; pullRequest?: PullRequest; legacyCwd?:string; migrationBranch?:string; runState?: "running" | "idle" | "interrupted"; workspaceRemoved?: boolean; cleanupStarted?:boolean; artifacts?: Artifact[]; baseline?: Record<string,string>; quiesced?: boolean; turnSnapshot?: TurnSnapshot }
 interface Artifact { path:string; modifiedAt:string; size:number; available:boolean }
 /**
  * Working-tree tree object recorded when a run starts, so "last turn" review can
@@ -95,12 +97,19 @@ interface SidebarState {pinned?:string[];showGroups?:boolean;assignments:Record<
 interface State { displayMode?:"compact"|"detailed"; sidebar?: SidebarState; version: 2; projects: Project[]; conversations: Conversation[]; legacyArchived?: string[]; deletedIds?:string[] }
 const slug = (v: unknown) => { if(typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(v)) throw new Error('Use a project name containing letters, numbers, - or _ (1–64 characters)');return v; };
 export class Workspaces {
+  preparationProjection?:(task:Conversation)=>Conversation;
+  async assertPreparationReady(task:Conversation){if(task.preparationId&&!task.recoveryReceipt&&preparationExecution.getStore()?.operationId!==task.preparationId&&this.preparationProjection?.(task).creationState!=='ready')throw Error('Task preparation is not complete; inspect its operation');}
+
   get backupGitCustody(){return this.options.gitCommandCustody;}
   backupWriterFence?:WriterAdmissionFence;
   setBackupWriterFence(fence:WriterAdmissionFence){this.backupWriterFence=fence;}
   private state: State = {version:2,projects:[],conversations:[]};
   private tails = new Map<string, Promise<unknown>>();
   private saveTail: Promise<void> = Promise.resolve();
+  private exportTail:Promise<void>=Promise.resolve();
+  private committedState?:State;
+  private publicationError?:string;
+  private readonly exportedTasks=new Map<string,string>();
   private initialized = false;
   private startupReconciliationPending=false;
   private loading?: Promise<void>;
@@ -141,7 +150,7 @@ export class Workspaces {
       this.state={...data,version:2};
     } catch(e) { if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e; }
     for (const c of this.state.conversations) c.engine=parseAgentEngine(c.engine);
-    this.initialized=true;this.startupReconciliationPending=true;
+    this.committedState=structuredClone(this.state);this.initialized=true;this.startupReconciliationPending=true;
     if(!this.options.deferStartupReconciliation?.())await this.reconcileStartup();
   }
   private async reconcileStartup(){const run=async()=>{
@@ -155,10 +164,19 @@ export class Workspaces {
   }
   private async save() {return this.backupWriterFence?this.backupWriterFence.runWriter('platform',()=>this.saveState()):this.saveState();}
   private async saveState(exportTasks=true) {
-    const next=this.saveTail.then(async()=>{
-      await durableJson(join(this.root,'.coffee','state.json'),this.state);
-      for(const c of this.state.conversations)if(exportTasks&&c.taskRoot && !c.workspaceRemoved)await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c}).catch(()=>console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative'));
-    });this.saveTail=next.catch(()=>undefined);return next;
+    const snapshot=structuredClone(this.state);
+    const next=this.saveTail.then(async()=>{try{await durableJson(join(this.root,'.coffee','state.json'),snapshot);this.committedState=snapshot;this.publicationError=undefined;}catch(error){this.publicationError='Registry publication failed; last committed task bindings are retained';throw error;}});
+    this.saveTail=next.catch(()=>undefined);await next;
+    if(!exportTasks)return;
+    const exported=this.exportTail.then(async()=>{
+      for(const c of snapshot.conversations){
+        if(!c.taskRoot||c.workspaceRemoved||c.preparationId&&!c.rootReservation)continue;
+        const digest=sha(JSON.stringify(c));if(this.exportedTasks.get(c.id)===digest)continue;
+        try{await writeTaskJson(c.taskRoot,'task.json',{schemaVersion:1,historyRole:'display-export-only',nativeRecovery:'Use the Agent adapter and its original native store',conversation:c});this.exportedTasks.set(c.id,digest);}
+        catch{console.warn('Task metadata export unavailable for '+c.id+'; registry remains authoritative');}
+      }
+      const ids=new Set(snapshot.conversations.map(c=>c.id));for(const id of this.exportedTasks.keys())if(!ids.has(id))this.exportedTasks.delete(id);
+    });this.exportTail=exported.catch(()=>undefined);await exported;
   }
   /** Git operations serialize per project; only metadata publication is VM-wide. */
   private async mutate<T>(run:()=>Promise<T>, key:()=>string=()=>"registry",admitted=false):Promise<T> {
@@ -167,8 +185,10 @@ export class Workspaces {
     const next=(this.tails.get(name) ?? Promise.resolve()).catch(()=>undefined).then(async()=> {
       const dir=join(this.root,'.coffee','locks');await mkdir(dir,{recursive:true,mode:0o700});
       const lock=join(dir,createHash('sha256').update(name).digest('hex'));
-      try { await mkdir(lock); } catch { throw new Error('Workspace operation locked. If Host restarted, inspect unfinished Git work before an administrator removes its .coffee/locks marker.'); }
-      try { return await run(); } finally { await rm(lock,{recursive:true,force:true}); }
+      // Old directory markers are evidence, never age-based cleanup candidates.
+      if(await lstat(lock).then(()=>true,(error:NodeJS.ErrnoException)=>{if(error.code==='ENOENT')return false;throw error;}))throw Error('Legacy workspace operation requires inspection before recovery');
+      const lease=acquireFileLease(lock+'.lease','exclusive');if(!lease)throw Error('Workspace operation locked');
+      try {lease.assertHeld();checkPreparation();return await run();} finally {lease.release();}
     });
     this.tails.set(name,next);
     try {return await next;} finally {if(this.tails.get(name)===next)this.tails.delete(name);}
@@ -218,6 +238,7 @@ export class Workspaces {
   }
   private async gitExec(cwd:string,args:string[],options:{input?:Buffer;maxBuffer?:number;timeout?:number;env?:NodeJS.ProcessEnv;accountId?:string}={},admitted=false):Promise<{stdout:Buffer;stderr:Buffer}>{
     if(this.backupWriterFence&&!admitted)return this.backupWriterFence.runWriter('platform',()=>this.gitExec(cwd,args,options,true));
+    checkPreparation();
     let transport:import('./workspace-git-transport.js').WorkspaceGitTransport|undefined;
     if(this.options.managedGitCustody&&['clone','fetch','push','ls-remote'].includes(workspaceGitCommand(args))){
       const conversation=this.state.conversations.find(c=>samePath(c.cwd,cwd)),project=conversation?this.state.projects.find(p=>p.id===conversation.projectId):undefined;
@@ -227,7 +248,7 @@ export class Workspaces {
         transport=await this.githubAccounts.workspaceGitTransport(repository,options.accountId??conversation?.githubAccountId??this.pendingAccounts.get(cwd));
       }
     }
-    return executeWorkspaceGit(args,{input:options.input,cwd,timeout:options.timeout??120000,maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
+    return executeWorkspaceGit(args,{input:options.input,cwd,signal:preparationExecution.getStore()?.signal,timeout:preparationBudget(options.timeout??120000),maxBuffer:options.maxBuffer??2*1024*1024,env:options.env??await this.gitEnvironment(cwd,options.accountId),custody:this.options.managedGitCustody,ordinaryCustody:this.options.gitCommandCustody,managedRequired:this.backupWriterFence instanceof ManagedWriterFence,transport,identity:this.options.managedGitCustody?await this.githubAccounts?.workspaceGitIdentity():undefined});
   }
   private async git(cwd:string,args:string[],maxBuffer=2*1024*1024,accountId?:string,raw=false):Promise<string> {
     const release=this.backupWriterFence?.beginWriter('platform');try {
@@ -340,7 +361,7 @@ export class Workspaces {
     this.state.sidebar={...sidebar,collapsed:[...sidebar.collapsed.filter(id=>id!==projectId),...(collapsed?[projectId]:[])]};
     await this.save();return this.state.sidebar;
   }); }
-  async list() { await this.load();await this.saveTail;const state=structuredClone(this.state);const accounts=await this.githubAccounts?.list();return {...state,projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{chatWorkspaces:true,taskGitHubAccounts:Boolean(this.githubAccounts),forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
+  async list() { await this.load();const state=structuredClone(this.committedState??this.state);if(this.publicationError)for(const task of state.conversations){const live=this.state.conversations.find(c=>c.id===task.id);if(live?.takeover?.status==='failed'&&task.takeover?.id===live.takeover.id&&task.engine===live.engine)task.takeover=structuredClone(live.takeover);}if(this.preparationProjection)state.conversations=state.conversations.map(c=>this.preparationProjection!(c));const accounts=await this.githubAccounts?.list();return {...state,...(this.publicationError?{metadataPublicationError:this.publicationError}:{}),projects:state.projects.map(p=>({...p,...(accounts&&p.forge==='github'?{githubAccountLogin:accounts.find(a=>a.id===p.githubAccountId)?.login??null}:{})})),vmId:this.ownerId,capabilities:{...(this.preparationProjection?{taskPreparation:true}:{}),chatWorkspaces:true,taskGitHubAccounts:Boolean(this.githubAccounts),forges:{gitea:Boolean(this.forge),github:Boolean(this.githubAccounts||this.github),...(this.githubAccounts?{githubAccounts:true}:{})}}}; }
   async lookup(id:string) { await this.load();return this.state.conversations.find(c=>c.id===id); }
   async lookupByCwd(cwd:string){await this.load();return this.state.conversations.find(c=>samePath(c.cwd,cwd));}
   async branches(projectId:string):Promise<string[]> {
@@ -661,11 +682,11 @@ export class Workspaces {
     this.assertId(targetId);const source=this.conversation(sourceId);await this.checkDirectory(source);
     if(source.archived||source.forking?.status==='preparing'||(source.fork&&source.fork.status!=='completed')||source.takeover?.status==='preparing')throw new Error('Source is unavailable for Fork');
     if(this.state.conversations.some(c=>c.id===targetId))throw new Error('Fork destination already exists');
-    const chat=source.workspaceKind==='chat',taskRoot=this.taskRoot?await claimTaskRoot(this.taskRoot,targetId):undefined;
+    const chat=source.workspaceKind==='chat',taskRoot=this.taskRoot?(preparationExecution.getStore()?join(this.taskRoot,targetId):await claimTaskRoot(this.taskRoot,targetId)):undefined;
     const cwd=taskRoot?join(taskRoot,'workspace'):join(chat?this.chatRoot:join(this.root,'checkouts'),targetId);
     if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Fork destination directory already exists');
-    const c:Conversation={id:targetId,engine:source.engine??'pi',workspaceKind:source.workspaceKind??'project',projectId:source.projectId,githubAccountId:source.githubAccountId,...(taskRoot?{taskRoot}:{}),cwd,branch:chat?'':`coffee/${this.ownerId}/${targetId}`,archived:false,createdAt:new Date().toISOString(),vmId:this.ownerId,creationState:'creating',fork:{sourceId,sourceCwd:source.cwd,mode,title,settings,status:'preparing',at:new Date().toISOString()}};
-    this.state.conversations.push(c);source.forking={targetId,mode,status:'preparing'};await this.save();return structuredClone(c);
+    const c:Conversation={...(preparationExecution.getStore()?{preparationId:preparationExecution.getStore()!.operationId}:{}),id:targetId,engine:source.engine??'pi',workspaceKind:source.workspaceKind??'project',projectId:source.projectId,githubAccountId:source.githubAccountId,...(taskRoot?{taskRoot}:{}),cwd,branch:chat?'':`coffee/${this.ownerId}/${targetId}`,archived:false,createdAt:new Date().toISOString(),vmId:this.ownerId,creationState:'creating',fork:{sourceId,sourceCwd:source.cwd,mode,title,settings,status:'preparing',at:new Date().toISOString()}};
+    this.state.conversations.push(c);source.forking={targetId,mode,status:'preparing'};await this.save();await this.allocatePreparationRoot(c);return structuredClone(c);
   },()=>this.conversationLock(sourceId));}
   async copyForkWorkspace(targetId:string,history:AgentHistory){return this.mutate(async()=>{
     const target=this.conversation(targetId);if(target.fork?.status!=='preparing')throw new Error('Fork is not preparing');
@@ -705,7 +726,27 @@ export class Workspaces {
     await this.save();return structuredClone(target);
   },()=>this.conversationLock(targetId));}
   async retainForkNative(targetId:string,nativeId:string){return this.mutate(async()=>{const c=this.conversation(targetId);this.retainNativeHistory(c,[{engine:c.engine??'pi',nativeId}]);c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),nativeId])];await this.save();},()=>this.conversationLock(targetId));}
-  async createChatConversation(id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
+  /** Registry intent precedes allocation; only an inode-bound Host receipt permits adoption. */
+  private async allocatePreparationRoot(c:Conversation){
+    if(!c.preparationId||!c.taskRoot)return;
+    const parent=dirname(c.taskRoot);await mkdir(parent,{recursive:true,mode:0o700});await checkedTaskRoot(parent);
+    const receipts=join(this.root,'.coffee','reservations');await privateDir(receipts,true);
+    const receipt=join(receipts,sha(c.id)+'.json');
+    let saved: {operationId:string;taskId:string;path:string;dev:number;ino:number}|undefined;
+    try{saved=await readJson(receipt);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    if(saved){
+      const info=await lstat(c.taskRoot);
+      if(saved.operationId!==c.preparationId||saved.taskId!==c.id||saved.path!==c.taskRoot||saved.dev!==info.dev||saved.ino!==info.ino)throw Error('Task reservation identity changed; retained directory requires inspection');
+      await checkedTaskRoot(c.taskRoot);
+    }else{
+      try{await mkdir(c.taskRoot,{mode:0o700});}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw Error('Task directory has no Host-owned allocation receipt; it will not be adopted');throw error;}
+      const info=await lstat(c.taskRoot);await syncDir(parent);
+      await durableJson(receipt,{operationId:c.preparationId,taskId:c.id,path:c.taskRoot,dev:info.dev,ino:info.ino});
+    }
+    const owned=await lstat(c.taskRoot);c.rootReservation={dev:owned.dev,ino:owned.ino};
+    await prepareTaskRoot(c.taskRoot);
+  }
+  async createChatConversation(id:string=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
     if(c && c.workspaceKind!=='chat')throw new Error('Creation ID belongs to a different task');
@@ -714,17 +755,18 @@ export class Workspaces {
     const cwd=c?.cwd ?? (this.taskRoot ? join(this.taskRoot,id,'workspace') : join(this.chatRoot,id));
     if(!c){
       if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Chat directory already exists; inspect it before retrying');
-      const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
-      c={...(taskRoot?{taskRoot}:{}),...(engine==='codex'?{nativeContextEmpty:true}:{}),id,engine,workspaceKind:'chat',vmId:this.ownerId,cwd,branch:'',archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
+      const taskRoot=this.taskRoot ? (preparationExecution.getStore()?join(this.taskRoot,id):await claimTaskRoot(this.taskRoot,id)) : undefined;
+      c={...(preparationExecution.getStore()?{preparationId:preparationExecution.getStore()!.operationId}:{}),...(taskRoot?{taskRoot}:{}),...(engine==='codex'?{nativeContextEmpty:true}:{}),id,engine,workspaceKind:'chat',vmId:this.ownerId,cwd,branch:'',archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
       this.state.conversations.push(c);await this.save();
     }
     try {
+      await this.allocatePreparationRoot(c);
       if(!c.directoryCreated){await mkdir(cwd,{mode:0o700});c.directoryCreated=true;await this.save();}
       if(!(await lstat(cwd)).isDirectory())throw new Error('Chat directory unavailable');
       c.creationState='ready';await this.dataRoot(id);delete c.creationError;await this.save();return structuredClone(c);
     }catch(error){c.creationState='failed';c.creationError=`Creation failed; retained directory: ${cwd}. ${error instanceof Error ? error.message : 'Inspect before retrying'}`;await this.save();throw new Error(c.creationError);}
   },()=>this.conversationLock(id));}
-  async createConversation(projectId:string, branch?:string, id=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
+  async createConversation(projectId:string, branch?:string, id:string=randomUUID(), engine:AgentEngine="pi") {return this.mutate(async()=>{
     this.assertId(id);const p=this.project(projectId),from=branch || p.branch;
     let c=this.state.conversations.find(c=>c.id===id);
     if(c && (c.engine ?? 'pi')!==engine)throw new Error('Task Agent is fixed at creation');
@@ -736,12 +778,13 @@ export class Workspaces {
     await mkdir(join(this.root,'checkouts'),{recursive:true,mode:0o700});
     if(!c) {
       if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
-      const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
-      c={...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
+      const taskRoot=this.taskRoot ? (preparationExecution.getStore()?join(this.taskRoot,id):await claimTaskRoot(this.taskRoot,id)) : undefined;
+      c={...(preparationExecution.getStore()?{preparationId:preparationExecution.getStore()!.operationId}:{}),...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
       this.state.conversations.push(c);await this.save();
     }
     c.creationState='creating';delete c.creationError;await this.save();
     try {
+      await this.allocatePreparationRoot(c);
       if(!await lstat(cwd).then(()=>true,()=>false)) {
         const clone=()=>this.git(this.root,['-c','protocol.file.allow=always','clone','--origin','origin','--branch',from,'--',p.repoUrl!,cwd],2*1024*1024,c.githubAccountId);
         try {await clone();} catch(error) {
@@ -977,7 +1020,7 @@ export class Workspaces {
     if(this.state.conversations.some(c=>c.id===id))throw new Error('Conversation already exists');
     const p=this.project(projectId);if(!p.repoUrl)throw new Error('Project has no remote repository');
     await this.git(this.root,['check-ref-format','--branch',sourceBranch]);
-    const taskRoot=this.taskRoot ? await claimTaskRoot(this.taskRoot,id) : undefined;
+    const taskRoot=this.taskRoot ? (preparationExecution.getStore()?join(this.taskRoot,id):await claimTaskRoot(this.taskRoot,id)) : undefined;
     const cwd=taskRoot ? join(taskRoot,'workspace') : join(this.root,'checkouts',id);await mkdir(dirname(cwd),{recursive:true});
     if(await stat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
     if(p.githubAccountId)this.pendingAccounts.set(cwd,p.githubAccountId);if(p.repoUrl)this.pendingRepositories.set(cwd,p.repoUrl);

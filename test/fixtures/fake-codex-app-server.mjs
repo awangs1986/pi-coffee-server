@@ -116,7 +116,7 @@ async function runTurn(thread, input, options) {
     if(process.env.FAKE_MANUAL_HANDOFF==='hold')while(!state.interrupted)await new Promise(resolve=>setTimeout(resolve,20));
   }
   if(preparing&&process.env.FAKE_FORK_DEFAULT_MODEL)appendFileSync(join(home,'fork-preparation-turns.jsonl'),JSON.stringify({model:options.model,effort:options.effort})+'\n');
-  if(preparing&&process.env.FAKE_FORK_FAIL===(text.startsWith('[PI Coffee Handoff Fork]')?'seed':'summary')){turn.status='failed';turn.error={message:'fixture preparation rejection'};active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn});return;}
+  if(preparing&&process.env.FAKE_FORK_FAIL===(text.startsWith('[PI Coffee Handoff Fork]')?'seed':'summary')&&(!process.env.FAKE_FORK_FAIL_ONCE||!existsSync(join(home,'preparation-failed-once')))){writeFileSync(join(home,'preparation-failed-once'),'1');turn.status='failed';turn.error={message:'fixture preparation rejection'};active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn});return;}
   if(preparing&&process.env.FORK_POLICY_ASSERT){
     const policy=settings.get(thread.id);
     if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
@@ -252,6 +252,7 @@ rl.on("line", (line) => {
       return reply({ data, nextCursor: offset + limit < all.length ? String(offset + limit) : null, backwardsCursor: null });
     }
     case "thread/start": {
+      if(process.env.FAKE_PREPARATION_HANG_METHOD==='thread/start')return;
       if(params.config?.mcp_servers?.coffee_mishu&&!params.config.mcp_servers.coffee_mishu.command)return fail('failed to load configuration: invalid transport in `mcp_servers.coffee_mishu`');
       if(process.env.RUNNER_ARGS_LOG)writeFileSync(process.env.RUNNER_ARGS_LOG,JSON.stringify(params));
       writeFileSync(join(home,"fake-context.json"),JSON.stringify(params.config??{}));
@@ -293,7 +294,9 @@ rl.on("line", (line) => {
         const onDisk = JSON.parse(readFileSync(store, "utf8"))[thread.id];
         if (onDisk) thread.activeExternally = onDisk.activeExternally;
       }
-      return thread ? reply({ thread: threadView(thread, params.includeTurns === true) }) : fail("no such thread");
+      if(!thread)return fail("no such thread");const view=threadView(thread,params.includeTurns===true);
+      if(process.env.FAKE_CODEX_COLD_READ&&existsSync(join(home,'cold-source'))&&readFileSync(join(home,'cold-source'),'utf8')===thread.id)view.status={type:'notLoaded'};
+      return reply({thread:view});
     }
     case "thread/name/set": {
       const thread = threads[params.threadId];

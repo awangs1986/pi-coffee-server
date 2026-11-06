@@ -995,3 +995,29 @@ describe('recovery generation at the real browser controller',()=>{
   expect(allFrames.filter(f=>f.type==='prompt').at(-1)).toMatchObject({text:'new explicit instruction',recoveryGeneration:'restored-operation'});
  });
 });
+
+it('bounds a stalled Fork acceptance request and reconciles its original operation',async()=>{
+ HTMLDialogElement.prototype.showModal=function(){};
+ let aborted=false;const calls:any[]=[];
+ const app=await setup('codex',1,()=>{
+  const original=vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async(url:any,init:any)=>{
+   const body=init?.body?JSON.parse(init.body):{};
+   if(url==='/api/workspace'&&body.action==='preparation_start'){
+    calls.push(body);return new Promise((_resolve,reject)=>init?.signal?.addEventListener('abort',()=>{aborted=true;reject(new DOMException('Aborted','AbortError'));},{once:true}));
+   }
+   if(url==='/api/workspace'&&body.action==='preparation_get'){
+    calls.push(body);return {ok:true,status:200,json:async()=>({operationId:body.operationId,status:'failed',phase:'readiness',allowedActions:[],error:'Fixture terminal failure'})} as Response;
+   }
+   const response=await original(url,init);
+   if(url==='/api/engines'){const data=await response.json();return {ok:true,json:async()=>({...data,forkModes:{codex:['handoff']}})} as Response;}
+   if(url==='/api/workspace'&&!body.action){const data=await response.json();return {ok:true,json:async()=>({...data,capabilities:{...data.capabilities,taskPreparation:true}})} as Response;}
+   return response;
+  });
+ });
+ await app.select('a');
+ document.querySelector<HTMLButtonElement>('[data-session-id="a"] .more')!.click();
+ const fork=[...document.querySelectorAll<HTMLButtonElement>('.popitem')].find(button=>button.textContent==='Fork（分叉）')!;
+ expect(fork.disabled).toBe(false);fork.click();document.getElementById('fork-confirm')!.click();await tick(15100);
+ expect(aborted).toBe(true);expect(calls.map(c=>c.action)).toEqual(['preparation_start','preparation_get']);expect(calls[1].operationId).toBe(calls[0].operationId);
+});

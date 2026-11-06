@@ -1,3 +1,4 @@
+import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} from './task-preparation.js';
 import {mountOptionalSpeech} from './speech-bootstrap.js';
 import {initBackupControls} from './backup.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
@@ -312,7 +313,8 @@ const pendingRenames=new Map();
 function abandonRenames(){if(pendingRenames.size){pendingRenames.clear();toast("重命名结果尚未确认，请重新打开对话核对",5000);}}
 const queuedRequests = new Set(); // A rejected queued input does not end the active run.
 let engine="pi", capabilities=null, engineAvailability=[],chatEngines=["pi"],takeoverAvailable=false,forkModes={},clearChatContextAvailable=false,contextResetEngines=["pi"],clearingContextId=null;
-const forkControls=initForkControls({task:id=>workspaceState?.conversations.find(c=>c.id===id),modes:engine=>forkModes[engine]??[],request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},selection:()=>taskSelectionEpoch,complete:(id,epoch)=>{send({v:1,type:"list_sessions"});if(epoch===taskSelectionEpoch)switchSession(id);},toast:message=>toast(message)});
+const preparationRecovery=initPreparationRecovery({request:workspaceApi,scope:()=>currentUser??'',toast:message=>toast(message),complete:task=>{void loadWorkspace().then(()=>switchSession(task.id));}});
+const forkControls=initForkControls({durable:()=>Boolean(workspaceState?.capabilities?.taskPreparation),scope:()=>currentUser??'',task:id=>workspaceState?.conversations.find(c=>c.id===id),modes:engine=>forkModes[engine]??[],request:workspaceApi,refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},selection:()=>taskSelectionEpoch,complete:(id,epoch)=>{send({v:1,type:"list_sessions"});if(epoch===taskSelectionEpoch)switchSession(id);},toast:message=>toast(message)});
 const takeoverControls=initTakeoverControls({context:()=>currentTask(),request:value=>workspaceApi(value),refresh:()=>loadWorkspace(),changed:()=>{refreshComposer();renderHeader();},complete:id=>{clearPreviews();announceCacheClear('cache');if(id===activeId)connect();},toast:message=>toast(message)});
 const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeoverControls.busy(activeId)||forkControls.busy(activeId)));
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
@@ -1886,26 +1888,23 @@ async function openSession(id) {
     const projectId=existing?.projectId || ui.projectSelect.value;
     if(workspaceKind==='project' && !projectId) {restoreQueuedPrompt();toast(forgeCapabilities().github ? '请先选择 Gitea 或 GitHub 仓库' : '请先选择 Gitea 项目');return;}
     const selectedEngine=existing?.engine || $("#task-engine").value;
-    const signature=JSON.stringify([selectedEngine,workspaceKind,projectId,existing?.startBranch || ui.startBranch.value.trim()]);
+    const signature=JSON.stringify([currentUser,selectedEngine,workspaceKind,projectId,existing?.startBranch || ui.startBranch.value.trim()]);
     if(!creationRequest || creationRequest.signature!==signature)creationRequest={signature,id:existing?.id || sshmeDraftId || [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('')};
     saveCreation();pendingOpenId='creating';refreshComposer();$('#create-task').disabled=true;$('#create-task').textContent='创建中…';
     try {
-      const controller=new AbortController();
-      const deadline=setTimeout(()=>controller.abort(),130000);
-      let c;
-      try{c=await workspaceApi({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch || ui.startBranch.value.trim() || undefined}:{})},{signal:controller.signal});}
-      catch(error){if(controller.signal.aborted)throw new Error('创建确认超时；首条消息已保留。重试会沿用同一任务，不会重复创建。');throw error;}
-      finally{clearTimeout(deadline);}
+      const c=workspaceState?.capabilities?.taskPreparation
+        ? await prepareTask({operationId:creationRequest.id,targetTaskId:creationRequest.id,kind:workspaceKind==='chat'?'create-chat':'create-work',engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch||ui.startBranch.value.trim()||undefined}:{})},{request:workspaceApi,active:isCurrent,changed:operation=>{$('#create-task').textContent=preparationLabel(operation);}})
+        : await prepareLegacyTask({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch||ui.startBranch.value.trim()||undefined}:{})},workspaceApi);
       if(!isCurrent())return;
       textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
       id=c.id;activeId=id;speedToApply=selectedEngine==='codex'&&draftSpeed==='fast'?draftSpeed:null;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;
-      // Creation acknowledgement is sufficient to open the native session.
+      // The preparation coordinator has published a validated native binding.
       // Sidebar/file grants are independent and must never own first-message delivery.
       workspaceState={...workspaceState,conversations:[...(workspaceState?.conversations||[]).filter(task=>task.id!==c.id),c]};
       renderProjectContext();renderSessionList();void loadWorkspace();
     }catch(e){
       if(!isCurrent())return;
-      pendingOpenId=null;toast(e.message);
+      pendingOpenId=null;toast(e.message);if(e.operation)preparationRecovery.open(e.operation);
       // The first message started this creation: give the draft back instead of a stuck "running" state.
       restoreQueuedPrompt();
       void loadWorkspace();return;

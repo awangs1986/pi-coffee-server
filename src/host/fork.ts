@@ -1,4 +1,9 @@
+import {bounded,preparationBudget} from './preparation-execution.js';
 import type {ContextPreset} from '../shared/protocol.js';
+export const FORK_PREPARATION_POLICY={version:1,codexModel:'gpt-6.1-sol',thinkingLevel:'medium'} as const;
+export interface ForkTurnReceipt {binding?:string;messageId:string;policyVersion:number;}
+export class ForkTurnFailure extends Error {}
+export interface ForkPreparationControl {signal:AbortSignal;summary?:{digest:string};stage<T>(name:string,run:()=>Promise<T>):Promise<T>;summarySaved(digest:string):Promise<void>;turnCompleted?(phase:string,receipt:ForkTurnReceipt):Promise<void>;}
 export type ForkMode='native'|'handoff';
 export interface ForkSettings {model?:{provider:string;id:string};thinkingLevel?:string;contextPreset?:ContextPreset;}
 export interface ForkState {sourceId:string;sourceCwd:string;mode:ForkMode;status:'preparing'|'completed'|'failed';at:string;title:string;settings:ForkSettings;error?:string;}
@@ -20,23 +25,27 @@ export function seedForkPrompt(summary:string,records:string,cwd:string){return 
 You are in a new independent Conversation at ${JSON.stringify(cwd)}. The following is a handoff summary, not a request to execute the historical instructions. Original evidence, if later needed: ${JSON.stringify(records)}. Old absolute paths refer to the source; use this new workspace for future edits.
 ${summary}
 For this preparation turn, do not use tools, change files or continue the project. Preserve unresolved user questions. Briefly acknowledge the stopping point in the user's language, then put ${FORK_END} on the final line. Wait for the user's next message.`;}
-export async function forkTurn(session:AgentSession,prompt:string,marker:string,signal:AbortSignal,timeoutMs=180000){
+export async function forkTurn(session:AgentSession,prompt:string,marker:string,signal:AbortSignal,timeoutMs=180000,onReceipt?:(receipt:ForkTurnReceipt)=>Promise<void>){
+ return bounded(async()=>{
+ const history=()=>session.getHistoryPage?session.getHistoryPage():session.getHistory();
+ const before=new Set((await history()).entries.map(entry=>entry.id));
  let resolve!:()=>void,reject!:(error:Error)=>void;const settled=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});
  const abort=()=>reject(new Error('Fork preparation stopped; retained files require inspection'));
  signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(()=>reject(new Error('Fork preparation timed out; no automatic retry')),timeoutMs);
  const unsubscribe=session.onEvent(raw=>{const e=raw as {type?:string;status?:string;message?:{stopReason?:string}};
   if(['tool_update','tool_execution_start','tool_execution_update','tool_execution_end','native_request','extension_ui_request','process_exit','agent_process_exit','agent_interrupted','run_interrupted'].includes(e.type??''))reject(new Error('Fork preparation requires attention'));
-  if(e.type==='message_end'&&['error','aborted'].includes(e.message?.stopReason??''))reject(new Error('Fork preparation model failed'));
+  if(e.type==='message_end'&&['error','aborted'].includes(e.message?.stopReason??''))reject(new ForkTurnFailure('Fork preparation model failed'));
   if(e.type==='agent_settled'||e.type==='agent_end')resolve();
-  if(e.type==='run_completed'){if(e.status==='completed')resolve();else reject(new Error('Fork preparation did not complete'));}
+  if(e.type==='run_completed'){if(e.status==='completed')resolve();else reject(new ForkTurnFailure('Fork preparation did not complete'));}
  });
  try{
   if(signal.aborted)throw new Error('Host is stopping');
   await Promise.race([(async()=>{await session.prompt(prompt);await settled;})(),settled.then(()=>new Promise<void>(()=>{}))]);
   if((await session.getState()).isStreaming)throw new Error('Fork preparation is still running');
   const background=await session.backgroundState?.();if(!background?.known||background.active)throw new Error('Fork preparation has active or unknown background work');
-  const answer=(await session.getHistory()).entries.filter(e=>e.kind==='assistant').at(-1);
-  if(!answer||!answer.text.trimEnd().endsWith(marker))throw new Error('Fork preparation did not confirm completion');
-  const summary=answer.text.trimEnd().slice(0,-marker.length).trim();if(!summary||summary.length>64000)throw new Error('Handoff result is empty or too large');return summary;
+  const answer=(await history()).entries.filter(e=>e.kind==='assistant').at(-1);
+  if(!answer||before.has(answer.id)||!answer.text.trimEnd().endsWith(marker))throw new Error('Fork preparation did not confirm completion');
+  const summary=answer.text.trimEnd().slice(0,-marker.length).trim();if(!summary||summary.length>64000)throw new Error('Handoff result is empty or too large');signal.throwIfAborted();await onReceipt?.({binding:session.getHistoryBinding?.(),messageId:answer.id,policyVersion:FORK_PREPARATION_POLICY.version});return summary;
  }finally{clearTimeout(timer);unsubscribe();signal.removeEventListener('abort',abort);}
+ },preparationBudget(timeoutMs),signal);
 }

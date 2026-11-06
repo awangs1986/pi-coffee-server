@@ -1,3 +1,6 @@
+import {executeForkPreparation} from './fork-preparation.js';
+import {checkPreparation} from '../preparation-execution.js';
+import type {ForkPreparationControl} from '../fork.js';
 import type {NativeWriterCustody} from '../native-custody.js';
 import type {ManagedNativeCustody} from '../managed-native.js';
 import {BackupError,type WriterAdmissionFence} from '../backup.js';
@@ -10,7 +13,7 @@ import {AcpSession,acpArguments,initializeAcp,acpAuthentication} from './acp.js'
 import {NativeSettingsStore} from './settings.js';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {applyForkSettings,handoffPrompt,seedForkPrompt,forkTurn,HANDOFF_END,FORK_END,type ForkMode} from '../fork.js';
+import {applyForkSettings,forkTurn,HANDOFF_END,FORK_END,type ForkMode} from '../fork.js';
 import {writeFile,readFile} from 'node:fs/promises';
 import {prepareTakeoverRecords,takeoverPrompt,reconstruct,priorHistory,withPriorHistory,type TakeoverState} from "../takeover.js";
 import type {AgentHistory,AgentHistoryRead,AgentSession} from "../agent-adapter.js";
@@ -34,6 +37,7 @@ export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private closing=false;
+  private readonly readinessCache=new Map<AgentEngine,{at:number;result:EngineAvailability}>();
   private readonly audits=new Map<AbortController,Promise<void>>();
   private readonly preparations=new Map<AbortController,AgentSession>();
   private readonly generation=new Map<string,string>();
@@ -113,67 +117,29 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine==='codex')return this.hasCodexFactory()?['native','handoff']:[];
     return this.options.claude?['handoff']:[];
   }
-  async forkConversation(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory){
+  async inspectForkSource(id:string){
+    const task=await this.options.workspaces.lookup(id);if(!task)throw Error('Unknown Fork source');
+    const nativeId=task.nativeBinding?.id??id;
+    if(task.engine==='codex'){
+      const factory=await this.codexFactory(id,task.cwd);
+      if(!factory?.inspectForkSource)throw Error('Native source inspection unavailable');
+      return this.readFactory(factory,()=>factory.inspectForkSource!(nativeId));
+    }
+    // An adapter-owned inspection runtime has no HostSession, prompt, queue or
+    // completion subscriber. Its source is borrowed evidence, never a task run.
+    const session=await this.create({sessionId:id});
+    try{
+      const state=await session.getState(),background=await session.backgroundState?.();
+      if(state.isStreaming||state.isCompacting||!background?.known||background.active)throw Error('Source work is active or unknown');
+      const history=await session.getHistory(),models=await session.getModels();
+      const after=await session.getState();if(after.isStreaming||after.isCompacting)throw Error('Source resumed during inspection');
+      return {history,binding:nativeId,title:state.sessionName,settings:{...(models.current?{model:{provider:models.current.provider,id:models.current.id}}:{}),thinkingLevel:models.thinkingLevel,contextPreset:models.context?.preset}};
+    }finally{await session.stop();}
+  }
+  async forkConversation(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory,control?:ForkPreparationControl){
     await this.options.beforeNativeExecution?.((await this.options.workspaces.lookup(sourceId))?.engine??'pi');
     const task=await this.options.workspaces.lookup(sourceId),release=this.options.writerFence?.beginWriter(this.covered(task?.engine??'pi')?'platform':'unmanaged-native');
-    try{if(!this.covered(task?.engine??'pi'))await this.options.beforeUnmanagedNative?.();return await this.forkConversationAdmitted(sourceId,targetId,mode,_history);}finally{release?.();}
-  }
-  private async forkConversationAdmitted(sourceId:string,targetId:string,mode:ForkMode,_history:AgentHistory){
-    if(this.closing)throw new Error('Host is stopping');
-    const source=await this.options.workspaces.lookup(sourceId),target=await this.options.workspaces.lookup(targetId);
-    if(!source||!target?.fork||target.fork.sourceId!==sourceId)throw new Error('Unknown Fork');
-    const engine=source.engine??'pi',sourceNative=source.nativeBinding?.id??source.id,cwd=target.cwd;
-    const records=join(await this.options.workspaces.forkRecordsDirectory(targetId),'source-history.json');
-    const controller=new AbortController();let session:AgentSession|undefined,temporaryFactory:AgentSessionFactory|undefined;
-    const track=(child:AgentSession)=>{session=child;this.preparations.set(controller,child);if(this.closing)controller.abort();return child;};
-    const closeChild=async()=>{this.preparations.delete(controller);await session?.stop();session=undefined;await temporaryFactory?.close?.();temporaryFactory=undefined;};
-    try{
-      if(engine==='pi'){
-        if(!this.options.pi.forkNative)throw new Error('Native Pi Fork unavailable');
-        const child=track(await this.options.pi.forkNative(sourceNative,{sessionId:targetId,cwd,sourceCwd:source.cwd}));
-        if(controller.signal.aborted)throw new Error('Host is stopping');
-        await applyForkSettings(child,target.fork.settings);
-        if(mode==='handoff')await child.compact();
-        await child.rename(target.fork.title);return;
-      }
-      if(engine==='codex'){
-        if(!this.hasCodexFactory())throw new Error('Native Codex Fork unavailable');
-        if(mode==='native'){
-          const factory=await this.codexFactory(targetId,cwd);if(!factory?.forkNative)throw new Error('Native Codex Fork unavailable');
-          const child=track(await factory.forkNative(sourceNative,{sessionId:targetId,cwd,sourceCwd:source.cwd}));
-          if(controller.signal.aborted)throw new Error('Host is stopping');
-          await applyForkSettings(child,target.fork.settings);await child.rename(target.fork.title);return;
-        }
-        const tempId=randomUUID();
-        temporaryFactory=await this.buildCodexFactory(targetId+'-handoff',cwd,id=>this.options.workspaces.retainForkNative(targetId,id),()=>this.options.workspaces.runtimeEnvironment(targetId),true);
-        if(!temporaryFactory.forkNative)throw new Error('Native Codex Fork unavailable');
-        track(await temporaryFactory.forkNative(sourceNative,{sessionId:tempId,cwd,sourceCwd:source.cwd}));
-      }else{
-        if(mode!=='handoff'||!this.options.claude)throw new Error('Claude supports Handoff Fork only');
-        const tempId=randomUUID();await this.options.workspaces.retainForkNative(targetId,tempId);
-        const command={...this.options.claude,env:{...this.options.claude.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
-        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:tempId},async()=>{},[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
-      }
-      const preparationSettings=engine==='codex'?{...target.fork.settings,model:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'}:target.fork.settings;
-      await applyForkSettings(session!,preparationSettings);
-      const prepareTurn=async(prompt:string,marker:string,phase:string)=>{
-        try{return await forkTurn(session!,prompt,marker,controller.signal);}
-        catch(error){throw new Error(`Fork handoff ${phase} failed (${preparationSettings.model?.id??engine} / ${preparationSettings.thinkingLevel??'default'}): ${error instanceof Error?error.message:'Preparation failed'}`);}
-      };
-      const exported=engine==='claude'?await readFile(records,'utf8'):undefined;if(exported&&Buffer.byteLength(exported)>1024*1024)throw new Error('Claude Handoff history is too large for preparation; source and snapshot retained');
-      const summary=await prepareTurn(handoffPrompt(records,cwd,engine==='codex',exported),HANDOFF_END,'summary');
-      await writeFile(join(await this.options.workspaces.forkRecordsDirectory(targetId),'handoff.md'),summary+'\n',{mode:0o600});
-      await closeChild();if(this.closing)throw new Error('Host is stopping');
-      if(engine==='codex'){
-        temporaryFactory=await this.buildCodexFactory(targetId,cwd,id=>this.options.workspaces.setNativeBinding(targetId,{state:'bound',id}),()=>this.options.workspaces.runtimeEnvironment(targetId),true);track(await temporaryFactory.create({sessionId:targetId}));
-      }else{
-        const nativeId=randomUUID();
-        const command={...this.options.claude!,env:{...this.options.claude!.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
-        track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:nativeId},binding=>this.options.workspaces.setNativeBinding(targetId,binding),[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
-      }
-      await applyForkSettings(session!,{...preparationSettings,contextPreset:undefined});await prepareTurn(seedForkPrompt(summary,records,cwd),FORK_END,'seed');await applyForkSettings(session!,target.fork.settings);
-      if(engine==='codex')await session!.rename(target.fork.title);
-    }finally{await closeChild();await this.resetTaskRuntime(targetId);}
+    try{if(!this.covered(task?.engine??'pi'))await this.options.beforeUnmanagedNative?.();return await executeForkPreparation(this.options,{closing:()=>this.closing,preparations:this.preparations,buildCodexFactory:this.buildCodexFactory.bind(this),codexFactory:this.codexFactory.bind(this),resetTaskRuntime:this.resetTaskRuntime.bind(this)},sourceId,targetId,mode,_history,control);}finally{release?.();}
   }
   async resetTaskRuntime(id:string){
     for(const [key,factory] of this.codexFactories){if(key.startsWith(id+':')){await factory.close?.();this.codexFactories.delete(key);}}
@@ -278,8 +244,13 @@ export class NativeAgentFactory implements AgentSessionFactory {
     if(engine!=="codex" || !this.options.codex || !factory?.modelCatalog)throw new Error("Codex model discovery unavailable");
     return this.withFactory(factory,()=>factory.modelCatalog!(engine));
   }
-  async engines():Promise<EngineAvailability[]> {
-    return Promise.all(PI_ONLY_ENGINES.map(async original=>{
+  async engines():Promise<EngineAvailability[]> {return Promise.all(PI_ONLY_ENGINES.map(original=>this.engineAvailability(original.id)));}
+  async engineAvailability(engine:AgentEngine):Promise<EngineAvailability> {
+    const cached=this.readinessCache.get(engine);if(cached&&Date.now()-cached.at<2000)return structuredClone(cached.result);
+    const result=await this.inspectEngine(engine);if(result.available)this.readinessCache.set(engine,{at:Date.now(),result});else this.readinessCache.delete(engine);return result;
+  }
+  private async inspectEngine(engine:AgentEngine):Promise<EngineAvailability> {
+      const original=PI_ONLY_ENGINES.find(item=>item.id===engine)!;
       const config=original.id==="pi"?undefined:this.options[original.id];
       if(!config&&original.id!=="pi")return {...original};
       try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,reason:error instanceof Error?error.message:'Native launch denied'};}
@@ -295,7 +266,6 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const ready=await this.authentication(original.id as "codex"|"claude"|"cursor"|"grok",config);
         return {...original,version,available:ready,modelCatalog:original.id==="claude" || (original.id==="codex" && Boolean(this.options.legacyCodex?.modelCatalog)),authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
       } catch {return {...original,version,available:false,authentication:"unknown" as const,reason:"Native authentication status unavailable; inspect this CLI on the User VM"};}
-    }));
   }
   private async authentication(engine:"codex"|"claude"|"cursor"|"grok",config:NativeCommand):Promise<boolean> {
     if(engine==='grok'){
@@ -434,10 +404,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
     }catch(error){await rollback().catch(()=>undefined);throw error;}
   }
   async create({sessionId}:{sessionId:string}):Promise<AgentSession> {
+    checkPreparation();
     await this.options.beforeNativeExecution?.((await this.options.workspaces.lookup(sessionId))?.engine??'pi');
     const task=await this.options.workspaces.lookup(sessionId);
     const segment=task?.takeoverSegments?.at(-1);
-    const session=await this.createNative(sessionId);
+    let session:AgentSession;try{session=await this.createNative(sessionId);}catch(error){this.readinessCache.delete(task?.engine??'pi');throw error;}
     const read=session.readRunEvidence?.bind(session);
     if(read){
       // The adapter may remain open when an out-of-band task binding changes.
@@ -461,11 +432,12 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   private async createNativeAdmitted(sessionId:string):Promise<AgentSession> {
     const task=await this.options.workspaces.lookup(sessionId);
+    if(task?.preparationId)await this.options.workspaces.assertPreparationReady(task);
     if(task?.fork&&task.fork.status!=='completed')throw new Error(task.fork.error??'Fork preparation is not complete');
     if(!task && this.options.legacyCodex && (await this.legacyListings()).some(s=>s.id===sessionId))return this.options.legacyCodex.create({sessionId});
     if(!task && !(await this.readFactory(this.options.pi,()=>this.options.pi.list())).some(s=>s.id===sessionId))throw new Error("Unknown Task; create a Task with an explicit Agent first");
     if(!task || (task.engine??"pi")==="pi")return this.options.pi.create({sessionId:task?.nativeBinding?.id??sessionId,workspaceSessionId:sessionId,requireExisting:Boolean(task?.takeoverSegments?.length||task?.contextReset||task?.recoveryReceipt)});
-    const readiness=(await this.engines()).find(e=>e.id===task.engine);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
+    const readiness=await this.engineAvailability(task.engine!);if(!readiness?.available)throw new Error(readiness?.reason??"Agent unavailable");
     const baseConfig=this.options[task.engine as "codex"|"claude"|"cursor"|"grok"];if(!baseConfig)throw new Error("Agent not configured");
     const config={...baseConfig,env:{...baseConfig.env,...await this.options.workspaces.runtimeEnvironment(sessionId)}};
     const cwd=await this.options.workspaces.file(sessionId,"");

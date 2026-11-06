@@ -24,3 +24,20 @@ it('shows durable failure after reopening the dialog without creating or retryin
  const request=vi.fn();const controls=initForkControls({task:()=>({engine:'codex',forking:{status:'failed',error:'Workspace Git request exceeds its resource budget'}}),modes:()=>['native','handoff'],request,refresh:async()=>{},changed:()=>{},complete:()=>{},selection:()=>1,toast:()=>{}});
  controls.open({id:'source'});expect(document.getElementById('fork-status')!.textContent).toContain('Workspace Git request exceeds its resource budget');expect(controls.busy('source')).toBe(false);expect(request).not.toHaveBeenCalled();
 });
+it('keeps a durable operation across dialog reload and offers only Host-authorized resume',async()=>{
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');HTMLDialogElement.prototype.showModal=function(){};HTMLDialogElement.prototype.close=function(){};
+ const calls:any[]=[];const saved=new Map<string,string>();const storage={getItem:(key:string)=>saved.get(key)??null,setItem:(key:string,value:string)=>saved.set(key,value),removeItem:(key:string)=>saved.delete(key)};
+ const options={task:()=>({id:'source',engine:'codex'}),modes:()=>['handoff'],durable:()=>true,scope:()=> 'alice',storage,request:async value=>{calls.push(value);return {operationId:value.operationId,targetTaskId:value.targetTaskId,status:'failed',phase:'seed',revision:8,error:'seed failed',allowedActions:['resume']};},refresh:async()=>{},changed:()=>{},complete:()=>{},selection:()=>1,toast:()=>{}};
+ const first=initForkControls(options);first.open({id:'source'});document.getElementById('fork-confirm')!.click();await new Promise(r=>setTimeout(r,0));
+ expect(calls[0].action).toBe('preparation_start');expect(document.getElementById('fork-resume')!.hidden).toBe(false);
+ const original=calls[0].operationId;
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');const second=initForkControls(options);second.open({id:'source'});await new Promise(r=>setTimeout(r,0));
+ expect(calls.at(-1)).toMatchObject({action:'preparation_get',operationId:original});
+ expect(calls.filter(c=>c.action==='preparation_start')).toHaveLength(1);
+});
+it('allows an explicit new Fork after a definite failure while retaining the failed operation until that click',async()=>{
+ document.documentElement.innerHTML=readFileSync('public/index.html','utf8');HTMLDialogElement.prototype.showModal=function(){};HTMLDialogElement.prototype.close=function(){};
+ const calls:any[]=[];const controls=initForkControls({task:()=>({id:'source',engine:'codex'}),modes:()=>['handoff'],durable:()=>true,scope:()=> 'retry-test',storage:null,request:async input=>{calls.push(input);return {operationId:input.operationId,status:'failed',phase:'source-snapshot',allowedActions:[],error:'Source was busy'};},refresh:async()=>{},changed:()=>{},complete:()=>{},selection:()=>1,toast:()=>{}});
+ controls.open({id:'source'});document.getElementById('fork-confirm')!.click();await new Promise(resolve=>setTimeout(resolve,0));expect(calls).toHaveLength(1);
+ document.getElementById('fork-confirm')!.click();await new Promise(resolve=>setTimeout(resolve,0));expect(calls).toHaveLength(2);expect(calls[1].operationId).not.toBe(calls[0].operationId);
+});

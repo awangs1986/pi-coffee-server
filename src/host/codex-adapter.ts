@@ -482,6 +482,42 @@ export class CodexSessionFactory implements PiSessionFactory {
   }
 
   /** Direct bound-thread metadata avoids a whole store scan for each task directory. */
+  /** Read source evidence without thread/resume, interactive hooks or a model turn. */
+  async inspectForkSource(id:string){
+    this.listingReads++;try{
+    const server=await this.connection();
+    const result=await server.request('thread/read',{threadId:id,includeTurns:false}) as Obj;
+    const thread=result.thread as Obj|undefined;
+    if(!thread||thread.id!==id||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(this.options.cwd)||!['idle','notLoaded'].includes(String((thread.status as Obj)?.type)))throw Error('Fork source is not provably idle and owned');
+    const turns:Obj[]=[];let cursor:string|undefined,bytes=0;const seen=new Set<string>();
+    for(let page=0;page<MAX_LIST_PAGES;page++){
+      const result=await server.request('thread/turns/list',{threadId:id,limit:LIST_PAGE_SIZE,sortDirection:'asc',itemsView:'full',...(cursor?{cursor}:{})}) as Obj;
+      if(!Array.isArray(result.data))throw Error('Native Fork history is unavailable');
+      bytes+=Buffer.byteLength(JSON.stringify(result.data));if(bytes>32*1024*1024)throw Error('Fork source exceeds its 32 MiB evidence budget');
+      turns.push(...result.data as Obj[]);
+      if(result.nextCursor==null){cursor=undefined;break;}
+      if(typeof result.nextCursor!=='string'||!result.nextCursor||seen.has(result.nextCursor))throw Error('Native Fork history cursor did not advance');
+      cursor=result.nextCursor;seen.add(cursor);
+    }
+    if(cursor)throw Error('Native Fork history exceeds its page budget');
+    const after=(await server.request('thread/read',{threadId:id,includeTurns:false}) as Obj).thread as Obj;
+    if(!after||after.id!==id||after.updatedAt!==thread.updatedAt||!['idle','notLoaded'].includes(String((after.status as Obj)?.type)))throw Error('Source changed during Fork snapshot');
+    for(const turn of turns){
+      if(!['completed','failed','interrupted'].includes(String(turn.status)))throw Error('Source has running work');
+      for(const item of (Array.isArray(turn.items)?turn.items:[]) as Obj[]){
+        if(item.status==='inProgress')throw Error('Source tool work is active');
+        if(item.type==='commandExecution'&&(item.status==='inProgress'||item.processId&&item.exitCode==null))throw Error('Source background work is active');
+        if(item.type==='collabAgentToolCall'&&Object.values((item.agentsStates??{}) as Obj).some(child=>!['completed','shutdown'].includes(String((child as Obj)?.status))))throw Error('Source child work is active or unknown');
+      }
+    }
+    if(Buffer.byteLength(JSON.stringify(thread))>32*1024*1024)throw Error('Fork source exceeds its 32 MiB evidence budget');
+    const entries=projectTurns(turns),preferences=await this.readPreferences(id);
+    const model=preferences.model??(typeof thread.model==='string'?thread.model:undefined);
+    return {history:{entries,leafId:entries.at(-1)?.id??null},binding:id,title:typeof thread.name==='string'?thread.name:undefined,
+      settings:{...(model?{model:{provider:'codex',id:model}}:{}),thinkingLevel:preferences.reasoningEffort??(typeof thread.reasoningEffort==='string'?thread.reasoningEffort:undefined),contextPreset:preferences.preset}};
+    }finally{await this.finishMetadataRead();}
+  }
+
   async summaryForCwd(cwd:string,id:string):Promise<PiSessionListing|undefined>{
     this.listingReads++;
     try{
@@ -1073,7 +1109,7 @@ class CodexSession implements PiSession {
     }
     this.pendingApprovals.clear();
     if (this.server.alive) {
-      await this.server.request("thread/unsubscribe", { threadId: this.threadId }).catch(() => undefined);
+      await this.server.request("thread/unsubscribe", { threadId: this.threadId },3000).catch(() => undefined);
     }
     this.onStop?.();
   }

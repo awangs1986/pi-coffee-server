@@ -1,11 +1,14 @@
+import {checkPreparation} from './preparation-execution.js';
 import {lstat,readdir,mkdir,copyFile,readlink,symlink,chmod} from 'node:fs/promises';
 import {join,resolve,relative,isAbsolute} from 'node:path';
 const caches=new Set(['node_modules','.venv','venv','__pycache__','.cache']);
 /** Stream/copy files into a new task; never share writable Git metadata or external links. */
 export async function copyForkTree(source:string,target:string,options:{workspace?:boolean;tracked?:Set<string>}={}){
  const walk=async(from:string,to:string,parts:string[])=>{
+  checkPreparation();
   await mkdir(to,{recursive:true});
   for(const entry of await readdir(from,{withFileTypes:true})){
+   checkPreparation();
    const names=[...parts,entry.name],path=names.join('/');
    if(options.workspace&&names.length===1&&['.git','.pi-coffee'].includes(entry.name))continue;
    if(entry.name==='.git')throw new Error('Fork requires nested Git repositories/submodules to be handled separately: '+path);

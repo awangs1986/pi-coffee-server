@@ -685,6 +685,11 @@ export class HostSessionRegistry {
     this.externalPollMs = options.externalPollMs;
   }
 
+  /** Admission-only read: never opens an interactive source or drains its queue. */
+  async preparationConflict(id:string):Promise<boolean>{
+    const live=this.sessions.get(id);
+    return Boolean(live?.isBusy||live?.pendingUiRequests.length)||(await this.options.queueStore?.read(id)??[]).length>0;
+  }
   /** Fires whenever the conversation list may have changed (new, settled, renamed, deleted, retired). */
   onChange(listener: (session?:HostSession) => void): () => void {
     this.changeListeners.add(listener);

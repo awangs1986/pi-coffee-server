@@ -18,6 +18,7 @@ it.each([['native',''],['handoff',''],['handoff','summary'],['handoff','seed']] 
   const reopened=await factory.create({sessionId:task.id});cleanup.push(()=>reopened.stop());expect(await reopened.getHistory()).toEqual(before);return;
  }
  await expect.poll(async()=>(await ws.lookup(target))?.fork?.status,{timeout:10000}).toBe('completed');
+ await expect.poll(async()=>{const r=await fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:'preparation_get',operationId:target})});return (await r.json()).status;},{timeout:10000}).toBe('completed');
  const child=await factory.create({sessionId:target});cleanup.push(()=>child.stop());const history=await child.getHistory();
  if(mode==='native')expect(history.entries).toEqual(before.entries);else{expect(history.entries.some(e=>e.kind==='user'&&e.text==='Original requirement with pending user choice')).toBe(false);expect(await readFile(join(await ws.dataRoot(target),'fork','handoff.md'),'utf8')).toContain('Pending: run tests');}
  if(mode==='handoff'){const preparations=(await readFile(join(root,'codex','fork-preparation-turns.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));expect(preparations).toEqual([{model:'gpt-6.1-sol',effort:'medium'},{model:'gpt-6.1-sol',effort:'medium'}]);}

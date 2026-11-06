@@ -1,8 +1,8 @@
 # Durable task preparation
 
-Status: **Accepted design, implementation pending**, 2026-11-06.
+Status: **Implemented candidate; release acceptance pending**, 2026-11-06.
 Baseline: Server 0.84, `eb34dde7fb08420ac9501811482893f0c3215ddd`.
-Tracking: [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). This contract governs the planned lifecycle replacement;
+Tracking: [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). This contract governs the lifecycle replacement;
 it does not claim the deployed baseline already implements it.
 
 ## Problem Statement
@@ -294,3 +294,43 @@ Implementation anchors at the reviewed baseline: [Host entry points](../../src/h
 Regression prior art: [Fork HTTP](../../test/conversation-fork.test.ts),
 [native subprocess integration](../../test/fork-native-http.test.ts),
 [Browser controller](../../test/fork-ui.test.ts).
+
+## Candidate implementation (2026-11-06)
+
+The candidate implements the coordinator in `src/host/task-preparation.ts`,
+execution budgets in `src/host/preparation-execution.ts`, native Fork policy in
+`src/host/native/fork-preparation.ts` and Browser polling/recovery in
+`public/task-preparation.js`. This is source evidence, not production activation.
+
+- Budgets: 600 seconds per operation, 120 seconds per stage, at least 180 seconds
+  for summary/seed, and 10 seconds for cleanup. Admission permits two active
+  preparations per workspace authority. Uncertain operations retain task/source
+  custody. Timeout never proves that a writer stopped.
+- Explicit resume supports known failed creation readiness/workspace stages and
+  known terminal Codex seed failure. The latter reuses the saved summary and
+  target native binding. Resume waits for the previous execution's resource
+  release. Other interrupted native outcomes remain quarantined, with no replay.
+- Restart can complete publication passively only when cleanup and publication
+  receipts match the durable target. An accepted intent that never started can
+  be resumed explicitly. Interrupted work is otherwise uncertain.
+- Codex Handoff keeps the inherited-context temporary fork, then seeds a distinct
+  target. Preparation policy version 1 uses `gpt-6.1-sol` / `medium`; working
+  settings are restored. Source inspection reads paginated native evidence and
+  accepts an idle unloaded thread. Other adapters may use an owned inspection
+  session; this is not an interactive Host registry open.
+- Saved history reads are capped at 32 MiB, summaries at 256 KiB, and embedded
+  Claude history at 1 MiB before consumption. Summary digests and native result
+  receipts belong to the current operation.
+- Directory reservations are inode-bound and never adopt pre-existing folders.
+  Kernel lease files persist after release; legacy lock directories are refused,
+  not deleted. Committed list reads do not await unrelated task exports.
+- Browser enables preparation only when advertised. The legacy low-level
+  `conversation` endpoint remains for compatible clients; modern task records
+  cannot open until their preparation is ready. Legacy Fork routes delegate to
+  the coordinator. Manual compression and takeover remain separate workflows.
+
+Candidate regressions exercise HTTP acceptance/idempotency/scope, resume/cancel,
+workspace allocation, cold-source Handoff, changed-artifact refusal, process-crash
+reconciliation, and Browser recovery. They use synthetic native/provider replies.
+The exhaustive crash-boundary/resource matrix and an owner-authorized deployed
+Fork remain release acceptance work; do not infer those results from unit checks.
