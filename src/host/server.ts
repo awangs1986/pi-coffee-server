@@ -1,3 +1,4 @@
+import {holdTaskLifecycle,requireTaskIdle} from './task-lifecycle.js';
 import {TaskPreparation,type PreparationBudgets} from './task-preparation.js';
 import {createCompletionSpeech} from './completion-speech.js';
 import type {PersonalRecoveryCollection} from './personal-recovery-collection.js';
@@ -634,26 +635,25 @@ export class HostServer {
           if(!task || task.archived || (task.engine??'pi')!==input.engine)throw new Error('Select an active Task using this Agent');
           await slot.skills.handle({...input,action:'list'});
           if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
-          slot.lifecycleLocks.add(id);
+          const release=holdTaskLifecycle(slot.lifecycleLocks,[id]);
           try {
             const live=slot.registry.get(id);
             if(live){
-              if(live.isBusy)throw new Error('Wait for the running task before reloading Skills');
-              const state=await live.backgroundState();if(!state.known || state.active)throw new Error('Background work is active or unknown; the Agent was not stopped');
+              await requireTaskIdle(live);
               await slot.registry.stopIdle(id);
               for(const socket of this.sockets)if(socket.user===slot.user && socket.sessionId===id)socket.close();
             }
             json(res,200,{ok:true,reloaded:Boolean(live),activation:'Skills will be discovered when the Agent next opens; conversation history is retained.'});
-          }finally{slot.lifecycleLocks.delete(id);}
+          }finally{release();}
         } else if(input.scope==='project' && ['install','update','enable','disable','disable_native','restore_native'].includes(input.action)) {
           const id=input.conversationId;
           if(typeof id!=='string' || slot.lifecycleLocks.has(id))throw new Error('Project lifecycle operation in progress');
-          slot.lifecycleLocks.add(id);
+          const release=holdTaskLifecycle(slot.lifecycleLocks,[id]);
           try {
             const live=slot.registry.get(id);
-            if(live){if(live.isBusy)throw new Error('Wait for the running task before changing project Skills');const state=await live.backgroundState();if(!state.known||state.active)throw new Error('Project has active or unknown background work');}
+            await requireTaskIdle(live);
             json(res,200,await slot.skills.handle(input));
-          }finally{slot.lifecycleLocks.delete(id);}
+          }finally{release();}
         } else json(res,200,await slot.skills.handle(input));
       }
       catch(e){json(res,409,{error:e instanceof Error?e.message:"Skill operation failed"});}
@@ -661,7 +661,7 @@ export class HostServer {
     }
     const ws=slot.workspaces;
     if(!ws || req.url!=="/api/workspace") {json(res,404,{error:"Project workspace mode is not configured"});return;}
-    let locked: string | undefined;
+    let releaseLifecycle: (()=>void) | undefined;
     try {
       if(req.method === "GET") {json(res,200,await ws.list());return;}
       if(req.method!=="POST") {json(res,405,{error:"Method not allowed"});return;}
@@ -675,7 +675,7 @@ export class HostServer {
         if(task.contextReset?.id===input.operationId){json(res,200,task);return;}
         if((task.nativeBinding?.id??id)!==input.expectedNativeId)throw new Error('Context changed; refresh before clearing');
         if(!slot.factory.prepareContextReset)throw new Error('Chat context reset unavailable on this Host');
-        slot.lifecycleLocks.add(id);locked=id;
+        releaseLifecycle=holdTaskLifecycle(slot.lifecycleLocks,[id]);
         const session=(await slot.registry.open(id)).session;
         if(session.isBusy||session.pendingUiRequests.length)throw new Error('Finish running and queued instructions before clearing context');
         const history=await session.getHistory();
@@ -701,31 +701,27 @@ export class HostServer {
         const id=input.id;
         if(typeof id!=='string')throw new Error('Select a Work task');
         if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
-        slot.lifecycleLocks.add(id);let stopped=false;
+        const release=holdTaskLifecycle(slot.lifecycleLocks,[id]);let stopped=false;
         try {
           await ws.validateTaskGitHubBinding(id,input.accountId);
           const live=slot.registry.get(id)??(await slot.registry.open(id)).session;
-          const state=await live.readNativeState();
-          if(live.isBusy||state.isStreaming||state.isCompacting||live.pendingUiRequests.length)throw new Error('Finish running work, queued input and questions before changing GitHub authorization');
-          const background=await live.backgroundState();
-          if(!background.known||background.active)throw new Error('Background work is active or unknown');
-          if(live.isBusy||live.pendingUiRequests.length)throw new Error('Task resumed during authorization change');
+          await requireTaskIdle(live,{native:true});
           await slot.registry.stopIdle(id);stopped=true;await slot.factory.resetTaskRuntime?.(id);
           json(res,200,await ws.bindTaskGitHubAccount(id,input.accountId));
         }finally{
-          slot.lifecycleLocks.delete(id);
+          release();
           if(stopped)for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
         }return;
       }
       if(input.action==='github_bind'){
         const ids=(await ws.list()).conversations.filter(c=>c.projectId===input.projectId).map(c=>c.id);
         if(ids.some(id=>slot.lifecycleLocks.has(id)))throw new Error('Project lifecycle operation in progress');
-        for(const id of ids)slot.lifecycleLocks.add(id);
+        const release=holdTaskLifecycle(slot.lifecycleLocks,ids);
         try {
-          for(const id of ids){const live=slot.registry.get(id)??(await slot.registry.open(id)).session;if(live.isBusy)throw new Error('Finish running tasks before binding');const state=await live.backgroundState();if(!state.known||state.active)throw new Error('Background work is active or unknown');if(live.isBusy)throw new Error('Task resumed during authorization change');}
+          for(const id of ids){const live=slot.registry.get(id)??(await slot.registry.open(id)).session;await requireTaskIdle(live);}
           for(const id of ids){await slot.registry.stopIdle(id);await slot.factory.resetTaskRuntime?.(id);for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();}
           json(res,200,await ws.bindGitHubProject(input.projectId,input.accountId));
-        }finally{for(const id of ids)slot.lifecycleLocks.delete(id);}return;
+        }finally{release();}return;
       }
       if(input.action==='takeover'){
         const id=input.id;
@@ -734,25 +730,25 @@ export class HostServer {
         if(!task||task.workspaceKind!=='project'||task.archived||task.engine!==input.expectedEngine||task.engine===input.engine)throw new Error('Select an active Work task with an unchanged source Agent');
         if(!slot.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
         if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
-        slot.lifecycleLocks.add(id);locked=id;
+        releaseLifecycle=holdTaskLifecycle(slot.lifecycleLocks,[id]);
         const readiness=(await slot.factory.engines?.())?.find(e=>e.id===input.engine);if(!readiness?.available)throw new Error(readiness?.reason??'Target Agent unavailable');
         const session=(await slot.registry.open(id)).session;
-        if(session.isBusy||session.pendingUiRequests.length)throw new Error('Finish running and queued instructions before switching Agent');
-        const background=await session.backgroundState();if(!background.known||background.active)throw new Error('Source background work is active or unknown');
+        await requireTaskIdle(session);
         const listing=(await slot.registry.list()).find(s=>s.id===id);
         const title=listing?.name||listing?.preview;
         const operation:TakeoverState={...(title?{title}:{}),id:takeoverId(),from:input.expectedEngine,to:input.engine,status:'preparing',at:new Date().toISOString()};
         await slot.mishu?.revokeConversation(id);
         await ws.beginTakeover(id,operation);
         // Host owns this operation after HTTP returns. A disconnected viewer never retries it.
+        const release=releaseLifecycle;
         const takeover = session.takeover(operation).then(async()=>{
           for(const socket of this.sockets)if(socket.user===slot.user&&socket.sessionId===id)socket.close();
         }).catch(async(error)=>{
           await ws.updateTakeover(id,operation.id,{status:'failed',error:error instanceof Error?error.message:'Takeover failed'});
-        }).finally(()=>{slot.lifecycleLocks.delete(id);void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
+        }).finally(()=>{release();void this.broadcastSessions(slot);}).catch(()=>console.warn('Takeover status could not be saved; inspect the task before retrying'));
         this.taskPreparations.add(takeover);
         void takeover.finally(()=>this.taskPreparations.delete(takeover));
-        locked=undefined;json(res,202,operation);return;
+        releaseLifecycle=undefined;json(res,202,operation);return;
       }
       // Reject mutating lifecycle operations while the parent is streaming. External commands remain trusted VM operations.
       const target=input.id;
@@ -771,7 +767,7 @@ export class HostServer {
       }
       if(target && !["files","changes","change_file","status","sidebar_move","sidebar_pin","sidebar_collapse","sidebar_display"].includes(input.action)) {
         if(slot.lifecycleLocks.has(target) || (input.action!=="archive" && slot.registry.get(target)?.isBusy))throw new Error("Stop the source conversation before changing its lifecycle");
-        slot.lifecycleLocks.add(target);locked=target;
+        releaseLifecycle=holdTaskLifecycle(slot.lifecycleLocks,[target]);
       }
       if(target && (["checkpoint","sync","pull_request","delete"].includes(input.action) || input.action==="conversation" && slot.registry.get(target))) {
         const c=await ws.lookup(target);
@@ -872,7 +868,7 @@ export class HostServer {
       }
       json(res,200,result);void this.broadcastSessions(slot);
     } catch(e) {json(res,409,{error:e instanceof Error ? e.message : "Workspace operation failed"});}
-    finally {if(locked)slot.lifecycleLocks.delete(locked);}
+    finally {releaseLifecycle?.();}
 
   }
 
@@ -1009,7 +1005,7 @@ export class HostServer {
   async prepareRestoreScope(user:string|undefined){await this.slotFor(user);}
   async withRestorePublication<T>(user:string|undefined,taskId:string,run:()=>Promise<T>,operationId?:string,options:{deferMetadata?:boolean}={}):Promise<T>{
     const slot=await this.slotFor(user);if(slot.lifecycleLocks.has(taskId)||slot.registry.get(taskId)?.isBusy)throw new BackupError('target_busy','Task has live execution or lifecycle work');
-    slot.lifecycleLocks.add(taskId);try{await slot.registry.stopIdle(taskId);if(!options.deferMetadata){await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);}const result=await run();this.broadcastSessions(slot);return result;}finally{slot.lifecycleLocks.delete(taskId);}
+    const release=holdTaskLifecycle(slot.lifecycleLocks,[taskId]);try{await slot.registry.stopIdle(taskId);if(!options.deferMetadata){await slot.mishu?.retireRecoveryAuthority(taskId);if(operationId)await slot.index?.recover(taskId,operationId);}const result=await run();this.broadcastSessions(slot);return result;}finally{release();}
   }
   /** Only the coordinator holding this task's lifecycle lane and the exact
    * physical publication capability may retire live authority/display epochs. */

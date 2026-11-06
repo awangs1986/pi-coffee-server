@@ -78,3 +78,23 @@ it('does not advertise a completed task until its final publication tail release
   await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50});
  }
 },20000);
+
+it('holds the Fork source before awaiting durable admission so another lifecycle operation cannot slip in',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-admission-gate-'));
+ const child=spawn(process.execPath,[resolve('test/fixtures/preparation-host.mjs'),root],{detached:true,env:{...process.env,PREPARATION_ADMISSION_GATE:'1'},stdio:['ignore','pipe','pipe']});
+ let output='',errors='';child.stdout!.on('data',chunk=>output+=chunk);child.stderr!.on('data',chunk=>errors+=chunk);let pending:Promise<any>|undefined;
+ try{
+  await expect.poll(()=>{if(child.exitCode!==null)throw Error(errors);return output.includes('"port"');},{timeout:10000}).toBe(true);
+  const port=JSON.parse(output.split('\n').find(line=>line.includes('"port"'))!).port;
+  const call=async(body:object)=>{const r=await fetch(`http://127.0.0.1:${port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+  await call({action:'preparation_start',kind:'create-chat',engine:'codex',operationId:'source-op',targetTaskId:'source-task'});
+  await expect.poll(async()=>(await call({action:'preparation_get',operationId:'source-op'})).body.status,{timeout:10000}).toBe('completed');
+  pending=call({action:'preparation_start',kind:'native-fork',sourceId:'source-task',operationId:'admission-op',targetTaskId:'fork-task'});
+  await expect.poll(()=>output.includes('admissionPaused'),{timeout:10000}).toBe(true);
+  expect((await call({action:'archive',id:'source-task'})).status).toBe(409);
+ }finally{
+  await writeFile(join(root,'release-admission'),'1');await pending?.catch(()=>{});
+  if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGTERM');const force=setTimeout(()=>{try{process.kill(-child.pid!,'SIGKILL');}catch{}},3000);await exited;clearTimeout(force);}
+  await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50});
+ }
+},20000);

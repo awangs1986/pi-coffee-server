@@ -28,6 +28,17 @@ if(process.env.PREPARATION_COMPLETION_GATE){
  syncBuiltinESMExports();
 }
 
+if(process.env.PREPARATION_ADMISSION_GATE){
+ const rename=fs.promises.rename;
+ fs.promises.rename=async(from,to)=>{
+  let pause=false;
+  if(String(to).endsWith('/admission-op.json')){try{pause=JSON.parse(await fs.promises.readFile(from,'utf8')).status==='accepted';}catch{}}
+  if(pause){console.log(JSON.stringify({admissionPaused:true}));await new Promise(resolve=>{const timer=setInterval(()=>{if(fs.existsSync(join(root,'release-admission'))){clearInterval(timer);resolve();}},20);});}
+  await rename(from,to);
+ };
+ syncBuiltinESMExports();
+}
+
 const workspaces=new Workspaces(join(root,'projects'),{taskRoot:join(root,'tasks')});
 const factory=new NativeAgentFactory({workspaces,pi:{list:async()=>[],delete:async()=>false,create:async()=>{throw Error('Unexpected Pi start');}},codex:{command:process.execPath,args:[resolve('test/fixtures/fake-codex.mjs')]},codexSessionFactory:(id,cwd,onBound,environment,preparation)=>new CodexSessionFactory({cwd,preparation,cliPath:process.execPath,commandArgs:[resolve('test/fixtures/fake-codex-app-server.mjs')],codexHome:join(root,'codex'),mappingFile:join(root,'maps',id+'.json'),envForSession:environment,onBound:async(_id,native)=>onBound(native)})});
 const host=new HostServer({port:0,token:'fixture',factory,workspaces});await host.start();

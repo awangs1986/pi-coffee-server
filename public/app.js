@@ -138,7 +138,7 @@ function selectConversationView(id){
   clearTimeout(syncHintTimer);syncHintTimer=null;
   viewScheduler.setView(currentRenderView());conversationDisplay.select(id);
 }
-const navigation=createConversationNavigation({onSelect:id=>id===null?applyNewSession(false):applySessionSelection(id),
+const navigation=createConversationNavigation({onSelect:id=>applyConversationSelection(id),
   onAttach:()=>connect(),onError:error=>toast(error.message)});
 
 function rememberTask(id){navigation.adopt(id);if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
@@ -1802,18 +1802,12 @@ function disconnectExecution() {
   opened=false;connected=false;historyReady=false;pendingOpenId=null;activeBindingEpoch=null;
 }
 function connect() {
-  clearConnectionDeadline();
-  abandonPendingSettings();
-  clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);
-  abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
-  const epoch=++connectionEpoch;viewScheduler.setView(currentRenderView());
+  disconnectExecution();
+  const epoch=connectionEpoch;viewScheduler.setView(currentRenderView());
   connectionAuthEpoch=epoch;
   connectionAbort=new AbortController();
   connectionExpiresAt=Date.now()+10000;
   connectionDeadline=setTimeout(()=>expireConnectionAttempt(epoch),10000);
-  // Detach immediately so old replies cannot mutate the newly selected view.
-  if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  opened=false;historyReady=false;activeBindingEpoch=null;
   setConnection('连接中…');
   whoAmI(epoch,connectionAbort.signal).then((ok) => { if (ok && epoch===connectionEpoch) connectSocket(); }).finally(()=>{
     if(connectionAuthEpoch===epoch)connectionAuthEpoch=null;
@@ -3336,63 +3330,40 @@ const skillPanel=initSkills({
 
 // ---------- session actions ----------
 function switchSession(id) {navigation.select(id);}
-function applySessionSelection(id) {
+// This transaction owns all state invalidated by changing the selected Conversation.
+// Native execution, display synchronization and saved drafts retain separate lifetimes.
+function applyConversationSelection(id) {
+  if(id!==null){
+    if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)){toast("请从对话菜单恢复后再打开");return false;}
+    if(id===activeId&&opened)return false;
+  }
   closeMenu();sshmeDraftId=null;
-  skillPanel.close();resetSlashCommands();skillReloadScope=null;
-  setSearchOpen(false);
-  if(workspaceState?.conversations.find(c=>c.id===id)?.archived || workspaceState?.legacyArchived?.includes(id)) {toast("请从对话菜单恢复后再打开");return false;}
-  if (id === activeId && opened) return false;
   saveVisiblePosition();saveComposerDraft();disconnectExecution();
-  closeTaskDetails();
-  setWorkspaceOpen(false);closeDiffDialog();
-  clearExtensionUi();
-  taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearModelsSyncTimer();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;workspaceSync=null;
-  activeId = id;
-  models=null;restoreModelPreview();
-  engine=currentTask()?.engine||sessions.find(s=>s.id===id)?.engine||modelPreview?.engine||'pi';capabilities=null;
-  if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}
-  streaming = false;
-  compacting = false;
-  statsCache = null;
-  selectedChangedPath = null;
-  lastChangeCardSignature = '';
-  resetThread();
-  selectConversationView(id);
-  showRecentThread(id);
-  restoreComposerDraft();
-  renderAgentSettings();
-  renderProjectContext();
-  renderHeader();
-  renderSessionList();
+  skillPanel.close();resetSlashCommands();skillReloadScope=null;
+  setSearchOpen(false);closeTaskDetails();setWorkspaceOpen(false);closeDiffDialog();clearExtensionUi();
+  taskSelectionEpoch++;modelsRequestEpoch++;closeMishuPanels();closeAgentMenu();
+  clearModelsSyncTimer();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;
+  thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;
+  resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];
+  draftContextPreset='272k';contextToApply=null;contextPending=null;
+  draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;workspaceSync=null;
+  activeId=id;models=null;modelPreview=null;capabilities=null;
+  streaming=false;compacting=false;statsCache=null;selectedChangedPath=null;lastChangeCardSignature='';
+  if(id!==null){
+    restoreModelPreview();engine=currentTask()?.engine||sessions.find(s=>s.id===id)?.engine||modelPreview?.engine||'pi';
+    sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);
+  }else{
+    prepareNew=false;creationRequest=null;saveCreation();engine='pi';commands=[];
+    $('#task-engine').value='pi';$('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
+    sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);
+  }
+  resetThread();selectConversationView(id);
+  if(id!==null)showRecentThread(id);
+  restoreComposerDraft();renderAgentSettings();
+  if(id===null)renderHero();
+  renderProjectContext();renderHeader();renderSessionList();
 }
 function newSession(focus = true) {navigation.select(null);if(focus)ui.prompt.focus();}
-function applyNewSession(focus = true) {
-  closeMenu();sshmeDraftId=null;
-  saveVisiblePosition();saveComposerDraft();disconnectExecution();
-  skillPanel.close();resetSlashCommands();skillReloadScope=null;
-  setSearchOpen(false);
-  closeTaskDetails();
-  setWorkspaceOpen(false);closeDiffDialog();
-  clearExtensionUi();
-  taskSelectionEpoch++;closeMishuPanels();catalogRequest=null;draftModel=null;draftThinking='medium';draftThinkingExplicit=false;thinkingToApply=null;thinkingPending=null;modelPending=null;historyReady=false;closeAgentMenu();prepareNew=false;creationRequest=null;saveCreation();workspaceSync=null;resetTransfers();filesAwaitingTransfer=[];draftFiles=[];attachments=[];draftContextPreset='272k';contextToApply=null;contextPending=null;draftSpeed='standard';speedToApply=null;clearSpeedPending();queuedPrompt=null;
-  engine='pi';capabilities=null;models=null;modelPreview=null;commands=[];$('#task-engine').value='pi';
-  $('#task-kind').value='chat';draftProjectForge='gitea';ui.projectSelect.value='';ui.startBranch.value='';
-  activeId = null;
-  sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);
-  streaming = false;
-  compacting = false;
-  statsCache = null;
-  selectedChangedPath = null;
-  lastChangeCardSignature = '';
-  resetThread();
-  selectConversationView(null);restoreComposerDraft();
-  renderAgentSettings();
-  renderHero();
-  renderProjectContext();
-  renderHeader();
-  renderSessionList();
-  if (focus) ui.prompt.focus();
-}
 
 // ---------- sidebar / global ----------
 $('#new-task').addEventListener('click', () => { newSession(); closeSidebarOnMobile(); });

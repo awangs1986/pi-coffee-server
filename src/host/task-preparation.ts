@@ -1,3 +1,4 @@
+import {holdTaskLifecycle} from './task-lifecycle.js';
 import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {ForkTurnFailure} from './fork.js';
 import type {AgentHistory} from './agent-adapter.js';
@@ -23,6 +24,7 @@ export class TaskPreparation {
  private readonly records=new Map<string,Record>();
  private readonly targets=new Map<string,Record>();
  private readonly running=new Map<string,Promise<void>>();
+ private readonly releases=new Map<string,()=>void>();
  private readonly inFlight=new Map<string,Set<Promise<unknown>>>();
  private initialized?:Promise<void>;
  private readonly controllers=new Map<string,AbortController>();
@@ -54,10 +56,12 @@ export class TaskPreparation {
     record.revision++;await this.save(record);
    }
    this.records.set(record.operationId,record);this.targets.set(record.targetTaskId,record);
-   if(record.status==='uncertain'){this.options.locks.add(record.targetTaskId);if(record.input.sourceId)this.options.locks.add(record.input.sourceId);}
+   if(record.status==='uncertain')this.hold(record);
   }
   this.options.workspaces.preparationProjection=task=>this.project(task);
  }
+ private hold(record:Record){this.releases.set(record.operationId,holdTaskLifecycle(this.options.locks,[record.targetTaskId,...record.input.sourceId?[record.input.sourceId]:[]]));}
+ private release(record:Record){this.releases.get(record.operationId)?.();this.releases.delete(record.operationId);}
  private publicStatus(record:Record):PreparationStatus {
   return record.status==='completed'&&this.running.has(record.operationId)?'finalizing':record.status;
  }
@@ -102,9 +106,11 @@ export class TaskPreparation {
    }
    if(this.running.size>=2)throw Error('Two task preparations are already active; wait for one to finish');
    if(this.options.locks.has(input.targetTaskId)||await this.options.workspaces.lookup(input.targetTaskId))throw Error('Preparation destination already exists');
-   if(input.sourceId&&(this.options.locks.has(input.sourceId)||await this.options.sourceBusy?.(input.sourceId)))throw Error('Source task lifecycle is busy');
+   if(input.sourceId&&this.options.locks.has(input.sourceId))throw Error('Source task lifecycle is busy');
    const record:Record={schema:1,input,...input,revision:1,status:'accepted',phase:'accepted',completedStages:[],allowedActions:['cancel']};
-   await this.save(record);this.records.set(record.operationId,record);this.targets.set(record.targetTaskId,record);this.options.locks.add(input.targetTaskId);if(input.sourceId)this.options.locks.add(input.sourceId);
+   this.hold(record);
+   try{if(input.sourceId&&await this.options.sourceBusy?.(input.sourceId))throw Error('Source task lifecycle is busy');await this.save(record);}catch(error){this.release(record);throw error;}
+   this.records.set(record.operationId,record);this.targets.set(record.targetTaskId,record);
    const view=this.view(record);
    this.controllers.set(input.operationId,new AbortController());
    const running=this.execute(record);this.running.set(input.operationId,running);void running.finally(()=>{this.running.delete(input.operationId);this.options.changed();}).catch(()=>undefined);
@@ -133,9 +139,10 @@ export class TaskPreparation {
    if(this.closing||this.running.size>=2||!record.allowedActions.includes('resume')||this.running.has(record.operationId))throw Error('Preparation outcome must be inspected before resume');
    const target=await this.options.workspaces.lookup(record.targetTaskId),source=record.input.sourceId?await this.options.workspaces.lookup(record.input.sourceId):undefined;
    if(target&&(target.archived||target.cleanupStarted||target.workspaceRemoved)||record.input.sourceId&&(!source||source.archived||source.cleanupStarted||source.workspaceRemoved))throw Error('Preparation task or source is unavailable');
-   if(this.options.locks.has(record.targetTaskId)||record.input.sourceId&&(this.options.locks.has(record.input.sourceId)||await this.options.sourceBusy?.(record.input.sourceId)))throw Error('Task lifecycle is busy');
-   this.options.locks.add(record.targetTaskId);if(record.input.sourceId)this.options.locks.add(record.input.sourceId);
-   record.status='accepted';record.phase='resume';record.allowedActions=['cancel'];delete record.error;record.revision++;await this.save(record);
+   if(this.options.locks.has(record.targetTaskId)||record.input.sourceId&&this.options.locks.has(record.input.sourceId))throw Error('Task lifecycle is busy');
+   this.hold(record);
+   try{if(record.input.sourceId&&await this.options.sourceBusy?.(record.input.sourceId))throw Error('Source task lifecycle is busy');}catch(error){this.release(record);throw error;}
+   record.status='accepted';record.phase='resume';record.allowedActions=['cancel'];delete record.error;record.revision++;try{await this.save(record);}catch(error){this.release(record);throw error;}
    this.controllers.set(record.operationId,new AbortController());const view=this.view(record);
    const running=this.execute(record);this.running.set(record.operationId,running);void running.finally(()=>{this.running.delete(record.operationId);this.options.changed();}).catch(()=>undefined);return view;
   });
@@ -222,7 +229,7 @@ export class TaskPreparation {
    record.task=await ws.lookup(record.targetTaskId);record.revision++;await this.save(record);
    if(record.input.sourceId&&(await ws.lookup(record.targetTaskId))?.fork)await ws.finishFork(record.targetTaskId,record.error);
 
-  }finally{clearTimeout(timer);if(record.status!=='uncertain'){this.options.locks.delete(record.targetTaskId);if(record.input.sourceId)this.options.locks.delete(record.input.sourceId);}this.controllers.delete(record.operationId);this.options.changed();}
+  }finally{clearTimeout(timer);if(record.status!=='uncertain')this.release(record);this.controllers.delete(record.operationId);this.options.changed();}
  }
  async close(){this.closing=true;for(const controller of this.controllers.values())controller.abort(Error('Host stopped during preparation'));await Promise.allSettled(this.running.values());await this.writes;this.lease?.release();}
 }
