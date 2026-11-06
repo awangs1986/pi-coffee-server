@@ -1,5 +1,9 @@
 # Gitea 工作区与 VM 执行边界
 
+## Task preparation lifecycle — accepted refactor, 2026-11-06
+
+New Chat/Work creation will use the [durable preparation contract](task-preparation.md). Persist scoped intent before directory/Git/native side effects; acknowledge acceptance separately from task readiness. Lost responses query the same operation identity. Reconcile reservations and uncertain push/binding results from owned receipts, without duplicate clones or automatic native/model replay. Preserve selected branches, empty-repository initialization, Git privacy repair and independent clone rules below. This is planned orchestration, not a claim that Server 0.84 already implements it.
+
 > Shared-Host correction (2026-10-13): [two-user workbench](multi-user-workbench.md), Server #125, requires both accounts' complete Gitea workflow. Scoped repository API, native Git and project Skills use that account's verified credential; the old default-owner environment credential is never lent to another scope.
 
 > Native-engine extension (2026-09-23): the shared Workspace, file ownership and Gitea contracts remain in force. Codex/Claude Code Session bindings and writer-state adapters are planned in the [native-engine SPEC](./native-agent-engines.md); Pi-specific startup, mode, history and cleanup descriptions below are the current implementation, not automatic rules for the new engines.

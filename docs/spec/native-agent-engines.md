@@ -1,5 +1,9 @@
 # Native Agent integration
 
+## Preparation adapter boundary — accepted refactor, 2026-11-06
+
+The [durable preparation contract](task-preparation.md) owns planned create-chat, create-work, native-fork and handoff-fork orchestration. Agent adapters supply bounded native operations, operation/turn-bound receipts and ownership-aware cleanup; prompt acknowledgement is not turn completion. Readiness inspects only the selected scoped engine. Preserve the supported engine matrix, native permissions, preparation restrictions and repository-free Pi/Codex Chat rules. Takeover and manual compression retain their separate contracts. This replacement is not implemented at the Server 0.84 baseline.
+
 > Current Work engines: Pi, Codex CLI, Claude Code, Cursor and Grok Build. [Cursor/Claude](cursor-claude.md) and [Grok](grok-build.md) supplement the initial M0–M5 contract. Read their actual-account and capability limits before claiming parity. Current refresh: published main `789a0d1` plus local candidate `e7f8ce5`; [weekly evidence and remaining gaps](../reviews/spec-freshness-20261013.md).
 
 Initial milestone status (2026-09-23): **M0–M5 implemented, merged and deployed**. This dated status does not certify later Cursor/Grok integrations or current upstream accounts. See [M5 deployment evidence](../reviews/native-agents-m5-20260923.md) and [supported capabilities](../deployment/native-agents.md).

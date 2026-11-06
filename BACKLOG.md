@@ -1,3 +1,5 @@
+- [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161): [durable task preparation refactor](docs/spec/task-preparation.md), accepted and ready for implementation. Five stages: contract, bounded adapters, Chat/Work creation, Fork pipeline, unified projection/retirement. No runtime implementation or deployment is claimed.
+
 - [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39): Server 0.83 Fork writer-custody budget repair and persistent failure display; [contract](docs/spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05). Source acceptance and activation remain separate.
 
 - [Server #160](https://github.com/awangs1986/pi-coffee-server/issues/160): GitHub GH007 task creation/push repair; [contract](docs/spec/github-accounts.md#github-email-privacy-repair--2026-11-05-server-160). Source acceptance and production activation are recorded separately.

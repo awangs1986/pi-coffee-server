@@ -9,11 +9,16 @@ Place Fork beside Rename and Archive in each Conversation menu. A dialog offers:
 - **Traditional Fork**: preserve the active Agent's native context through its native fork API. No model preparation turn.
 - **Handoff Fork**: prepare a new branch using handoff context. Experimental: may drift or omit information and incurs model usage. Explicit dialog confirmation is required.
 
-Both create a new Conversation and independent local folder, retain the source Agent and its model/thinking/context selection, and preserve project/GitHub binding. Chat stays Pi Chat. Fork does not switch Agents; takeover remains a separate feature. Show unavailable native modes as disabled with a reason, never silently substitute a different method.
+Both create a new Conversation and independent local folder, retain the source Agent and its model/thinking/context selection, and preserve project/GitHub binding. Chat retains its selected Pi or Codex engine under the accepted repository-free Chat contract. Fork does not switch Agents; takeover remains a separate feature. Show unavailable native modes as disabled with a reason, never silently substitute a different method.
 
 The owner explicitly chose copying the current local state: tracked/staged/unstaged changes, untracked project files and task attachments are retained in an independent clone/data folder. Git metadata and known dependency/cache directories are excluded from filesystem copying. Preserve staged versus unstaged changes. Unresolved Git merge conflicts and nested Git repositories/submodules require separate handling before creating the snapshot; they are rejected instead of producing a partly shared checkout. Internal links are retargeted within the new copy; external links are rejected rather than sharing writable files. A clone uses its own task branch; no implicit push, checkpoint, remote repository creation or commit.
 
 ## Lifecycle
+
+The accepted [durable task preparation refactor](task-preparation.md) replaces the
+scattered orchestration with one Host-owned operation lifecycle. It is not yet
+implemented. Preserve the product/source protections below during migration; the
+new contract governs durable acceptance, budgets, cancellation and recovery.
 
 Source must be an owned, active, ready task with settled foreground/background work, no unanswered questions and no queued input. Lock source and destination against conflicting Web operations while preparing. Fork does not rewrite source conversation messages, compact its context, change its binding/branch or edit its files. Routine native inspection may append internal bookkeeping entries. The new task records source, mode, phase, model settings and progress. Same operation ID is idempotent; never regenerate after delivery uncertainty. Source remains usable after a failed fork; retain destination diagnostics/files for inspection and archival. Host restart marks unfinished preparation interrupted instead of continuing model work automatically.
 
@@ -50,14 +55,30 @@ Executed release acceptance: both the reviewed checkout and an independent publi
 
 Actual activation is confirmed by the private operator receipt `fork-v083-20261105/result.json`: Web and primary Host started from the exact commit, Host reported normal mode, and served assets (including fork.js) matched the immutable release. No rollback occurred. [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39) records source and activation evidence. No real provider Fork was automatically replayed; live provider acceptance of a new user-initiated Fork remains separate from these synthetic regression and deployment checks. This change does not establish a universal Fork deadline or repair unrelated provider/network failures.
 
-Documentation gap retained for reconciliation: the older “Chat stays Pi Chat” sentence predates the later repository-free Codex Chat design. This scoped budget/deployment refresh does not treat that sentence as evidence that all current Chat tasks are Pi-only, or certify a new Chat/Agent compatibility matrix.
+Documentation reconciliation, 2026-11-06: the Pi-only Chat restriction above has been corrected to match the already accepted [repository-free Pi/Codex Chat contract](native-agent-engines.md#repository-free-codex-chat--2026-10-08-server-98). This does not extend native Fork capability to an unsupported engine.
 
-## Codex Handoff Fork preparation model (0.84 candidate, 2026-11-06)
+## Codex Handoff Fork preparation model (0.84, 2026-11-06)
 
-The owner previously requested Codex handoff preparation to default to `gpt-6.1-sol` with `medium` reasoning. At deployed 0.83, that default was applied to Agent takeover but not Handoff Fork: both summary and seed turns inherited the source Conversation's model and effort. The 0.84 candidate applies sol/medium to these two temporary Codex preparation turns, then restores the source model/thinking/context selection on the new Conversation before normal use. Traditional native Fork, Pi/Claude preparation and manual in-place Codex compression are unchanged by this scoped fix. A protected provider that does not enroll the preparation model fails explicitly; it must not bypass its allowlist.
+The owner previously requested Codex handoff preparation to default to `gpt-6.1-sol` with `medium` reasoning. At deployed 0.83, that default was applied to Agent takeover but not Handoff Fork: both summary and seed turns inherited the source Conversation's model and effort. Server 0.84 applies sol/medium to these two temporary Codex preparation turns, then restores the source model/thinking/context selection on the new Conversation before normal use. Traditional native Fork, Pi/Claude preparation and manual in-place Codex compression are unchanged by this scoped fix. A protected provider that does not enroll the preparation model fails explicitly; it must not bypass its allowlist.
 
 Each `forkTurn` still has a 180-second preparation deadline. It fails without automatic retries, stops its temporary runtime and retains the source and failed copy. Error text now identifies summary versus seed and the preparation model/effort. This is not a promise that sol will respond within three minutes or that the entire operation has one three-minute wall-clock bound; setup and two turns are separate phases.
 
 Evidence: `NativeAgentFactory.forkConversationAdmitted` in [factory.ts](../../src/host/native/factory.ts), [fork.ts](../../src/host/fork.ts), and the public HTTP/native subprocess regression in [fork-native-http.test.ts](../../test/fork-native-http.test.ts). The regression was observed failing when preparation inherited the source model/high effort; it verifies the sol/medium wire requests, final source-setting restoration, and phase-specific failure retention without provider calls.
 
-Observed production failure at 0.83: workspace copy completed; the retained temporary Codex rollout recorded astra/medium, task start and interruption approximately 180 seconds apart, without a completed summary. This supports a real preparation deadline expiry; it does not establish whether upstream latency, provider processing or another native issue prevented completion. A real provider retry and activation of 0.84 have not been performed by this diagnosis. Source and failed Fork are not automatically replayed.
+Observed production failure at 0.83: workspace copy completed; the retained temporary Codex rollout recorded astra/medium, task start and interruption approximately 180 seconds apart, without a completed summary. This supports a real preparation deadline expiry; it does not establish whether upstream latency, provider processing or another native issue prevented completion. At the time of that diagnosis, activation and a real provider retry had not occurred. Later activation and acceptance are recorded below; the failed Fork was not automatically replayed.
+
+### Activation and acceptance update (2026-11-06)
+
+Server 0.84 / `eb34dde7fb08420ac9501811482893f0c3215ddd` was published to
+GitHub and Gitea main and activated for Web/Host. Normal-mode health, release
+identity and served assets passed. One owner-authorized Handoff Fork subsequently
+passed: independent workspace, saved summary, distinct native binding, WebSocket
+open/history and retained final model/thinking/context. [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39#issuecomment-6681979218)
+records the result without user transcripts.
+
+Exact-source verification passed 1,703 tests, with 136 optional skipped, and 17
+Chromium probes. Earlier concurrent runs encountered MISHU polling timeouts; the
+isolated six-case recheck and subsequent sole canonical run passed. These are
+recorded historical executions, not tests rerun by this documentation change.
+The [preparation refactor](task-preparation.md) remains unimplemented; this one
+success does not establish bounded end-to-end cleanup/recovery for every failure.

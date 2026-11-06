@@ -11,6 +11,6 @@ following label in the current tracker selected by [issue navigation](issue-trac
 | `ready-for-human` | `ready-for-human` | Requires human implementation. |
 | `wontfix` | `wontfix` | Will not be implemented. |
 
-When a skill names a canonical role, use the corresponding Gitea label above.
+When a skill names a canonical role, use the corresponding label above.
 Create a missing label as needed, using its exact name and avoiding duplicates.
-Edit the Gitea label column if the tracker vocabulary changes later.
+Update this mapping if the selected tracker vocabulary changes later.

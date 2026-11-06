@@ -1,6 +1,9 @@
-- Codex Handoff Fork 0.84 candidate (not deployed): [sol/medium preparation, retained final settings and phase-specific errors](spec/conversation-fork.md#codex-handoff-fork-preparation-model-084-candidate-2026-11-06); [diagnosis and executed checks](reviews/fork-preparation-20261106.md).
+- Accepted, not implemented: [durable task preparation](spec/task-preparation.md), [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). Unified creation/Fork lifecycle, recovery and five-stage migration.
+- Latest recorded activation (2026-11-06): Server 0.84 / `eb34dde`; [release and one live Fork acceptance](spec/conversation-fork.md#activation-and-acceptance-update-2026-11-06). This is distinct from the planned refactor.
 
-- Latest verified activation (2026-11-05): Server 0.83 / `13e4636`, Web and primary Host in normal operation; [Fork evidence](spec/conversation-fork.md#evidence-and-deployment-status-2026-11-05) and [GitHub email recovery](spec/github-accounts.md#email-repair-evidence-and-activation-2026-11-05). Documentation refresh after that commit is not a new runtime release.
+- Codex Handoff Fork 0.84 (activated and one live Fork accepted): [sol/medium preparation, retained final settings and phase-specific errors](spec/conversation-fork.md#codex-handoff-fork-preparation-model-084-2026-11-06); [diagnosis and executed checks](reviews/fork-preparation-20261106.md).
+
+- Historical activation (2026-11-05): Server 0.83 / `13e4636`, Web and primary Host in normal operation; [Fork evidence](spec/conversation-fork.md#evidence-and-deployment-status-2026-11-05) and [GitHub email recovery](spec/github-accounts.md#email-repair-evidence-and-activation-2026-11-05). Documentation refresh after that commit is not a new runtime release.
 
 - Fork preparation under ordinary writer custody: [bounded 32 MiB patch and durable failure display](spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05), Server 0.83 / #39.
 
