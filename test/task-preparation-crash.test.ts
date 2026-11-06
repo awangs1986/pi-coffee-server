@@ -57,3 +57,24 @@ it('finishes interrupted publication using the same native binding without start
   await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50});
  }
 },30000);
+
+it('does not advertise a completed task until its final publication tail releases lifecycle custody',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-completion-gate-'));
+ const child=spawn(process.execPath,[resolve('test/fixtures/preparation-host.mjs'),root],{detached:true,env:{...process.env,PREPARATION_COMPLETION_GATE:'1'},stdio:['ignore','pipe','pipe']});
+ let output='',errors='';child.stdout!.on('data',chunk=>output+=chunk);child.stderr!.on('data',chunk=>errors+=chunk);
+ try{
+  await expect.poll(()=>{if(child.exitCode!==null)throw Error(errors);return output.includes('"port"');},{timeout:10000}).toBe(true);
+  const port=JSON.parse(output.split('\n').find(line=>line.includes('"port"'))!).port;
+  const call=async(body?:object)=>{const r=await fetch(`http://127.0.0.1:${port}/api/workspace`,{method:body?'POST':'GET',headers:{authorization:'Bearer fixture','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};};
+  expect((await call({action:'preparation_start',kind:'create-chat',engine:'codex',operationId:'publication-op',targetTaskId:'publication-task'})).status).toBe(202);
+  await expect.poll(()=>output.includes('completionPaused'),{timeout:10000}).toBe(true);
+  expect((await call()).body.conversations.find((t:any)=>t.id==='publication-task').creationState).toBe('creating');
+  await writeFile(join(root,'release-completion'),'1');
+  await expect.poll(async()=>(await call({action:'preparation_get',operationId:'publication-op'})).body.status,{timeout:10000}).toBe('completed');
+  expect((await call({action:'archive',id:'publication-task'})).status).toBe(200);
+ }finally{
+  await writeFile(join(root,'release-completion'),'1');
+  if(child.exitCode===null&&child.signalCode===null){const exited=once(child,'exit');child.kill('SIGTERM');const force=setTimeout(()=>{try{process.kill(-child.pid!,'SIGKILL');}catch{}},3000);await exited;clearTimeout(force);}
+  await rm(root,{recursive:true,force:true,maxRetries:3,retryDelay:50});
+ }
+},20000);

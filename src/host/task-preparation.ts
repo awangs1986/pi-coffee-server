@@ -21,6 +21,7 @@ const identity=(value:unknown)=>{if(typeof value!=='string'||!/^[a-zA-Z0-9][a-zA
 /** One coordinator per authenticated Host scope. Browser-supplied owners are never accepted. */
 export class TaskPreparation {
  private readonly records=new Map<string,Record>();
+ private readonly targets=new Map<string,Record>();
  private readonly running=new Map<string,Promise<void>>();
  private readonly inFlight=new Map<string,Set<Promise<unknown>>>();
  private initialized?:Promise<void>;
@@ -52,15 +53,22 @@ export class TaskPreparation {
     }
     record.revision++;await this.save(record);
    }
-   this.records.set(record.operationId,record);
+   this.records.set(record.operationId,record);this.targets.set(record.targetTaskId,record);
    if(record.status==='uncertain'){this.options.locks.add(record.targetTaskId);if(record.input.sourceId)this.options.locks.add(record.input.sourceId);}
   }
   this.options.workspaces.preparationProjection=task=>this.project(task);
  }
+ private publicStatus(record:Record):PreparationStatus {
+  return record.status==='completed'&&this.running.has(record.operationId)?'finalizing':record.status;
+ }
  private project(task:Conversation):Conversation {
+  const source=task.forking?this.targets.get(task.forking.targetId):undefined;
+  if(source?.input.sourceId===task.id&&this.running.has(source.operationId)&&task.forking)task={...task,forking:{...task.forking,status:'preparing'}};
+
   if(!task.preparationId||task.recoveryReceipt)return task;const record=this.records.get(task.preparationId);
   if(!record)return {...task,creationState:'failed',creationError:'Preparation journal unavailable'};
-  return {...task,creationState:record.status==='completed'?'ready':['failed','cancelled','uncertain'].includes(record.status)?'failed':'creating',...(record.error?{creationError:record.error}:{}),...(task.fork?{fork:{...task.fork,status:record.status==='completed'?'completed':['failed','cancelled','uncertain'].includes(record.status)?'failed':'preparing',...(record.error?{error:record.error}:{})}}:{})};
+  const status=this.publicStatus(record);
+  return {...task,creationState:status==='completed'?'ready':['failed','cancelled','uncertain'].includes(status)?'failed':'creating',...(record.error?{creationError:record.error}:{}),...(task.fork?{fork:{...task.fork,status:status==='completed'?'completed':['failed','cancelled','uncertain'].includes(status)?'failed':'preparing',...(record.error?{error:record.error}:{})}}:{})};
  }
  private serialize<T>(run:()=>Promise<T>):Promise<T>{const next=this.tail.then(run);this.tail=next.catch(()=>undefined);return next;}
  private async save(record:Record){
@@ -68,7 +76,7 @@ export class TaskPreparation {
   const next=this.writes.then(()=>this.options.workspaces.backupWriterFence?this.options.workspaces.backupWriterFence.runWriter('platform',write):write());
   this.writes=next.catch(()=>undefined);await next;this.options.changed();
  }
- private view(record:Record):PreparationView {const {schema:_,input:__,completedStages:___,failedPhase:____,...view}=record;return structuredClone({...view,...(record.task?{task:this.project(record.task)}:{})});}
+ private view(record:Record):PreparationView {const {schema:_,input:__,completedStages:___,failedPhase:____,...view}=record;const status=this.publicStatus(record);return structuredClone({...view,status,...(status!==record.status?{phase:'publication'}:{}),...(record.task?{task:this.project(record.task)}:{})});}
  async get(id:unknown){await this.load();await this.writes;const record=this.records.get(identity(id));if(!record)throw Error('Unknown preparation');record.task=await this.options.workspaces.lookup(record.targetTaskId);return this.view(record);}
  async start(raw:PreparationInput):Promise<PreparationView>{
   await this.load();return this.serialize(async()=>{
@@ -96,10 +104,10 @@ export class TaskPreparation {
    if(this.options.locks.has(input.targetTaskId)||await this.options.workspaces.lookup(input.targetTaskId))throw Error('Preparation destination already exists');
    if(input.sourceId&&(this.options.locks.has(input.sourceId)||await this.options.sourceBusy?.(input.sourceId)))throw Error('Source task lifecycle is busy');
    const record:Record={schema:1,input,...input,revision:1,status:'accepted',phase:'accepted',completedStages:[],allowedActions:['cancel']};
-   await this.save(record);this.records.set(record.operationId,record);this.options.locks.add(input.targetTaskId);if(input.sourceId)this.options.locks.add(input.sourceId);
+   await this.save(record);this.records.set(record.operationId,record);this.targets.set(record.targetTaskId,record);this.options.locks.add(input.targetTaskId);if(input.sourceId)this.options.locks.add(input.sourceId);
    const view=this.view(record);
    this.controllers.set(input.operationId,new AbortController());
-   const running=this.execute(record);this.running.set(input.operationId,running);void running.finally(()=>this.running.delete(input.operationId)).catch(()=>undefined);
+   const running=this.execute(record);this.running.set(input.operationId,running);void running.finally(()=>{this.running.delete(input.operationId);this.options.changed();}).catch(()=>undefined);
    return view;
   });
  }
@@ -129,7 +137,7 @@ export class TaskPreparation {
    this.options.locks.add(record.targetTaskId);if(record.input.sourceId)this.options.locks.add(record.input.sourceId);
    record.status='accepted';record.phase='resume';record.allowedActions=['cancel'];delete record.error;record.revision++;await this.save(record);
    this.controllers.set(record.operationId,new AbortController());const view=this.view(record);
-   const running=this.execute(record);this.running.set(record.operationId,running);void running.finally(()=>this.running.delete(record.operationId)).catch(()=>undefined);return view;
+   const running=this.execute(record);this.running.set(record.operationId,running);void running.finally(()=>{this.running.delete(record.operationId);this.options.changed();}).catch(()=>undefined);return view;
   });
  }
  private track<T>(record:Record,run:()=>Promise<T>):Promise<T>{

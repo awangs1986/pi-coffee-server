@@ -334,3 +334,13 @@ workspace allocation, cold-source Handoff, changed-artifact refusal, process-cra
 reconciliation, and Browser recovery. They use synthetic native/provider replies.
 The exhaustive crash-boundary/resource matrix and an owner-authorized deployed
 Fork remain release acceptance work; do not infer those results from unit checks.
+
+### Public completion and lifecycle custody (0.95)
+
+A durable completed journal does not advertise Browser readiness while the owned
+execution tail still holds lifecycle custody. The public operation projects
+`finalizing` and the task projects `creating` until that tail settles; the source
+Fork indicator also remains preparing. Notify subscribers again after releasing
+the operation. Thus a public completed result can be followed immediately by an
+ordinary task action, without a transient lifecycle-lock rejection. Restart can
+still use the durable completion receipt without replaying native work.

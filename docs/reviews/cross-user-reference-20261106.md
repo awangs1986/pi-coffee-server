@@ -51,3 +51,19 @@ existing Codex acceptance. Runtime readiness checks were not weakened.
 Final `npm run check` exited 0: lint/build, 1,722 tests (136 optional skipped),
 3 isolated runtime-temp tests and all 17 Chromium probes passed. No live model
 turn or production cross-account read was used. `git diff --check` passed.
+
+## Deployment-gate correction
+
+Further release verification exposed a production readiness race in the 0.94
+preparation coordinator: public task listing could report completion before the
+execution tail released lifecycle locks. A deterministic HTTP fixture now pauses
+final journal publication and proves that the list remains creating; after public
+completion, an immediate archive succeeds. The test failed with premature ready
+before the correction and passes afterward. Operation/task/source projections now
+retain preparing/finalizing until the tail settles and emit a subsequent update.
+The focused four-case acceptance, including MISHU history reset after Fork, passed.
+
+Separate verification attempts observed a Node/V8 worker crash and a five-second
+native fixture timeout. These are not claimed fixed by the readiness correction.
+Final release verification uses the repository-supported 15-second test budget,
+without weakening assertions or changing production runtime settings.
