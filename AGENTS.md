@@ -22,7 +22,7 @@ Bulk creation or concurrent awakening of conversations or Agents is high risk, i
 
 - Keep native engine details behind Agent interfaces. Web authenticates and forwards; Host owns execution and durable task data.
 - Select the authenticated user's scope for every HTTP and WebSocket operation. Browser disconnects preserve running sessions.
-- Use the red → green loop at public HTTP/WS and browser-controller seams. Run `npm run check`.
+- Use the red → green loop at public HTTP/WS and browser-controller seams. Runtime, authorization, dependency and data changes run `npm run check`; the owner-approved low-risk documentation/style plan is defined in [the verification workflow](docs/development/verification-and-release.md). Do not downgrade unknown changes or inspect upstream Pi internals as part of Coffee maintenance.
 - Preserve the acceptance matrix in [the reconciliation report](docs/reviews/repository-unification-20260927.md): a model reply alone does not verify the workbench.
 - Before publishing a Server update, advance its [formal release version](docs/deployment/versioning.md) and keep VERSION/package metadata synchronized.
 - Push GitHub main first, then fast-forward Gitea main to the identical commit. Fetch and verify both remote SHAs. Deploy from that commit and record the release identity and served asset probe.

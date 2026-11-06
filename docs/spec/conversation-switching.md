@@ -458,3 +458,11 @@ subscription. Lifecycle signals initiate both recoveries without sharing a stuck
 request guard. Speech recovery never refreshes the page, changes the selected
 Conversation, replays a user prompt or alters native execution. The contract
 does not establish the original cause of every idle conversation disconnect.
+
+## Selection transaction consolidation (0.97 candidate)
+
+Existing-task and new-task selection use one Browser transaction in `public/app.js`.
+It saves scoped drafts, detaches the old transport, invalidates callbacks, resets
+selection-owned state and restores the target view. Reconnect reuses detachment.
+The three independent lifetimes in this contract remain unchanged. See
+[architecture maintenance](architecture-maintenance.md) for scope and evidence.

@@ -4,8 +4,9 @@ Current topology baseline (reviewed 2026-10-26): Web, the primary workbench Host
 and native Agent CLIs share one Linux VM and OS account. Web and Host run as
 separate user services. [Current architecture](docs/architecture/topology.md)
 defines physical placement, scoped application data and the legacy-owner exception.
-The last observed running release is v0.56 / `1db8ab3`; future deployment identity
-must come from live `/api/release` and receipts, not this dated observation.
+The latest recorded activation is v0.96 / `a6ad4d1` (2026-11-06); source candidate
+v0.97 consolidates architecture maintenance. Deployment identity must come from
+live `/api/release` and receipts, not this dated observation.
 See [the audit](docs/reviews/topology-freshness-20261026.md) and
 [REPOSITORIES.md](REPOSITORIES.md) for source ownership. Earlier dated audits are
 historical evidence, not competing topology requirements.

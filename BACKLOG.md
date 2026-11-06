@@ -1,6 +1,8 @@
-- [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162): [explicit cross-user references](docs/spec/cross-user-reference.md), candidate command and scoped read endpoint; deployment/configuration pending.
+- Current P0/P1 source: [architecture maintenance](docs/spec/architecture-maintenance.md); preserve the framework, consolidate current state/lifecycle rules and reconcile release evidence.
 
-- [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161): [durable task preparation refactor](docs/spec/task-preparation.md), implemented candidate covering durable admission, bounded adapters, Chat/Work creation, Fork and Browser recovery. Final release matrix and deployed acceptance remain open; no deployment is claimed.
+- [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162): [authorized Takeover](docs/spec/cross-user-reference.md), activated in 0.96; `/cross-user` and its read endpoints are retired.
+
+- [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161): [durable task preparation refactor](docs/spec/task-preparation.md), implemented since 0.94, covering durable admission, bounded adapters, Chat/Work creation, Fork and Browser recovery. The separate live Fork acceptance matrix remains open; the historical candidate status does not describe current activation.
 
 - [Server #39](https://github.com/awangs1986/pi-coffee-server/issues/39): Server 0.83 Fork writer-custody budget repair and persistent failure display; [contract](docs/spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05). Source acceptance and activation remain separate.
 
@@ -618,5 +620,6 @@ separate gates; synthetic checks do not establish summary quality or zero drift.
 
 - 2026-10-22: Server #36 follow-up: owner approved GitHub `workflow` scope for Actions-file pushes. Existing tokens require reconnection; account isolation and task bindings remain unchanged. See the GitHub account contract.
 
-- Server #162: replace `/cross-user` with explicitly authorized cross-account
-  context reconstruction through Cat Skills `takeover`; source candidate only.
+- Server #162: explicitly authorized cross-account context reconstruction through
+  Cat Skills `takeover` replaced `/cross-user` in activated Server 0.96; see the
+  current status and retained validation limits at the top of this backlog.

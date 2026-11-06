@@ -1,6 +1,11 @@
 # Authorized cross-account Takeover
 
-Status: replacement candidate, 2026-11-06. Supersedes the 0.95 `/cross-user` command.
+Status: implemented and activated in Server 0.96 `a6ad4d1`, 2026-11-06.
+Supersedes the 0.95 `/cross-user` command. Cat Skills `68ff070` is installed for Pi/Codex.
+Urgent activation passed targeted tests and live identity/health probes; its complete
+check was interrupted, and a later rerun found a documentation-vocabulary error,
+corrected in the 0.97 candidate. Publication and final verification are tracked
+separately in [architecture maintenance](architecture-maintenance.md).
 Tracking: [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162).
 
 ## Owner decision

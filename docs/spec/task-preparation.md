@@ -1,9 +1,9 @@
 # Durable task preparation
 
-Status: **Implemented candidate; release acceptance pending**, 2026-11-06.
+Status: **Implemented and activated since 0.94; complete real-user Fork acceptance remains separate**, 2026-11-06.
 Baseline: Server 0.84, `eb34dde7fb08420ac9501811482893f0c3215ddd`.
 Tracking: [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). This contract governs the lifecycle replacement;
-it does not claim the deployed baseline already implements it.
+the 0.84 baseline is historical; current implementation includes durable preparation.
 
 ## Problem Statement
 
@@ -295,12 +295,13 @@ Regression prior art: [Fork HTTP](../../test/conversation-fork.test.ts),
 [native subprocess integration](../../test/fork-native-http.test.ts),
 [Browser controller](../../test/fork-ui.test.ts).
 
-## Candidate implementation (2026-11-06)
+## Current implementation (since 0.94, reviewed 2026-11-06)
 
-The candidate implements the coordinator in `src/host/task-preparation.ts`,
+The implementation owns the coordinator in `src/host/task-preparation.ts`,
 execution budgets in `src/host/preparation-execution.ts`, native Fork policy in
 `src/host/native/fork-preparation.ts` and Browser polling/recovery in
-`public/task-preparation.js`. This is source evidence, not production activation.
+`public/task-preparation.js`. This implementation was activated in 0.94;
+activation does not establish every acceptance criterion below.
 
 - Budgets: 600 seconds per operation, 120 seconds per stage, at least 180 seconds
   for summary/seed, and 10 seconds for cleanup. Admission permits two active
@@ -329,7 +330,7 @@ execution budgets in `src/host/preparation-execution.ts`, native Fork policy in
   cannot open until their preparation is ready. Legacy Fork routes delegate to
   the coordinator. Manual compression and takeover remain separate workflows.
 
-Candidate regressions exercise HTTP acceptance/idempotency/scope, resume/cancel,
+Regressions exercise HTTP acceptance/idempotency/scope, resume/cancel,
 workspace allocation, cold-source Handoff, changed-artifact refusal, process-crash
 reconciliation, and Browser recovery. They use synthetic native/provider replies.
 The exhaustive crash-boundary/resource matrix and an owner-authorized deployed
@@ -344,3 +345,11 @@ Fork indicator also remains preparing. Notify subscribers again after releasing
 the operation. Thus a public completed result can be followed immediately by an
 ordinary task action, without a transient lifecycle-lock rejection. Restart can
 still use the durable completion receipt without replaying native work.
+
+## Shared lifecycle admission (0.97 candidate)
+
+[Architecture maintenance](architecture-maintenance.md) centralizes owned task
+holds. Source and target are held before source-idle checks and durable acceptance
+writes, closing the archive-during-admission race. Existing completed-tail and
+uncertain-cleanup semantics remain. This changes Coffee lifecycle coordination,
+not upstream Pi or native execution semantics.

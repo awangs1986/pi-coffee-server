@@ -108,16 +108,11 @@ Gitea, then returning to retry. Never render codes, tokens or provider error tex
 API authorization failures retain their machine-readable response contracts;
 recovery does not admit new accounts or alias their data to an existing user.
 
-## Explicit read-only reference exception (2026-11-06)
+## Explicit Takeover context authorization (2026-11-06)
 
-[Cross-user references](cross-user-reference.md) define the owner-approved,
-operator-enabled `/cross-user <conversation-id>` exception. It imports a bounded
-dialogue snapshot into the caller’s Conversation without granting source task
-control, repository access, attachments or credentials. Ordinary HTTP/WS isolation
-remains unchanged. Source implementation and activation are separate.
-
-## Authorized Takeover replacement (2026-11-06)
-
-The owner withdrew the 0.95 `/cross-user` interface. Its earlier sharing contract
-is superseded by [authorized Takeover](cross-user-reference.md): explicit source
-account, task ID and read-only authorization, with no automatic cross-account API.
+The owner withdrew the 0.95 `/cross-user` interface. Use the
+[authorized Takeover contract](cross-user-reference.md): explicitly named source
+account, Conversation ID and read-only authorization through Cat Skills `takeover`.
+This permits only the transcript and locating metadata; it does not grant source
+execution, project files, attachments or credentials. The retired Web/Host reference
+endpoints are absent from 0.96. Ordinary HTTP/WS isolation remains unchanged.
