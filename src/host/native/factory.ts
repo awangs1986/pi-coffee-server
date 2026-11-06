@@ -154,9 +154,14 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const command={...this.options.claude,env:{...this.options.claude.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
         track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:tempId},async()=>{},[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
       }
-      await applyForkSettings(session!,target.fork.settings);
+      const preparationSettings=engine==='codex'?{...target.fork.settings,model:{provider:'codex',id:'gpt-6.1-sol'},thinkingLevel:'medium'}:target.fork.settings;
+      await applyForkSettings(session!,preparationSettings);
+      const prepareTurn=async(prompt:string,marker:string,phase:string)=>{
+        try{return await forkTurn(session!,prompt,marker,controller.signal);}
+        catch(error){throw new Error(`Fork handoff ${phase} failed (${preparationSettings.model?.id??engine} / ${preparationSettings.thinkingLevel??'default'}): ${error instanceof Error?error.message:'Preparation failed'}`);}
+      };
       const exported=engine==='claude'?await readFile(records,'utf8'):undefined;if(exported&&Buffer.byteLength(exported)>1024*1024)throw new Error('Claude Handoff history is too large for preparation; source and snapshot retained');
-      const summary=await forkTurn(session!,handoffPrompt(records,cwd,engine==='codex',exported),HANDOFF_END,controller.signal);
+      const summary=await prepareTurn(handoffPrompt(records,cwd,engine==='codex',exported),HANDOFF_END,'summary');
       await writeFile(join(await this.options.workspaces.forkRecordsDirectory(targetId),'handoff.md'),summary+'\n',{mode:0o600});
       await closeChild();if(this.closing)throw new Error('Host is stopping');
       if(engine==='codex'){
@@ -166,7 +171,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const command={...this.options.claude!,env:{...this.options.claude!.env,...await this.options.workspaces.runtimeEnvironment(targetId)}};
         track(await new ClaudeSession(command,cwd,{state:'prepared',requestedId:nativeId},binding=>this.options.workspaces.setNativeBinding(targetId,binding),[await this.options.workspaces.dataRoot(targetId)],[await this.options.instructions?.(),await this.options.workspaces.forkInstructionForCwd(cwd)].filter(Boolean).join('\n'),true).start());
       }
-      await applyForkSettings(session!,{...target.fork.settings,contextPreset:undefined});await forkTurn(session!,seedForkPrompt(summary,records,cwd),FORK_END,controller.signal);await applyForkSettings(session!,target.fork.settings);
+      await applyForkSettings(session!,{...preparationSettings,contextPreset:undefined});await prepareTurn(seedForkPrompt(summary,records,cwd),FORK_END,'seed');await applyForkSettings(session!,target.fork.settings);
       if(engine==='codex')await session!.rename(target.fork.title);
     }finally{await closeChild();await this.resetTaskRuntime(targetId);}
   }

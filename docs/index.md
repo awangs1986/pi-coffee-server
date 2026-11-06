@@ -1,3 +1,7 @@
+- Codex Handoff Fork 0.84 candidate (not deployed): [sol/medium preparation, retained final settings and phase-specific errors](spec/conversation-fork.md#codex-handoff-fork-preparation-model-084-candidate-2026-11-06); [diagnosis and executed checks](reviews/fork-preparation-20261106.md).
+
+- Latest verified activation (2026-11-05): Server 0.83 / `13e4636`, Web and primary Host in normal operation; [Fork evidence](spec/conversation-fork.md#evidence-and-deployment-status-2026-11-05) and [GitHub email recovery](spec/github-accounts.md#email-repair-evidence-and-activation-2026-11-05). Documentation refresh after that commit is not a new runtime release.
+
 - Fork preparation under ordinary writer custody: [bounded 32 MiB patch and durable failure display](spec/conversation-fork.md#bounded-workspace-copy-under-ordinary-writer-custody-2026-11-05), Server 0.83 / #39.
 
 - Per-conversation GitHub access for Gitea Work: [selection, runtime recreation and isolation](spec/github-accounts.md#github-access-for-a-gitea-work-conversation-2026-10-26).

@@ -257,3 +257,11 @@ and merge commits, retry retention, metadata/content preservation, account-scope
 noreply identity, signature refusal, non-email errors, and ordinary writer custody.
 No real provider/model turns are needed. Production recovery and activation are
 separate from source-test evidence.
+
+### Email repair evidence and activation (2026-11-05)
+
+Reviewed implementation: Server 0.83 / `13e4636ea2b5874a1a65a01077ef3d20f5510955`, which includes the previously published 0.82 email repair. [git-email-privacy.mjs](../../src/host/git-email-privacy.mjs) implements GH007 recognition, the bounded unpublished-commit rewrite and retained recovery ref. [github-email-privacy.test.ts](../../test/github-email-privacy.test.ts) and [github-email-runtime.test.ts](../../test/github-email-runtime.test.ts) cover Host and native-tool integration. See the [source review](../reviews/github-email-privacy-20261105.md) for the original scope.
+
+The earlier 0.82 activation rolled back after an operator deployment probe requested private release metadata as a public asset. Publication of 0.82 alone therefore did not enable this behavior. The subsequent 0.83 activation succeeded: Web/Host health, exact Host identity and actual served assets passed. The retained failed owner task was retried using its existing ID, reached ready state, confirmed a remote SHA and reported anonymous repair. This is one observed production recovery, not proof that unrelated authentication failures are repairable. The private operator receipt is `fork-v083-20261105/result.json`; public acceptance is tracked on [Server #160](https://github.com/awangs1986/pi-coffee-server/issues/160).
+
+This documentation-only refresh follows the deployed baseline; no credentials, transcripts or other-account data are included. Existing account-isolation requirements and unsupported-push/signature limits above remain binding.

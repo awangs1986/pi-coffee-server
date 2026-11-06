@@ -115,6 +115,8 @@ async function runTurn(thread, input, options) {
     }
     if(process.env.FAKE_MANUAL_HANDOFF==='hold')while(!state.interrupted)await new Promise(resolve=>setTimeout(resolve,20));
   }
+  if(preparing&&process.env.FAKE_FORK_DEFAULT_MODEL)appendFileSync(join(home,'fork-preparation-turns.jsonl'),JSON.stringify({model:options.model,effort:options.effort})+'\n');
+  if(preparing&&process.env.FAKE_FORK_FAIL===(text.startsWith('[PI Coffee Handoff Fork]')?'seed':'summary')){turn.status='failed';turn.error={message:'fixture preparation rejection'};active.delete(thread.id);save(thread.id);notify('turn/completed',{threadId:thread.id,turn});return;}
   if(preparing&&process.env.FORK_POLICY_ASSERT){
     const policy=settings.get(thread.id);
     if(policy?.sandbox!=='read-only'||policy?.approvalPolicy!=='never'||policy?.config?.['features.shell_tool']!==false||policy?.config?.mcp_servers?.fixture_external?.enabled!==false){
@@ -341,6 +343,7 @@ rl.on("line", (line) => {
     case "model/list":
       if(existsSync(join(home,"fake-hang-model-list")))return;
       return reply({ data: [
+        ...(process.env.FAKE_FORK_DEFAULT_MODEL?[{id:'gpt-6.1-sol',model:'gpt-6.1-sol',displayName:'Sol',defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium',description:''}],inputModalities:['text']}]:[]),
         { id: "gpt-fake", model: "gpt-fake", serviceTiers:[{id:"fast",name:"Fast",description:"Fixture tier"}], displayName: "Fake", description: "", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }], inputModalities: ["text", "image"] },
         { id: "gpt-fake-mini", model: "gpt-fake-mini", displayName: "Fake mini", description: "", hidden: false, isDefault: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [], inputModalities: ["text"] },
       ], nextCursor: null });
