@@ -353,3 +353,32 @@ holds. Source and target are held before source-idle checks and durable acceptan
 writes, closing the archive-during-admission race. Existing completed-tail and
 uncertain-cleanup semantics remain. This changes Coffee lifecycle coordination,
 not upstream Pi or native execution semantics.
+
+## Codex empty Work binding (0.98)
+
+A completed directory/clone/native-start sequence does not prove that an empty
+Codex thread survives preparation cleanup. Work creation must mark its known
+empty context just as Chat creation does. Opening the same prepared Conversation
+may recreate only that empty native context, preserving the project, local files,
+settings, Conversation ID and retired native ID. No synthetic model turn is used
+to force native persistence.
+
+Two independent facts are required: current scoped Host authority for empty
+context and a Coffee sidecar explicitly marking the exact native ID empty. Only
+recognized native missing-thread/rollout responses admit recovery. Prompt
+admission revokes authority before dispatch; a missing used transcript, unknown
+native outcome, authorization error or arbitrary timeout never admits replacement.
+
+For older prepared Work records without `nativeContextEmpty`, the coordinator
+may derive it only from a completed `create-work` receipt with the matching
+publication digest, completed native-binding/cleanup stages, a ready active task,
+and no accepted request, run status, Fork, takeover, context reset, recovery or
+retained binding. Rebinding then persists the explicit marker through the scoped
+workspace transaction. Invalid or absent proof remains a visible failure.
+
+Public acceptance: `test/codex-prepared-work-http.test.ts` exercises the production
+Host entry, local Git fixture, asynchronous preparation, cold native reopen,
+legacy receipt recovery, proof mismatch refusal, first message and refusal to
+replace a missing used transcript. The native fixture models empty history as
+unavailable after process cleanup. Source tests and actual service activation
+remain separate; the original reported task must be reopened after activation.

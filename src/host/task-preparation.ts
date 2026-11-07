@@ -72,7 +72,16 @@ export class TaskPreparation {
   if(!task.preparationId||task.recoveryReceipt)return task;const record=this.records.get(task.preparationId);
   if(!record)return {...task,creationState:'failed',creationError:'Preparation journal unavailable'};
   const status=this.publicStatus(record);
-  return {...task,creationState:status==='completed'?'ready':['failed','cancelled','uncertain'].includes(status)?'failed':'creating',...(record.error?{creationError:record.error}:{}),...(task.fork?{fork:{...task.fork,status:status==='completed'?'completed':['failed','cancelled','uncertain'].includes(status)?'failed':'preparing',...(record.error?{error:record.error}:{})}}:{})};
+  // Older prepared Work tasks omitted the empty-context marker. Only their exact,
+  // completed creation receipt can supply it; absence of a transcript is no proof.
+  const emptyCreation=status==='completed'&&record.kind==='create-work'&&record.targetTaskId===task.id&&
+   task.engine==='codex'&&task.creationState==='ready'&&task.nativeContextEmpty===undefined&&
+   !task.archived&&!task.workspaceRemoved&&!task.cleanupStarted&&!task.fork&&!task.takeover&&!task.contextReset&&
+   !task.acceptedRequestIds?.length&&!task.runState&&!task.lastRunStatus&&!task.takeoverSegments?.length&&
+   !task.retainedNativeIds?.length&&!task.retainedNativeBindings?.length&&
+   record.completedStages.includes('native-binding')&&record.completedStages.includes('cleanup')&&
+   record.receipts?.publication?.digest===publicationDigest(task);
+  return {...task,...(emptyCreation?{nativeContextEmpty:true}:{}),creationState:status==='completed'?'ready':['failed','cancelled','uncertain'].includes(status)?'failed':'creating',...(record.error?{creationError:record.error}:{}),...(task.fork?{fork:{...task.fork,status:status==='completed'?'completed':['failed','cancelled','uncertain'].includes(status)?'failed':'preparing',...(record.error?{error:record.error}:{})}}:{})};
  }
  private serialize<T>(run:()=>Promise<T>):Promise<T>{const next=this.tail.then(run);this.tail=next.catch(()=>undefined);return next;}
  private async save(record:Record){

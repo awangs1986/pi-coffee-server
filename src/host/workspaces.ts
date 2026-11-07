@@ -657,11 +657,15 @@ export class Workspaces {
     if(c.nativeBinding?.id && c.nativeBinding.id!==binding.id)throw new Error("Native Session binding cannot change");
     c.nativeBinding=binding;await this.save();
   },()=>this.conversationLock(id));}
+  private knownEmptyCodex(c:Conversation){return c.engine==='codex'&&!c.archived&&!c.workspaceRemoved&&!c.cleanupStarted&&
+    (c.nativeContextEmpty===true||c.nativeContextEmpty===undefined&&this.preparationProjection?.(c).nativeContextEmpty===true);}
+  async canRecoverEmptyCodex(id:string){const c=await this.lookup(id);return Boolean(c&&this.knownEmptyCodex(c));}
   /** A Codex context-preset change may replace an empty native thread. */
   async rebindCodexThread(id:string,expectedNativeId:string,nativeId:string){return this.mutate(async()=>{
     const c=this.conversation(id);
     if(c.engine!=='codex'||c.nativeBinding?.id!==expectedNativeId||c.archived||c.workspaceRemoved||c.cleanupStarted)throw new Error('Native context changed; refresh before changing settings');
-    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds};
+    const previous={retainedNativeBindings:c.retainedNativeBindings,retiredOperationIds:c.retiredOperationIds,nativeBinding:c.nativeBinding,retainedNativeIds:c.retainedNativeIds,nativeContextEmpty:c.nativeContextEmpty};
+    if(this.knownEmptyCodex(c))c.nativeContextEmpty=true;
     this.retainNativeHistory(c,[{engine:'codex',nativeId:expectedNativeId}]);
     c.nativeBinding={state:'bound',id:nativeId};c.retainedNativeIds=[...new Set([...(c.retainedNativeIds??[]),expectedNativeId])];
     try{await this.save();}catch(error){Object.assign(c,previous);throw error;}
@@ -779,7 +783,7 @@ export class Workspaces {
     if(!c) {
       if(await lstat(cwd).then(()=>true,()=>false))throw new Error('Checkout destination already exists; inspect it before retrying');
       const taskRoot=this.taskRoot ? (preparationExecution.getStore()?join(this.taskRoot,id):await claimTaskRoot(this.taskRoot,id)) : undefined;
-      c={...(preparationExecution.getStore()?{preparationId:preparationExecution.getStore()!.operationId}:{}),...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
+      c={...(preparationExecution.getStore()?{preparationId:preparationExecution.getStore()!.operationId}:{}),...(taskRoot?{taskRoot}:{}),...(p.githubAccountId?{githubAccountId:p.githubAccountId}:{}),...(engine==='codex'?{nativeContextEmpty:true}:{}),id,engine,projectId,workspaceKind:'project',vmId:this.ownerId,cwd,branch:ownedBranch,startBranch:from,archived:false,createdAt:new Date().toISOString(),creationState:'creating'};
       this.state.conversations.push(c);await this.save();
     }
     c.creationState='creating';delete c.creationError;await this.save();

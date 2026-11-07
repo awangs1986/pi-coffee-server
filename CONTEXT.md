@@ -5,7 +5,7 @@ and native Agent CLIs share one Linux VM and OS account. Web and Host run as
 separate user services. [Current architecture](docs/architecture/topology.md)
 defines physical placement, scoped application data and the legacy-owner exception.
 The latest recorded activation is v0.96 / `a6ad4d1` (2026-11-06); source candidate
-v0.97 consolidates architecture maintenance. Deployment identity must come from
+v0.98 fixes Codex Work empty-thread recovery; published v0.97 consolidates architecture maintenance. Deployment identity must come from
 live `/api/release` and receipts, not this dated observation.
 See [the audit](docs/reviews/topology-freshness-20261026.md) and
 [REPOSITORIES.md](REPOSITORIES.md) for source ownership. Earlier dated audits are

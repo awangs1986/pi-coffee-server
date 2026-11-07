@@ -1,3 +1,5 @@
+- Server #161 follow-up, 0.98 candidate: [recover only proven empty Codex Work after preparation cleanup](docs/spec/task-preparation.md#codex-empty-work-binding-098). Production entry regression covers new/legacy creation and protects used or unproven history.
+
 - Current P0/P1 source: [architecture maintenance](docs/spec/architecture-maintenance.md); preserve the framework, consolidate current state/lifecycle rules and reconcile release evidence.
 
 - [Server #162](https://github.com/awangs1986/pi-coffee-server/issues/162): [authorized Takeover](docs/spec/cross-user-reference.md), activated in 0.96; `/cross-user` and its read endpoints are retired.

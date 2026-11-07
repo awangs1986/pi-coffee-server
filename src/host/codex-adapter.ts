@@ -365,6 +365,7 @@ export class CodexSessionFactory implements PiSessionFactory {
     // user's thread in the shared native store. Listing by cwd is not authorization.
     let response: Obj | undefined,recoveringEmpty=false;
     const missingEmpty=async(error:unknown)=>{
+      if(preferences.emptyContext!==true)return false;
       if(!options.requireExisting&&!mapping.has(options.sessionId))return false;
       const message=error instanceof Error?error.message:'';
       if(!/^(?:thread not loaded:|no rollout found for thread id|no such thread\b)/i.test(message)&&message!==`invalid paginated history lineage for ${known}: missing source rollout`)return false;

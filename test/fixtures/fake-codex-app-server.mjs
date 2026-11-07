@@ -294,7 +294,9 @@ rl.on("line", (line) => {
         const onDisk = JSON.parse(readFileSync(store, "utf8"))[thread.id];
         if (onDisk) thread.activeExternally = onDisk.activeExternally;
       }
-      if(!thread)return fail("no such thread");const view=threadView(thread,params.includeTurns===true);
+      if(!thread)return fail("no such thread");
+      if(process.env.FAKE_CODEX_EMPTY_NOT_DURABLE&&!createdHere.has(thread.id)&&!thread.turns.length)return fail('no rollout found for thread id '+thread.id);
+      const view=threadView(thread,params.includeTurns===true);
       if(process.env.FAKE_CODEX_COLD_READ&&existsSync(join(home,'cold-source'))&&readFileSync(join(home,'cold-source'),'utf8')===thread.id)view.status={type:'notLoaded'};
       return reply({thread:view});
     }

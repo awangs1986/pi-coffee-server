@@ -230,15 +230,24 @@ Pi Chat and streaming responsiveness regressions. CLI fixtures do not establish
 real-account model acceptance. Source verification is separate from deployment.
 
 
-Native Codex 0.159.1 does not durably reopen an entirely empty thread. Coffee
-records a Host-owned `nativeContextEmpty` marker only on new Codex Chat or explicit
-clear. For that marker and a native missing-thread/missing-rollout response only,
-Host can recreate empty context through native APIs, carry confirmed settings and
-atomically rebind the same Chat; no historical input is replayed. Prompt admission
-revokes this marker durably before native dispatch. Once any prompt was admitted,
-or for Work/legacy/unknown records, a missing native transcript remains an error.
+Native Codex can discard an entirely empty thread when its process closes
+(observed with 0.159.1 and the reported 0.163.0 deployment). Coffee records a
+Host-owned `nativeContextEmpty` marker on new Codex Chat, new Codex Work and
+explicit Chat clear. Both this authority and the exact native ID's `emptyContext`
+settings proof must agree before a recognized missing-thread/missing-rollout
+response can recreate empty context. Confirmed settings and the same Conversation
+and workspace are retained; no historical input is replayed. Prompt admission
+revokes the Host marker durably before native dispatch. Once any prompt was admitted,
+or for unproven legacy/imported/Fork/recovery records, missing history remains an error.
 Authentication, timeout and arbitrary native errors never trigger this recovery.
 Old IDs are retained, and the cleared title stays available in task metadata.
+
+Server 0.98 also recognizes an older prepared Work that omitted the marker only
+when its completed `create-work` receipt matches the current task/native binding,
+native-binding and cleanup stages completed, and no prompt/run, Fork, takeover,
+reset, recovery or prior binding replacement is recorded. This is a derived read
+projection until an actual rebind saves the marker; listing never launches an
+Agent or migrates unrelated tasks. [Preparation contract](task-preparation.md#codex-empty-work-binding-098).
 
 
 A fresh native thread can report an unmaterialized or missing-source-rollout
