@@ -39,6 +39,18 @@ changes were used for this UI implementation. The earlier one-thread Luna
 continuation experiment is historical adapter/native evidence, not a new browser
 or latest-CLI acceptance claim.
 
+## Complete-check follow-up
+
+The first canonical attempt failed 13 tests: a prohibited legacy-mode word in
+new prose, an existing task-details test matching the new Goal Details button
+by its former generic label, and 11 ordinary-backup startup failures. The worker
+had systemd UMask 0002 and emitted group-writable build artifacts (mode 0664),
+which the startup authority correctly rejected. Use UMask 0077 for the isolated
+verification worker and rebuild; do not weaken the startup guard or alter live
+service permissions. The prose and Goal Details label were corrected. All 18
+tests in the three affected files passed after rebuilding with private modes.
+The reviewed-source complete gate must then run again.
+
 ## Release boundaries
 
 Serial standards/spec/security review found no remaining blocking issue in this scope.

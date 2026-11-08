@@ -98,7 +98,7 @@ Browser-controller and Chromium probes must prove command-vs-prompt separation, 
 
 The current Codex Conversation has a compact, single-row Goal strip immediately
 above the composer. It shows the objective, native status and available usage.
-Long objectives truncate visually with the full text available in the title and
+Long objectives truncate visually with the complete text available in the title and
 Details. Mobile layouts omit usage before reducing the message input. No goal
 means no strip. Ordinary Pi Chat and other engines do not receive a Goal strip.
 
