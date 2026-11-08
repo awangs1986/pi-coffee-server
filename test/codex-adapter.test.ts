@@ -89,6 +89,40 @@ describe("Codex app-server adapter", () => {
     expect(await session.runCommand!('goal','clear')).toEqual({goal:null});
   });
 
+  it('publishes scoped native goal changes and restores the current goal without starting a turn',async()=>{
+    const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'goal-live'});
+    const other=await factory.create({sessionId:'goal-other'}),events=recorder(session),foreign=recorder(other);
+    await session.runCommand!('goal','Keep the project tests passing');
+    expect(events.events.filter(e=>e.type==='goal_updated').at(-1)).toMatchObject({goal:{objective:'Keep the project tests passing',status:'active'}});
+    await session.runCommand!('goal','pause');
+    expect(events.events.filter(e=>e.type==='goal_updated').at(-1)).toMatchObject({goal:{status:'paused'}});
+    expect(foreign.events.some(e=>e.type==='goal_updated')).toBe(false);
+    expect(events.events.some(e=>e.type==='agent_start')).toBe(false);
+    await session.stop();
+    const reopened=await factory.create({sessionId:'goal-live'}),restored=recorder(reopened);
+    await reopened.runCommand!('goal','');
+    expect(restored.events.filter(e=>e.type==='goal_updated').at(-1)).toMatchObject({goal:{status:'paused'}});
+    await reopened.runCommand!('goal','clear');
+    expect(restored.events.filter(e=>e.type==='goal_updated').at(-1)).toMatchObject({goal:null});
+    expect(restored.events.some(e=>e.type==='agent_start')).toBe(false);
+  });
+
+  it('pushes native goal completion independently of the turn boundary',async()=>{
+    const session=await setup().factory().create({sessionId:'goal-native-events'}),events=recorder(session);
+    await session.runCommand!('goal','Complete the fixture');
+    await session.prompt('fixture:complete-goal');
+    const final=await events.until(e=>e.type==='goal_updated'&&(e.goal as any)?.status==='complete');
+    expect(final).toMatchObject({goal:{status:'complete',tokensUsed:30,timeUsedSeconds:2}});
+    expect(events.events.findIndex(settled)).toBeLessThan(events.events.indexOf(final));
+  });
+
+  it('clears the displayed goal if an empty-context setting replaces the native thread',async()=>{
+    const session=await setup().factory().create({sessionId:'goal-rebind'}),events=recorder(session);
+    await session.runCommand!('goal','An unstarted goal');await session.runCommand!('goal','pause');
+    await session.setContextPreset!('maximum');
+    expect(events.events.filter(e=>e.type==='goal_updated').at(-1)).toMatchObject({goal:null});
+  });
+
   it('uses native inline review and persists native planning mode across resume',async()=>{
     const b=setup(),factory=b.factory(),session=await factory.create({sessionId:'native-command-test'}),events=recorder(session);
     await session.setModel('codex','gpt-fake-mini');await session.prompt('/review');await events.until(e=>e.type==='agent_settled');

@@ -1400,6 +1400,10 @@ class HostSocket implements SessionSink {
           if(!this.session||!this.opened)throw new NotOpenError();
           const target=this.session;
           if(this.lifecycleLocks.has(target.id)||await this.workspaces?.isArchived(target.id))throw Error('Conversation is unavailable');
+          if(frame.name==='goal'&&!frame.args.trim()){
+            this.readMetadata(frame,'get_goal',async()=>({v:1,type:'agent_command_result',sessionId:target.id,name:'goal',text:await target.runCommand('goal','')}));
+            break;
+          }
           const text=await target.runCommand(frame.name,frame.args);
           if(this.session===target)this.send({v:1,type:'agent_command_result',sessionId:target.id,name:frame.name,text,...rid(frame)});
           break;

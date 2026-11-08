@@ -93,3 +93,50 @@ Aliases: cwd → pwd; pet → pets; clean → stop.
 ## Acceptance
 
 Browser-controller and Chromium probes must prove command-vs-prompt separation, unsupported draft retention, download behavior and delayed-response fencing. Native fixture tests prove goal provenance, no goal-triggered turn/start, inline review and persisted native Plan mode. Public authenticated HTTP/WS tests prove same-ID cross-account isolation, complete-history export and anonymous/archived rejection. No real model turns or bulk session creation are required. Publication and production activation are separate acceptance states.
+
+## Persistent Goal controls (2026-11-08, Server #163)
+
+The current Codex Conversation has a compact, single-row Goal strip immediately
+above the composer. It shows the objective, native status and available usage.
+Long objectives truncate visually with the full text available in the title and
+Details. Mobile layouts omit usage before reducing the message input. No goal
+means no strip. Ordinary Pi Chat and other engines do not receive a Goal strip.
+
+Native `active` displays an ongoing objective and a Pause button. `paused`,
+`blocked` and `usageLimited` offer Resume. `budgetLimited` and `complete` remain
+visible with their actual status, without a misleading Resume button. Budget
+editing remains a separate unimplemented portion of #163. Pause/Resume use the
+existing explicit user-origin native commands; the native engine owns execution
+and current-turn interruption semantics. Coffee adds no continuation scheduler,
+synthetic prompt or extra native thread.
+
+The adapter projects `thread/goal/updated` and `thread/goal/cleared` into bounded,
+engine-neutral `goal_updated` events. Invalid state becomes unavailable, never
+an assumed active goal. Only objective/status/usage fields reach the Browser;
+native thread IDs are omitted. Events remain visible in both Compact and Detailed
+delivery but are not inserted into the transcript. A single turn settling does
+not complete or hide the persistent goal.
+
+Every successful native open/reconnect performs a nonblocking read of the current
+goal through the authenticated open Session. This auxiliary read uses Host's
+bounded, deduplicated metadata lane, so a slow goal query cannot block user input.
+There is no timer polling or batch scan. Live updates supersede older in-flight
+snapshots; replayed goal events do not override the fresh current-state read.
+Selection and identity changes clear state immediately. Late results cannot paint
+another Conversation/account, and reconnection never automatically resumes a goal.
+An empty-context native binding replacement also clears the old displayed goal;
+no automation is copied to a replacement native thread.
+
+Buttons wait for native acknowledgement/notification. While disconnected,
+compacting, switching Agent or awaiting a command result they cannot mutate state.
+An uncertain timeout/error disables Goal mutations and exposes a Refresh action;
+Refresh reads state only and never replays the mutation. Details use the existing
+command-result dialog. The strip is a current-state view, not durable Browser
+authority or proof that a model is presently producing tokens.
+
+Reference: Codex `rust-v0.167.0`, commit
+`086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a`,
+`codex-rs/tui/src/chatwidget/goal_status.rs`, `goal_menu.rs`,
+`codex-rs/tui/src/bottom_pane/footer.rs`, and App Server `ThreadGoal*` schemas.
+This source reference does not assert that CLI 0.167.0 has been installed or
+activated. See [review and acceptance](../reviews/codex-goal-controls-20261108.md).

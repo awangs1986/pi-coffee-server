@@ -1,3 +1,5 @@
+> Server #163: [persistent Codex Goal status and Pause/Resume](docs/spec/codex-native-commands.md#persistent-goal-controls-2026-11-08-server-163) are implemented in the current source candidate; [review/acceptance](docs/reviews/codex-goal-controls-20261108.md). CLI upgrade, budget controls and production activation remain separate.
+
 - Server #161 follow-up, 0.98 candidate: [recover only proven empty Codex Work after preparation cleanup](docs/spec/task-preparation.md#codex-empty-work-binding-098). Production entry regression covers new/legacy creation and protects used or unproven history.
 
 - Current P0/P1 source: [architecture maintenance](docs/spec/architecture-maintenance.md); preserve the framework, consolidate current state/lifecycle rules and reconcile release evidence.

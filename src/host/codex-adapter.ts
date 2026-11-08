@@ -5,6 +5,7 @@ import {codexStore} from './codex-recovery.js';
 import {homedir} from 'node:os';
 import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
+import {codexGoal} from './codex/goal.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
@@ -697,6 +698,8 @@ class CodexSession implements PiSession {
   private sessionName?: string;
   private activeTurnId?: string;
   private streaming = false;
+  private goal?:import('../shared/protocol.js').GoalState|null;
+  private goalRevision=0;
   private messageCount = 0;
   private nativeInputSeen=false;
   private tokenUsage?: Obj;
@@ -1016,7 +1019,7 @@ class CodexSession implements PiSession {
     }else{response=await this.server.request('thread/start',common) as Obj;}
     const thread=response.thread as Obj;
     const id=String(thread.id);
-    if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;
+    if(id!==oldId){await this.settings.rebind(id);await this.server.request('thread/unsubscribe',{threadId:oldId});this.unsubscribe();this.threadId=id;this.observeGoal(null);
       this.settings.freshEmpty=history.entries.length===0;
       this.unsubscribe=this.server.subscribe(id,{notification:(method,params)=>this.onNotification(method,params),request:request=>this.onServerRequest(request),exit:()=>this.onServerExit()});}
     await this.settings.savePreferences(id,{planMode:this.planMode,mishuRole:this.settings.mishuRoleApplied===true,preset,speed:this.speed,model:this.model,reasoningEffort:this.effort,emptyContext:Boolean(this.settings.freshEmpty&&!this.nativeInputSeen)});this.preset=preset;this.tokenUsage=undefined;
@@ -1034,7 +1037,19 @@ class CodexSession implements PiSession {
       if(args!=='status')await this.updatePreferences({planMode:args!=='off'});
       return {mode:this.planMode?'plan':'default',appliesTo:'next turn',persisted:true};
     }
-    return codexNativeCommand(this.server,this.threadId,this.cwd,name,args);
+    const revision=this.goalRevision;
+    const result=await codexNativeCommand(this.server,this.threadId,this.cwd,name,args);
+    if(name!=='goal')return result;
+    // A notification received during this request is newer than its snapshot.
+    if(revision===this.goalRevision)this.observeGoal((result as Obj).goal);
+    if(this.goal===undefined)throw Error('Native goal state is unavailable');
+    return {goal:this.goal};
+  }
+
+  private observeGoal(value:unknown){
+    const goal=codexGoal(value);
+    this.goalRevision++;this.goal=goal;
+    this.emit({type:'goal_updated',goal:goal as unknown as Json});
   }
 
   async getCommands(): Promise<CommandInfo[]> {
@@ -1119,6 +1134,13 @@ class CodexSession implements PiSession {
 
   private onNotification(method: string, params: Obj): void {
     switch (method) {
+      case 'thread/goal/updated':
+      case 'thread/goal/cleared': {
+        if(params.threadId!==this.threadId)return;
+        try{this.observeGoal(method==='thread/goal/cleared'?null:params.goal);}
+        catch{this.goalRevision++;this.goal=undefined;this.emit({type:'goal_unavailable'});}
+        return;
+      }
       case 'thread/settings/updated': {
         const mode=(params.threadSettings as Obj|undefined)?.collaborationMode as Obj|undefined;
         const text=(mode?.settings as Obj|undefined)?.developer_instructions;

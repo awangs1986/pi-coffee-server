@@ -1527,7 +1527,34 @@ it('dispatches Codex native commands without sending prompts and keeps unsupport
  ws.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{commands:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(20);
  const input=document.querySelector<HTMLTextAreaElement>('#prompt')!,form=document.querySelector('#composer')!;
  input.value='/goal Finish this task';form.dispatchEvent(new Event('submit',{cancelable:true}));
- expect(app.frames.filter(f=>f.type==='agent_command')).toHaveLength(1);expect(app.frames.at(-1)).toMatchObject({name:'goal',args:'Finish this task'});
+ expect(app.frames.filter(f=>f.type==='agent_command'&&f.args==='Finish this task')).toHaveLength(1);expect(app.frames.at(-1)).toMatchObject({name:'goal',args:'Finish this task'});
  expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
  input.value='/logout';form.dispatchEvent(new Event('submit',{cancelable:true}));expect(input.value).toBe('/logout');expect(app.frames.some(f=>f.type==='prompt')).toBe(false);
+});
+
+it('keeps the persistent goal visible between turns and pauses/resumes only on native confirmation',async()=>{
+ const app=await setup();chooseWork();const engine=document.querySelector<HTMLSelectElement>('#task-engine')!;engine.value='codex';engine.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
+ const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
+ ws.receive({type:'opened',engine:'codex',sessionId:id,state:{},capabilities:{commands:true}});ws.receive({type:'history',sessionId:id,entries:[]});await vi.advanceTimersByTimeAsync(20);
+ const read=app.frames.find(f=>f.type==='agent_command'&&f.name==='goal'&&f.args==='');expect(read).toBeTruthy();
+ const goal={objective:'Keep tests passing <img src=x>',status:'active',tokenBudget:50000,tokensUsed:1200};
+ const emit=(value:any)=>ws.receive({type:'event',sessionId:id,event:value});
+ emit({type:'goal_updated',goal});
+ ws.receive({type:'agent_command_result',sessionId:id,requestId:read.requestId,name:'goal',text:JSON.stringify({goal:null})});
+ const bar=()=>document.querySelector('#goal-status')!;
+ expect(bar().textContent).toContain('持续目标');expect(bar().textContent).toContain('进行中');expect(bar().querySelector('img')).toBeNull();
+ emit({type:'agent_start'});emit({type:'agent_settled'});expect(bar().textContent).toContain('进行中');
+ const button=()=>document.querySelector<HTMLButtonElement>('#goal-toggle')!;
+ button().click();const pause=app.frames.filter(f=>f.type==='agent_command'&&f.args==='pause').at(-1);expect(pause).toBeTruthy();expect(button().disabled).toBe(true);expect(bar().textContent).toContain('进行中');
+ ws.receive({type:'agent_command_result',sessionId:id,requestId:pause.requestId,name:'goal',text:JSON.stringify({goal:{...goal,status:'paused'}})});
+ expect(bar().textContent).toContain('已暂停');expect(button().textContent).toBe('继续');
+ button().click();const resume=app.frames.filter(f=>f.type==='agent_command'&&f.args==='resume').at(-1);expect(resume).toBeTruthy();
+ emit({type:'goal_updated',goal:{...goal,status:'complete'}});
+ ws.receive({type:'agent_command_result',sessionId:id,requestId:resume.requestId,name:'goal',text:JSON.stringify({goal})});
+ expect(bar().textContent).toContain('已完成');expect(button().hidden).toBe(true);
+ expect(app.frames.filter(f=>f.type==='prompt')).toHaveLength(0);
+ document.querySelector<HTMLButtonElement>('#new-task')!.click();await vi.advanceTimersByTimeAsync(10);
+ expect(bar().hidden).toBe(true);
+ ws.receive({type:'event',sessionId:id,event:{type:'goal_updated',goal}});expect(bar().hidden).toBe(true);
 });

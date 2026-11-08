@@ -2,6 +2,7 @@ import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} 
 import {mountOptionalSpeech} from './speech-bootstrap.js';
 import {initBackupControls} from './backup.js';
 import {CODEX_COMMANDS,parseCodexCommand} from './codex-commands.js';
+import {initGoalControls} from './goal-controls.js';
 import {recentHistoryPanel,addHistoryDownload} from './recent-history.js';
 import {isProcessEvent,isTranscriptEvent} from './display-events.js';
 import {createSocketHeartbeat} from './socket-heartbeat.js';
@@ -133,6 +134,7 @@ const conversationDisplay=new ConversationDisplay({onState:state=>{completionInd
   renderHistory(frame);restoreDisplayAnchor();if(scroll!==null)ui.scroller.scrollTop=scroll;
 }});
 function selectConversationView(id){
+  goalControls.reset();
   clearTimeout(displayTimer);displayRequest=null;displayAnchor=null;
   closeNativeCommandResult?.();completionProof=null;completionIndexState=null;openCompletionKey=null;openedEventCursor=0;receivedEventCursor=0;liveCompletionStart=null;liveCompletionSettled=false;
   clearTimeout(syncHintTimer);syncHintTimer=null;
@@ -1535,6 +1537,7 @@ function setStreaming(active) {
   renderSessionList();
 }
 function refreshComposer() {
+  goalControls.availability(opened&&connected&&engine==='codex'&&!compacting&&!takeoverBusy());
   mishuControls?.updateAvailability();
   const clearChat=currentTask();
   $('#sp-chat-actions').classList.toggle('hidden',!clearChatContextAvailable||clearChat?.workspaceKind!=='chat'||!contextResetEngines.includes(clearChat?.engine||'pi')||Boolean(clearChat?.archived));
@@ -1591,7 +1594,7 @@ async function whoAmI(epoch, signal) {
     const previousUser=currentUser;
     backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
-    if(previousUser!==currentUser){completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1610,6 +1613,7 @@ async function whoAmI(epoch, signal) {
   }
 }
 function revokeCachedIdentity(){
+  goalControls.reset();
   clearConnectionDeadline();
   conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
@@ -1795,6 +1799,7 @@ function resumeLiveSubscription() {
   if (activeId && !takeoverBusy()) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
 }
 function disconnectExecution() {
+  goalControls.connection(false);
   clearConnectionDeadline();
   abandonPendingSettings();clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
   connectionEpoch++;
@@ -1846,6 +1851,7 @@ function connectSocket() {
 }
 function socketDisconnected(ws,event) {
     if (socket !== ws) return;
+    goalControls.connection(false);
     clearConnectionDeadline();
     clearHeartbeat();clearModelsSyncTimer();
     abandonRenames();unconfirmedUiAnswers();
@@ -1983,6 +1989,8 @@ function handleFrame(frame, ws) {
       if(draftModel && ['pi','codex','claude','cursor','grok'].includes(engine)){const chosen=draftModel;draftModel=null;chooseModel(chosen.provider,chosen.id);}
       if(!supports('models'))thinkingToApply=null;
       afterOpened();
+      if(engine==='codex'&&supports('commands'))goalControls.opened(activeId);else goalControls.reset();
+      refreshComposer();
       return;
     case 'sync_changed':
       if(frame.sessionId===activeId)requestConversationSync();return;
@@ -2053,6 +2061,7 @@ function handleFrame(frame, ws) {
       renderSlash();
       return;
     case 'agent_command_result': {
+      if(goalControls.receive(frame))return;
       const pending=nativeCommandRequests.get(frame.requestId);if(!pending)return;
       nativeCommandRequests.delete(frame.requestId);clearTimeout(pending.timer);
       if(pending.id!==activeId||pending.user!==currentUser||pending.epoch!==taskSelectionEpoch||frame.sessionId!==activeId)return;
@@ -2118,6 +2127,7 @@ function handleFrame(frame, ws) {
       maybeReadCompletion();scheduleRecentThread();
       return;
     case 'error':
+      if(goalControls.receive(frame))return;
       if(agentSaveBusy&&frame.requestId&&[modelPending,thinkingPending,contextPending,speedPending?.id].includes(frame.requestId))agentSaveFailure=frame.message;
       if(nativeCommandRequests.has(frame.requestId)){const pending=nativeCommandRequests.get(frame.requestId);nativeCommandRequests.delete(frame.requestId);clearTimeout(pending.timer);if(pending.id===activeId&&pending.user===currentUser&&pending.epoch===taskSelectionEpoch)toast(frame.message);return;}
 
@@ -2160,6 +2170,7 @@ function handleFrame(frame, ws) {
 
 function handleEvent(event,{replayed=false}={}) {
   const type = event.type;
+  if(type==='goal_updated'||type==='goal_unavailable'){if(!replayed)goalControls.event(event);return;}
   if(type==='display_boundary'){currentAssistant=undefined;return;}
   if(type==='display_notice'){if(displayMode==='detailed')pushNote(event.text,Boolean(event.error));return;}
 
@@ -2632,6 +2643,7 @@ function chooseThinking(level){
 ui.thinking.addEventListener('change',()=>chooseThinking(ui.thinking.value));
 
 const nativeCommandRequests=new Map();
+const goalControls=initGoalControls({root:$('#goal-status'),send,requestId,details:text=>showNativeCommandResult('goal',text)});
 function showNativeCommandResult(name,text){
  closeNativeCommandResult?.();
  try{const value=JSON.parse(text);if(name==='goal'){const goal=value.goal;text=goal?`目标：${goal.objective}\n状态：${({active:'进行中',paused:'已暂停',blocked:'遇到阻碍',usageLimited:'用量受限',budgetLimited:'预算受限',complete:'已完成'})[goal.status]||goal.status}${typeof goal.tokensUsed==='number'?'\n已用 Token：'+goal.tokensUsed:''}${goal.tokenBudget!=null?'\nToken 预算：'+goal.tokenBudget:''}\n\n修改：/goal edit 新目标\n暂停：/goal pause\n继续：/goal resume\n清除：/goal clear`:'当前没有设置目标。输入 /goal 目标内容 即可设置。';}else if(name==='plan')text=value.mode==='plan'?'原生规划模式已开启，后续消息将使用 Plan mode；重启后保留。\n输入 /plan off 返回默认模式。':'当前使用默认模式。输入 /plan 开启原生规划模式。';else if(name==='pwd')text=value.cwd;}catch{}

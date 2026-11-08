@@ -1213,3 +1213,13 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .speech-settings select { display:block;width:100%;max-width:100%;margin-top:.35rem; }
 .speech-settings button { margin:.25rem .4rem .25rem 0; }
 .speech-settings p { font-size:.85rem;line-height:1.45; }
+
+/* Persistent native objective; independent of per-turn activity. */
+.goal-status { display:flex;align-items:center;gap:6px;min-width:0;padding:3px 8px;font-size:12px;line-height:1.5; }
+.goal-status[hidden] { display:none; }
+.goal-label { flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.goal-status[data-status="active"] .goal-label { color:var(--accent); }
+.goal-objective { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted); }
+.goal-usage { white-space:nowrap;color:var(--muted); }
+.goal-status button { flex-shrink:0; }
+@media(max-width:600px) { .goal-usage { display:none; } .goal-status { gap:4px;padding-inline:4px; } }

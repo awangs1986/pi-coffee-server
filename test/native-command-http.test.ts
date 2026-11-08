@@ -1,6 +1,20 @@
 import {it,expect,vi} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {once} from 'node:events';import {WebSocket} from 'ws';
 import {HostServer} from '../src/host/server.js';import {Workspaces} from '../src/host/workspaces.js';
+it('does not let a delayed goal read block messages on the same authenticated socket',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'goal-read-'));const workspaces=new Workspaces(join(root,'projects'));await workspaces.createChatConversation('task','codex');
+ let finish!:(value:unknown)=>void;const reading=new Promise(resolve=>{finish=resolve;});let prompts=0;
+ const factory={list:async()=>[],create:async()=>({getState:async()=>({isStreaming:false,messageCount:0}),getHistory:async()=>({entries:[],leafId:null}),runCommand:async()=>reading,prompt:async()=>{prompts++;},onEvent:()=>()=>{},stop:async()=>{}})};
+ const host=new HostServer({port:0,token:'fixture',workspaces,factory:factory as any});await host.start();
+ const ws=new WebSocket(`ws://127.0.0.1:${host.address().port}/host`,{headers:{authorization:'Bearer fixture'}}),frames:any[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));
+ try{
+  await once(ws,'open');ws.send(JSON.stringify({v:1,type:'open',nativeProtocol:1,sessionId:'task'}));await vi.waitFor(()=>expect(frames.some(f=>f.type==='opened')).toBe(true));
+  ws.send(JSON.stringify({v:1,type:'agent_command',requestId:'read-goal',name:'goal',args:''}));
+  ws.send(JSON.stringify({v:1,type:'prompt',requestId:'input',text:'Continue working'}));
+  await vi.waitFor(()=>expect(prompts).toBe(1),{timeout:500});
+  finish({goal:null});await vi.waitFor(()=>expect(frames).toContainEqual(expect.objectContaining({type:'agent_command_result',requestId:'read-goal',sessionId:'task'})));
+ }finally{finish({goal:null});ws.close();await host.close();await rm(root,{recursive:true,force:true});}
+});
 it('scopes native commands and complete exports to the opened account task',async()=>{
  const root=await mkdtemp(join(tmpdir(),'native-command-'));const stores=new Map<string,Workspaces>();const calls:any[]=[];
  const host=new HostServer({port:0,token:'secret',requireUser:true,factory:{} as any,scopeForUser:async user=>{

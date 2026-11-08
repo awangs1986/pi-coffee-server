@@ -7,6 +7,7 @@ import {chromium} from 'playwright';
 import {once} from 'node:events';
 const tasks=['a','b'].map(id=>({id,engine:'codex',workspaceKind:'chat',name:id,cwd:'/fixture/'+id,creationState:'ready',createdAt:new Date().toISOString()})),creates=[],prompts=[],errors=[],evidence=[],commands=[],compactions=[];let delayed;
 const models=[{provider:'codex',id:'gpt-6.1-sol'},{provider:'codex',id:'gpt-6-luna'}];
+const goals=new Map();let activeSocket;
 const reply=(res,value)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));};
 const server=createServer(async(req,res)=>{
  const path=new URL(req.url,'http://fixture').pathname;
@@ -21,26 +22,36 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/conversations/a/native-export'){res.writeHead(200,{'content-type':'text/markdown'});return res.end('# Full export\nOldest message\nLatest message');}
  if(path.startsWith('/api/'))return reply(res,{});
- const file=path==='/'?'index.html':path.slice(1);
+ const file=path==='/'||/^\/conversations\/[\w-]+$/.test(path)?'index.html':path.slice(1);
  if(!/^[\w.-]+$/.test(file)){res.writeHead(404);return res.end();}
  try{const content=await readFile(join(resolve('public'),file));res.writeHead(200,{'content-type':{'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'}[extname(file)]||'application/octet-stream'});res.end(content);}catch{res.writeHead(404);res.end();}
 });
 const wss=new WebSocketServer({server,path:'/ws'});
 wss.on('connection',socket=>{
+ activeSocket=socket;
  const send=frame=>socket.send(JSON.stringify({v:1,...frame}));
  const values=()=>({models,current:{provider:'codex',id:socket.model||'gpt-6.1-sol'},thinkingLevel:'medium',thinkingLevels:['medium'],context:{preset:'272k'}});
  socket.on('message',raw=>{
   const frame=JSON.parse(String(raw));
   if(frame.type==='list_sessions')send({type:'sessions',sessions:tasks});
   if(frame.type==='get_model_catalog')send({type:'model_catalog',requestId:frame.requestId,engine:'codex',...values()});
-  if(frame.type==='open'){socket.task=frame.sessionId;send({type:'opened',engine:'codex',sessionId:frame.sessionId,state:{},capabilities:{models:true,stats:true,stop:true,followUp:true,rename:true,compact:true}});send({type:'history',sessionId:frame.sessionId,entries:[]});}
+  if(frame.type==='open'){socket.task=frame.sessionId;send({type:'opened',engine:'codex',sessionId:frame.sessionId,state:{},capabilities:{commands:true,models:true,stats:true,stop:true,followUp:true,rename:true,compact:true}});send({type:'history',sessionId:frame.sessionId,entries:[]});}
   if(frame.type==='get_stats')send({type:'stats',requestId:frame.requestId,sessionId:socket.task,stats:{contextUsage:{tokens:1000,contextWindow:272000},tokens:{input:0,output:0,total:0}}});
   if(frame.type==='get_models')send({type:'models',requestId:frame.requestId,sessionId:socket.task,...values()});
   if(frame.type==='set_model'){socket.model=frame.id;send({type:'ack',operation:frame.type,requestId:frame.requestId});}
   if(frame.type==='set_thinking')send({type:'ack',operation:frame.type,requestId:frame.requestId});
   if(frame.type==='compact'){compactions.push(frame);send({type:'event',sessionId:socket.task,event:{type:'context_operation',active:true,mode:frame.mode}});}
   if(frame.type==='abort')send({type:'event',sessionId:socket.task,event:{type:'context_operation',active:false,success:false,mode:'handoff',message:'Cancelled'}});
-  if(frame.type==='agent_command'){commands.push(frame);const answer=()=>send({type:'agent_command_result',requestId:frame.requestId,sessionId:socket.task,name:frame.name,text:JSON.stringify({goal:frame.args})});if(frame.args==='delayed')delayed=answer;else answer();}
+  if(frame.type==='agent_command'){
+   commands.push(frame);const task=socket.task;
+   const answer=()=>{
+    if(frame.args==='pause'||frame.args==='resume')goals.set(task,{...goals.get(task),status:frame.args==='pause'?'paused':'active'});
+    else if(frame.args)goals.set(task,{objective:frame.args,status:'active',tokensUsed:1200,tokenBudget:50000});
+    const goal=goals.get(task)||null;
+    if(frame.args)send({type:'event',sessionId:task,event:{type:'goal_updated',goal}});
+    send({type:'agent_command_result',requestId:frame.requestId,sessionId:task,name:frame.name,text:JSON.stringify({goal})});
+   };if(frame.args==='delayed')delayed=answer;else answer();
+  }
   if(frame.type==='prompt'){prompts.push({model:socket.model,...frame});send({type:'ack',operation:'prompt',requestId:frame.requestId});server.emit('fixture-prompt');}
  });
 });
@@ -51,7 +62,18 @@ try{
  const page=await browser.newPage();page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(6000);
  await page.goto('http://127.0.0.1:'+server.address().port);await page.locator('[data-session-id="a"] .session-main').click();
  await page.locator('#prompt').fill('/goal Finish tests');await page.locator('#send').click();await page.locator('#native-command-result h2').filter({hasText:'Codex /goal'}).waitFor();
- if(commands.length!==1||prompts.length)throw Error('Goal became a prompt');await page.locator('#native-command-result button').click();
+ if(commands.filter(c=>c.args).length!==1||prompts.length)throw Error('Goal became a prompt');await page.locator('#native-command-result button').click();
+ await page.locator('#goal-state').filter({hasText:'进行中'}).waitFor();
+ activeSocket.send(JSON.stringify({v:1,type:'event',sessionId:'a',event:{type:'agent_settled'}}));
+ if(await page.locator('#goal-status').isHidden())throw Error('A turn boundary hid the persistent goal');
+ await page.getByRole('button',{name:'暂停',exact:true}).click();await page.locator('#goal-state').filter({hasText:'已暂停'}).waitFor();
+ await page.getByRole('button',{name:'继续',exact:true}).click();await page.locator('#goal-state').filter({hasText:'进行中'}).waitFor();
+ await page.reload();await page.locator('#goal-state').filter({hasText:'进行中'}).waitFor();
+ await page.setViewportSize({width:390,height:844});
+ const layout=await page.locator('#goal-status').evaluate(node=>({width:node.getBoundingClientRect().width,height:node.getBoundingClientRect().height,scroll:node.scrollWidth,client:node.clientWidth}));
+ if(layout.scroll>layout.client+1||layout.height>60)throw Error('Goal strip overflowed mobile composer');
+ await page.setViewportSize({width:1280,height:800});
+ evidence.push({persistentGoal:true,pauseResumeWithoutPrompt:true,goalRestoredAfterReload:true,mobileGoalLayout:layout});
  await page.locator('#prompt').fill('/logout');await page.locator('#send').click();if(await page.locator('#prompt').inputValue()!=='/logout'||prompts.length)throw Error('Unsupported command lost draft or sent prompt');
  await page.locator('#prompt').fill('/export');const downloading=page.waitForEvent('download');await page.locator('#send').click();const download=await downloading;const exported=await readFile(await download.path(),'utf8');if(!exported.includes('Oldest message'))throw Error('Export was not downloaded');
  await page.locator('#prompt').fill('/goal delayed');await page.locator('#send').click();

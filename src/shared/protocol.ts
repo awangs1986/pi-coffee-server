@@ -40,6 +40,15 @@ export interface SessionState {
   sessionName?: string;
 }
 
+/** Native persistent objective, independent of a single turn's streaming state. */
+export interface GoalState {
+  objective:string;
+  status:'active'|'paused'|'blocked'|'usageLimited'|'budgetLimited'|'complete';
+  tokensUsed?:number;
+  tokenBudget?:number|null;
+  timeUsedSeconds?:number;
+}
+
 /**
  * One row of the conversation list. Derived on the Host from Pi's native
  * session store in the User VM; the browser never persists it.

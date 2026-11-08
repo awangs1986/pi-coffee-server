@@ -161,6 +161,13 @@
         </button>
 
         <div class="composer-wrap">
+          <div class="goal-status" id="goal-status" hidden aria-label="持续目标">
+            <span class="goal-label">持续目标 · <span id="goal-state" role="status" aria-live="polite"></span></span>
+            <span id="goal-objective" class="goal-objective"></span><span id="goal-usage" class="goal-usage"></span>
+            <button id="goal-toggle" class="context-action" type="button" hidden>暂停</button>
+            <button id="goal-refresh" class="context-action" type="button" hidden>刷新</button>
+            <button id="goal-details" class="context-action" type="button">详情</button>
+          </div>
           <div class="widgets hidden" id="widgets"></div>
           <div class="queue hidden" id="queue"></div>
           <div class="slash hidden" id="slash" role="listbox"></div>

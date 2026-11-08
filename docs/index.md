@@ -17,6 +17,8 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
+- Codex persistent Goal controls: [current contract](spec/codex-native-commands.md#persistent-goal-controls-2026-11-08-server-163), [upstream source and acceptance](reviews/codex-goal-controls-20261108.md). Source candidate; CLI upgrade and budget editing remain separate under [Server #163](https://github.com/awangs1986/pi-coffee-server/issues/163).
+
 - Personal backup PB-2.1: [single operator, Pi/Codex and Gitea backup, one administrator recovery key and CLI recovery](spec/task-backup.md). v0.58 source candidate implements owner workflows and passes isolated Pi/Codex/Gitea emergency recovery; cold Pi history auditing includes the current SDK 1.4, and controller lock publication survives initialization crashes. [Current evidence and deployment boundaries](reviews/personal-backup-pb21.md); production activation remains separate. Existing PI Coffee account boundaries remain; emergency recovery covers all enrolled accounts.
 
 - Personal source candidate: [direct Host configuration and one-confirmation CLI recovery](deployment/personal-backup.md). Pi/Codex account collection, independent daily jobs, Gitea login restoration and offline CLI recovery are implemented; exact-source final evidence is recorded on #144–#150 and the delivery PR.

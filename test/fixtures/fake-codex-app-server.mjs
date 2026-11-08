@@ -217,6 +217,10 @@ async function runTurn(thread, input, options) {
     notify("account/rateLimits/updated", { rateLimits });
   }
   notify("turn/completed", { threadId: thread.id, turn: { ...turn, items: [] } });
+  if(text==='fixture:complete-goal'&&thread.goal){
+    thread.goal={...thread.goal,status:'complete',tokensUsed:30,timeUsedSeconds:2};save(thread.id);
+    notify('thread/goal/updated',{threadId:thread.id,turnId,goal:thread.goal});
+  }
 }
 
 let experimentalApi = false;
@@ -330,9 +334,10 @@ rl.on("line", (line) => {
     case "thread/goal/get": return reply({goal:threads[params.threadId].goal??null});
     case "thread/goal/set": {
       if(params.origin!=='user')return fail('explicit user provenance required');
-      const t=threads[params.threadId];t.goal={...(t.goal??{status:'active'}),...(params.objective?{objective:params.objective}:{}),...(params.status?{status:params.status}:{})};save(params.threadId);return reply({goal:t.goal});
+      const t=threads[params.threadId];t.goal={...(t.goal??{status:'active'}),...(params.objective?{objective:params.objective}:{}),...(params.status?{status:params.status}:{})};save(params.threadId);
+      notify('thread/goal/updated',{threadId:params.threadId,turnId:null,goal:t.goal});return reply({goal:t.goal});
     }
-    case "thread/goal/clear": {if(params.origin!=='user')return fail('explicit user provenance required');delete threads[params.threadId].goal;save(params.threadId);return reply({});}
+    case "thread/goal/clear": {if(params.origin!=='user')return fail('explicit user provenance required');delete threads[params.threadId].goal;save(params.threadId);notify('thread/goal/cleared',{threadId:params.threadId});return reply({});}
     case "thread/compact/start": {
       reply({});
       const item = { type: "contextCompaction", id: uid("item") };
