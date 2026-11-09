@@ -99,6 +99,11 @@ async function runTurn(thread, input, options) {
   notify("item/started", { item: user, threadId: thread.id, turnId, startedAtMs: Date.now() });
   notify("item/completed", { item: user, threadId: thread.id, turnId, completedAtMs: Date.now() });
 
+  if(text==='fixture:generate-image'){
+    const image={type:'imageGeneration',id:uid('image'),status:'completed',savedPath:join(home,'generated_images',thread.id,'exec-live-picture.png'),result:'PRIVATE_BASE64_IMAGE_BODY',failure:null};
+    turn.items.push(image);save(thread.id);notify('item/completed',{threadId:thread.id,turnId,item:image});
+  }
+
   if(text.startsWith('mishu-call:')||text.startsWith('mishu-hold:')){
     const config=settings.get(thread.id)?.config?.mcp_servers?.coffee_mishu;
     const input=JSON.parse(text.slice(text.indexOf(':')+1));

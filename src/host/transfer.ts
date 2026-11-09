@@ -73,6 +73,7 @@ export class TransferServer {
   private readonly onEvent?: (scope: string, event: JsonValue) => void;
   private readonly http: HttpServer;
   private readonly workspaceScopes = new Map<string,Workspaces>();
+  private readonly artifactResolvers=new Map<string,(path:string)=>Promise<string|undefined>>();
   private workspaceFor(scope:string):Workspaces|undefined{return this.workspaceScopes.get(scope) ?? this.workspaces;}
   private taskFor(scope:string):string{return this.inboxScopes.get(scope) ?? scope;}
   private readonly tokenExpiry = new Map<string, number>();
@@ -145,9 +146,10 @@ export class TransferServer {
    * Host runs. `root` pins the scope to one user's directory in the shared
    * User VM: its inbox lives under it and downloads cannot leave it.
    */
-  issueToken(scope: string, root?: string, inboxScope = scope, workspaces?:Workspaces): string {
+  issueToken(scope: string, root?: string, inboxScope = scope, workspaces?:Workspaces,resolveArtifact?:(path:string)=>Promise<string|undefined>): string {
     this.tokenExpiry.set(scope,Date.now()+45000);
     if(workspaces)this.workspaceScopes.set(scope,workspaces);
+    if(resolveArtifact)this.artifactResolvers.set(scope,resolveArtifact);
 
     const existing = this.tokens.get(scope);
     if (existing) {
@@ -161,9 +163,10 @@ export class TransferServer {
     return token;
   }
 
-  revokeAll(): void { this.tokens.clear(); this.tokenExpiry.clear(); this.uploads.clear(); this.roots.clear();this.inboxScopes.clear();this.workspaceScopes.clear(); }
+  revokeAll(): void { this.tokens.clear(); this.tokenExpiry.clear(); this.uploads.clear(); this.roots.clear();this.inboxScopes.clear();this.workspaceScopes.clear();this.artifactResolvers.clear(); }
 
   async revoke(scope:string):Promise<void> {
+    this.artifactResolvers.delete(scope);
     this.tokens.delete(scope);this.tokenExpiry.delete(scope);
     for(const req of this.activeRequests.get(scope) ?? [])req.destroy();
     this.activeRequests.delete(scope);
@@ -174,6 +177,7 @@ export class TransferServer {
   }
   async quiesce(scope:string):Promise<void> {
     if([...this.uploads.values()].some(s=>s.scope===scope && [...s.files.values()].some(f=>f.state==='uploading')))throw new Error('Wait for active uploads before permanent cleanup');
+    this.artifactResolvers.delete(scope);
     this.tokens.delete(scope);this.tokenExpiry.delete(scope);
     for(const [id,s] of this.uploads)if(s.scope===scope)this.uploads.delete(id);
   }
@@ -190,7 +194,12 @@ export class TransferServer {
       if(!full.startsWith(base+sep) || base!==resolve(this.rootOf(scope),this.inboxFor(scope)))throw new Error('Outside legacy inbox scope');
       return full;
     }
-    return this.workspaceFor(scope)!.file(this.taskFor(scope),path);
+    try{return await this.workspaceFor(scope)!.file(this.taskFor(scope),path);}
+    catch(error){
+      const imported=await this.artifactResolvers.get(scope)?.(path);
+      if(!imported||!this.tokens.has(scope)||(this.tokenExpiry.get(scope)??0)<=Date.now())throw error;
+      return this.workspaceFor(scope)!.file(this.taskFor(scope),imported);
+    }
   }
   private async baseFor(scope:string):Promise<string> {
     if(!this.workspaceFor(scope))return this.rootOf(scope);
@@ -248,7 +257,7 @@ export class TransferServer {
         const path=url.searchParams.get("path") ?? "";
         if(route==="artifacts") {sendJson(response,200,{artifacts:await this.workspaceFor(scope)!.artifacts(this.taskFor(scope))} as unknown as JsonValue);return;}
         if(route==="tree") {sendJson(response,200,await this.workspaceFor(scope)!.tree(this.taskFor(scope),path) as unknown as JsonValue);return;}
-        const full=await this.workspaceFile(scope,path);if(isCredentialFileName(basename(path)) || isCredentialFileName(basename(full)))throw new Error("Credential file");const info=await stat(full);
+        const full=await this.workspaceFile(scope,path);if(this.scopeOf(url)!==scope||isCredentialFileName(basename(path)) || isCredentialFileName(basename(full)))throw new Error("Credential file or expired authorization");const info=await stat(full);
         if(!info.isFile())throw new Error("Not a file");
         if(route==="preview" && info.size>10*1024*1024) {sendJson(response,413,{message:"Preview exceeds 10 MiB; download instead"});return;}
         const mime=mimeFor(full);const inline=route==="preview" && /^(image\/|text\/plain|text\/markdown|application\/pdf)/.test(mime);

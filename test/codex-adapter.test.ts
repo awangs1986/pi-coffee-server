@@ -77,6 +77,27 @@ const text = (events: Event[]) => events
 describe("Codex app-server adapter", () => {
   const benches: Bench[] = [];
   const setup = () => { const b = bench(); benches.push(b); return b; };
+  it('retains a completed native image generation as a deliverable reply without base64',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'image-result'});
+    const path=join(b.codexHome,'generated_images','thread-1','exec-image.png');
+    const file=join(b.codexHome,'fake-threads.json'),store=JSON.parse(readFileSync(file,'utf8'));
+    const thread=Object.values(store)[0] as any;
+    thread.turns=[{id:'image-turn',status:'completed',items:[{id:'image-output',type:'imageGeneration',status:'completed',savedPath:path,result:'PRIVATE_BASE64_IMAGE_BODY',failure:null}]}];
+    writeFileSync(file,JSON.stringify(store));
+    const history=await session.getHistoryPage!();
+    expect(history.entries).toEqual([expect.objectContaining({id:'image-output',kind:'assistant',text:expect.stringContaining('![')})]);
+    expect(history.entries[0].text).toContain(path);
+    expect(JSON.stringify(history)).not.toContain('PRIVATE_BASE64_IMAGE_BODY');
+    expect((await session.getHistory()).entries).toEqual(history.entries);
+  });
+  it('pushes a generated-image result live once with the same durable identity as restored history',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'image-live'}),events=recorder(session);
+    await session.prompt('fixture:generate-image');await events.until(settled);
+    const output=(await session.getHistoryPage!()).entries.find(entry=>entry.kind==='assistant'&&entry.text?.startsWith('!['))!;
+    expect(output).toBeDefined();
+    expect(events.events.filter(event=>event.type==='message_end'&&event.id===output.id)).toEqual([expect.objectContaining({text:output.text})]);
+    expect(JSON.stringify(events.events)).not.toContain('PRIVATE_BASE64_IMAGE_BODY');
+  });
   it('runs explicit goals without a model turn and rejects raw slash commands as prompts',async()=>{
     const b=setup(),session=await b.factory().create({sessionId:'goal-test'});
     expect(await session.runCommand!('goal','Finish tests')).toMatchObject({goal:{objective:'Finish tests',status:'active'}});

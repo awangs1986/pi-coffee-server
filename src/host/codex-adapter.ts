@@ -1277,6 +1277,16 @@ class CodexSession implements PiSession {
         this.emit({ type: "message_end", id: item.id, text, message: { role: "assistant" } });
         return;
       }
+      case 'imageGeneration':
+      case 'extension': {
+        for(const entry of projectTurns([{items:[item]}])){
+          if(entry.kind!=='assistant')continue;
+          this.messageCount++;
+          this.emit({type:'message_update',id:entry.id,assistantMessageEvent:{type:'text_delta',delta:entry.text}});
+          this.emit({type:'message_end',id:entry.id,text:entry.text,message:{role:'assistant'}});
+        }
+        return;
+      }
       case "plan": {
         const text = typeof item.text === "string" ? item.text : "";
         for (const entry of projectTurns([{ items: [item] }])) this.emit({ type: "sync_entity", entry });

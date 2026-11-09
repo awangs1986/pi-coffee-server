@@ -22,6 +22,17 @@ const piRows = (id: string) => [
 ];
 
 describe("native source audits without runtime ownership", () => {
+  it('restores native generated images from canonical Extension records without app-server or base64 delivery',async()=>{
+    const home=await root(),cwd=join(home,'work'),id='11111111-2222-4333-8444-555555555555',directory=join(home,'sessions','2026','11','09');await mkdir(directory,{recursive:true});
+    const image=join(home,'generated_images',id,'exec-picture.png');
+    await writeFile(join(directory,`rollout-2026-11-09T00-00-00-${id}.jsonl`),jsonl([
+      {type:'session_meta',payload:{id,cwd}},
+      {type:'event_msg',timestamp:at,payload:{type:'item_completed',thread_id:id,turn_id:'image-turn',item:{type:'Extension',id:'image-result',kind:'image_gen.generation',status:'completed',savedPath:image,result:'PRIVATE_BASE64_BODY',failure:null}}},
+    ]));
+    const factory=new CodexSessionFactory({cwd,codexHome:home,cliPath:'/no-runtime-allowed'});
+    const read=await factory.readHistory(id);expect(read.sourceFreshness).toBe('current');expect(factory.serverRunning).toBe(false);
+    expect(read.history.entries).toEqual([expect.objectContaining({id:'image-result',kind:'assistant',text:expect.stringContaining(image)})]);expect(JSON.stringify(read)).not.toContain('PRIVATE_BASE64_BODY');
+  });
   it("reads Pi with no executable or runtime hooks, detects same-size edits and deletion, and keeps binding stable across restart", async () => {
     const sessionDir = await root(), id = "pi-read-only", path = join(sessionDir, `2026-10-03_${id}.jsonl`);
     const initial = jsonl(piRows(id)); await writeFile(path, initial);

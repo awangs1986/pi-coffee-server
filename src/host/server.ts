@@ -171,6 +171,7 @@ interface UserSlot {
   sshme?: RunnerManager;
   lifecycleLocks: Set<string>;
   workspaceReads: Map<string, Promise<unknown>>;
+  artifactHolds:Map<string,{active:number;release:()=>void}>;
 
 }
 
@@ -811,7 +812,7 @@ export class HostServer {
           if(slot.lifecycleLocks.has(input.id))throw new Error("Workspace lifecycle operation in progress");
           await ws.dataRoot(input.id);
           const scope=transferScope(user,input.id);
-          const token=this.transfer.issueToken(scope,slot.workdir,input.id,ws);
+          const token=this.transfer.issueToken(scope,slot.workdir,input.id,ws,slot.factory.resolveArtifact?path=>this.trackBackground(resolveTaskArtifact(slot,input.id,path)):undefined);
           this.transferTargets.set(scope,{slot:Promise.resolve(slot),sessionId:input.id});
           result={url:this.transfer.publicUrl(),sessionId:input.id,scope,token,inbox:await this.transfer.inbox(scope),maxFileBytes:this.transfer.limits.maxFileBytes,maxBatchBytes:this.transfer.limits.maxBatchBytes};break;
         }
@@ -898,7 +899,7 @@ export class HostServer {
       },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, speech, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, speech, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(),artifactHolds:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       if(scope.workspaces){
         if(sharedPreparation){sharedPreparation.registries.add(registry);sharedPreparation.slots.add(slot);slot.preparation=sharedPreparation.preparation;}
         else{
@@ -1104,6 +1105,17 @@ export class HostServer {
       this.wsServer.emit("connection", websocket, request);
     });
   }
+}
+
+/** Same task lifecycle authority as Fork/cleanup; duplicate image fetches share one copy. */
+function resolveTaskArtifact(slot:UserSlot,id:string,path:string):Promise<string|undefined>{
+ const key=JSON.stringify(['native-artifact',id,path]),existing=slot.workspaceReads.get(key);
+ if(existing)return existing.then(value=>typeof value==='string'?value:undefined);
+ let held=slot.artifactHolds.get(id);
+ if(!held){held={active:0,release:holdTaskLifecycle(slot.lifecycleLocks,[id])};slot.artifactHolds.set(id,held);}
+ const group=held;group.active++;
+ const pending=Promise.resolve().then(()=>slot.factory.resolveArtifact?.(id,path)).finally(()=>{slot.workspaceReads.delete(key);if(--group.active===0){slot.artifactHolds.delete(id);group.release();}});
+ slot.workspaceReads.set(key,pending);return pending;
 }
 
 class HostSocket implements SessionSink {
@@ -1559,7 +1571,7 @@ class HostSocket implements SessionSink {
     // Transfer inbox preparation may yield; finish replaying before live events resume.
     if (this.transfer && (!this.workspaces || task)) {
       const scope = transferScope(this.user,result.session.id);
-      const token = this.transfer.issueToken(scope, this.workdir, result.session.id, this.workspaces);
+      const token = this.transfer.issueToken(scope, this.workdir, result.session.id, this.workspaces,this.factory.resolveArtifact?path=>{const work=this.slot.then(slot=>resolveTaskArtifact(slot,result.session.id,path));this.trackOperation(work);return work;}:undefined);
       this.registerTransfer?.(scope, result.session.id);
 
 

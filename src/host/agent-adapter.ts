@@ -112,6 +112,8 @@ export interface AgentRunEvidence {
 }
 
 export interface AgentSessionFactory {
+  /** Materialize a task-owned native output; returns a path inside task data, never an arbitrary native file. */
+  resolveArtifact?(sessionId:string,path:string):Promise<string|undefined>;
   /** Isolated native candidate extraction; never writes the source thread or enables tools. */
   extractMemory?(id:string,input:{sessionFile:string;prompt:string;provider:string;model:string;signal:AbortSignal}):Promise<import('./pi-memory-runner.js').MemoryExtractionOutput>;
   mishuSourceCapabilities?(id:string):Promise<import("./mishu-source.js").MishuSourceCapabilities>;

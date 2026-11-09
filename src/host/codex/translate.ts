@@ -29,6 +29,13 @@ export function countMessages(turns: Obj[]): number {
   return count;
 }
 
+/** Native generated output is deliverable content, never a base64 tool log. */
+function generatedImageText(item:Obj):string|undefined {
+  const path=item.savedPath;
+  if((item.type!=='imageGeneration'&&item.kind!=='image_gen.generation')||item.status!=='completed'||item.failure!=null||typeof path!=='string'||path.length>4096||!path.startsWith('/')||/[<>\u0000-\u001f\u007f]/.test(path)||!/\.(png|jpe?g|webp)$/i.test(path))return;
+  return `![生成的图片](<${path}>)`;
+}
+
 /** Map a Codex item to the tool name/args the shell knows how to summarise. */
 export function toolCallOf(item: Obj): { name: string; args: Obj } | undefined {
   switch (item.type) {
@@ -114,6 +121,12 @@ export function projectTurns(turns: Obj[]): HistoryEntry[] {
         case "agentMessage":
           entries.push({ kind: "assistant", id, sourceMessageKey:`native-message:${id}`, ...stamp, text: String(item.text ?? "") });
           break;
+        case "imageGeneration":
+        case "extension": {
+          const text=generatedImageText(item);
+          if(text)entries.push({kind:'assistant',id,sourceMessageKey:`native-message:${id}`,...stamp,text});
+          break;
+        }
         case "plan": {
           const text = String(item.text ?? "");
           if (text.trim()) entries.push({ kind: "note", id, ...stamp, text: `计划：\n${text}` });

@@ -67,6 +67,10 @@ function normalizeItem(item: Record<string, any>): Obj | undefined {
         return { path, diff: change.unified_diff ?? change.diff ?? change.content ?? "" };
       }); break;
     case "dynamicToolCall": base.contentItems = item.content_items ?? item.contentItems ?? []; break;
+    case 'imageGeneration': delete base.result;break;
+    case 'extension':
+      if(item.kind!=='image_gen.generation')throw new Error('Native rollout contains an unsupported display extension');
+      base.savedPath=item.savedPath??item.saved_path??null;delete base.result;break;
     case "collabAgentToolCall": base.agentsStates = item.agents_states ?? item.agentsStates ?? {}; break;
     case "plan": case "contextCompaction": case "mcpToolCall": case "webSearch": case "imageView": break;
     // These are intentionally not part of the existing public display projection.

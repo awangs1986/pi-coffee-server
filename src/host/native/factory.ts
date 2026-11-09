@@ -1,4 +1,7 @@
 import {executeForkPreparation} from './fork-preparation.js';
+import {importCodexImage} from '../codex/images.js';
+import {homedir} from 'node:os';
+import {relative,resolve} from 'node:path';
 import {checkPreparation} from '../preparation-execution.js';
 import type {ForkPreparationControl} from '../fork.js';
 import type {NativeWriterCustody} from '../native-custody.js';
@@ -36,6 +39,9 @@ export type BoundCodexOptions=Omit<CodexSessionFactoryOptions,'nativeCustody'|'c
 export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>BoundCodexOptions;commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
+  private readonly imageImports=new Map<string,Promise<string|undefined>>();
+  private imageImportsActive=0;
+  private readonly imageImportWaiters:Array<()=>void>=[];
   private closing=false;
   private readonly readinessCache=new Map<AgentEngine,{at:number;result:EngineAvailability}>();
   private readonly audits=new Map<AbortController,Promise<void>>();
@@ -43,6 +49,34 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly generation=new Map<string,string>();
   private readonly codexFactories=new Map<string,AgentSessionFactory>();
   constructor(private options:NativeAgentOptions){this.options={...options};}
+  resolveArtifact(id:string,path:string):Promise<string|undefined>{
+    if(this.closing)return Promise.reject(Error('Host is stopping'));
+    const key=JSON.stringify([id,path]),pending=this.imageImports.get(key);if(pending)return pending;
+    if(this.imageImports.size>=20)return Promise.reject(Error('Native image import queue is busy; retry shortly'));
+    const run=async()=>{
+      const task=await this.options.workspaces.lookup(id);if(!task||task.cleanupStarted||task.workspaceRemoved)return;
+      const configured=this.options.codexSessionOptions?.(id,task.cwd,async()=>{});
+      const home=resolve(configured?.codexHome??configured?.env?.CODEX_HOME??this.options.codex?.env?.CODEX_HOME??process.env.CODEX_HOME??join(configured?.env?.HOME??this.options.codex?.env?.HOME??homedir(),'.codex'));
+      if(!path.startsWith(home+'/generated_images/'))return;
+      const identity=JSON.stringify([task.cwd,task.taskRoot,task.nativeBinding,task.retainedNativeBindings,task.retainedNativeIds,task.engine]);
+      const work=async()=>{
+        const data=await this.options.workspaces.dataRoot(id),directory=join(data,'images');
+        const nativeIds=[...(task.engine==='codex'&&task.nativeBinding?.id?[task.nativeBinding.id]:[]),...(task.retainedNativeBindings??[]).filter(binding=>binding.engine==='codex').map(binding=>binding.nativeId)];
+        const name=await importCodexImage({home,nativeIds,path,directory,validate:async()=>{
+          const after=await this.options.workspaces.lookup(id);
+          if(this.closing||!after||after.cleanupStarted||after.workspaceRemoved||JSON.stringify([after.cwd,after.taskRoot,after.nativeBinding,after.retainedNativeBindings,after.retainedNativeIds,after.engine])!==identity)throw Error('Task image binding changed');
+        }});
+        return name?relative(task.cwd,join(directory,name)):undefined;
+      };
+      return this.options.workspaces.backupWriterFence?this.options.workspaces.backupWriterFence.runWriter('platform',work):work();
+    };
+    const admitted=async()=>{
+      if(this.imageImportsActive>=4)await new Promise<void>(resolve=>this.imageImportWaiters.push(resolve));else this.imageImportsActive++;
+      try{if(this.closing)throw Error('Host is stopping');return await run();}
+      finally{const next=this.imageImportWaiters.shift();if(next)next();else this.imageImportsActive--;}
+    };
+    const result=admitted().finally(()=>this.imageImports.delete(key));this.imageImports.set(key,result);return result;
+  }
   /** Registry-owned ordinary metadata audit; no browser native ID or cwd input. */
   async auditNativeHistory(taskId:string,input:{engine?:'pi'|'codex';signal:AbortSignal}):Promise<void>{
     if(this.closing)throw new BackupError('native_audit_unavailable','Host is stopping');
@@ -145,7 +179,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
     for(const [key,factory] of this.codexFactories){if(key.startsWith(id+':')){await factory.close?.();this.codexFactories.delete(key);}}
   }
   async cancelTakeovers(){this.closing=true;for(const controller of this.audits.keys())controller.abort();await Promise.allSettled(this.audits.values());for(const controller of this.preparations.keys())controller.abort();await Promise.allSettled([...this.preparations.values()].map(s=>s.stop()));}
-  async close(){await this.cancelTakeovers();await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
+  async close(){await this.cancelTakeovers();await Promise.allSettled([...this.imageImports.values()]);await Promise.all([...this.codexFactories.values()].map(f=>f.close?.()));await this.options.legacyCodex?.close?.();}
   private async codexFactory(id:string,cwd:string){
     const generation=id+':'+(this.generation.get(id)??'original');let factory=this.codexFactories.get(generation);
     if(!factory&&this.hasCodexFactory()){

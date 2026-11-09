@@ -89,6 +89,12 @@ Detailed retains their error evidence. Agent/transport failures, questions and d
 errors remain visible; they are not tool output. A generated file discoverable from tool evidence must
 remain discoverable by the Host without sending that raw evidence to the Browser.
 
+Completed native Codex image-generation output is an assistant deliverable, not
+a process card. Its stable image reference is retained in Compact and Detailed,
+including after passive history recovery. [The storage/delivery contract](task-storage.md#native-codex-generated-images-102-2026-11-09)
+governs scoped native-image import and preview/download; base64 generation output
+does not become a Browser transcript payload.
+
 ## Bounded detail delivery
 
 Complete available execution evidence remains on the Host. Detailed mode reads

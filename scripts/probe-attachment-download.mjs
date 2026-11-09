@@ -4,8 +4,12 @@ import {createServer} from 'node:http';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
 import {resolve,extname} from 'node:path';
 import {chromium} from 'playwright';
+import {projectTurns} from '../dist/src/host/codex/translate.js';
 const root=resolve('public'),binary=Buffer.from('SYNTHETIC-APK-BYTES'),html=Buffer.from('<!doctype html><html><body>Animated HTML fixture<script>globalThis.HTML_EXECUTED=true;</script></body></html>'),requests=[];
-const markdown='[APK](/synthetic/task/workspace/build/app.apk)\n\n![Preview](picture.png)\n\n\uE200visualize\uE202{"path":"output/animation.html"}\uE201';
+const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4T8AAAAASUVORK5CYII=','base64');
+const nativeImage=projectTurns([{items:[{type:'imageGeneration',id:'fixture-image',status:'completed',savedPath:'/synthetic/codex/generated_images/owned-thread/exec-image.png',result:'BASE64_BODY_MUST_NOT_BE_DELIVERED',failure:null}]}])[0];
+assert.equal(nativeImage?.kind,'assistant','Native generated-image result was omitted');
+const markdown='[APK](/synthetic/task/workspace/build/app.apk)\n\n'+nativeImage.text+'\n\n\uE200visualize\uE202{"path":"output/animation.html"}\uE201';
 const server=createServer(async(req,res)=>{
  const u=new URL(req.url,'http://fixture');
  if(u.pathname==='/'){
@@ -19,8 +23,8 @@ const server=createServer(async(req,res)=>{
   requests.push({route:u.pathname,path:u.searchParams.get('path')});
   if(u.searchParams.get('scope')!=='synthetic'){res.writeHead(401);res.end();return;}
   if(u.pathname==='/files/preview'&&u.searchParams.get('path')?.endsWith('.apk')){res.writeHead(413);res.end('Preview exceeds 10 MiB; download instead');return;}
-  if(u.pathname==='/files/preview'){res.setHeader('content-type','image/png');res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4T8AAAAASUVORK5CYII=','base64'));return;}
-  if(u.pathname==='/files/workspace-download'){const isHTML=u.searchParams.get('path')?.endsWith('.html');res.setHeader('content-type',isHTML?'text/html; charset=utf-8':'application/octet-stream');res.setHeader('content-disposition',isHTML?'attachment; filename="animation.html"':'attachment; filename="app.apk"');res.end(isHTML?html:binary);return;}
+  if(u.pathname==='/files/preview'){res.setHeader('content-type','image/png');res.end(image);return;}
+  if(u.pathname==='/files/workspace-download'){const isHTML=u.searchParams.get('path')?.endsWith('.html'),isImage=u.searchParams.get('path')?.endsWith('.png');res.setHeader('content-type',isHTML?'text/html; charset=utf-8':isImage?'image/png':'application/octet-stream');res.setHeader('content-disposition',isHTML?'attachment; filename="animation.html"':isImage?'attachment; filename="generated.png"':'attachment; filename="app.apk"');res.end(isHTML?html:isImage?image:binary);return;}
   res.writeHead(404);res.end();return;
  }
  const path=u.pathname.slice(1);if(!/^[\w.-]+$/.test(path)){res.writeHead(404);res.end();return;}
@@ -45,7 +49,11 @@ try{
 
  assert.match(await page.locator('a:has(img)').getAttribute('href'),/\/files\/preview\?/);
  assert.match(await page.getByRole('link',{name:'下载图片',exact:true}).getAttribute('href'),/\/files\/workspace-download\?/);
- assert.deepEqual(errors,[]);const result={passed:true,actualChromiumDownload:true,downloadedBytes:binary.length,imagePreviewRetained:true,nativeVisualizeHTMLDownload:true,htmlDidNotExecuteInParent:true,requests,errors};
+ await page.waitForFunction(()=>{const image=document.querySelector('img');return image?.complete&&image.naturalWidth===1;});
+ const [imageDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'下载图片',exact:true}).click()]);
+ assert.equal(await imageDownload.failure(),null);assert.deepEqual(await readFile(await imageDownload.path()),image);
+ assert.equal((await page.locator('body').textContent()).includes('BASE64_BODY_MUST_NOT_BE_DELIVERED'),false);
+ assert.deepEqual(errors,[]);const result={passed:true,actualChromiumDownload:true,downloadedBytes:binary.length,imagePreviewRetained:true,nativeGeneratedImageVisible:true,nativeGeneratedImageDownloaded:true,nativeVisualizeHTMLDownload:true,htmlDidNotExecuteInParent:true,requests,errors};
  if(process.env.EVIDENCE_DIR){await mkdir(process.env.EVIDENCE_DIR,{recursive:true});await writeFile(resolve(process.env.EVIDENCE_DIR,'attachment-download.json'),JSON.stringify(result,null,2)+'\n');}
  console.log(JSON.stringify(result));
 }finally{await browser.close();await new Promise(r=>server.close(r));}

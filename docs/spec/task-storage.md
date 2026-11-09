@@ -142,6 +142,58 @@ Live diagnosis separately confirmed a real authorized binary download succeeds
 and the incorrectly bound preview returns 413; user file contents are not stored
 in repository evidence.
 
+## Native Codex generated images (1.02, 2026-11-09)
+
+[Server #165](https://github.com/awangs1986/pi-coffee-server/issues/165) covers
+completed `imageGeneration` App Server items and canonical `image_gen.generation`
+native Extension records with a saved image path. These are deliverable assistant content in both Compact and Detailed
+views. Live events, recent/complete native pages and passive rollout reads
+preserve the native item identity and produce the same image reference.
+Base64 image bodies, generation prompts and unrelated extension payloads are
+not sent as transcript content. Existing image preview/download controls apply.
+
+The Agent interface exposes optional scoped artifact resolution. When an
+otherwise unavailable file reference names a qualified Codex generated image,
+the Host Adapter may import it into the current task's image directory and
+return that task-relative path to the file service. The original native path
+acts as an alias; the service still serves the independent task-owned copy.
+This repairs older assistant links as well as newly projected image replies.
+It does not expose the native store as a filesystem browser.
+
+New imports require the configured native generated-image root and a current
+or explicitly retained Codex binding owned by the scoped task. Only expected
+generated raster filenames and validated PNG/JPEG/WebP signatures qualify.
+Unknown bindings, credentials, traversal, symlinks, external hardlinks and
+oversized files are denied. Already materialized task copies remain available
+after native cleanup and are retained/copied under the existing task/Fork
+data contract. Unmaterialized files do not gain cross-task authority from a
+guessed path or an inherited transcript reference.
+
+Imports share lifecycle custody with Fork/reset/cleanup and the platform backup
+writer fence. Concurrent requests for the same image share one import; a scoped
+Adapter admits at most four active imports and sixteen queued imports; multiple
+images in one task share the same held lifecycle operation. Copying uses 64 KiB buffers, checked source
+metadata, a 256 MiB file ceiling, private staging and synchronized publication.
+Directory descriptors anchor source and destination access. Publication never
+hardlinks the original native image or overwrites an existing task image.
+Interrupted removal of an owned staging link is reconciled by inode identity;
+other hardlinks remain denied. Settled operations release memory and descriptors.
+
+HTTP and WebSocket-issued grants use the same authenticated resolver. File
+authorization is checked again after asynchronous resolution, so expired or
+revoked grants cannot complete a late import download. The existing 10 MiB
+preview cap remains separate; a larger qualified image can still download.
+Resolving a file never starts/resumes a native CLI or submits a model request.
+Ordinary Chat receives no added system instructions or historical image content
+as a side effect of delivery.
+
+Acceptance combines authenticated Host/transfer HTTP, real native Adapter with
+synthetic App Server, passive canonical rollout fixtures and Chromium image
+decoding/download checks. Preserve original source bytes and test foreign scope,
+binding, traversal, link, size, duplicate-request and interrupted-publication
+denials. [Diagnosis and release boundaries](../reviews/codex-image-delivery-20261109.md)
+distinguish source acceptance from activation of the running Web/Host.
+
 ## Native HTML visualization download — 2026-10-11, Server #119
 
 A completed rich assistant reply containing the native visualize marker with a
