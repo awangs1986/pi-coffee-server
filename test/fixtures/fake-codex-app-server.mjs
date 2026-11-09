@@ -318,6 +318,15 @@ rl.on("line", (line) => {
       return notify("thread/deleted", { threadId: params.threadId });
     }
     case "thread/turns/list": {
+      const volumeFile=join(home,'fork-evidence-volume.json');
+      if(existsSync(volumeFile)){
+        const volume=JSON.parse(readFileSync(volumeFile,'utf8'));
+        if(volume.threadId===params.threadId){
+          const offset=Number(params.cursor??0),end=Math.min(volume.turns,offset+(params.limit??20)),output='v'.repeat(volume.bytesPerTurn);
+          const data=Array.from({length:end-offset},(_,n)=>{const i=offset+n;return {id:'volume-turn-'+i,status:'completed',items:[{id:'volume-tool-'+i,type:'commandExecution',status:i===volume.activeIndex?'inProgress':'completed',exitCode:0,command:'fixture',aggregatedOutput:output}]};});
+          return reply({data,nextCursor:end<volume.turns?String(end):null});
+        }
+      }
       if(existsSync(join(home,"capture-history-requests")))appendFileSync(join(home,"history-requests.jsonl"),JSON.stringify(params)+"\n");
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");

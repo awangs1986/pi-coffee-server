@@ -1,3 +1,4 @@
+import {writeForkHistory} from './fork-evidence.js';
 import {acquireFileLease} from './linux-file-lease.js';
 import {preparationBudget,preparationExecution,checkPreparation} from './preparation-execution.js';
 import {WORKSPACE_GIT_MAX_OUTPUT_BYTES} from './workspace-git-limits.js';
@@ -717,7 +718,7 @@ export class Workspaces {
       await copyForkTree(from,join(data,toName));
     }
     const records=await this.forkRecordsDirectory(targetId);
-    await writeTaskJson(records,'source-history.json',history);
+    await writeForkHistory(records,history);
     if(!chat&&staged){const patch=join(records,'staged.patch');await writeFile(patch,staged,{mode:0o600});await this.git(target.cwd,['apply','--cached','--binary',patch]);}
     if(source.taskRoot&&!chat&&sourceData===data)throw new Error('Fork data directory was not isolated');
     await this.save();return structuredClone(target);

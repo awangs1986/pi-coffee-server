@@ -25,9 +25,10 @@ export async function readPreparationArtifact(path:string,maximum:number):Promis
   const info=await file.stat();
   if(!info.isFile()||info.uid!==process.getuid?.()||info.nlink!==1)throw Error('Unsafe preparation artifact');
   if(info.size>maximum)throw Error('Preparation artifact exceeds byte budget');
-  const buffer=Buffer.alloc(maximum+1);let length=0;
+  const buffer=Buffer.alloc(info.size+1);let length=0;
   while(length<buffer.length){const {bytesRead}=await file.read(buffer,length,buffer.length-length,null);if(!bytesRead)break;length+=bytesRead;}
-  if(length>maximum)throw Error('Preparation artifact exceeds byte budget');
+  const after=await file.stat();
+  if(length!==info.size||after.size!==info.size||after.mtimeMs!==info.mtimeMs||after.ctimeMs!==info.ctimeMs)throw Error('Preparation artifact changed during read');
   return buffer.toString('utf8',0,length);
  }finally{await file.close();}
 }

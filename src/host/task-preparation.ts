@@ -3,6 +3,7 @@ import {acquireFileLease,type FileLease} from './linux-file-lease.js';
 import {ForkTurnFailure} from './fork.js';
 import type {AgentHistory} from './agent-adapter.js';
 import {bounded,preparationExecution,readPreparationArtifact} from './preparation-execution.js';
+import {FORK_EVIDENCE_MAX_BYTES,forkHistoryReceipt} from './fork-evidence.js';
 import {join} from 'node:path';
 import {readdir} from 'node:fs/promises';
 import {durableJson, privateDir, readJson, sha} from './restore-files.js';
@@ -193,8 +194,8 @@ export class TaskPreparation {
       if(await this.options.sourceBusy?.(sourceId))throw Error('Source task resumed');
       const result=await this.inspectSource(sourceId);
       if(await this.options.sourceBusy?.(sourceId))throw Error('Source task resumed');
-      if(Buffer.byteLength(JSON.stringify(result))>32*1024*1024)throw Error('Source history exceeds preparation evidence budget');
-      record.receipts={...record.receipts,source:{binding:result.binding,leafId:result.history.leafId,digest:sha(JSON.stringify(result.history))}};
+      const evidence=forkHistoryReceipt(result.history);
+      record.receipts={...record.receipts,source:{binding:result.binding,leafId:result.history.leafId,digest:evidence.digest}};
       return result;
     });
     await this.stage(record,'workspace',async()=>{
@@ -203,8 +204,8 @@ export class TaskPreparation {
       await ws.copyForkWorkspace(record.targetTaskId,captured.history);
     });
     }
-    const history:AgentHistory=JSON.parse(await readPreparationArtifact(join(await ws.forkRecordsDirectory(record.targetTaskId),'source-history.json'),32*1024*1024));
-    if(sha(JSON.stringify(history))!==record.receipts?.source?.digest)throw Error('Source snapshot changed; resume refused');
+    const history:AgentHistory=JSON.parse(await readPreparationArtifact(join(await ws.forkRecordsDirectory(record.targetTaskId),'source-history.json'),FORK_EVIDENCE_MAX_BYTES));
+    if(forkHistoryReceipt(history).digest!==record.receipts?.source?.digest)throw Error('Source snapshot changed; resume refused');
     const signal=this.controllers.get(record.operationId)!.signal;
     if(mode==='native')await this.stage(record,'native-binding',()=>factory.forkConversation!(sourceId,record.targetTaskId,mode,history));
     else await preparationExecution.run({operationId:record.operationId,signal,deadline:Date.now()+this.budgets.operationMs},()=>bounded(()=>this.track(record,()=>factory.forkConversation!(sourceId,record.targetTaskId,mode,history,{

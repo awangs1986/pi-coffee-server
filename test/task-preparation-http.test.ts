@@ -3,7 +3,7 @@ import {promisify} from 'node:util';
 import {WebSocket} from 'ws';
 import {once} from 'node:events';
 import {afterEach, expect, it} from 'vitest';
-import {mkdtemp, rm, mkdir, writeFile, rename, readFile, stat} from 'node:fs/promises';
+import {mkdtemp, rm, mkdir, writeFile, rename, readFile, stat,truncate} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {HostServer} from '../src/host/server.js';
@@ -34,6 +34,56 @@ async function setup(env:Record<string,string>={}, budgets?:{stageMs:number;oper
  const project=async()=>{const source=join(root,'repo'),remote=join(root,'remote.git');await mkdir(source);const git=promisify(execFile);for(const args of [['init','-b','main'],['commit','--allow-empty','-m','base'],['clone','--bare',source,remote]])await git('git',['-c','user.name=Test','-c','user.email=test@example.invalid',...args],{cwd:source});const registered=await call({action:'project',name:'p',url:remote});expect(registered.status).toBe(200);return {projectId:registered.body.id,remote};};
  return {root,call,prompt,project,restart:async()=>{await host.close();const next=new HostServer({port:0,token:'fixture',factory,workspaces:ws,scopeForUser:user=>user==='alice'?{factory,workspaces:ws}:{factory,workspaces:new Workspaces(join(root,'other-projects'))}});await next.start();cleanup.push(()=>next.close());return async(body:object)=>{const r=await fetch(`http://127.0.0.1:${next.address().port}/api/workspace`,{method:'POST',headers:{authorization:'Bearer fixture','x-pi-coffee-user':'alice','content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};}};
 }
+it.each(['native-fork','handoff-fork'] as const)('retains complete evidence beyond 32 MiB through %s preparation',async kind=>{
+ const {root,call,prompt}=await setup({FORK_POLICY_ASSERT:'1',FAKE_FORK_DEFAULT_MODEL:'1'});
+ await call({action:'preparation_start',kind:'create-chat',operationId:'large-source',targetTaskId:'large-source',engine:'codex'});
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'large-source'})).body.status).toBe('completed');
+ await prompt('large-source');
+ const source=(await call({action:'preparation_get',operationId:'large-source'})).body.task;
+ // External CLI fixture store: realistic completed command results, no model usage.
+ const store=join(root,'codex','fake-threads.json'),threads=JSON.parse(await readFile(store,'utf8'));
+ const native=threads[source.nativeBinding.id];
+ for(let i=0;i<34;i++)native.turns.push({id:'large-turn-'+i,status:'completed',startedAt:1,items:[{id:'large-output-'+i,type:'commandExecution',command:'fixture',status:'completed',exitCode:0,aggregatedOutput:'x'.repeat(1024*1024)+'-evidence-tail-'+i}]});
+ await writeFile(store,JSON.stringify(threads));
+ const accepted=await call({action:'preparation_start',kind,operationId:'large-fork',sourceId:source.id,targetTaskId:'large-fork',acceptDrift:true});expect(accepted.status).toBe(202);
+ await expect.poll(async()=>{const result=(await call({action:'preparation_get',operationId:'large-fork'})).body;return result.error??result.status;},{timeout:20000}).toBe('completed');
+ const evidence=JSON.parse(await readFile(join(root,'tasks','large-fork','fork','source-history.json'),'utf8'));
+ expect(evidence.entries.filter((entry:any)=>entry.id.startsWith('large-output-'))).toHaveLength(34);
+ expect(evidence.entries.find((entry:any)=>entry.id==='large-output-33').result).toBe('x'.repeat(1024*1024)+'-evidence-tail-33');
+ expect((await stat(join(root,'tasks','large-fork','fork','source-history.json'))).size).toBeGreaterThan(32*1024*1024);
+ const original=JSON.parse(await readFile(store,'utf8'))[source.nativeBinding.id];expect(original.turns).toEqual(native.turns);
+},30000);
+it.each([
+ {name:'total evidence ceiling',turns:260,bytesPerTurn:1024*1024,error:/256 MiB evidence budget/},
+ {name:'an active tool on a later page',turns:21,bytesPerTurn:1,activeIndex:20,error:/Source tool work is active/},
+ {name:'an oversized native page',turns:1,bytesPerTurn:33*1024*1024,error:/page exceeds its 32 MiB read budget/},
+])('refuses $name before native Fork work',async volume=>{
+ const {root,call,prompt}=await setup();
+ await call({action:'preparation_start',kind:'create-chat',operationId:'bounded-source',targetTaskId:'bounded-source',engine:'codex'});
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'bounded-source'})).body.status).toBe('completed');await prompt('bounded-source');
+ const source=(await call({action:'preparation_get',operationId:'bounded-source'})).body.task;
+ await writeFile(join(root,'codex','fork-evidence-volume.json'),JSON.stringify({...volume,threadId:source.nativeBinding.id}));
+ await call({action:'preparation_start',kind:'native-fork',operationId:'bounded-target',targetTaskId:'bounded-target',sourceId:source.id});
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'bounded-target'})).body.status,{timeout:30000}).toBe('failed');
+ const failed=(await call({action:'preparation_get',operationId:'bounded-target'})).body;
+ expect(failed.error).toMatch(volume.error);expect(failed.task).toBeUndefined();expect(failed.receipts?.source).toBeUndefined();expect(failed.receipts?.turns).toBeUndefined();
+},40000);
+
+it.each(['extra-field','oversize','legacy-format'] as const)('validates %s saved Fork evidence before resuming a failed seed',async mode=>{
+ const {call,prompt}=await setup({FORK_POLICY_ASSERT:'1',FAKE_FORK_DEFAULT_MODEL:'1',FAKE_FORK_FAIL:'seed',FAKE_FORK_FAIL_ONCE:'1'});
+ await call({action:'preparation_start',kind:'create-chat',operationId:'proof-source',targetTaskId:'proof-source',engine:'codex'});
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'proof-source'})).body.status).toBe('completed');await prompt('proof-source');
+ await call({action:'preparation_start',kind:'handoff-fork',operationId:'proof-target',targetTaskId:'proof-target',sourceId:'proof-source',acceptDrift:true});
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'proof-target'})).body.status,{timeout:10000}).toBe('failed');
+ const failed=(await call({action:'preparation_get',operationId:'proof-target'})).body,file=join(failed.task.taskRoot,'fork','source-history.json');
+ if(mode==='oversize')await truncate(file,256*1024*1024+1);
+ else {const history=JSON.parse(await readFile(file,'utf8'));if(mode==='extra-field')history.unrecorded='Unverified evidence';await writeFile(file,JSON.stringify(history,null,2)+'\n');}
+ expect((await call({action:'preparation_resume',operationId:'proof-target',expectedRevision:failed.revision})).status).toBe(200);
+ await expect.poll(async()=>(await call({action:'preparation_get',operationId:'proof-target'})).body.status,{timeout:10000}).toBe(mode==='legacy-format'?'completed':'failed');
+ const result=(await call({action:'preparation_get',operationId:'proof-target'})).body;
+ if(mode!=='legacy-format')expect(result.error).toMatch(mode==='oversize'?/artifact.*budget/i:/Invalid Fork evidence/);
+ else expect(result.receipts.summary).toEqual(failed.receipts.summary);
+},20000);
 it('durably accepts one scoped Chat preparation and publishes a usable native binding without sending a model turn',async()=>{
  const {call}=await setup();
  const input={action:'preparation_start',kind:'create-chat',operationId:'new-chat-one',targetTaskId:'new-chat-one',engine:'codex'};
@@ -124,7 +174,7 @@ it('resumes a failed repository preparation with its original workspace and exac
  const failed=(await call({action:'preparation_get',operationId:'work-retry'})).body;expect(failed.allowedActions).toContain('resume');
  await rename(p.remote+'.offline',p.remote);
  expect((await call({action:'preparation_resume',operationId:'work-retry',expectedRevision:failed.revision})).status).toBe(200);
- await expect.poll(async()=>{const r=(await call({action:'preparation_get',operationId:'work-retry'})).body;return r.error??r.status;}).toBe('completed');
+ await expect.poll(async()=>{const r=(await call({action:'preparation_get',operationId:'work-retry'})).body;return r.error??r.status;},{timeout:10000}).toBe('completed');
  const task=(await call({action:'preparation_get',operationId:'work-retry'})).body.task;
  expect(task.cwd).toBe(failed.task.cwd);expect(task.startBranch).toBe('main');
  const remote=await promisify(execFile)('git',['--git-dir',p.remote,'rev-parse','refs/heads/'+task.branch]);expect(remote.stdout.trim()).toBe(task.lastRemoteSha);

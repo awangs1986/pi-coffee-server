@@ -16,9 +16,9 @@ The owner explicitly chose copying the current local state: tracked/staged/unsta
 ## Lifecycle
 
 The accepted [durable task preparation refactor](task-preparation.md) replaces the
-scattered orchestration with one Host-owned operation lifecycle. It is not yet
-implemented. Preserve the product/source protections below during migration; the
-new contract governs durable acceptance, budgets, cancellation and recovery.
+scattered orchestration with one Host-owned operation lifecycle, implemented
+since Server 0.94. Preserve the product/source protections below; the preparation
+contract governs durable acceptance, budgets, cancellation and recovery.
 
 Source must be an owned, active, ready task with settled foreground/background work, no unanswered questions and no queued input. Lock source and destination against conflicting Web operations while preparing. Fork does not rewrite source conversation messages, compact its context, change its binding/branch or edit its files. Routine native inspection may append internal bookkeeping entries. The new task records source, mode, phase, model settings and progress. Same operation ID is idempotent; never regenerate after delivery uncertainty. Source remains usable after a failed fork; retain destination diagnostics/files for inspection and archival. Host restart marks unfinished preparation interrupted instead of continuing model work automatically.
 
@@ -80,5 +80,27 @@ Exact-source verification passed 1,703 tests, with 136 optional skipped, and 17
 Chromium probes. Earlier concurrent runs encountered MISHU polling timeouts; the
 isolated six-case recheck and subsequent sole canonical run passed. These are
 recorded historical executions, not tests rerun by this documentation change.
-The [preparation refactor](task-preparation.md) remains unimplemented; this one
-success does not establish bounded end-to-end cleanup/recovery for every failure.
+At that historical 0.84 baseline, the [preparation refactor](task-preparation.md)
+was unimplemented; it was implemented since 0.94. That one success does not
+establish bounded end-to-end cleanup/recovery for every failure.
+
+## Large conversation evidence (1.00, 2026-11-09)
+
+Both Fork modes retain complete projected source evidence up to 256 MiB. This
+replaces the 32 MiB conversation-history ceiling, which rejected long Codex
+tasks dominated by completed tool output. It does not alter the separate
+32 MiB staged Git patch budget, model context setting, preparation model or
+summary limit. History is not silently truncated or reduced to recent messages.
+
+Codex reads 20 turns at a time, checks active tools/background work on every
+page, and discards raw pages after projection. Each native page and metadata
+response has a 32 MiB ceiling; cumulative native data and saved history each
+have a 256 MiB ceiling. Entry-sized hashing/writing and actual-file-sized read
+buffers avoid allocating the maximum for small histories. Original ownership,
+source consistency, digest, operation/stage deadlines and recovery gates remain.
+
+The [preparation contract](task-preparation.md#large-fork-evidence-100) defines
+persistence and failure semantics. [Review evidence](../reviews/fork-large-evidence-20261109.md)
+distinguishes synthetic complete Fork tests and the original read-only source
+inspection from production activation and real model acceptance. Old failed
+operations remain diagnostic evidence and are never replayed automatically.

@@ -319,9 +319,13 @@ activation does not establish every acceptance criterion below.
   settings are restored. Source inspection reads paginated native evidence and
   accepts an idle unloaded thread. Other adapters may use an owned inspection
   session; this is not an interactive Host registry open.
-- Saved history reads are capped at 32 MiB, summaries at 256 KiB, and embedded
-  Claude history at 1 MiB before consumption. Summary digests and native result
-  receipts belong to the current operation.
+- Since Server 1.00, Fork history capture, persistence and saved-history reads
+  share a 256 MiB evidence ceiling. Codex reads 20 turns per page with a 32 MiB
+  per-page ceiling and releases raw page data after projection. Evidence is
+  hashed and written in entry-sized pieces; artifact readers allocate against
+  actual checked file size. These are byte budgets, not model context settings.
+  Summaries remain capped at 256 KiB and embedded Claude history at 1 MiB.
+  Summary digests and native result receipts belong to the current operation.
 - Directory reservations are inode-bound and never adopt pre-existing folders.
   Kernel lease files persist after release; legacy lock directories are refused,
   not deleted. Committed list reads do not await unrelated task exports.
@@ -335,6 +339,30 @@ workspace allocation, cold-source Handoff, changed-artifact refusal, process-cra
 reconciliation, and Browser recovery. They use synthetic native/provider replies.
 The exhaustive crash-boundary/resource matrix and an owner-authorized deployed
 Fork remain release acceptance work; do not infer those results from unit checks.
+
+### Large Fork evidence (1.00)
+
+Long, idle Codex sources can exceed 32 MiB because completed tools retain their
+output. Within the 256 MiB ceiling, retain every projected history entry and its
+content; do not truncate history to pass admission. The cumulative native-page
+bytes and canonical saved history each obey that ceiling. Individual native
+pages and metadata remain bounded at 32 MiB; the existing 10,000-turn traversal
+ceiling, ownership, idle/background checks and source consistency checks remain.
+
+Private evidence writes use an exclusive temporary file, file sync, atomic
+rename and directory sync. Saved reads validate canonical path, ownership,
+single-link regular-file status, actual size and stability during reading;
+unknown top-level history fields or changed digests prevent reuse. Legacy
+pretty-printed evidence with the same verified content remains readable.
+Oversized evidence fails visibly before model preparation and retains the source.
+No failed Fork is automatically replayed. Git's staged patch budget remains
+32 MiB, independently of conversation evidence.
+
+Public HTTP/native-fixture acceptance covers both Fork modes beyond 32 MiB,
+unchanged source content, total/per-page rejection, active work on later pages,
+saved-evidence integrity and failed-seed reuse. A private read-only inspection
+of the reported long source verifies the failing gate, not an actual deployed
+Fork. [Review and acceptance boundaries](../reviews/fork-large-evidence-20261109.md).
 
 ### Public completion and lifecycle custody (0.95)
 

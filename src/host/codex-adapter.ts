@@ -6,6 +6,7 @@ import {homedir} from 'node:os';
 import type {NativeWriterCustody} from './native-custody.js';
 import {codexNativeCommand} from './codex/commands.js';
 import {codexGoal} from './codex/goal.js';
+import {assertForkEvidenceBudget,forkHistoryReceipt,FORK_NATIVE_PAGE_BYTES,FORK_NATIVE_PAGE_TURNS} from './fork-evidence.js';
 import {fileURLToPath} from "node:url";
 import type {MishuSourceContext} from "./mishu-source.js";
 import {LiveRunEvidence} from './native/live-run-evidence.js';
@@ -491,12 +492,24 @@ export class CodexSessionFactory implements PiSessionFactory {
     const result=await server.request('thread/read',{threadId:id,includeTurns:false}) as Obj;
     const thread=result.thread as Obj|undefined;
     if(!thread||thread.id!==id||typeof thread.cwd!=='string'||resolve(thread.cwd)!==resolve(this.options.cwd)||!['idle','notLoaded'].includes(String((thread.status as Obj)?.type)))throw Error('Fork source is not provably idle and owned');
-    const turns:Obj[]=[];let cursor:string|undefined,bytes=0;const seen=new Set<string>();
-    for(let page=0;page<MAX_LIST_PAGES;page++){
-      const result=await server.request('thread/turns/list',{threadId:id,limit:LIST_PAGE_SIZE,sortDirection:'asc',itemsView:'full',...(cursor?{cursor}:{})}) as Obj;
+    if(Buffer.byteLength(JSON.stringify(thread))>FORK_NATIVE_PAGE_BYTES)throw Error('Native Fork metadata exceeds its 32 MiB read budget');
+    const entries:import('../shared/protocol.js').HistoryEntry[]=[];let cursor:string|undefined,bytes=0,projectedBytes=0;const seen=new Set<string>();
+    for(let page=0;page<MAX_LIST_PAGES*LIST_PAGE_SIZE/FORK_NATIVE_PAGE_TURNS;page++){
+      const result=await server.request('thread/turns/list',{threadId:id,limit:FORK_NATIVE_PAGE_TURNS,sortDirection:'asc',itemsView:'full',...(cursor?{cursor}:{})}) as Obj;
       if(!Array.isArray(result.data))throw Error('Native Fork history is unavailable');
-      bytes+=Buffer.byteLength(JSON.stringify(result.data));if(bytes>32*1024*1024)throw Error('Fork source exceeds its 32 MiB evidence budget');
-      turns.push(...result.data as Obj[]);
+      const pageBytes=Buffer.byteLength(JSON.stringify(result.data));
+      if(pageBytes>FORK_NATIVE_PAGE_BYTES)throw Error('Native Fork history page exceeds its 32 MiB read budget; original history is retained');
+      bytes+=pageBytes;assertForkEvidenceBudget(bytes);
+      const turns=result.data as Obj[];
+      for(const turn of turns){
+        if(!['completed','failed','interrupted'].includes(String(turn.status)))throw Error('Source has running work');
+        for(const item of (Array.isArray(turn.items)?turn.items:[]) as Obj[]){
+          if(item.status==='inProgress')throw Error('Source tool work is active');
+          if(item.type==='commandExecution'&&(item.status==='inProgress'||item.processId&&item.exitCode==null))throw Error('Source background work is active');
+          if(item.type==='collabAgentToolCall'&&Object.values((item.agentsStates??{}) as Obj).some(child=>!['completed','shutdown'].includes(String((child as Obj)?.status))))throw Error('Source child work is active or unknown');
+        }
+      }
+      for(const entry of projectTurns(turns)){projectedBytes+=Buffer.byteLength(JSON.stringify(entry))+1;assertForkEvidenceBudget(projectedBytes);entries.push(entry);}
       if(result.nextCursor==null){cursor=undefined;break;}
       if(typeof result.nextCursor!=='string'||!result.nextCursor||seen.has(result.nextCursor))throw Error('Native Fork history cursor did not advance');
       cursor=result.nextCursor;seen.add(cursor);
@@ -504,18 +517,10 @@ export class CodexSessionFactory implements PiSessionFactory {
     if(cursor)throw Error('Native Fork history exceeds its page budget');
     const after=(await server.request('thread/read',{threadId:id,includeTurns:false}) as Obj).thread as Obj;
     if(!after||after.id!==id||after.updatedAt!==thread.updatedAt||!['idle','notLoaded'].includes(String((after.status as Obj)?.type)))throw Error('Source changed during Fork snapshot');
-    for(const turn of turns){
-      if(!['completed','failed','interrupted'].includes(String(turn.status)))throw Error('Source has running work');
-      for(const item of (Array.isArray(turn.items)?turn.items:[]) as Obj[]){
-        if(item.status==='inProgress')throw Error('Source tool work is active');
-        if(item.type==='commandExecution'&&(item.status==='inProgress'||item.processId&&item.exitCode==null))throw Error('Source background work is active');
-        if(item.type==='collabAgentToolCall'&&Object.values((item.agentsStates??{}) as Obj).some(child=>!['completed','shutdown'].includes(String((child as Obj)?.status))))throw Error('Source child work is active or unknown');
-      }
-    }
-    if(Buffer.byteLength(JSON.stringify(thread))>32*1024*1024)throw Error('Fork source exceeds its 32 MiB evidence budget');
-    const entries=projectTurns(turns),preferences=await this.readPreferences(id);
+    const history={entries,leafId:entries.at(-1)?.id??null};forkHistoryReceipt(history);
+    const preferences=await this.readPreferences(id);
     const model=preferences.model??(typeof thread.model==='string'?thread.model:undefined);
-    return {history:{entries,leafId:entries.at(-1)?.id??null},binding:id,title:typeof thread.name==='string'?thread.name:undefined,
+    return {history,binding:id,title:typeof thread.name==='string'?thread.name:undefined,
       settings:{...(model?{model:{provider:'codex',id:model}}:{}),thinkingLevel:preferences.reasoningEffort??(typeof thread.reasoningEffort==='string'?thread.reasoningEffort:undefined),contextPreset:preferences.preset}};
     }finally{await this.finishMetadataRead();}
   }
