@@ -5,6 +5,14 @@ Baseline: Server 0.84, `eb34dde7fb08420ac9501811482893f0c3215ddd`.
 Tracking: [Server #161](https://github.com/awangs1986/pi-coffee-server/issues/161). This contract governs the lifecycle replacement;
 the 0.84 baseline is historical; current implementation includes durable preparation.
 
+Accepted planned amendment: [complete-history Codex Handoff Fork](handoff-history-reconstruction.md),
+[Server #164](https://github.com/awangs1986/pi-coffee-server/issues/164), uses the
+same preparation authority with bounded RAM, qualified context up to 1M tokens,
+serial reconstruction and one local-compression/input-size retry allowance.
+This narrowly supersedes the exclusions on fresh-context summarization and
+automatic retry for that future mode only. Implementation/activation is pending;
+the current source behavior and other failure recovery rules below remain.
+
 ## Problem Statement
 
 Creating a Chat/Work Conversation or a Fork can outlive the Browser or gateway

@@ -24,6 +24,13 @@ Source must be an owned, active, ready task with settled foreground/background w
 
 ## Native integration
 
+The paragraph below describes the implemented 1.00 policy. The accepted,
+unimplemented [complete-history reconstruction design](handoff-history-reconstruction.md)
+replaces inherited-context summary generation for Codex Handoff Fork only, adds
+a qualified preparation ceiling up to 1M tokens and permits exactly one local
+compression/retry for definitive input-size failures. It does not change
+Traditional Fork, Pi/Claude Handoff or in-place manual Handoff.
+
 Pi uses native SessionManager.forkFrom with a new ID and cwd. Handoff invokes the pinned context-handoff plugin only inside that copy. The source session is never compacted. Codex uses native thread/fork with source ownership checked and cwd changed to the new task. Codex Handoff uses an isolated native fork to generate a handoff, then starts a fresh target with the summary and original-evidence pointer. Handoff instructions adapt the installed Skill: preserve goal, accepted/rejected decisions, pending questions, changed files, verification and next actions; redact credentials, reference existing artifacts, suggest relevant Skills. Preparation must not resume project work. Codex summary and seed runtimes disable shell/execution, external tool providers, plugins and hooks, and enforce native read-only/no-network policy; unexpected tool events fail preparation. They are closed before normal task reopening, which restores ordinary execution policy.
 
 Claude native complete-context fork is not claimed without a verified native interface; Handoff embeds the readable exported history in a fresh native session with built-in tools, MCP, slash commands and hooks disabled. Exports over 1 MiB are rejected without truncating evidence; the source and failed snapshot are retained. Normal reopening restores ordinary tools. Raw provider transcript formats are never fabricated or translated into another provider's tool-call protocol.
