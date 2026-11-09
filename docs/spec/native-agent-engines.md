@@ -1,5 +1,30 @@
 # Native Agent integration
 
+## Codex native search qualification — 2026-11-09, Server #166
+
+Native CLI identity alone does not prove that a configured provider exposes every
+native tool. Preserve the owner's native configuration and qualify the selected
+provider, CLI version and model together. Coffee must not replace Codex search
+with Pi search tools or add a search prompt to ordinary Chat.
+
+Codex 0.163.0 Responses Lite models require the standalone search executor. A
+custom provider alias pointing to the official Codex endpoint can report
+`webSearch: true` through App Server while omitting that executor. If the alias
+is not recognized as the built-in OpenAI provider and does not use supported
+actor authorization, the selected provider needs
+`supports_standalone_web_search = true`. Do not infer this opt-in for arbitrary
+third-party endpoints or override an explicit `web_search = "disabled"` policy.
+
+Repair the owner-selected native provider configuration with a private backup
+and validate that only the intended field changed. No modified CLI, additional
+model proxy, broader command permissions or Host search implementation is needed.
+Existing native processes may retain loaded settings: an authorized Host restart
+is separate from writing the file. Browser reconnection alone does not prove
+native configuration reload. Tool discovery and invocation are separate gates;
+a provider-capability response or a model-written link is insufficient acceptance.
+Require a native search completion with actual results. See [the diagnosis and
+verification evidence](../reviews/codex-native-search-20261109.md).
+
 ## Preparation adapter boundary — accepted refactor, 2026-11-06
 
 The [durable preparation contract](task-preparation.md) owns create-chat, create-work, native-fork and handoff-fork orchestration. Agent adapters supply bounded native operations, operation/turn-bound receipts and ownership-aware cleanup; prompt acknowledgement is not turn completion. Readiness inspects only the selected scoped engine. Preserve the supported engine matrix, native permissions, preparation restrictions and repository-free Pi/Codex Chat rules. Takeover and manual compression retain their separate contracts. The replacement was activated in 0.94; 0.84 remains the historical pre-refactor baseline.
