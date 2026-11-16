@@ -1,9 +1,18 @@
 # PI Coffee Server
 
-**把运行在自己机器上的原生 AI Agent，变成可通过浏览器使用的开发工作台。**
-**A browser workbench for native AI agents running on your own machine.**
+**面向个人与家庭内部协作的自托管 AI 开发工作台：原生 Codex、本地执行、独立 Web 工作区。**
+**A self-hosted AI workbench for personal and household collaboration: native Codex, local execution and separate Web workspaces.**
 
-[中文说明](#中文说明) · [English guide](#english-guide) · [部署配置 / Deployment configuration](#deployment-configuration) · [文档索引 / Documentation](docs/index.md) · [插件仓库 / Plugins](https://github.com/awangs1986/pi-coffee)
+PI Coffee 让受信任的家庭成员通过各自的 Web 身份，在同一台主机上管理对话、项目和资料。
+Codex 通过原生 CLI 的 `app-server` 接入，由 CLI 保留登录和执行；这条接入路径不要求模型 API 反向代理。
+使用范围、资料分隔和供应商账号授权的边界见下方免责声明。
+
+PI Coffee gives trusted household participants separate Web identities for conversations,
+projects and task data on one host. Codex runs through the native CLI's `app-server`,
+which retains authentication and execution; this integration does not require a model-API reverse proxy.
+The disclaimers below explain data separation and provider-account authorization boundaries.
+
+[中文说明](#中文说明) · [免责声明 / Disclaimer](#usage-disclaimer) · [English guide](#english-guide) · [部署配置 / Deployment configuration](#deployment-configuration) · [文档索引 / Documentation](docs/index.md) · [插件仓库 / Plugins](https://github.com/awangs1986/pi-coffee)
 
 PI Coffee Server owns the Browser, Web gateway, Host, optional Relay and native
 Pi / Codex CLI / Claude Code / Cursor / Grok Build adapters. Independently versioned Pi plugins live in
@@ -12,6 +21,18 @@ GitHub is the source authority; Gitea mirrors the same commits. See
 [REPOSITORIES.md](REPOSITORIES.md) for ownership and release boundaries.
 
 ## 中文说明
+
+<a id="usage-disclaimer"></a>
+### 使用范围与免责声明
+
+PI Coffee 面向个人及受信任的家庭内部协作。在同一台主机、同一个系统账号的部署中，
+多个 Web 身份可以使用该主机已配置的原生 CLI 登录，同时分别管理对话列表、任务目录及仓库授权。
+这是技术能力说明，不代表一个模型订阅已获得多人使用许可，也不保证某种部署方式符合所有地区法律或供应商条款。
+
+- **原生接入**：Codex 的模型请求与账号认证由原生 CLI 处理。PI Coffee 的 Web 网关转发自己的应用请求与事件；原生 Codex 接入不依赖把订阅会话转换为通用模型 API。项目另有显式配置的可选 Relay，不能将整个系统概括为“完全没有任何转发”。
+- **资料分隔**：Web 授权、对话列表、文件访问及任务目录按用户作用域管理，减少家庭成员在正常使用界面时混淆或误读彼此资料。共用一个 Linux 系统账号属于应用层分隔，**不构成操作系统级隐私隔离**；拥有该账号权限的进程或管理员仍可能访问其文件。需要更强边界时应使用独立系统账号或 VM。
+- **账号授权**：家庭使用、不分发密码或不使用模型 API 反代，都不会自动豁免供应商的账号限制。OpenAI 当前[使用条款](https://openai.com/policies/terms-of-use/)和[账号共享政策](https://help.openai.com/en/articles/10471989-openai-account-sharing-policy)不允许将个人账号提供给其他人使用。家庭成员独立使用服务时，仍须取得各自所需的账号、席位或其他明确许可；Web 用户数量不会增加模型供应商的授权席位。
+- **部署者责任**：部署者和使用者应遵守适用法律、原生引擎许可及供应商的现行条款，不得借此绕过访问限制、用量限制或安全措施。本项目不提供账号共享的合规保证，也不因这份声明取得任何供应商的认可或免责。
 
 ### 1. 项目解决什么问题
 
@@ -211,6 +232,20 @@ npm start
 `src/main.ts` 为准；`deploy/` 中保留的历史模板需要按角色、路径和当前授权策略调整，不能原样覆盖现有配置。
 
 ## English guide
+
+### Intended use and disclaimer
+
+PI Coffee is intended for personal use and collaboration among trusted household
+participants. In a deployment with one host and one OS account, several Web identities
+can use that host's configured native CLI login while managing separate conversation
+lists, task directories and repository authorizations. This describes a technical
+capability, not permission to share a model subscription or a guarantee of compliance
+with every jurisdiction or provider agreement.
+
+- **Native integration:** The native Codex CLI handles model requests and provider authentication. Coffee's Web gateway forwards its own application requests and events; native Codex integration does not depend on converting subscription sessions into a general-purpose model API. An explicitly configured optional Relay also exists, so this is not a claim that the entire system performs no forwarding.
+- **Data separation:** Web authorization, conversation lists, file access and task directories are scoped by user to reduce accidental mixing during ordinary household use. Sharing one Linux account provides application-level separation, **not OS-level privacy isolation**. Processes or administrators with that account's privileges may still access its files. Use separate OS accounts or VMs when a stronger boundary is required.
+- **Provider authorization:** Household use, withholding passwords and avoiding a model-API reverse proxy do not waive account restrictions. OpenAI's current [Terms of Use](https://openai.com/policies/terms-of-use/) and [Account Sharing Policy](https://help.openai.com/en/articles/10471989-openai-account-sharing-policy) prohibit making a personal account available to other people. Each person using the service must have the account, seat or other explicit permission required for that use. Creating more Web identities does not create more provider seats.
+- **Operator responsibility:** Operators and participants must follow applicable law, native-engine licenses and current provider terms, without bypassing access restrictions, usage limits or safeguards. This project provides no account-sharing compliance guarantee, and this disclaimer does not confer provider approval or an exemption from those obligations.
 
 ### 1. What this project does
 
