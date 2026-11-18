@@ -294,7 +294,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
         const prepared=await this.command(config,["--version"],undefined,original.id),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,reason:"Native executable unavailable"};}
-      const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /\b0\.(154\.0|156\.1|159\.1|163\.0)\b/.test(version) : /\b2\.1\.280\b/.test(version);
+      const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /^codex-cli 0\.(154\.0|156\.1|159\.1|163\.0|170\.0)$/.test(version) : /\b2\.1\.280\b/.test(version);
       if(!supported)return {...original,version,available:false,reason:"Unsupported native CLI version; use the verified release"};
       try {
         const ready=await this.authentication(original.id as "codex"|"claude"|"cursor"|"grok",config);

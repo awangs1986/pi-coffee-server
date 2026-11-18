@@ -1,5 +1,27 @@
 # Native CLI qualification and rollback
 
+## Current candidate: 0.170.0 / GPT-6.2, 2026-11-18
+
+[Server #168](https://github.com/awangs1986/pi-coffee-server/issues/168) qualifies
+stable Codex 0.170.0 and native catalog entries `gpt-6.2-sol` / `gpt-6.2-astra`.
+The prepared wrapper defaults new tasks to Sol 6.2 / medium, retaining existing
+native permissions. Existing task selections and the Handoff preparation pin
+are preserved. [Evidence and activation limits](../reviews/codex-0170-sol62-20261118.md).
+
+The model-retention probe accepts a selected model after the executable argument:
+
+```sh
+node scripts/probe-codex-model-restore.mjs /absolute/path/to/candidate/coffee-codex gpt-6.2-sol
+```
+
+It runs one isolated synthetic thread against a loopback Responses fixture,
+reopens it twice and checks the model and reasoning on subsequent requests.
+It never uses the production native home or paid provider. Omitting the model
+keeps the older 6.1 Sol regression target. Run it serially; this is not permission
+to create or awaken a batch of production tasks.
+
+## Qualification and activation procedure
+
 A global CLI install does not update Host's pinned command. Stage a new immutable
 version directory, retain the previous binary and wrapper, and record both before
 activation. Preserve unrestricted Codex permissions, task-local models and native

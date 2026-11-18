@@ -1,5 +1,33 @@
 # Native Agent integration
 
+## Codex 0.170.0 and GPT-6.2 defaults — 2026-11-18
+
+Tracking: [Server #168](https://github.com/awangs1986/pi-coffee-server/issues/168).
+The readiness allowlist accepts stable Codex CLI 0.170.0 alongside previously
+qualified versions; unknown patch and prerelease versions remain unavailable.
+Installed protocol and model-catalog qualification is required before activation.
+
+The owner-selected deployment default for new Codex tasks is `gpt-6.2-sol`,
+with `medium` reasoning. `gpt-6.2-astra` is another native catalog choice.
+Coffee discovers both through `model/list`, without maintaining a parallel
+hardcoded model registry. Native availability does not guarantee provider quota.
+Retain per-conversation model, reasoning, speed and context settings on resume;
+an upgrade must not replace existing selections with the new default. Explicit
+choices in an unsent draft also remain choices rather than being silently reset.
+
+Use a separate exact-version CLI runtime and wrapper. Preserve native login,
+provider endpoint/capabilities (including standalone search), unrestricted native
+permissions and the existing 272K / nominal 500K context choices. This upgrade
+does not enable the upstream 1M option, change Pi or migrate historical tasks.
+The pinned Handoff preparation model remains a separate setting. Broader Goal
+budget/inventory work remains tracked by #163.
+
+Installation, source publication and loaded-Host activation are separate gates.
+Do not replace a running native process to refresh its catalog. A compatible Host
+and its pinned command must be activated in an authorized maintenance window;
+then verify scoped engine discovery and model defaults without starting a model
+turn. [Qualification evidence and activation boundary](../reviews/codex-0170-sol62-20261118.md).
+
 ## Codex native search qualification — 2026-11-09, Server #166
 
 Native CLI identity alone does not prove that a configured provider exposes every

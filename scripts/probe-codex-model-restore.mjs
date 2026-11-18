@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { CodexSessionFactory } from '../dist/src/host/codex-adapter.js';
 
 const root = await mkdtemp(join(tmpdir(), 'coffee-model-restore-'));
+const selectedModel = process.argv[3] ?? 'gpt-6.1-sol';
 const requests = [];
 const endpoint = createServer(async (req, res) => {
   const chunks = [];
@@ -61,17 +62,17 @@ try {
   factory = new CodexSessionFactory(options);
   const first = await factory.create({ sessionId: 'model-fixture' });
   await run(first);
-  await first.setModel('codex', 'gpt-6.1-sol');
+  await first.setModel('codex', selectedModel);
   await first.setThinkingLevel('high');
   await factory.close();
   for (let restart = 1; restart <= 2; restart++) {
     factory = new CodexSessionFactory(options);
     const session = await factory.create({ sessionId: 'model-fixture' });
     const choices = await session.getModels();
-    assert.equal(choices.current?.id, 'gpt-6.1-sol');
+    assert.equal(choices.current?.id, selectedModel);
     assert.equal(choices.thinkingLevel, 'high');
     await run(session);
-    assert.deepEqual(requests.at(-1), { model: 'gpt-6.1-sol', effort: 'high' });
+    assert.deepEqual(requests.at(-1), { model: selectedModel, effort: 'high' });
     console.log(JSON.stringify({ restart, ...requests.at(-1), verdict: 'PASS' }));
     await factory.close();
   }

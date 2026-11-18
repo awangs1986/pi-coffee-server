@@ -163,7 +163,7 @@ VM 生命周期和权限策略由部署者管理，项目不会自动创建 VM �
 安装时需要访问 npm 和 GitHub Release，运行时由相应主机访问 Gitea、GitHub 及模型供应商。
 
 Codex/Claude 是可选的独立 CLI，不由本项目的 `npm ci` 自动安装。
-当前 Adapter 接受 Codex 0.154.0、0.156.1、0.159.1 和 Claude Code 2.1.280；
+当前 Adapter 接受 Codex 0.154.0、0.156.1、0.159.1、0.163.0、0.170.0 和 Claude Code 2.1.280；
 新增版本应先验证 Adapter。没有配置可执行路径的 Agent 不会被启用。
 
 以下用于**新建的本机体验环境**，在未加载生产 `PI_COFFEE_*` 配置的 shell 中执行。
@@ -357,7 +357,7 @@ building. Installation accesses npm and GitHub Releases. Web needs access to its
 identity/code-hosting endpoints; Host needs repository and model-provider access.
 
 Codex and Claude are optional separate CLI installations. The current Adapter
-accepts Codex 0.154.0, 0.156.1 and 0.159.1, and Claude Code 2.1.280. Other versions
+accepts Codex 0.154.0, 0.156.1, 0.159.1, 0.163.0 and 0.170.0, and Claude Code 2.1.280. Other versions
 require compatibility validation. The paths are configured explicitly; `npm ci`
 does not install those CLIs or authenticate them.
 
