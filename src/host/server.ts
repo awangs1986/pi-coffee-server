@@ -1,3 +1,5 @@
+import { publicPluginReleases, type PluginRelease } from '../shared/plugin-release.js';
+import { AnswerDeliveries, DELIVERY_MESSAGE_KEY } from './answer-deliveries.js';
 import {holdTaskLifecycle,requireTaskIdle} from './task-lifecycle.js';
 import {TaskPreparation,type PreparationBudgets} from './task-preparation.js';
 import {createCompletionSpeech} from './completion-speech.js';
@@ -83,6 +85,7 @@ export interface HostServerOptions {
 
   releaseDir?:string;
   runtimeStatus?: () => PiRuntimeStatus;
+  pluginProvenance?: (mishuEligible: boolean) => Promise<PluginRelease[]>;
   host?: string;
   port?: number;
   token?: string;
@@ -172,6 +175,7 @@ interface UserSlot {
   lifecycleLocks: Set<string>;
   workspaceReads: Map<string, Promise<unknown>>;
   artifactHolds:Map<string,{active:number;release:()=>void}>;
+  answerDeliveries?: AnswerDeliveries;
 
 }
 
@@ -563,6 +567,18 @@ export class HostServer {
       }catch(e){json(res,409,{error:e instanceof Error?e.message:'MISHU operation failed'});}return;
     }
     const readUrl=new URL(req.url??'/', 'http://host');
+    const deliveryRoute = /^\/api\/conversations\/([A-Za-z0-9_-]{1,256})\/deliveries$/.exec(readUrl.pathname);
+    if (deliveryRoute) {
+      if (req.method !== 'GET') { json(res, 405, { error: 'Use GET' }); return; }
+      const keys = readUrl.searchParams.getAll('key');
+      if (keys.length > 40 || keys.some(key => !DELIVERY_MESSAGE_KEY.test(key))) {
+        json(res, 400, { error: 'Invalid answer identities' }); return;
+      }
+      const deliveries = await slot.answerDeliveries?.list(deliveryRoute[1], new Set(keys));
+      if (!deliveries) { json(res, 404, { error: 'Conversation unavailable' }); return; }
+      json(res, 200, { deliveries });
+      return;
+    }
     const exportRoute=/^\/api\/conversations\/([a-zA-Z0-9-]+)\/native-export$/.exec(readUrl.pathname);
     if(exportRoute){
       res.setHeader('cache-control','no-store');if(req.method!=='GET'){json(res,405,{error:'Use GET'});return;}
@@ -602,13 +618,39 @@ export class HostServer {
       return;
     }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
-    if(req.url === '/api/release' && req.method === 'GET') {const release=await readReleaseIdentity(this.options.releaseDir??process.cwd());json(res,200,{hostBackendCommit:release.commit,hostVersion:release.version});return;}
+    if (req.url === '/api/release' && req.method === 'GET') {
+      const release = await readReleaseIdentity(this.options.releaseDir ?? process.cwd());
+      const plugins = await this.options.pluginProvenance?.(Boolean(slot.mishu) && this.options.runtimeStatus?.().mode!=='emergency').catch(()=>undefined);
+      json(res,200,{hostBackendCommit:release.commit,hostVersion:release.version,hostPlugins:publicPluginReleases(plugins)});
+      return;
+    }
     if(req.url === '/api/runtime' && req.method === 'GET') {
       json(res,200,this.options.runtimeStatus?.() ?? {mode:'normal'});return;
     }
-    if(req.url === "/api/engines" && req.method === "GET") {
-      try { json(res,200,{runtime:this.options.runtimeStatus?.(),engines:await slot.factory.engines?.() ?? PI_ONLY_ENGINES,chatEngines:CHAT_ENGINES,contextResetEngines:slot.factory.contextResetEngines?.() ?? (slot.factory.prepareContextReset?["pi"]:[]),takeover:Boolean(slot.factory.prepareTakeover),clearChatContext:Boolean(slot.factory.prepareContextReset),forkModes:Object.fromEntries(["pi","codex","claude","cursor","grok"].map(engine=>[engine,slot.factory.forkModes?.(engine as "pi"|"codex"|"claude"|"cursor"|"grok")??[]]))}); }
-      catch { json(res,503,{error:"Agent discovery unavailable"}); }
+    const engineRoute = /^\/api\/engines\/(pi|codex|claude|cursor|grok)(\/retry)?$/.exec(req.url ?? '');
+    if (req.url === '/api/engines' || req.url === '/api/engines/directory' || engineRoute) {
+      if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed' }); return; }
+      res.setHeader('cache-control', 'no-store');
+      const { factory } = slot;
+      try {
+        if (engineRoute) {
+          const id = parseAgentEngine(engineRoute[1]);
+          const engine = factory.engineAvailability
+            ? await (engineRoute[2] ? factory.engineAvailability(id, true) : factory.engineAvailability(id))
+            : (await factory.engines?.() ?? PI_ONLY_ENGINES).find(row => row.id === id);
+          json(res, 200, { engine });
+          return;
+        }
+        const engines = req.url === '/api/engines/directory'
+          ? PI_ONLY_ENGINES.map(({ id, name }) => ({ id, name }))
+          : await factory.engines?.() ?? PI_ONLY_ENGINES;
+        json(res, 200, {
+          runtime: this.options.runtimeStatus?.(), independentReadiness: req.url === '/api/engines/directory' || undefined, engines, chatEngines: CHAT_ENGINES,
+          contextResetEngines: factory.contextResetEngines?.() ?? (factory.prepareContextReset ? ['pi'] : []),
+          takeover: Boolean(factory.prepareTakeover), clearChatContext: Boolean(factory.prepareContextReset),
+          forkModes: Object.fromEntries(PI_ONLY_ENGINES.map(({ id }) => [id, factory.forkModes?.(id) ?? []])),
+        });
+      } catch { json(res, 503, { error: 'Agent discovery unavailable' }); }
       return;
     }
     if(req.url === '/api/github-accounts') {
@@ -732,7 +774,7 @@ export class HostServer {
         if(!slot.factory.prepareTakeover)throw new Error('Agent takeover unavailable on this Host');
         if(slot.lifecycleLocks.has(id))throw new Error('Task lifecycle operation in progress');
         releaseLifecycle=holdTaskLifecycle(slot.lifecycleLocks,[id]);
-        const readiness=(await slot.factory.engines?.())?.find(e=>e.id===input.engine);if(!readiness?.available)throw new Error(readiness?.reason??'Target Agent unavailable');
+        const readiness=slot.factory.engineAvailability?await slot.factory.engineAvailability(input.engine):(await slot.factory.engines?.())?.find(e=>e.id===input.engine);if(!readiness?.available)throw new Error(readiness?.reason??'Target Agent unavailable');
         const session=(await slot.registry.open(id)).session;
         await requireTaskIdle(session);
         const listing=(await slot.registry.list()).find(s=>s.id===id);
@@ -758,7 +800,7 @@ export class HostServer {
         const existing=target ? await ws.lookup(target) : undefined;
         if(existing && (existing.engine ?? "pi")!==engine)throw new Error("Task Agent is fixed at creation");
         if(!existing && input.action==='conversation' && input.workspaceKind==='chat' && !CHAT_ENGINES.includes(engine))throw new Error('Chat is available with Pi or Codex; choose Work for this Agent');
-        const available=(await slot.factory.engines?.() ?? PI_ONLY_ENGINES).find(item=>item.id===engine);
+        const available=slot.factory.engineAvailability?await slot.factory.engineAvailability(engine):(await slot.factory.engines?.() ?? PI_ONLY_ENGINES).find(item=>item.id===engine);
         if(!existing && !available?.available)throw new Error(available?.reason ?? "Agent unavailable");
       }
       if(input.action==="delete" && target) {
@@ -891,15 +933,24 @@ export class HostServer {
       const sharedPreparation=scope.workspaces?this.preparationScopes.get(scope.workspaces):undefined;
       const lifecycleLocks=sharedPreparation?.locks??new Set<string>();
       const mishu=scope.workspaces?new MishuCoordinator(join(scope.workspaces.root,'.coffee','mishu'),scope.workspaces,lifecycleLocks,scope.factory.mishuSourceCapabilities?.bind(scope.factory)):undefined;
+      const answerDeliveries = scope.workspaces ? new AnswerDeliveries(scope.workspaces, id => {
+        for (const socket of this.sockets) if (socket.user === user && socket.sessionId === id) {
+          socket.send({v:1,type:'answer_deliveries_changed',sessionId:id});
+        }
+      }) : undefined;
       const registry = new HostSessionRegistry({turnInstructions:speech? id=>speech.prepare(id):undefined,queueStore:scope.workspaces?new QueueStore(join(scope.workspaces.root,'.coffee','input-queues'),scope.workspaces.backupWriterFence,async id=>(await scope.workspaces!.lookup(id))?.recoveryReceipt?.operationId):undefined, factory: scope.factory, ...this.registryOptions, runnerGuidance:scope.runners&&scope.workspaces?async id=>(await scope.workspaces!.lookup(id))?.workspaceKind==='project'?scope.runners!.guidance():undefined:undefined, onEvent:(id,event)=>{
+        const delivery = answerDeliveries?.observe(id, event);
+        if (delivery) void this.trackBackground(delivery);
         index?.event(id,event);mishu?.event(id,event);
         const admit=speech?.event(id,event);
         const status=event&&typeof event==='object'&&!Array.isArray(event)?runLifecycle(event.type):undefined;
         if(status&&scope.workspaces)void this.trackBackground(scope.workspaces.recordRunStatus(id,status)).then(async()=>{await admit?.().catch(()=>undefined);this.broadcastSessions(slot);},()=>console.warn('Run status could not be saved'));
-      },onCommand:async(id,requestId,state,mode,text)=>{await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
+      },onCommand:async(id,requestId,state,mode,text)=>{if (state==='cancelled'||state==='uncertain') answerDeliveries?.cancel(id,requestId);
+        await mishu?.command(id,requestId,state,mode,text);await index?.command(id,requestId,state,mode);
+        if (state==='delivering' && mode==='prompt') await answerDeliveries?.begin(id,requestId).catch(()=>undefined);}, ...(scope.workspaces ? {runStatuses:()=>scope.workspaces!.runStatuses(),onHistory:async(id,history)=>{await scope.workspaces!.exportHistory(id,history);index?.scheduleAudit(id,true);},onRun:async(id,state,requestId)=>{await this.trackBackground(scope.workspaces!.markRun(id,state,requestId));}} : {}) });
       mishu?.attach(registry);mishu?.attachIndex(index);mishu?.attachHistoryReader(scope.factory.readHistory?.bind(scope.factory));mishu?.attachMemoryExtractor(scope.factory.extractMemory?.bind(scope.factory));
       mishu?.onWatch(frame=>{if(this.closing)return;for(const socket of this.sockets)if(socket.user===user)socket.send({v:1,type:'mishu_watch',...(frame.type==='panel'?{panel:{counts:frame.panel.counts,items:frame.panel.items.slice(0,50).map(i=>({key:i.key,kind:i.kind,conv:i.conv,text:i.text,link:i.link,priority:i.priority}))}}:{notice:{text:frame.notice.text,link:frame.notice.link,conv:frame.notice.conv,kind:frame.notice.rule}})});});
-      const slot: UserSlot = { user, speech, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(),artifactHolds:new Map(), ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
+      const slot: UserSlot = { user, speech, backupAdministrator:this.options.backup?.administrator??'awangs',restore:this.options.backup?.restore,schedule:this.options.backup?.schedule,backup:this.options.backup?.coordinator,repository:this.options.backup?.repository,repositoryActivationUnavailable:this.options.backup?.activationUnavailable, mishu, githubAccounts:scope.githubAccounts, index, factory: scope.factory, registry, workspaces:scope.workspaces, runners:scope.runners, sshme:scope.sshme, skills:scope.skills ? new SkillManager(scope.skills,scope.workspaces) : undefined, lifecycleLocks, workspaceReads:new Map(),artifactHolds:new Map(),answerDeliveries, ...(scope.workdir === undefined ? {} : { workdir: scope.workdir }) };
       if(scope.workspaces){
         if(sharedPreparation){sharedPreparation.registries.add(registry);sharedPreparation.slots.add(slot);slot.preparation=sharedPreparation.preparation;}
         else{

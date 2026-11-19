@@ -1,5 +1,7 @@
 # Task bundles without native session migration
 
+Current P1 contract: [Files under an answer](workbench-p1.md#files-under-an-answer).
+
 Accepted 2026-09-27. Tracking: [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).
 This specification overrides the new-task directory layout in conversation-workspaces.md when task storage is configured. Existing tasks keep their registered paths.
 

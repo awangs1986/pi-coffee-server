@@ -14,9 +14,16 @@ const server=createServer(async(req,res)=>{
  const u=new URL(req.url,'http://fixture');
  if(u.pathname==='/'){
   res.setHeader('content-type','text/html; charset=utf-8');res.end(`<div id="thread"></div><script type="module">
-  import {renderMarkdown} from '/render.js';import {bindWorkspaceArtifactLinks} from '/workspace-artifacts.js';
+  import {renderMarkdown,assistantNode} from '/render.js';import {bindWorkspaceArtifactLinks} from '/workspace-artifacts.js';
+  import {createAnswerDeliveries} from '/answer-deliveries.js';
   const root=document.querySelector('#thread');root.innerHTML=renderMarkdown(${JSON.stringify(markdown)});
-  bindWorkspaceArtifactLinks(root,(route,path)=>'/files/'+route+'?scope=synthetic&path='+encodeURIComponent(path));window.fixtureReady=true;
+  const file=(route,path)=>'/files/'+route+'?scope=synthetic&path='+encodeURIComponent(path);
+  bindWorkspaceArtifactLinks(root,file);
+  root.append(assistantNode({id:'other',text:'Finished'}),assistantNode({id:'result',text:'Finished'}));
+  const deliveries=createAnswerDeliveries({root,context:()=> 'fixture',
+    load:async keys=>{if(!keys.includes('native-message:result'))throw Error('Missing identity');return [{key:'native-message:result',files:[{path:'output/generated.html',available:true}]}];},
+    endpoint:path=>file('workspace-download',path)});
+  deliveries.refresh();window.fixtureReady=true;
   </script>`);return;
  }
  if(u.pathname.startsWith('/files/')){
@@ -53,7 +60,14 @@ try{
  const [imageDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'下载图片',exact:true}).click()]);
  assert.equal(await imageDownload.failure(),null);assert.deepEqual(await readFile(await imageDownload.path()),image);
  assert.equal((await page.locator('body').textContent()).includes('BASE64_BODY_MUST_NOT_BE_DELIVERED'),false);
- assert.deepEqual(errors,[]);const result={passed:true,actualChromiumDownload:true,downloadedBytes:binary.length,imagePreviewRetained:true,nativeGeneratedImageVisible:true,nativeGeneratedImageDownloaded:true,nativeVisualizeHTMLDownload:true,htmlDidNotExecuteInParent:true,requests,errors};
+ const generated=page.getByRole('link',{name:'下载 generated.html',exact:true});
+ assert.equal(await page.locator('[data-delivery-key="native-message:other"] .answer-deliveries').count(),0);
+ await generated.waitFor();
+ assert.equal(await page.locator('[data-delivery-key="native-message:result"] .answer-deliveries a').count(),1);
+ const [generatedDownload]=await Promise.all([page.waitForEvent('download'),generated.click()]);
+ assert.deepEqual(await readFile(await generatedDownload.path()),html);
+ await page.reload();await generated.waitFor();
+ assert.deepEqual(errors,[]);const result={passed:true,actualChromiumDownload:true,downloadedBytes:binary.length,imagePreviewRetained:true,nativeGeneratedImageVisible:true,nativeGeneratedImageDownloaded:true,nativeVisualizeHTMLDownload:true,htmlDidNotExecuteInParent:true,answerScopedDownloadAfterReload:true,requests,errors};
  if(process.env.EVIDENCE_DIR){await mkdir(process.env.EVIDENCE_DIR,{recursive:true});await writeFile(resolve(process.env.EVIDENCE_DIR,'attachment-download.json'),JSON.stringify(result,null,2)+'\n');}
  console.log(JSON.stringify(result));
 }finally{await browser.close();await new Promise(r=>server.close(r));}

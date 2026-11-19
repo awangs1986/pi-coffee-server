@@ -25,6 +25,7 @@ async function setup(transfer?:HostServerOptions['transfer']){
  const session:AgentSession={async prompt(text){calls.push({id,text,model,effort});if(text==='hold'){streaming=true;for(const l of listeners)l({type:'agent_start'});return;}if(hold)await hold;if(fail)throw new Error('provider unavailable');entries.push({id:'u'+entries.length,kind:'user',text});entries.push({id:'a'+entries.length,kind:'assistant',text:'Verified current files; next: run tests.\n[TAKEOVER_READY]'});for(const l of listeners)l({type:'agent_settled'});},async steer(){},async followUp(){},async abort(){streaming=false;},async getState(){return {isStreaming:streaming,messageCount:entries.length};},async getHistory(){return {entries:[...entries],leafId:entries.at(-1)?.id??null};},async rename(){},async getModels(){return {models:[],current:null,thinkingLevel:'off',thinkingLevels:[]};},async setModel(_provider,id){model=id;},async setThinkingLevel(value){effort=value;},async getCommands(){return [];},async getExtensions(){return [];},async getStats(){return {};},async compact(){},async respondUi(){},onEvent(l){listeners.add(l);return ()=>listeners.delete(l);},async stop(){if(id===task.id)await sourceStop?.();live.delete(session);},async backgroundState(){return {known:true,active:0};}};live.add(session);return session;},async list(){return [];},async delete(){return false;}});
  const factory=new NativeAgentFactory({workspaces,pi:factoryFor(),codex:{command:'fixture'},codexSessionFactory:(_id,_cwd,bound)=>factoryFor(bound)});
  factory.engines=async()=>[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true}];
+ factory.engineAvailability=async id=>({id,name:id,available:id==='pi'||id==='codex'});
  const host=new HostServer({port:0,token:'test',factory,workspaces,transfer,scopeForUser:async user=>({factory,workspaces:user==='owner'?workspaces:new Workspaces(join(root,user))})});await host.start();cleanup.push(()=>host.close());
  const request=(body?:unknown)=>fetch(`http://127.0.0.1:${host.address().port}/api/workspace`,{method:body?'POST':'GET',headers:{authorization:'Bearer test','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const readTask=async()=>((await (await request()).json()).conversations as any[]).find(c=>c.id===task.id);
@@ -33,6 +34,7 @@ async function setup(transfer?:HostServerOptions['transfer']){
   const store=new Workspaces(join(root,'projects'));
   const nextFactory=new NativeAgentFactory({workspaces:store,pi:factoryFor(),codex:{command:'fixture'},codexSessionFactory:(_id,_cwd,bound)=>factoryFor(bound)});
   nextFactory.engines=factory.engines;
+  nextFactory.engineAvailability=factory.engineAvailability;
   const next=new HostServer({port:0,token:'test',factory:nextFactory,workspaces:store});await next.start();cleanup.push(()=>next.close());return next;
  };
  return {root,task,host,request,readTask,calls,workspaces,records,restart,live,factory,setSourceStop:(value:()=>Promise<void>)=>{sourceStop=value;},setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;}};

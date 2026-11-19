@@ -1,3 +1,4 @@
+import { readPluginProvenance } from './host/plugin-provenance.js';
 import {PersonalRecoveryCollection} from './host/personal-recovery-collection.js';
 import {PersonalBackup} from './host/personal-backup.js';
 import {BackupRepository} from './host/backup-repository.js';
@@ -260,6 +261,11 @@ async function run(selectedRole: Role): Promise<void> {
     port: envNumber("PI_COFFEE_HOST_PORT", 8788),
     token: process.env.PI_COFFEE_HOST_TOKEN,
     runtimeStatus: piRuntime?.status,
+    pluginProvenance: mishuEligible => readPluginProvenance({
+      releaseDir: process.env.PI_COFFEE_RELEASE_DIR ?? process.cwd(),
+      selectedRoots: piRuntime?.extensions() ?? [],
+      mishuEligible,
+    }),
     ...(backupCoordinator?{backup:{personal:personalEnabled,gitea,giteaProfile,coordinator:backupCoordinator,restore:restoreCoordinator,accountRecovery,collection,...(scheduleForActor?{scheduleForActor,scheduleConnection}:{}),...(personalRepository?{repository:personalRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY}:brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined,configureRepositoryForActor:async(actor:string|undefined,dataScope:string)=>{if(!actor)throw new BackupError('forbidden','Authenticated administrator required');await new BackupRepositoryClient({...brokerConfig,actor,dataScope}).configure();}}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),

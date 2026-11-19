@@ -1,3 +1,4 @@
+import { publicPluginReleases } from '../shared/plugin-release.js';
 import {githubSecret} from '../shared/github-credentials.js';
 import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
@@ -255,7 +256,7 @@ export class WebServer {
         json(response,result.status,{...await result.json(),oauthConfigured:Boolean(this.githubOAuth)});
       }catch{json(response,502,{error:'GitHub account management unavailable'});}return;
     }
-    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content|native-export)$/.test(path)) {
+    if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content|native-export|deliveries)$/.test(path)) {
       response.setHeader('cache-control','no-store');
       if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
       try {
@@ -277,20 +278,21 @@ export class WebServer {
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
         const upstream=await this.hostApi(route,'/api/release','GET');const body=upstream.ok?await upstream.json():{};
         const backend=await readReleaseIdentity(this.releaseDir),frontend=await readReleaseIdentity(this.publicDir,'release-manifest.json');
-        json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion)});
+        json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion),hostPlugins:publicPluginReleases(body.hostPlugins)});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
-    if(path === "/api/backup" || path === "/api/completion-speech" || path === "/api/mishu" || path === "/api/workspace" || path === "/api/engines" || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+    const engineRead = path === '/api/engines' || /^\/api\/engines\/(?:directory|(?:pi|codex|claude|cursor|grok)(?:\/retry)?)$/.test(path);
+    if(path === "/api/backup" || path === "/api/completion-speech" || path === "/api/mishu" || path === "/api/workspace" || engineRead || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
       try {
         const session=await this.identity?.authorize(request);
         if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
-        if((path === "/api/engines" || path === "/api/runtime") && request.method !== "GET") {json(response,405,{error:"Method not allowed"});return;}
+        if((engineRead || path === "/api/runtime") && request.method !== "GET") {json(response,405,{error:"Method not allowed"});return;}
         if(request.method === "POST" && (this.identity ? !this.identity.originAllowed(request) : this.auth ? !this.auth.originAllowed(request) : request.headers.origin !== `${this.scheme}://${request.headers.host}`)) {json(response,403,{error:"Invalid origin"});return;}
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
         const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined,path==='/api/backup'?session?.login??this.auth?.principalOf(request)?.user:undefined);
         const body=await result.json();
-        if(path==='/api/backup')response.setHeader('cache-control','no-store');
+        if(path==='/api/backup' || engineRead)response.setHeader('cache-control','no-store');
         if(result.ok)this.recordTransferGrant(body, session ? `identity:${session.id}` : this.auth ? `auth:${this.auth.principalOf(request)!.user}` : "local");
         json(response,result.status,body);
       } catch {json(response,502,{error:"VM unavailable or invalid request"});}

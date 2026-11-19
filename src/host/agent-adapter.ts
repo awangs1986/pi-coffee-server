@@ -20,6 +20,8 @@ export interface EngineAvailability {
   version?: string;
   modelCatalog?: boolean;
   authentication?: "configured" | "required" | "unknown";
+  status?: "ready" | "not_configured" | "login_required" | "unsupported" | "unverified" | "unavailable";
+  checkedAt?: string;
 }
 
 export const PI_ONLY_ENGINES: EngineAvailability[] = [
@@ -139,7 +141,7 @@ export interface AgentSessionFactory {
   close?(): Promise<void>;
   capabilities?(id:string):Promise<import("../shared/protocol.js").AgentCapabilities>;
   engines?(): Promise<EngineAvailability[]>;
-  engineAvailability?(engine:AgentEngine):Promise<EngineAvailability>;
+  engineAvailability?(engine: AgentEngine, refresh?: boolean): Promise<EngineAvailability>;
   /** Read native choices without creating a conversation or running a turn. */
   commandCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<CommandInfo[]>;
   modelCatalog?(engine: import("../shared/protocol.js").AgentEngine): Promise<AgentModels>;

@@ -1,5 +1,7 @@
 # Native Agent integration
 
+Current P1 contract: [Agent availability](workbench-p1.md#agent-availability).
+
 ## Codex 0.170.0 and GPT-6.2 defaults — 2026-11-18
 
 Tracking: [Server #168](https://github.com/awangs1986/pi-coffee-server/issues/168).

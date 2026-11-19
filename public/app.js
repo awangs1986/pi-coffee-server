@@ -1,3 +1,6 @@
+import {appendPluginVersions} from './plugin-versions.js';
+import {createAnswerDeliveries,setAnswerDeliveryKey} from './answer-deliveries.js';
+import {createEngineDirectory} from './engine-directory.js';
 import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} from './task-preparation.js';
 import {mountOptionalSpeech} from './speech-bootstrap.js';
 import {initBackupControls} from './backup.js';
@@ -322,14 +325,38 @@ const takeoverBusy=()=>Boolean(activeId&&(clearingContextId===activeId||takeover
 function canTakeover(){const task=currentTask();return takeoverAvailable&&opened&&task?.workspaceKind==='project'&&!task.archived&&['pi','codex'].includes(task.engine||'pi')&&!streaming&&!compacting&&!takeoverBusy()&&!pendingDelivery;}
 const engineName=(value=engine)=>({pi:"Pi",codex:"Codex",claude:"Claude Code",cursor:"Cursor",grok:"Grok Build"})[value] || value;
 const supports=(name)=>name==='steer'&&engine==='codex'&&mishuControls?.isSelected()?false:capabilities ? capabilities[name]===true : engine==="pi";
-async function loadEngines(){
-  let available=[];try{const response=await fetch("/api/engines");if(response.ok){const data=await response.json();available=data.engines??[];chatEngines=Array.isArray(data.chatEngines)?data.chatEngines.filter(id=>['pi','codex'].includes(id)):['pi'];takeoverAvailable=data.takeover===true;clearChatContextAvailable=data.clearChatContext===true;contextResetEngines=Array.isArray(data.contextResetEngines)?data.contextResetEngines.filter(id=>['pi','codex'].includes(id)):['pi'];forkModes=data.forkModes??{};renderRuntimeStatus($('#runtime-banner'),data.runtime);}}catch{}
-  engineAvailability=available;renderProjectContext();loadDraftModels();
+const engineDirectory = createEngineDirectory({
+  ids: ['pi','codex','claude','cursor','grok'],
+  onChange(rows, metadata) {
+    const reloadCatalog = rows.some(row => row.id===$('#task-engine').value && row.available && row.modelCatalog &&
+      !engineAvailability.some(old => old.id===row.id && old.available && old.modelCatalog));
+    engineAvailability = rows;
+    if (metadata !== undefined) {
+      chatEngines = Array.isArray(metadata?.chatEngines) ? metadata.chatEngines.filter(id=>['pi','codex'].includes(id)) : ['pi'];
+      contextResetEngines = Array.isArray(metadata?.contextResetEngines) ? metadata.contextResetEngines.filter(id=>['pi','codex'].includes(id)) : ['pi'];
+      takeoverAvailable = metadata?.takeover === true;
+      clearChatContextAvailable = metadata?.clearChatContext === true;
+      forkModes = metadata?.forkModes ?? {};
+      if (metadata?.runtime) renderRuntimeStatus($('#runtime-banner'),metadata.runtime);
+    }
+    renderProjectContext();
+    if (!ui.agentPanes.engine.classList.contains('hidden')) renderAgentPane('engine');
+    if (reloadCatalog) loadDraftModels();
+  },
+});
+function engineAvailabilityLabel(row) {
+  if (!row) return '等待检查';
+  if (row.stale) return row.checking ? '上次可用 · 检查中' : '上次可用 · 本次未核实';
+  if (row.checking) return row.available ? '可用 · 检查中' : '检查中';
+  if (row.status==='login_required' || row.authentication==='required') return '需要登录';
+  if (row.status==='not_configured' || row.reason==='Not configured on this Host') return 'Host 未配置';
+  if (row.status==='unsupported') return 'CLI 版本不受支持';
+  if (row.status==='unverified' || row.authentication==='unknown') return '暂未核实';
+  return row.available ? '' : '暂不可用';
 }
 async function loadRuntimeStatus(){
   try{const response=await fetch('/api/runtime');if(response.ok)renderRuntimeStatus($('#runtime-banner'),await response.json());}catch{}
 }
-void loadEngines();
 let requestNumber = 0;
 let currentAssistant, currentActivity, activityCount = 0;
 const openTools = new Map();
@@ -430,6 +457,7 @@ async function loadReleaseStatus(){
       const row=document.createElement('div');row.textContent=name+' '+(typeof version==='string'&&/^(0|[1-9]\d{0,6})\.\d{2}$/.test(version)?'v'+version:'未标记')+' · '+commit(sha);return row;
     }));
     target.title=versions.map(([name,,sha])=>name+' '+commit(sha)).join('\n');
+    appendPluginVersions(target,data.hostPlugins);
   }catch{if(request===releaseStatusRequest&&user===currentUser)target.textContent='版本信息暂不可用';}
 }
 
@@ -499,17 +527,43 @@ function agentOption({ label, meta = '', selected = false, disabled = false, pla
   button.addEventListener('click',event=>{event.stopPropagation();onClick();});
   return button;
 }
-// Agent and Chat/Work are chosen here for a new task; the hidden selects stay the source of truth.
-function renderChoicePane(pane, select, describe) {
-  for(const option of select.options){const {label,meta}=describe(option);pane.append(agentOption({label,meta,plain:true,selected:agentDraft?.engine===option.value,disabled:agentDraft?.kind==='chat'?option.disabled:!engineAvailability.find(e=>e.id===option.value)?.available,onClick:()=>stageAgentSetting('engine',option.value)}));}
+function appendEngineChoice(pane, {value, meta, selected, disabled}) {
+  const observation=engineAvailability.find(item=>item.id===value);
+  const row=el('div','agent-option-row');
+  const button=agentOption({label:engineName(value),meta,plain:true,selected,disabled,onClick:()=>stageAgentSetting('engine',value)});
+  if(observation?.checkedAt && Number.isFinite(Date.parse(observation.checkedAt))) {
+    button.title='最近核实 · '+new Date(observation.checkedAt).toLocaleString();
+  }
+  row.append(button);
+  if(observation?.retry && !observation.checking){
+    const retry=el('button','btn small agent-retry','重试');
+    retry.type='button';
+    retry.setAttribute('aria-label','重试检查 '+engineName(value));
+    retry.onclick=event=>{event.stopPropagation();void engineDirectory.retry(value);};
+    row.append(retry);
+  }
+  pane.append(row);
 }
 function renderAgentPane(kind) {
   const pane=ui.agentPanes[kind];pane.replaceChildren();
   const draft=agentDraft, catalog=draft?.catalog||models;
-  if(kind==='engine'&&activeId){
-    for(const target of ['pi','codex'])pane.append(agentOption({label:engineName(target),meta:target===currentTask()?.engine?'当前 Agent':'自动交接',selected:(draft?.engine||currentTask()?.engine)===target,disabled:!canTakeover()||!engineAvailability.find(e=>e.id===target)?.available,onClick:()=>stageAgentSetting('engine',target)}));return;
+  if(kind==='engine'){
+    if(activeId){
+      for(const value of ['pi','codex']){
+        const current=value===currentTask()?.engine, observation=engineAvailability.find(e=>e.id===value);
+        appendEngineChoice(pane,{value,meta:current?'当前 Agent':engineAvailabilityLabel(observation)||'自动交接',
+          selected:(draft?.engine||currentTask()?.engine)===value,disabled:!canTakeover()||!observation?.available});
+      }
+    }else{
+      for(const option of $('#task-engine').options) {
+        const value=option.value, observation=engineAvailability.find(e=>e.id===value);
+        const workOnly=(draft?.kind||taskSource())==='chat'&&!chatEngines.includes(value);
+        appendEngineChoice(pane,{value,meta:workOnly?'仅 Work':engineAvailabilityLabel(observation),
+          selected:draft?.engine===value,disabled:workOnly||(observation?!observation.available:value!=='pi')});
+      }
+    }
+    return;
   }
-  if(kind==='engine'){renderChoicePane(pane,$('#task-engine'),option=>({label:engineName(option.value),meta:option.textContent.split(' · ').slice(1).join(' · ')}));return;}
   if(kind==='kind'){
     for(const source of ['chat','gitea','github'])pane.append(agentOption({label:source==='chat'?'Chat':FORGE_NAMES[source],selected:(draft?.kind||taskSource())===source,meta:source!=='chat'&&!forgeCapabilities()[source]?'当前账号的仓库授权尚未配置':'',disabled:source!=='chat'&&!forgeCapabilities()[source],onClick:()=>stageAgentSetting('kind',source)}));return;
   }
@@ -907,7 +961,7 @@ function scheduleEntryRender(entry,tool=false,done=false){
   viewScheduler.schedule({...view,entityId:entry.renderId,entityRevision:entry.renderRevision,run:()=>{
     if(!entry.node.isConnected)return;
     const stick=nearBottom();
-    if(tool)fillToolCard(entry.node,entry);else updateAssistant(entry.node,entry.text,{done});
+    if(tool)fillToolCard(entry.node,entry);else {if(done)setAnswerDeliveryKey(entry.node,entry);updateAssistant(entry.node,entry.text,{done});}
     if(done)completionSpeech?.project(entries);
     if(stick)scrollToEnd();
     maybeReadCompletion();
@@ -1595,6 +1649,7 @@ async function whoAmI(epoch, signal) {
     backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
     if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    engineDirectory.setScope(currentUser ?? 'local');
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
@@ -1614,6 +1669,7 @@ async function whoAmI(epoch, signal) {
 }
 function revokeCachedIdentity(){
   goalControls.reset();
+  engineDirectory.setScope(undefined);
   clearConnectionDeadline();
   conversationModels.clear();conversationModels.setScope(null);modelPreview=null;models=null;
   abandonPendingSettings(false);
@@ -1669,9 +1725,10 @@ function renderProjectContext() {
   for(const option of agentSelect.options){
     const found=engineAvailability.find(e=>e.id===option.value);
     const unavailable=found ? !found.available : option.value!=='pi';
+    const label=engineAvailabilityLabel(found);
     const workOnly=!lockedToConversation && kind.value==='chat' && !chatEngines.includes(option.value);
     option.disabled=unavailable || workOnly;
-    option.textContent=engineName(option.value)+(workOnly?' · 仅 Work':unavailable?' · '+(found?.reason || 'Host 未启用'):'');
+    option.textContent=engineName(option.value)+(workOnly?' · 仅 Work':label?' · '+label:'');
   }
   for(const option of kind.options)option.textContent=option.value==='chat'?(lockedToConversation?'Chat':'Chat · 本地目录'):(lockedToConversation?'Work':'Work · '+workForgeLabel());
   const projectWorkspace=kind.value==='project',forges=forgeCapabilities();
@@ -2109,6 +2166,9 @@ function handleFrame(frame, ws) {
       if(frame.operation==='set_context'&&frame.requestId===contextPending){contextPending=null;send({v:1,type:'get_stats'});}
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
+    case 'answer_deliveries_changed':
+      if(frame.sessionId===activeId) answerDeliveries.refresh(true);
+      return;
     case 'resync_required':
       pushNote('正在运行的这一段输出有部分未能补放；已完成的消息以上方历史为准。');
       return;
@@ -2188,6 +2248,7 @@ function handleEvent(event,{replayed=false}={}) {
   if(type==='message_delta' || type==='message_completed'){
     showThinking(false);let entry=nativeItems.get(event.id);
     if(!entry){entry=pushAssistant('');nativeItems.set(event.id,entry);}
+    if(type==='message_completed'&&typeof event.id==='string')entry.sourceMessageKey='native-message:'+event.id;
     entry.text=type==='message_completed'?(event.text||''):entry.text+(event.delta||'');scheduleEntryRender(entry,false,type==='message_completed');return;
   }
   if(type==='tool_update'){
@@ -4160,11 +4221,23 @@ fetch('/api/me',{cache:'no-store'}).then(async r=>{
 function bindWorkspaceArtifacts() {
  bindWorkspaceArtifactLinks(document,(action,path)=>workspaceState&&transfer?fileEndpoint(action,path):null);
  void documentDownloads.refresh();
+ answerDeliveries.refresh();
 }
 const documentDownloads=createDocumentDownloads({
  root:ui.thread,
  context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
  load:async()=>{const response=await fetch(fileEndpoint('artifacts'));if(!response.ok)throw new Error('Generated files unavailable');return (await response.json()).artifacts;},
+ endpoint:path=>transfer?fileEndpoint('workspace-download',path):null,
+});
+const answerDeliveries=createAnswerDeliveries({
+ root:ui.thread,
+ context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,transferRevision]):null,
+ load:async(keys,signal)=>{
+   const params=new URLSearchParams(keys.map(key=>['key',key]));
+   const result=await fetch('/api/conversations/'+encodeURIComponent(activeId)+'/deliveries?'+params,{signal,cache:'no-store'});
+   if(!result.ok)throw Error('Answer delivery metadata unavailable');
+   return (await result.json()).deliveries;
+ },
  endpoint:path=>transfer?fileEndpoint('workspace-download',path):null,
 });
 new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});

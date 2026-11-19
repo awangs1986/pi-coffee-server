@@ -1,5 +1,7 @@
 # Formal Server release versions
 
+Current P1 contract: [Plugin source and effective version](../spec/workbench-p1.md#plugin-source-and-effective-version).
+
 Owner decision, 2026-10-09. [Server #106](https://github.com/awangs1986/pi-coffee-server/issues/106).
 
 `VERSION` is the authority for the Server's formal release number. The initial

@@ -290,6 +290,7 @@ export type ClientFrame = (
     }) & {conversationId?:string;bindingEpoch?:string;recoveryGeneration?:string};
 
 export type ServerFrame = (
+  | {v:typeof PROTOCOL_VERSION;type:"answer_deliveries_changed";sessionId:string}
   | {v:typeof PROTOCOL_VERSION;type:"backup_status";scope:string;schedule?:JsonValue;retention?:JsonValue;restores?:JsonValue;repository?:JsonValue;tasks:{taskId:string;engine:AgentEngine;state:string;coverage:string;checkpointId:string|null;captureAt:string|null;ageMs:number|null;stale:boolean;reason?:string}[]}
   | {v:typeof PROTOCOL_VERSION;type:"agent_command_result";sessionId:string;requestId?:string;name:string;text:string}
   | {v:typeof PROTOCOL_VERSION;type:"mishu_watch";panel?:{counts:Record<string,number>;items:{key:string;kind:string;conv?:string;text:string;link?:string;priority:number}[]};notice?:{text:string;link?:string;conv?:string;kind:string}}

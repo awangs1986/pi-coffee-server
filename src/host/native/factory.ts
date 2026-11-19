@@ -44,6 +44,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
   private readonly imageImportWaiters:Array<()=>void>=[];
   private closing=false;
   private readonly readinessCache=new Map<AgentEngine,{at:number;result:EngineAvailability}>();
+  private readonly readinessReads = new Map<AgentEngine, Promise<EngineAvailability>>();
   private readonly audits=new Map<AbortController,Promise<void>>();
   private readonly preparations=new Map<AbortController,AgentSession>();
   private readonly generation=new Map<string,string>();
@@ -279,27 +280,37 @@ export class NativeAgentFactory implements AgentSessionFactory {
     return this.withFactory(factory,()=>factory.modelCatalog!(engine));
   }
   async engines():Promise<EngineAvailability[]> {return Promise.all(PI_ONLY_ENGINES.map(original=>this.engineAvailability(original.id)));}
-  async engineAvailability(engine:AgentEngine):Promise<EngineAvailability> {
-    const cached=this.readinessCache.get(engine);if(cached&&Date.now()-cached.at<2000)return structuredClone(cached.result);
-    const result=await this.inspectEngine(engine);if(result.available)this.readinessCache.set(engine,{at:Date.now(),result});else this.readinessCache.delete(engine);return result;
+  async engineAvailability(engine: AgentEngine, refresh = false): Promise<EngineAvailability> {
+    const pending = this.readinessReads.get(engine);
+    if (pending) return structuredClone(await pending);
+    const cached = this.readinessCache.get(engine);
+    if (!refresh && cached && Date.now() - cached.at < 2000) return structuredClone(cached.result);
+    const read = this.inspectEngine(engine).then(observation => {
+      const at = Date.now();
+      const result = { ...observation, checkedAt: new Date(at).toISOString() };
+      this.readinessCache.set(engine, { at, result });
+      return result;
+    }).finally(() => this.readinessReads.delete(engine));
+    this.readinessReads.set(engine, read);
+    return structuredClone(await read);
   }
   private async inspectEngine(engine:AgentEngine):Promise<EngineAvailability> {
       const original=PI_ONLY_ENGINES.find(item=>item.id===engine)!;
       const config=original.id==="pi"?undefined:this.options[original.id];
-      if(!config&&original.id!=="pi")return {...original};
-      try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,reason:error instanceof Error?error.message:'Native launch denied'};}
-      if(!config)return {...original,modelCatalog:Boolean(this.options.pi.modelCatalog)};
+      if(!config&&original.id!=="pi")return {...original,status:"not_configured"};
+      try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,status:"unavailable",reason:error instanceof Error?error.message:'Native launch denied'};}
+      if(!config)return {...original,status:"ready",modelCatalog:Boolean(this.options.pi.modelCatalog)};
       let version:string;
       try {
         const prepared=await this.command(config,["--version"],undefined,original.id),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
-      } catch {return {...original,available:false,reason:"Native executable unavailable"};}
+      } catch {return {...original,available:false,status:"unavailable",reason:"Native executable unavailable"};}
       const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /^codex-cli 0\.(154\.0|156\.1|159\.1|163\.0|170\.0)$/.test(version) : /\b2\.1\.280\b/.test(version);
-      if(!supported)return {...original,version,available:false,reason:"Unsupported native CLI version; use the verified release"};
+      if(!supported)return {...original,version,available:false,status:"unsupported",reason:"Unsupported native CLI version; use the verified release"};
       try {
         const ready=await this.authentication(original.id as "codex"|"claude"|"cursor"|"grok",config);
-        return {...original,version,available:ready,modelCatalog:original.id==="claude" || (original.id==="codex" && Boolean(this.options.legacyCodex?.modelCatalog)),authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
-      } catch {return {...original,version,available:false,authentication:"unknown" as const,reason:"Native authentication status unavailable; inspect this CLI on the User VM"};}
+        return {...original,version,available:ready,status:ready?"ready":"login_required",modelCatalog:original.id==="claude" || (original.id==="codex" && Boolean(this.options.legacyCodex?.modelCatalog)),authentication:ready?"configured" as const:"required" as const,reason:ready?undefined:"Native authentication required; configure this CLI on the User VM"};
+      } catch {return {...original,version,available:false,status:"unverified",authentication:"unknown" as const,reason:"Native authentication status unavailable; inspect this CLI on the User VM"};}
   }
   private async authentication(engine:"codex"|"claude"|"cursor"|"grok",config:NativeCommand):Promise<boolean> {
     if(engine==='grok'){

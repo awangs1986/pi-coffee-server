@@ -1,3 +1,4 @@
+import {setAnswerDeliveryKey} from './answer-deliveries.js';
 import {splitUploadedFilesText} from './uploaded-files.js';
 // Rendering of messages, tool calls and Markdown. Pure view code: it turns
 // data the Host already produced into DOM and never talks to the network.
@@ -418,6 +419,7 @@ export function userBubble(entry) {
 export function assistantNode(entry, { done = true } = {}) {
   const node = el('div', 'msg assistant');
   node.dataset.messageComplete=String(done);
+  if (done || entry.status==='completed' || entry.done===true) setAnswerDeliveryKey(node,entry);
   const body = el('div', 'body');
   if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '');
   else renderBoundedText(body, entry.text || '');
