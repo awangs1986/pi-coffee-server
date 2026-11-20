@@ -4,6 +4,7 @@ const watched = new WeakMap();
 export function bindWorkspaceArtifactLinks(root, endpoint, {recover,context=()=>null}={}) {
   const nodes=root.matches?.('[data-workspace-path]') ? [root,...root.querySelectorAll('[data-workspace-path]')] : root.querySelectorAll('[data-workspace-path]');
   for (const node of nodes) {
+    if(node.dataset.deliveryUnavailable==='true')continue;
     const path=node.getAttribute('data-workspace-path');
     const preview=!node.hasAttribute('data-workspace-download') && (node.tagName==='IMG' || node.tagName==='A' && node.querySelector('img[data-workspace-path]'));
     const url=endpoint(preview?'preview':'workspace-download',path,node.dataset.deliveryVersion);

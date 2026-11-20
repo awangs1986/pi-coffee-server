@@ -3,7 +3,7 @@ import {renderProcessEntries} from './history-process.js';
 // lifetime is owned here. Old requests may populate their cache, never this view.
 import {ScrollAnchor} from './scroll-anchor.js';
 import {createRenderScheduler} from './render-scheduler.js';
-import {assistantNode, userBubble, toolCard, noteNode, boundedTextSlice} from './render.js';
+import {assistantNode, userBubble, toolCard, noteNode, boundedTextSlice, showAnswerReferences} from './render.js';
 
 const MAX_VISIBLE = 80;
 const MAX_TEXT = 64 * 1024;
@@ -133,7 +133,7 @@ export class ConversationSyncView {
         this.layout(source);
         this.restore(anchor,follow||anchor?.followTail);
         this.anchor.observe(anchor||this.capture());
-        this.onRendered(this.entries,state);
+        this.onRendered(this.entries,state,entry);
       };
       if(first&&index===0)run();else this.scheduler.schedule({entityId:id,entityRevision:revision,priority:0,run});
     });
@@ -177,7 +177,8 @@ export class ConversationSyncView {
         let body=item.kind==='tool'?entry.node.querySelector('.tool-body'):entry.node.querySelector('.body,.text,.remote-content-body');
         if(!body){body=document.createElement('div');body.className='remote-content-body';entry.node.replaceChildren(body,controls);}
         entry.text=shortText(page.text);remoteText=entry.text;body.replaceChildren(document.createTextNode(entry.text));body.style.whiteSpace='pre-wrap';
-        offset=page.offset;end=page.nextOffset;total=page.totalLength||total;entry.displayedContentEnd=end;this.restore(anchor);this.onRendered(this.entries,this.window);
+        if(item.kind==='assistant')showAnswerReferences(entry.node,[...(item.fileReferences||[]),...(page.fileReferences||[])]);
+        offset=page.offset;end=page.nextOffset;total=page.totalLength||total;entry.displayedContentEnd=end;this.restore(anchor);this.onRendered(this.entries,this.window,entry);
       }catch(error){if(generation===this.generation)this.onError(error);}
       finally{delete controls.dataset.loading;update();}
     };

@@ -24,6 +24,16 @@ async function primeV2(host:HostServer,factory:any,entries:any[]=[]){
  await vi.waitFor(async()=>{const response=await fetch(`http://127.0.0.1:${host.address().port}/api/conversations/c/page`,{headers:{authorization:'Bearer secret'}});expect((await response.json()).sourceFreshness).toBe('current');},{timeout:3000});
 }
 describe('read-only sync seam',()=>{
+ it('preserves explicit file references in a bounded authoritative answer page',async()=>{
+  const {factory}=fake(),host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});
+  servers.push(host);await host.start();
+  const text='x'.repeat(8180)+' [original](../artifacts/report.zip)\n'+'y'.repeat(15000);
+  await primeV2(host,factory,[{id:'answer',kind:'assistant',text}]);
+  const r=await fetch('http://127.0.0.1:'+host.address().port+'/api/conversations/c/page',{headers:{authorization:'Bearer secret'}});
+  const [entry]=(await r.json()).entries;
+  expect(entry.contentTruncated).toBe(true);expect(entry.text).not.toContain('report.zip');
+  expect(entry.fileReferences).toContainEqual({path:'../artifacts/report.zip',label:'original',image:false});
+ });
  it('serves compact dialogue pages and contiguous payload-free tool changes, while detailed retains evidence',async()=>{
   const {factory,session}=fake(),host=new HostServer({port:0,token:'secret',factory,conversationIndexRoot:await root()});servers.push(host);await host.start();
   const entries=[{id:'answer',kind:'assistant',text:'RESULT'},...Array.from({length:60},(_,i)=>({id:'tool-'+i,kind:'tool',name:'bash',args:{command:'PRIVATE_COMMAND'},result:'PRIVATE_OUTPUT'}))];

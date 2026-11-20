@@ -1,5 +1,6 @@
 import {setAnswerDeliveryKey} from './answer-deliveries.js';
 import {markdownFilePath} from './task-file-reference.js';
+import {answerFileReferences} from './answer-file-references.js';
 import {splitUploadedFilesText} from './uploaded-files.js';
 // Rendering of messages, tool calls and Markdown. Pure view code: it turns
 // data the Host already produced into DOM and never talks to the network.
@@ -419,6 +420,22 @@ export function userBubble(entry) {
   return node;
 }
 
+export function showAnswerReferences(node, refs) {
+  const previous=node.querySelector(':scope > .answer-references');
+  if(!refs?.length){previous?.remove();return;}
+  const body=node.querySelector('.body');
+  const present=new Set([...body.querySelectorAll('[data-workspace-path]')].map(el=>el.dataset.workspacePath));
+  const group=el('div','answer-references');
+  for(const ref of refs){
+    if(present.has(ref.path))continue;
+    present.add(ref.path);
+    const link=el('a','artifact-download',ref.label || ref.path.split('/').at(-1));
+    link.dataset.workspacePath=ref.path;link.dataset.workspaceDownload='true';group.append(link);
+  }
+  if(!group.childElementCount){previous?.remove();return;}
+  if(previous)previous.replaceWith(group);else body.after(group);
+}
+
 export function assistantNode(entry, { done = true, controls = true } = {}) {
   const node = el('div', 'msg assistant');
   node.dataset.messageComplete=String(done);
@@ -427,6 +444,8 @@ export function assistantNode(entry, { done = true, controls = true } = {}) {
   if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '').trimEnd();
   else renderBoundedText(body, entry.text || '');
   node.appendChild(body);
+  if(entry.fileReferences?.length)showAnswerReferences(node,entry.fileReferences);
+  else if(done && !fitsRichText(entry.text))showAnswerReferences(node,answerFileReferences(entry.text));
   if (!controls) return node;
   const tools = el('div', 'msg-tools');
   const copy = el('button', 'msg-tool', '复制');
@@ -446,7 +465,10 @@ export function updateAssistant(node, text, { done = false, isCurrent = () => tr
   if (done && fitsRichText(text)) {
     boundedViews.delete(body);
     body.innerHTML = renderMarkdown(text || '');
-  } else renderBoundedText(body, text || '', { isCurrent });
+  } else {
+    renderBoundedText(body, text || '', { isCurrent });
+    if(done)showAnswerReferences(node,answerFileReferences(text||''));
+  }
 }
 
 const toolViews = new WeakMap();

@@ -126,7 +126,7 @@ const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{i
 let displayMode="compact",displaySaving=false,displayAnchor=null,displayRequest=null,displayTimer=null;
 const conversationRepository=new ConversationRepository({displayMode,onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
-  onRendered:(visible,state)=>{restoreDisplayAnchor();entries=visible;completionSpeech?.project(visible);refreshToolDownloadLinks();renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
+  onRendered:(visible,state,changed)=>{restoreDisplayAnchor();entries=visible;completionSpeech?.project(visible);if(changed)refreshToolDownloadLinks(changed);renderUncertainPrompts();if(streaming&&state.runState==='running'&&visible.at(-1)?.k!=='user')showThinking(false);for(let i=visible.length-1;i>=0;i--)if(visible[i].k==='user'){lastUserText=splitUploadedFilesText(visible[i].text||'').text;break;}scheduleRecentThread();maybeReadCompletion();},
   onError:()=>syncStatus.update({conversationId:activeId,state:'error',message:'读取失败，可重试；已显示的内容仍保留'})});
 function requestConversationSync(){
   if(!activeId||!currentUser)return;
@@ -2169,7 +2169,7 @@ function handleFrame(frame, ws) {
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
     case 'answer_deliveries_changed':
-      if(frame.sessionId===activeId) answerDeliveries.refresh(true);
+      if(frame.sessionId===activeId){documentCatalog=null;bindWorkspaceArtifacts(undefined,true);answerDeliveries.refresh(true);}
       return;
     case 'resync_required':
       pushNote('正在运行的这一段输出有部分未能补放；已完成的消息以上方历史为准。');
@@ -3074,9 +3074,9 @@ function renderUploadLogCard() {
   if (uploadLog.length > 20) card.append(el('p', 'workspace-note', `其余 ${uploadLog.length - 20} 个文件仍在工作区可用。`));
 }
 
-function refreshToolDownloadLinks() {
-  for (const entry of entries) if (entry.k === 'tool' && entry.node) addToolDownloadLink(entry);
-  for (const chip of ui.thread.querySelectorAll('.file-chip[data-upload-path]')) {
+function refreshToolDownloadLinks(changed) {
+  for (const entry of changed?[changed]:entries) if (entry.k === 'tool' && entry.node) addToolDownloadLink(entry);
+  for (const chip of (changed?.node||ui.thread).querySelectorAll('.file-chip[data-upload-path]')) {
     const path = chip.dataset.uploadPath;
     const href = downloadUrl(path);
     if (!href) continue;
@@ -4231,17 +4231,40 @@ const readTaskFile=createTaskFileAccess({context:fileViewScope,endpoint:fileEndp
   } catch(error) {if(error.status===401 && fileViewScope()===scope){revokeCachedIdentity();void clearPreviews();connect();}throw error;}
 }});
 installTaskDownloads(ui.thread,{read:readTaskFile,context:fileViewScope,onError:toast});
-function bindWorkspaceArtifacts() {
- bindWorkspaceArtifactLinks(document,(action,path,version)=>workspaceState&&transfer?fileEndpoint(action,path,version):null,{context:fileViewScope,recover:(path,version)=>readTaskFile('preview',path,{method:'HEAD',version})});
- void documentDownloads.refresh();
- answerDeliveries.refresh();
+let boundGrant,documentCatalog;
+const documentReaders=new WeakMap();
+function loadDocuments(){
+  const scope=fileViewScope();
+  if(documentCatalog?.scope===scope)return documentCatalog.work;
+  const item={scope,work:null};
+  item.work=fetch(fileEndpoint('artifacts')).then(async response=>{
+    if(!response.ok)throw Error('Generated files unavailable');
+    return (await response.json()).artifacts;
+  }).catch(error=>{if(documentCatalog===item)documentCatalog=null;throw error;});
+  documentCatalog=item;return item.work;
 }
-const documentDownloads=createDocumentDownloads({
- root:ui.thread,
- context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
- load:async()=>{const response=await fetch(fileEndpoint('artifacts'));if(!response.ok)throw new Error('Generated files unavailable');return (await response.json()).artifacts;},
- endpoint:path=>transfer?fileEndpoint('workspace-download',path):null,
-});
+function bindTaskLinks(root){
+  bindWorkspaceArtifactLinks(root,(action,path,version)=>fileViewScope()?fileEndpoint(action,path,version):null,
+    {context:fileViewScope,recover:(path,version)=>readTaskFile('preview',path,{method:'HEAD',version})});
+}
+function bindWorkspaceArtifacts(changed,force=false) {
+  if(!changed){
+    const grant=JSON.stringify([fileViewScope(),transfer?.url,transfer?.token]);
+    if(!force && grant===boundGrant)return;
+    boundGrant=grant;
+  }
+  const rows=changed??[...ui.thread.querySelectorAll('.msg.assistant')];
+  for(const row of rows){
+    bindTaskLinks(row);
+    let reader=documentReaders.get(row);
+    if(!reader){
+      reader=createDocumentDownloads({root:row,context:fileViewScope,load:loadDocuments,endpoint:path=>fileViewScope()?fileEndpoint('workspace-download',path):null});
+      documentReaders.set(row,reader);
+    }
+    void reader.refresh(force);
+  }
+  answerDeliveries.refresh(false,rows);
+}
 const answerDeliveries=createAnswerDeliveries({
  root:ui.thread,
  context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
@@ -4254,9 +4277,29 @@ const answerDeliveries=createAnswerDeliveries({
    }
    return (await result.json()).deliveries;
  },
- endpoint:(path,version)=>transfer?fileEndpoint('workspace-download',path,version):null,
+ canonical:path=>canonicalTaskPath(path,currentTask()?.cwd),
+ endpoint:(path,version,action='workspace-download')=>transfer?fileEndpoint(action,path,version):null,
 });
-new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});
+new MutationObserver(mutations=>{
+  const rows=new Set();
+  for(const m of mutations){
+    const parent=m.target.nodeType===1?m.target:m.target.parentElement;
+    const owner=parent?.closest('.msg.assistant');
+    if(owner){
+      if(m.type==='attributes' && owner.dataset.messageComplete==='true')rows.add(owner);
+      else if(owner.dataset.messageComplete==='true' && (parent.closest('.body,.answer-references') || [...m.addedNodes].some(n=>n.matches?.('.body,.answer-references'))) &&
+        [...m.addedNodes].some(n=>n.nodeType===1 && !n.matches('.generated-document-download,.msg-tool')) && !parent.closest('.generated-document-download,.workspace-image-status'))rows.add(owner);
+    } else {
+      for(const node of m.addedNodes){
+        if(node.nodeType!==1)continue;
+        if(node.matches('.msg.assistant'))rows.add(node);
+        else for(const row of node.querySelectorAll('.msg.assistant'))rows.add(row);
+      }
+    }
+  }
+  const visible=[...rows].filter(row=>ui.thread.contains(row) && (row.dataset.messageComplete==='true'||row.hasAttribute('data-delivery-key')));
+  if(visible.length)bindWorkspaceArtifacts(visible);
+}).observe(ui.thread,{childList:true,subtree:true,attributes:true,attributeFilter:['data-message-complete']});
 
 // restore=true when the user closes the panel: bring back the Checkout panel it replaced and the focus.
 function closeDiffDialog(restore=false) {

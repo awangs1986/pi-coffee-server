@@ -19,6 +19,7 @@ function displayEntry(entry) {
     id: typeof entry?.id === 'string' ? entry.id : undefined,
     sourceMessageKey: typeof entry?.sourceMessageKey === 'string' ? entry.sourceMessageKey : undefined,
     status: entry?.status,
+    fileReferences: entry?.fileReferences,
     failure: entry?.failure === true,
   };
 }

@@ -5,17 +5,35 @@ export function setAnswerDeliveryKey(node, answer) {
   if (answer.status !== 'inProgress' && KEY.test(key)) node.dataset.deliveryKey = key;
 }
 
-export function createAnswerDeliveries({root, context, load, endpoint}) {
+export function createAnswerDeliveries({root, context, load, endpoint,canonical=path=>path}) {
   let scope = null, read = null, signature = '', timer = null, status = null;
   let records = new Map();
   const rendered = new WeakMap();
-  const answers = () => Array.from(root.querySelectorAll('.msg.assistant[data-delivery-key]'));
+  const selector='.msg.assistant[data-delivery-key]';
+  const visible=new Set();
+  function answers(){
+    for(const node of visible)if(!root.contains(node))visible.delete(node);
+    return [...visible];
+  }
   const document = root.ownerDocument;
   function paint(nodes) {
     for (const node of nodes) {
       const row = records.get(node.dataset.deliveryKey);
-      const explicit = new Set(Array.from(node.querySelectorAll('.body a[data-workspace-path], .body a[data-document-path]'),
-        link => link.dataset.workspacePath ?? link.dataset.documentPath));
+      const explicit = new Set();
+      for(const link of node.querySelectorAll('.body [data-workspace-path],.body a[data-document-path],.answer-references [data-workspace-path]')){
+        const path=canonical(link.dataset.workspacePath??link.dataset.documentPath);explicit.add(path);
+        const file=row?.files.find(f=>f.path===path);
+        if(!file)continue;
+        if(!file.available){
+          link.dataset.deliveryUnavailable='true';link.removeAttribute(link.tagName==='IMG'?'src':'href');link.setAttribute('aria-disabled','true');continue;
+        }
+        delete link.dataset.deliveryUnavailable;link.removeAttribute('aria-disabled');
+        if(!file.version)continue;
+        link.dataset.deliveryVersion=file.version;
+        const image=link.tagName==='IMG',preview=image||Boolean(link.querySelector('img[data-workspace-path]'));
+        const url=endpoint(path,file.version,preview?'preview':'workspace-download'),attribute=image?'src':'href';
+        if(url && link.getAttribute(attribute)!==url)link.setAttribute(attribute,url);
+      }
       const files = (row?.files ?? []).filter(file => !explicit.has(file.path)).map(file => ({
         path:file.path, version:file.version, url:file.available ? endpoint(file.path,file.version) : null,
       }));
@@ -69,14 +87,16 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
     }
     row.append(status);
   }
-  function refresh(force = false) {
+  function refresh(force = false, dirty) {
     const wanted = context();
     if (wanted !== scope) {
       scope = wanted; records = new Map(); signature = '';
       read?.controller.abort(); read = null; clearTimeout(timer); clearStatus();
     }
-    const nodes = answers();
-    paint(nodes);
+    const changed=dirty??Array.from(root.querySelectorAll(selector));
+    for(const node of changed)if(node.matches(selector)&&root.contains(node))visible.add(node);
+    const nodes=answers();
+    paint(dirty?changed.filter(node=>visible.has(node)):nodes);
     if (!scope || !nodes.length) return;
     const keys = [...new Set(nodes.map(node=>node.dataset.deliveryKey))].sort();
     const next = JSON.stringify(keys);

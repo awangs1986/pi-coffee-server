@@ -1,8 +1,19 @@
 // @vitest-environment jsdom
 import {expect,it,vi} from 'vitest';
 import {bindWorkspaceArtifactLinks} from '../public/workspace-artifacts.js';
-import {renderMarkdown} from '../public/render.js';
+import {assistantNode,renderMarkdown} from '../public/render.js';
 import {ConversationSyncView} from '../public/conversation-sync-view.js';
+
+it('keeps authored downloads outside the text budget and leaves fenced examples inert',()=>{
+ const link='[original](../artifacts/report.zip)';
+ for(const n of [8192,8193,16400]){
+  const text='x'.repeat(n-link.length-2)+'\n\n'+link;
+  const answer=assistantNode({id:'report',text});
+  expect(answer.querySelector('a[data-workspace-path="../artifacts/report.zip"]')?.textContent).toContain('original');
+ }
+ const example=assistantNode({id:'ex',text:'~'.repeat(3)+'md\n'+'x'.repeat(8190)+'\n'+link+'\n~~~'});
+ expect(example.querySelector('a[data-workspace-path]')).toBeNull();
+});
 
 it('retries a failed image in place after an unchanged file grant is usable again',async()=>{
  const root=document.createElement('div');document.body.append(root);

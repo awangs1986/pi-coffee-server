@@ -27,4 +27,16 @@ it('renders a scoped Word download in the actual restored Chat controller',async
  const link=document.querySelector<HTMLAnchorElement>('.generated-document-download');
  expect(link).not.toBeNull();expect(link!.href).toContain('/workspace-download?');expect(new URL(link!.href).searchParams.get('path')).toBe('report.docx');
  expect(document.querySelector('#thread')!.textContent).not.toContain('工作区产物');
+ const searches=vi.spyOn(document,'querySelectorAll');
+ try {
+  const event=(value:unknown)=>sockets.at(-1).receive({v:1,type:'event',sessionId:task.id,event:value});
+  event({type:'agent_start'});
+  for(let index=0;index<20;index++){
+    event({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'chunk'+index+' '}});
+    await vi.advanceTimersByTimeAsync(22);
+  }
+  expect(document.querySelector('#thread')!.textContent).toContain('chunk19');
+  expect(document.querySelector('.generated-document-download')).toBe(link);
+  expect(searches.mock.calls.filter(([selector])=>selector==='[data-workspace-path]')).toHaveLength(0);
+ } finally {searches.mockRestore();}
 });

@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, lstatSync, realpathSync, chmodSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import {answerFileReferences} from '../../public/answer-file-references.js';
 import type { HistoryEntry } from '../shared/protocol.js';
 
 const databases = new Map<string, DatabaseSync>();
@@ -61,7 +62,11 @@ function boundedEntry(entry: any, revision: string, budget = BLOCK_BYTES): any {
   for (const [field, text] of Object.entries(fields)) {
     if (field === 'args' || field === 'diff') { if (text.length > 2) result.contentTruncated = true; continue; }
     const available = Math.max(0, budget - bytes(result) - 180);
-    result[field] = textSuffix(text, available);
+    if(entry.kind==='assistant' && result.status!=='inProgress' && bytes(text)>available){
+      const refs=answerFileReferences(text,{budget:Math.min(2048,Math.floor(available/2))});
+      if(refs.length)result.fileReferences=refs;
+    }
+    result[field] = textSuffix(text, Math.max(0,budget-bytes(result)-180));
     result.contentOffset=text.length-result[field].length;
     if (result[field].length < text.length) result.contentTruncated = true;
   }
@@ -245,7 +250,12 @@ function dispatch(db:DatabaseSync,action:string,a:any):any {
     const rawEntry=JSON.parse(String(row.entry));if(a.displayMode==='compact'&&rawEntry.kind==='tool')fail('invalid_detail_mode');const entry=rawEntry;const field=a.field ?? (entry.kind==='tool'?'result':'text');if(!['text','result','args','diff'].includes(field))fail('invalid_field');
     const text=field==='args'?JSON.stringify(entry.args??{}):String(entry[field]??'');const offset=Number(a.offset??0);if(!Number.isSafeInteger(offset)||offset<0||offset>text.length)fail('invalid_offset');
     const result:any={...identity(s,a.id),entityId:a.entityId,entityRevision:String(row.revision),field,encoding:'utf-16',offset,totalLength:text.length,text:'',nextOffset:offset,hasMore:offset<text.length};
-    result.text=textPrefix(text.slice(offset),Math.min(BLOCK_BYTES,limit-bytes(result)-100));result.nextOffset=offset+result.text.length;result.hasMore=result.nextOffset<text.length;return result;
+    result.text=textPrefix(text.slice(offset),Math.min(BLOCK_BYTES,limit-bytes(result)-100));result.nextOffset=offset+result.text.length;result.hasMore=result.nextOffset<text.length;
+    if(entry.kind==='assistant' && entry.status!=='inProgress'){
+      const refs=answerFileReferences(text,{from:offset,to:result.nextOffset,budget:Math.max(0,Math.min(2048,limit-bytes(result)-100))});
+      if(refs.length)result.fileReferences=refs;
+    }
+    return result;
   }
   fail('unknown_index_operation');
 }
