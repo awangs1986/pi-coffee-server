@@ -19,10 +19,20 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
       const files = (row?.files ?? []).filter(file => !explicit.has(file.path)).map(file => ({
         path:file.path, url:file.available ? endpoint(file.path) : null,
       }));
-      const state = JSON.stringify(files);
-      if (rendered.get(node) === state) continue;
+      // Renewed grants only change hrefs. Keep the existing row and its open
+      // state so a workspace poll cannot move the conversation while reading.
+      const state = JSON.stringify(files.map(({path,url}) => [path, Boolean(url)]));
+      const existing = node.querySelector('.answer-deliveries');
+      if (rendered.get(node) === state && (existing || !files.length)) {
+        const links = existing?.querySelectorAll('a') ?? [];
+        const urls = files.flatMap(file => file.url ? [file.url] : []);
+        links.forEach((link, index) => {
+          if (link.getAttribute('href') !== urls[index]) link.href = urls[index];
+        });
+        continue;
+      }
       rendered.set(node,state);
-      node.querySelector('.answer-deliveries')?.remove();
+      existing?.remove();
       if (!files.length) continue;
       const group = document.createElement(files.length > 1 ? 'details' : 'div');
       group.className = 'answer-deliveries';
@@ -30,6 +40,7 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
         const summary = document.createElement('summary');
         summary.textContent = files.length + ' 个交付文件';
         group.append(summary);
+        group.open = existing?.open === true;
       }
       for (const {path,url} of files) {
         const item = document.createElement(url ? 'a' : 'span');

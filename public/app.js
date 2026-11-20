@@ -4231,7 +4231,7 @@ const documentDownloads=createDocumentDownloads({
 });
 const answerDeliveries=createAnswerDeliveries({
  root:ui.thread,
- context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,transferRevision]):null,
+ context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
  load:async(keys,signal)=>{
    const params=new URLSearchParams(keys.map(key=>['key',key]));
    const result=await fetch('/api/conversations/'+encodeURIComponent(activeId)+'/deliveries?'+params,{signal,cache:'no-store'});

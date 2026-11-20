@@ -46,7 +46,9 @@ rechecks the file when clicked; HTML downloads as an attachment. The association
 contains file metadata and message identities, not file bodies or transcript
 text. A metadata journal alongside task data retains up to 40 answers and eight
 files per answer. Writing it never changes the native session. Incomplete/expired observations do not label
-unrelated answers.
+unrelated answers. Renewing the same task's download grant updates active links
+in place. A background grant refresh preserves the delivery row and its expanded
+state and reuses verified metadata for the same conversation and native binding.
 
 Acceptance: an observed reply with no filename in its text creates HTML and Word
 outputs, and a pre-existing file is left untouched. Only the new outputs appear
