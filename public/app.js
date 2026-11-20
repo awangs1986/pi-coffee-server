@@ -981,7 +981,7 @@ function showThinking(show) {
 
 
 function historyDisplayEntry(item) {
-  if(item.kind!=='tool')return {kind:item.kind,text:item.text||''};
+  if(item.kind!=='tool')return item;
   // Authoritative evidence is display-only. The disposable cache uses name/result below.
   return {kind:'tool',failure:Boolean(item.isError),text:[item.isError?'错误':null,item.name,item.result,
     item.args?JSON.stringify(item.args,null,2):null,item.diff].filter(Boolean).join('\n')};
@@ -3847,9 +3847,9 @@ $('#migrate-workspace').addEventListener('click',async()=>{
     await workspaceApi({action:'migrate',id});await loadWorkspace();toast('Checkout 已迁移；旧目录仍保留');
   }catch(e){toast(e.message);}
 });
-function fileEndpoint(route,path) {
+function fileEndpoint(route,path,version) {
   if(!transfer)throw new Error('请先打开对话以获取 VM 文件授权');
-  const u=new URL('/api/localsend/v2/'+route,transfer.url);u.search=new URLSearchParams({scope:transfer.scope,token:transfer.token,...(path===undefined?{}:{path})});return u.href;
+  const u=new URL('/api/localsend/v2/'+route,transfer.url);u.search=new URLSearchParams({scope:transfer.scope,token:transfer.token,...(path===undefined?{}:{path}),...(version?{version}:{})});return u.href;
 }
 function currentTask() { return workspaceState?.conversations.find(c=>c.id===activeId) || null; }
 function taskProject(task) { return workspaceState?.projects.find(p=>p.id===task?.projectId) || null; }
@@ -4238,7 +4238,7 @@ const answerDeliveries=createAnswerDeliveries({
    if(!result.ok)throw Error('Answer delivery metadata unavailable');
    return (await result.json()).deliveries;
  },
- endpoint:path=>transfer?fileEndpoint('workspace-download',path):null,
+ endpoint:(path,version)=>transfer?fileEndpoint('workspace-download',path,version):null,
 });
 new MutationObserver(()=>bindWorkspaceArtifacts()).observe(ui.thread,{childList:true,subtree:true});
 

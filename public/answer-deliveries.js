@@ -9,7 +9,7 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
   let scope = null, read = null, signature = '', timer = null;
   let records = new Map();
   const rendered = new WeakMap();
-  const answers = () => Array.from(root.querySelectorAll('.msg.assistant[data-delivery-key]')).slice(-40);
+  const answers = () => Array.from(root.querySelectorAll('.msg.assistant[data-delivery-key]'));
   const document = root.ownerDocument;
   function paint(nodes) {
     for (const node of nodes) {
@@ -17,7 +17,7 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
       const explicit = new Set(Array.from(node.querySelectorAll('.body a[data-workspace-path], .body a[data-document-path]'),
         link => link.dataset.workspacePath ?? link.dataset.documentPath));
       const files = (row?.files ?? []).filter(file => !explicit.has(file.path)).map(file => ({
-        path:file.path, url:file.available ? endpoint(file.path) : null,
+        path:file.path, url:file.available ? endpoint(file.path,file.version) : null,
       }));
       // Renewed grants only change hrefs. Keep the existing row and its open
       // state so a workspace poll cannot move the conversation while reading.
@@ -77,7 +77,11 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
       const controller = new AbortController();
       read = controller;
       try {
-        const rows = await load(keys,controller.signal);
+        const rows = [];
+        for (let i = 0; i < keys.length; i += 40) {
+          rows.push(...await load(keys.slice(i, i + 40),controller.signal));
+          if (read !== controller || controller.signal.aborted || context() !== wanted) return;
+        }
         if (read!==controller || controller.signal.aborted || context()!==wanted) return;
         records = new Map(rows.map(row=>[row.key,row]));
         paint(answers());

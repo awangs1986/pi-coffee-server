@@ -416,20 +416,21 @@ export function userBubble(entry) {
   return node;
 }
 
-export function assistantNode(entry, { done = true } = {}) {
+export function assistantNode(entry, { done = true, controls = true } = {}) {
   const node = el('div', 'msg assistant');
   node.dataset.messageComplete=String(done);
   if (done || entry.status==='completed' || entry.done===true) setAnswerDeliveryKey(node,entry);
   const body = el('div', 'body');
-  if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '');
+  if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '').trimEnd();
   else renderBoundedText(body, entry.text || '');
+  node.appendChild(body);
+  if (!controls) return node;
   const tools = el('div', 'msg-tools');
   const copy = el('button', 'msg-tool', '复制');
   copy.type = 'button';
   copy.title = '复制回复';
   copy.addEventListener('click', async () => { if (await copyText(entry.text || '')) flashButton(copy); });
   tools.appendChild(copy);
-  node.appendChild(body);
   node.appendChild(tools);
   return node;
 }

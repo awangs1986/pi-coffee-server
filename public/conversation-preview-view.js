@@ -1,4 +1,4 @@
-import {boundedTextSlice,renderMarkdown} from './render.js';
+import {assistantNode} from './render.js';
 import {renderProcessEntries} from './history-process.js';
 // Cached previews remain plain text. Completed, authoritative small replies
 // use the shared sanitized Markdown renderer, including code frames and Copy.
@@ -16,11 +16,19 @@ function displayEntry(entry) {
   return {
     kind: entry?.kind === 'user' || entry?.kind === 'assistant' || entry?.kind === 'tool' ? entry.kind : 'note',
     text: typeof entry?.text === 'string' ? entry.text : '',
+    id: typeof entry?.id === 'string' ? entry.id : undefined,
+    sourceMessageKey: typeof entry?.sourceMessageKey === 'string' ? entry.sourceMessageKey : undefined,
+    status: entry?.status,
     failure: entry?.failure === true,
   };
 }
 
 function previewNode(entry, document, isActive = () => true, {authoritative=false} = {}) {
+  if (authoritative && entry.kind === 'assistant') {
+    const answer = assistantNode(entry, {done:entry.status !== 'inProgress', controls:false});
+    answer.dataset.previewKind = 'assistant';
+    return answer;
+  }
   const node = document.createElement('div');
   node.className = entry.kind === 'user' || entry.kind === 'assistant' ? `msg ${entry.kind}` : 'note';
   if (entry.failure) node.classList.add('failure');
@@ -31,9 +39,7 @@ function previewNode(entry, document, isActive = () => true, {authoritative=fals
   body.style.overflowWrap = 'anywhere';
   let end = textPageEnd(entry.text, 0);
   const text = document.createTextNode(entry.text.slice(0, end));
-  const rich=authoritative && entry.kind==='assistant' && boundedTextSlice(entry.text).end===entry.text.length;
-  if(rich){body.style.whiteSpace='';body.innerHTML=renderMarkdown(entry.text).trimEnd();}
-  else body.append(text);
+  body.append(text);
   if (entry.kind === 'user') {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';

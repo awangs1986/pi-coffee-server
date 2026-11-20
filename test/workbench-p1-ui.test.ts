@@ -4,8 +4,29 @@ import { createEngineDirectory } from '../public/engine-directory.js';
 import { createAnswerDeliveries } from '../public/answer-deliveries.js';
 import { appendPluginVersions } from '../public/plugin-versions.js';
 import { assistantNode } from '../public/render.js';
+import { renderConversationPreview } from '../public/conversation-preview-view.js';
 
 afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); });
+
+it('downloads an older retained answer through authoritative history beyond one metadata batch', async () => {
+  vi.useFakeTimers();
+  const root = document.createElement('div');
+  document.body.append(root);
+  const entries = Array.from({length: 46}, (_, i) => ({kind:'assistant', id:'row-'+i, text:'Reply '+i}));
+  renderConversationPreview(root, {entries}, {cached:false});
+  root.querySelector('button')!.click();
+  const list = createAnswerDeliveries({root, context:()=>'alice/task', endpoint:path=>'/files/'+path,
+    load:async (keys: string[]) => {
+      if (keys.length > 40) throw Error('Oversized batch');
+      return keys.includes('native-message:row-0') ? [{key:'native-message:row-0', files:[{path:'old.zip', available:true}]}] : [];
+    }});
+  list.refresh();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(root.querySelector('[data-delivery-key="native-message:row-0"] .answer-delivery')?.getAttribute('href')).toBe('/files/old.zip');
+  renderConversationPreview(root, {entries});
+  list.refresh();
+  expect(root.querySelector('[data-delivery-key], .answer-delivery')).toBeNull();
+});
 
 it('enables an independently checked engine while a second probe is pending and retries only the failed engine', async () => {
   const delayed = Promise.withResolvers<Response>(), login = Promise.withResolvers<Response>();

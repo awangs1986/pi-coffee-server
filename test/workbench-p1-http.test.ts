@@ -53,6 +53,11 @@ it('persists new files under the native answer identity and hides attachments, o
     bob: new Workspaces(join(root, 'bob'), {taskRoot: join(root, 'bob-bundles')}),
   };
   const task = await stores.alice.createChatConversation('sample');
+  const {TransferServer} = await import('../src/host/transfer.js');
+  const transfer = new TransferServer({port:0, host:'127.0.0.1', workdir:root});
+  await transfer.start();
+  shutdown.push(() => transfer.close());
+  const token = transfer.issueToken('alice-fixture',root,task.id,stores.alice);
   await writeFile(join(task.cwd, 'old.html'), '<p>old</p>');
   await writeFile(join(root, 'unrelated.html'), '<p>other</p>');
   let emit = (_event: unknown) => {};
@@ -97,10 +102,16 @@ it('persists new files under the native answer identity and hides attachments, o
   const first = await (await get(host)).json();
   expect(first.deliveries).toEqual([{
     key:'pi-message:123', files:[
-      {path:'../artifacts/report.docx', available:true},
-      {path:'output/report.html', available:true},
+      {path:'../artifacts/report.docx', available:true, version:expect.stringMatching(/^[a-f0-9]{64}$/)},
+      {path:'output/report.html', available:true, version:expect.stringMatching(/^[a-f0-9]{64}$/)},
     ],
   }]);
+  const delivered = first.deliveries[0].files[0];
+  const download = new URL('/api/localsend/v2/workspace-download',transfer.publicUrl());
+  download.search = new URLSearchParams({scope:'alice-fixture',token,path:delivered.path,version:delivered.version}).toString();
+  expect(await (await fetch(download)).text()).toBe('doc fixture');
+  await writeFile(join(task.taskRoot!,'artifacts','report.docx'),'replaced document');
+  expect((await fetch(download)).status).toBe(409);
   expect(await (await get(host,'alice','pi-message:456')).json()).toEqual({deliveries:[]});
   expect((await get(host,'bob')).status).toBe(404);
   ws.terminate();

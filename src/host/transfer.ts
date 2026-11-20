@@ -1,7 +1,8 @@
 import type { Workspaces } from "./workspaces.js";
 import { createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { link, mkdir, readdir, rm, stat, realpath } from "node:fs/promises";
+import { constants, createReadStream, createWriteStream } from "node:fs";
+import { link, mkdir, open, readdir, rm, stat, realpath } from "node:fs/promises";
+import { deliveryFingerprint, deliveryVersion } from './answer-deliveries.js';
 
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -257,12 +258,28 @@ export class TransferServer {
         const path=url.searchParams.get("path") ?? "";
         if(route==="artifacts") {sendJson(response,200,{artifacts:await this.workspaceFor(scope)!.artifacts(this.taskFor(scope))} as unknown as JsonValue);return;}
         if(route==="tree") {sendJson(response,200,await this.workspaceFor(scope)!.tree(this.taskFor(scope),path) as unknown as JsonValue);return;}
-        const full=await this.workspaceFile(scope,path);if(this.scopeOf(url)!==scope||isCredentialFileName(basename(path)) || isCredentialFileName(basename(full)))throw new Error("Credential file or expired authorization");const info=await stat(full);
-        if(!info.isFile())throw new Error("Not a file");
-        if(route==="preview" && info.size>10*1024*1024) {sendJson(response,413,{message:"Preview exceeds 10 MiB; download instead"});return;}
-        const mime=mimeFor(full);const inline=route==="preview" && /^(image\/|text\/plain|text\/markdown|application\/pdf)/.test(mime);
-        response.writeHead(200,{"content-type":mime,"content-length":String(info.size),"x-content-type-options":"nosniff","content-security-policy":"sandbox; default-src 'none'; style-src 'unsafe-inline'", "referrer-policy":"no-referrer","cache-control":"no-store","content-disposition":`${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(basename(full))}`});
-        createReadStream(full).on("error",()=>response.destroy()).pipe(response);
+        const full=await this.workspaceFile(scope,path);
+        if(isCredentialFileName(basename(path)) || isCredentialFileName(basename(full))) throw Error("Private file");
+        const file=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        let streaming=false;
+        try {
+          const info=await file.stat();
+          if(!info.isFile())throw Error("Not a file");
+          if(url.searchParams.has('version')){
+            const task=await this.workspaceFor(scope)!.lookup(this.taskFor(scope));
+            if(deliveryVersion(task,path,deliveryFingerprint(info))!==url.searchParams.get('version')){
+              sendJson(response,409,{message:"The delivered file has changed"});return;
+            }
+          }
+          if(this.scopeOf(url)!==scope){sendJson(response,401,{message:"Expired file grant"});return;}
+          if(route==="preview" && info.size>10*1024*1024) {sendJson(response,413,{message:"Preview exceeds 10 MiB; download instead"});return;}
+          const mime=mimeFor(full);const inline=route==="preview" && /^(image\/|text\/plain|text\/markdown|application\/pdf)/.test(mime);
+          response.writeHead(200,{"content-type":mime,"content-length":String(info.size),"x-content-type-options":"nosniff","content-security-policy":"sandbox; default-src 'none'; style-src 'unsafe-inline'", "referrer-policy":"no-referrer","cache-control":"no-store","content-disposition":`${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(basename(full))}`});
+          const stream=file.createReadStream();
+          streaming=true;
+          response.once('close',()=>stream.destroy());
+          stream.on('error',()=>response.destroy()).pipe(response);
+        } finally {if(!streaming)await file.close();}
       } catch {sendJson(response,403,{message:"File unavailable or outside workspace"});}
       return;
     }

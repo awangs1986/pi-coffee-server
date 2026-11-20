@@ -1,4 +1,5 @@
-import { constants } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { lstat, open, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { JsonValue } from '../shared/protocol.js';
@@ -30,6 +31,13 @@ function deliveryPath(path: string) {
 function taskBinding(task: Conversation | undefined) {
   if (!task?.taskRoot || task.archived || task.workspaceRemoved || task.cleanupStarted) return;
   return JSON.stringify([task.engine ?? 'pi', task.nativeBinding?.id ?? task.id, task.recoveryReceipt?.operationId ?? null]);
+}
+export function deliveryFingerprint(info: Stats) {
+  if (info.isFile() && info.nlink === 1) return [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(':');
+}
+export function deliveryVersion(task: Conversation | undefined, path: string, fingerprint?: string) {
+  const binding = taskBinding(task);
+  if (binding && fingerprint) return createHash('sha256').update(JSON.stringify([task!.id,binding,path,fingerprint])).digest('hex');
 }
 function answerKey(event: Record<string, JsonValue>) {
   const message = event.message;
@@ -105,7 +113,8 @@ export class AnswerDeliveries {
       const files = [];
       for (const {path, fingerprint} of row.files) {
         const evidence = await this.fileEvidence(id, path);
-        files.push({ path, available: evidence === fingerprint });
+        const available = evidence === fingerprint;
+        files.push({ path, available, ...(available ? {version:deliveryVersion(task,path,fingerprint)} : {}) });
       }
       result.push({ key: row.key, files });
     }
@@ -199,8 +208,7 @@ export class AnswerDeliveries {
       // Resolved aliases are intentionally omitted even within the same task.
       if (full !== intended) return;
       const info = await lstat(full);
-      return info.isFile() && info.nlink === 1
-        ? [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(':') : undefined;
+      return deliveryFingerprint(info);
     } catch { return; }
   }
 }
