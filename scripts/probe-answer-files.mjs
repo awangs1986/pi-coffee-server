@@ -248,7 +248,16 @@ try {
   const href=await last.getByRole('link',{name:'下载 export.zip',exact:true}).getAttribute('href');
   await writeFile(join(artifacts,'export.zip'),'replacement');assert.equal((await context.request.get(href)).status(),409);
   assert.deepEqual(errors,[]);results.versionGuard=true;
-  const logout=await context.request.post(base+'/auth/logout',{headers:{origin:base}});assert.ok(logout.status()<400);
+  await last.getByRole('button',{name:'预览 report.html',exact:true}).click();
+  await detail.frameLocator('iframe').getByRole('heading',{name:'Static fixture report'}).waitFor();
+  const logoutGate=Promise.withResolvers();
+  await page.route('**/auth/logout',async route=>{await logoutGate.promise;await route.continue();});
+  const logoutComplete=page.waitForResponse(r=>new URL(r.url()).pathname==='/auth/logout');
+  try {
+    page.once('dialog',dialog=>dialog.accept());
+    await Promise.all([page.waitForRequest(r=>new URL(r.url()).pathname==='/auth/logout'),page.locator('#user-btn').click()]);
+    assert.equal(await detail.locator('iframe,a[data-delivery-path]').count(),0,'Logout immediately releases the open preview and its download grant');
+  } finally {logoutGate.resolve();await logoutComplete;}
   assert.equal((await context.request.get(base+'/api/conversations/'+id+'/deliveries')).status(),401);results.logout=true;
   if(evidenceDir)await writeFile(join(evidenceDir,'answer-files.json'),JSON.stringify(results,null,2)+'\n');
   console.log('ANSWER_FILES '+JSON.stringify(results));
@@ -256,7 +265,7 @@ try {
   console.error('Last passed observations',JSON.stringify(results));
   if(page)console.error('Synthetic shell state',await page.evaluate(()=>({path:location.pathname,mode:location.search,
     rows:document.querySelectorAll('#thread .msg').length,indexed:Boolean(document.querySelector('.synced-transcript')),
-    legacy:Boolean(document.querySelector('details.history-older')),connection:document.querySelector('#conn-banner')?.textContent?.slice(0,100)})).catch(()=>null));
+    legacy:Boolean(document.querySelector('details.history-older')),connection:document.querySelector('#conn-banner.hidden')?'ready':document.querySelector('#conn-banner')?.textContent?.slice(0,100)})).catch(()=>null));
   throw error;
 } finally {resumeOutput.resolve();finishOutput.resolve();await browser?.close();await web?.close();await host?.close();await transfer.close();}
 }

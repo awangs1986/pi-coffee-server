@@ -227,6 +227,7 @@ function previewAllowed(id){
   return !task?.archived&&!task?.workspaceRemoved&&!task?.cleanupStarted&&!workspaceState?.legacyArchived?.includes(id);
 }
 function invalidatePreview(id){
+  if(id===activeId && disposeFilePreview)closeWorkspaceDetail();
   conversationModels.delete(id);
   if(id===activeId){models=null;modelPreview=null;renderAgentSettings();}
   void conversationRepository.invalidate(id);
@@ -1651,6 +1652,7 @@ async function whoAmI(epoch, signal) {
     const previousUser=currentUser;
     backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
+    if(previousUser!==currentUser && disposeFilePreview)closeWorkspaceDetail();
     if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     engineDirectory.setScope(currentUser ?? 'local');
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
@@ -1671,6 +1673,7 @@ async function whoAmI(epoch, signal) {
   }
 }
 function revokeCachedIdentity(){
+  if(workspaceDetailOpen)closeWorkspaceDetail();
   goalControls.reset();
   engineDirectory.setScope(undefined);
   clearConnectionDeadline();
@@ -4012,7 +4015,9 @@ function closeWorkspaceDetail() {
   workspaceDetailOpen=false;
   selectedChangedPath=null;
   $('#workspace-panel').classList.remove('detail-open');
-  $('#workspace-detail').classList.add('hidden');
+  const detail=$('#workspace-detail');
+  detail.classList.add('hidden');
+  detail.replaceChildren();
   setReviewTab('diff');
   renderWorkspaceList();
 }
