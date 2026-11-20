@@ -3,6 +3,21 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {openTaskFilePreview} from '../public/task-file-preview.js';
 
 afterEach(()=>document.body.replaceChildren());
+it('opens an HTML report in a static opaque frame while retaining its readable content',async()=>{
+ const container=document.createElement('div');document.body.append(container);
+ const html='<html><head><meta http-equiv="refresh" content="300"></head><body><h1>Fixture report</h1><a href="/other">Details</a><form></form><script type="application/json">{"private":true}</script></body></html>';
+ const dispose=openTaskFilePreview(container,{path:'report.html',context:()=> 'task',read:async()=>({response:new Response(html)}),endpoint:()=>'/file'});
+ try{
+  await vi.waitFor(()=>expect(container.querySelector('iframe')).not.toBeNull());
+  const frame=container.querySelector('iframe')!;
+  expect(frame.getAttribute('sandbox')).toBe('');
+  expect(frame.referrerPolicy).toBe('no-referrer');
+  const doc=new DOMParser().parseFromString(frame.srcdoc,'text/html');
+  expect(doc.querySelector('h1')?.textContent).toBe('Fixture report');
+  expect(doc.querySelector('script, form, [href], meta[http-equiv="refresh"]')).toBeNull();
+  expect(doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content')).toContain("default-src 'none'");
+ }finally{dispose();}
+});
 it('resolves a Markdown document image from its own directory and retains the scoped preview action',async()=>{
  const container=document.createElement('div');document.body.append(container);
  const dispose=openTaskFilePreview(container,{path:'../artifacts/reports/answer.md',context:()=> 'first',

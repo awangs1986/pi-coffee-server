@@ -1,6 +1,23 @@
 import {el,renderMarkdown,boundedTextSlice} from './render.js';
 import {canonicalTaskPath,previewKind} from './task-file-reference.js';
 import {bindWorkspaceArtifactLinks} from './workspace-artifacts.js';
+import DOMPurify from './vendor-purify.js';
+
+function staticHtmlPreview(html,name){
+  // Template contents are inert before sanitization, including resource URLs.
+  const source=document.createElement('template');source.innerHTML=html;
+  const markup=DOMPurify.sanitize(source.content,{
+    ALLOWED_TAGS:['article','main','header','footer','section','aside','nav','div','span','p','h1','h2','h3','h4','h5','h6',
+      'pre','code','kbd','strong','b','em','i','s','u','small','sup','sub','blockquote','ul','ol','li','dl','dt','dd',
+      'table','thead','tbody','tfoot','caption','tr','th','td','figure','figcaption','hr','br','details','summary','a','style'],
+    ALLOWED_ATTR:['class','style','colspan','rowspan','scope','title','dir','lang','open'],
+    ALLOW_DATA_ATTR:false,ALLOW_ARIA_ATTR:false,
+  });
+  const frame=document.createElement('iframe');
+  frame.title='静态预览 · '+name;frame.className='static-html-preview';frame.setAttribute('sandbox','');frame.referrerPolicy='no-referrer';
+  frame.srcdoc='<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'"><style>body{font:1rem/1.5 system-ui;overflow-wrap:anywhere}table{border-collapse:collapse}pre{white-space:pre-wrap}</style></head><body>'+markup+'</body></html>';
+  return frame;
+}
 
 function markdownPreview(text,path,{endpoint,read,context}) {
   const root=el('div','markdown');
@@ -50,7 +67,7 @@ export function openTaskFilePreview(container,{path,version,read,endpoint,contex
         await image.decode();if(current())container.replaceChildren(image);
       } else {
         const text=await response.text();if(!current())return;
-        container.replaceChildren(markdownPreview(text,path,{endpoint,read,context}));
+        container.replaceChildren(kind==='html'?staticHtmlPreview(text,path.split('/').at(-1)):markdownPreview(text,path,{endpoint,read,context}));
       }
     } catch(error) {
       if(!current())return;

@@ -29,6 +29,7 @@ export function canonicalTaskPath(path, cwd = '') {
 export function previewKind(path){
   if(/\.(?:png|jpe?g|gif|webp|svg)$/i.test(path))return 'image';
   if(/\.md$/i.test(path))return 'markdown';
+  if(/\.html?$/i.test(path))return 'html';
   return null;
 }
 

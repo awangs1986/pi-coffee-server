@@ -1232,6 +1232,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .file-preview-trigger { margin-inline-start: .5em; padding: .1em .4em; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .answer-references { display: flex; flex-wrap: wrap; gap: .5em; }
 .answer-files-status { margin-top: .35em; font-size: .85em; }
+.static-html-preview { width: 100%; min-height: 50vh; border: 1px solid var(--border); background: white; }
 .answer-delivery { display: block; width: fit-content; overflow-wrap: anywhere; margin: .2rem 0; }
 .answer-delivery:not([href]) { opacity: .68; }
 .plugin-versions { margin-top: .4rem; max-height: 16rem; overflow: auto; overflow-wrap: anywhere; }
