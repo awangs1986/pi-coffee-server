@@ -909,7 +909,10 @@ export class HostServer {
         }
         default: throw new Error("Unknown workspace action");
       }
-      json(res,200,result);void this.broadcastSessions(slot);
+      json(res,200,result);
+      // A sessions notification makes every open browser read the workspace.
+      // Answering its reads must not invalidate that same snapshot again.
+      if (!['files','changes','change_file','status','branches','gitea_repos','github_repos','migration_plan'].includes(input.action)) this.broadcastSessions(slot);
     } catch(e) {json(res,409,{error:e instanceof Error ? e.message : "Workspace operation failed"});}
     finally {releaseLifecycle?.();}
 

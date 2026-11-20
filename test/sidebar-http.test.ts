@@ -1,4 +1,7 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
+import {once} from 'node:events';
+import {WebSocket} from 'ws';
+import {TransferServer} from '../src/host/transfer.js';
 import {mkdtemp,mkdir,writeFile,rm,rename} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -6,6 +9,32 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
+it('settles a workspace poll without broadcasting reads, then publishes a sidebar change',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'coffee-idle-sidebar-'));
+ const workspaces=new Workspaces(join(root,'registry'),{taskRoot:join(root,'tasks')});
+ const task=await workspaces.createChatConversation('idle');
+ const factory={list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No agent');}};
+ const transfer=new TransferServer({port:0,workdir:root});
+ const host=new HostServer({port:0,token:'fixture',factory,transfer,workspaces});
+ let socket:WebSocket|undefined;
+ try {
+  await transfer.start();await host.start();
+  const base='127.0.0.1:'+host.address().port;
+  socket=new WebSocket('ws://'+base+'/host',{headers:{authorization:'Bearer fixture'}});
+  let lists=0;socket.on('message',data=>{if(JSON.parse(data.toString()).type==='sessions')lists++;});
+  await once(socket,'open');
+  socket.send(JSON.stringify({v:1,type:'list_sessions'}));await vi.waitFor(()=>expect(lists).toBeGreaterThan(0));
+  const before=lists;
+  async function action(name:string,props={}) {
+    return fetch('http://'+base+'/api/workspace',{method:'POST',headers:{authorization:'Bearer fixture','content-type':'application/json'},body:JSON.stringify({action:name,id:task.id,...props})});
+  }
+  for(const name of ['files','status'])expect((await action(name)).status).toBe(200);
+  await new Promise(resolve=>setTimeout(resolve,350));
+  expect(lists).toBe(before);
+  expect((await action('sidebar_pin',{pinned:true})).status).toBe(200);
+  await vi.waitFor(()=>expect(lists).toBeGreaterThan(before));
+ } finally {socket?.terminate();await host.close();await transfer.close();await rm(root,{recursive:true,force:true});}
+});
 it('persists scoped sidebar placement and collapse without changing task identity or execution',async()=>{
  const root=await mkdtemp(join(tmpdir(),'coffee-sidebar-'));let server:HostServer|undefined;
  try{
