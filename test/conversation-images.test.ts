@@ -4,6 +4,20 @@ import {bindWorkspaceArtifactLinks} from '../public/workspace-artifacts.js';
 import {renderMarkdown} from '../public/render.js';
 import {ConversationSyncView} from '../public/conversation-sync-view.js';
 
+it('retries a failed image in place after an unchanged file grant is usable again',async()=>{
+ const root=document.createElement('div');document.body.append(root);
+ root.innerHTML=renderMarkdown('![result](../artifacts/result.svg)');
+ const recover=vi.fn(async()=>true);
+ bindWorkspaceArtifactLinks(root,()=>'/same-preview',{recover});
+ const image=root.querySelector('img')!;
+ image.dispatchEvent(new Event('error'));
+ await vi.waitFor(()=>expect(recover).toHaveBeenCalledTimes(1));
+ await vi.waitFor(()=>expect(image.hidden).toBe(false));
+ expect(image.getAttribute('src')).toBe('/same-preview');
+ image.dispatchEvent(new Event('load'));
+ expect(root.querySelector<HTMLElement>('.workspace-image-status')!.hidden).toBe(true);
+});
+
 it('reads local Markdown destinations as URLs without decoding literal file names twice',()=>{
  const root=document.createElement('div');
  root.innerHTML=renderMarkdown('[A](../artifacts/%E5%9B%BE%20%2520%23.svg?view=1#L2) ![B](../images/ok%20file.png#preview)');

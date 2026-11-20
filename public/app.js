@@ -1,5 +1,6 @@
 import {appendPluginVersions} from './plugin-versions.js';
 import {canonicalTaskPath} from './task-file-reference.js';
+import {createTaskFileAccess,installTaskDownloads} from './task-file-access.js';
 import {createAnswerDeliveries,setAnswerDeliveryKey} from './answer-deliveries.js';
 import {createEngineDirectory} from './engine-directory.js';
 import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} from './task-preparation.js';
@@ -4220,8 +4221,18 @@ fetch('/api/me',{cache:'no-store'}).then(async r=>{
   return r.ok?r.json():null;
 }).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
+const fileViewScope=()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null;
+const readTaskFile=createTaskFileAccess({context:fileViewScope,endpoint:fileEndpoint,renew:async()=>{
+  const scope=fileViewScope(),id=activeId;
+  try {
+    const grant=await workspaceFileGrant(id);
+    if(fileViewScope()!==scope)throw new DOMException('Selection changed','AbortError');
+    transfer=normalizeTransferGrant(grant,id);transferRevision++;
+  } catch(error) {if(error.status===401 && fileViewScope()===scope){revokeCachedIdentity();void clearPreviews();connect();}throw error;}
+}});
+installTaskDownloads(ui.thread,{read:readTaskFile,context:fileViewScope,onError:toast});
 function bindWorkspaceArtifacts() {
- bindWorkspaceArtifactLinks(document,(action,path)=>workspaceState&&transfer?fileEndpoint(action,path):null);
+ bindWorkspaceArtifactLinks(document,(action,path,version)=>workspaceState&&transfer?fileEndpoint(action,path,version):null,{context:fileViewScope,recover:(path,version)=>readTaskFile('preview',path,{method:'HEAD',version})});
  void documentDownloads.refresh();
  answerDeliveries.refresh();
 }
@@ -4237,7 +4248,10 @@ const answerDeliveries=createAnswerDeliveries({
  load:async(keys,signal)=>{
    const params=new URLSearchParams(keys.map(key=>['key',key]));
    const result=await fetch('/api/conversations/'+encodeURIComponent(activeId)+'/deliveries?'+params,{signal,cache:'no-store'});
-   if(!result.ok)throw Error('Answer delivery metadata unavailable');
+   if(!result.ok){
+     if(result.status===401 && !signal.aborted){revokeCachedIdentity();void clearPreviews();connect();}
+     throw Object.assign(Error('交付文件暂时无法读取'),{status:result.status});
+   }
    return (await result.json()).deliveries;
  },
  endpoint:(path,version)=>transfer?fileEndpoint('workspace-download',path,version):null,

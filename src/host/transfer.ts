@@ -275,6 +275,7 @@ export class TransferServer {
           if(route==="preview" && info.size>10*1024*1024) {sendJson(response,413,{message:"Preview exceeds 10 MiB; download instead"});return;}
           const mime=mimeFor(full);const inline=route==="preview" && /^(image\/|text\/plain|text\/markdown|application\/pdf)/.test(mime);
           response.writeHead(200,{"content-type":mime,"content-length":String(info.size),"x-content-type-options":"nosniff","content-security-policy":"sandbox; default-src 'none'; style-src 'unsafe-inline'", "referrer-policy":"no-referrer","cache-control":"no-store","content-disposition":`${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(basename(full))}`});
+          if(request.method==='HEAD'){response.end();return;}
           const stream=file.createReadStream();
           streaming=true;
           response.once('close',()=>stream.destroy());

@@ -8,6 +8,25 @@ import { renderConversationPreview } from '../public/conversation-preview-view.j
 
 afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); });
 
+it('recovers a temporary delivery lookup and offers a bounded manual retry on prolonged failure',async()=>{
+ vi.useFakeTimers();
+ const root=document.createElement('div');document.body.append(root);root.append(assistantNode({id:'a',text:'done'}));
+ let ok=false,reads=0;
+ const deliveries=createAnswerDeliveries({root,context:()=> 'a',endpoint:()=>'/original',
+   load:async()=>{reads++;if(!ok)throw Object.assign(Error('temporary'),{status:503});return [{key:'native-message:a',files:[{path:'a.zip',available:true}]}];}});
+ deliveries.refresh();deliveries.refresh();
+ await vi.advanceTimersByTimeAsync(65);ok=true;
+ await vi.advanceTimersByTimeAsync(4000);
+ expect(root.querySelector('.answer-delivery')?.getAttribute('href')).toBe('/original');
+ ok=false;deliveries.refresh(true);
+ await vi.advanceTimersByTimeAsync(15000);const exhausted=reads;
+ deliveries.refresh();await vi.advanceTimersByTimeAsync(15000);
+ expect(reads).toBe(exhausted);expect(root.querySelector('.answer-delivery')).not.toBeNull();
+ ok=true;root.querySelector<HTMLButtonElement>('.answer-files-status button')!.click();
+ await vi.advanceTimersByTimeAsync(100);
+ expect(root.querySelector('.answer-files-status')).toBeNull();expect(reads).toBe(exhausted+1);
+});
+
 it('downloads an older retained answer through authoritative history beyond one metadata batch', async () => {
   vi.useFakeTimers();
   const root = document.createElement('div');

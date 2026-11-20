@@ -75,7 +75,7 @@ export function createDocumentDownloads({root,context,load,endpoint}) {
   const request=Promise.resolve(work).then(value=>{
    if(context()!==owner||key!==owner||epoch!==version)return;
    files=verified(value);lastSignature=wanted;bind(root,files,endpoint);
-  }).catch(()=>{if(key===owner&&epoch===version)lastSignature=wanted;}).finally(()=>{
+  }).catch(()=>{/* Preserve verified rows. The next ordinary refresh can retry. */}).finally(()=>{
    if(pending!==request)return;
    pending=null;const repeat=again;again=false;if(repeat&&context()===owner)return refresh(true);
   });
