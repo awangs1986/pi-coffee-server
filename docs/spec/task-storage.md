@@ -1,6 +1,7 @@
 # Task bundles without native session migration
 
-Current P1 contract: [Files under an answer](workbench-p1.md#files-under-an-answer).
+The observed-turn baseline is documented in [Files under an answer](workbench-p1.md#files-under-an-answer).
+The accepted follow-up governs answer history, canonical task references and preview and download recovery. [Assistant answers and file delivery](answer-rendering.md).
 
 Accepted 2026-09-27. Tracking: [Server #26](http://gitea:3000/awangs/pi-coffee-server/issues/26).
 This specification overrides the new-task directory layout in conversation-workspaces.md when task storage is configured. Existing tasks keep their registered paths.
@@ -207,8 +208,9 @@ valid local `.html` path displays an explicit “下载 HTML” file link. The m
 a file reference; the Browser binds it to the existing selected Conversation's
 `workspace-download` grant, with existing renewal and missing-grant behavior.
 The Host's user/task/root, symlink and credential checks remain authoritative.
-Generated HTML is delivered as an attachment. Its script content is not executed
-in the parent application. Inline HTML preview is outside this change.
+Generated HTML downloads as an attachment. Its script content cannot execute
+in the parent application. A user-initiated, isolated static preview is part of
+the [accepted follow-up](answer-rendering.md#resolve-and-display-a-task-file).
 
 The Markdown inline tokenizer preserves fenced and inline code examples. Malformed
 JSON, remote/protocol paths, non-HTML references, control characters and oversized

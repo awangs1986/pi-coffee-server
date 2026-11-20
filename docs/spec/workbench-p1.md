@@ -27,6 +27,9 @@ Existing Chat and Work restrictions, models and defaults remain authoritative.
 
 ## Files under an answer
 
+This section records the v1.07 baseline. The accepted follow-up covers durable
+retention, older pages, retry and file previews. [Assistant answers and file delivery](answer-rendering.md).
+
 The Host can associate verified deliverables produced during an observed turn
 with its last completed, identifiable assistant answer. Associate by native
 message identity, independent of the answer text and display order. The Host
@@ -44,8 +47,10 @@ uses no extra space. A removed or replaced file stays visibly unavailable on the
 next check. Refreshing or reopening the task preserves the association. The scoped download grant
 rechecks the file when clicked; HTML downloads as an attachment. The association
 contains file metadata and message identities, not file bodies or transcript
-text. A metadata journal alongside task data retains up to 40 answers and eight
-files per answer. Writing it never changes the native session. Incomplete/expired observations do not label
+text. In v1.07 the journal retains up to 40 answers and eight files per answer.
+The accepted follow-up moves the 40-answer limit to reads and retains the
+eight-file limit for automatic association. Writing metadata never changes the
+native session. Incomplete/expired observations do not label
 unrelated answers. Renewing the same task's download grant updates active links
 in place. A background grant refresh preserves the delivery row and its expanded
 state and reuses verified metadata for the same conversation and native binding.

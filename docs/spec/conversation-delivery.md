@@ -67,6 +67,10 @@ Preserve [local-first synchronization](local-first-conversation-sync.md),
 [queue controls](input-queue.md) and [file delivery](task-storage.md).
 Readiness and authoritative freshness remain separate from a fast cache paint.
 
+The accepted follow-up gives Compact and Detailed the same verified file
+actions on an authoritative answer, including older pages and recovery after a
+temporary failure. [Assistant answers and file delivery](answer-rendering.md).
+
 ## Compact delivery (default)
 
 | Content | Browser behavior |

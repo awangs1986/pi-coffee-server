@@ -112,6 +112,11 @@ unbounded complete-message Markdown/diff pass. Tool bodies are lazy and collapse
 updates only touch short status/length text. Reading older history does not force
 scroll-to-bottom; a new-message control returns to the latest page.
 
+The accepted answer-rendering design keeps these byte limits while preserving
+the answer key and verified file actions across live, paged and compatibility
+views. Cached text stays inert until the selected scope is authorized.
+[Answer rendering and file retention](answer-rendering.md).
+
 ## Synchronization and login animations
 
 Reviewed UI source: `1bc2b27968addeeb7d30ee2c0ed71b93147c314d`, branch
