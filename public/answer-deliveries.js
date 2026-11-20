@@ -1,3 +1,4 @@
+import {addFilePreviewActions} from './task-file-reference.js';
 const KEY = /^(?:pi-message:[0-9]{1,16}|native-message:[a-zA-Z0-9_.:-]{1,200})$/;
 
 export function setAnswerDeliveryKey(node, answer) {
@@ -17,7 +18,10 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
   }
   const document = root.ownerDocument;
   function paint(nodes) {
-    for (const node of nodes) {
+    for (const node of nodes) paintRow(node);
+    for (const node of nodes) addFilePreviewActions(node,canonical,Boolean(scope));
+  }
+  function paintRow(node) {
       const row = records.get(node.dataset.deliveryKey);
       const explicit = new Set();
       for(const link of node.querySelectorAll('.body [data-workspace-path],.body a[data-document-path],.answer-references [data-workspace-path]')){
@@ -47,11 +51,11 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
         links.forEach((link, index) => {
           if (link.getAttribute('href') !== urls[index]) link.href = urls[index];
         });
-        continue;
+        return;
       }
       rendered.set(node,state);
       existing?.remove();
-      if (!files.length) continue;
+      if (!files.length) return;
       const group = document.createElement(files.length > 1 ? 'details' : 'div');
       group.className = 'answer-deliveries';
       if (files.length > 1) {
@@ -70,7 +74,6 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
       }
       const body = node.querySelector('.body');
       if (body) body.after(group);
-    }
   }
   function clearStatus() { status?.remove(); status = null; }
   function errorStatus(row, retryable) {

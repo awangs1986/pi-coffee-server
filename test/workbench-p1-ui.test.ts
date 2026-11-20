@@ -8,6 +8,18 @@ import { renderConversationPreview } from '../public/conversation-preview-view.j
 
 afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); });
 
+it('offers one preview and the original download for image and Markdown deliverables',async()=>{
+ vi.useFakeTimers();
+ const root=document.createElement('div');document.body.append(root);
+ root.append(assistantNode({id:'a',text:'[drawing](../artifacts/map.svg)'}));
+ const paths=['../artifacts/map.svg','../artifacts/memo.md','../artifacts/archive.zip'];
+ const deliveries=createAnswerDeliveries({root,context:()=> 'owner/task',endpoint:path=>'/download/'+path,
+   load:async()=>[{key:'native-message:a',files:paths.map(path=>({path,available:true}))}]});
+ deliveries.refresh();await vi.advanceTimersByTimeAsync(100);
+ expect([...root.querySelectorAll<HTMLButtonElement>('button[data-preview-path]')].map(b=>b.dataset.previewPath).sort()).toEqual(paths.slice(0,2).sort());
+ expect(root.querySelectorAll('a[data-delivery-path]')).toHaveLength(2);
+});
+
 it('recovers a temporary delivery lookup and offers a bounded manual retry on prolonged failure',async()=>{
  vi.useFakeTimers();
  const root=document.createElement('div');document.body.append(root);root.append(assistantNode({id:'a',text:'done'}));

@@ -15,7 +15,7 @@ export function deliveryPath(path: string) {
   const relative = path.replace(/^\.\.\/(?:artifacts|images)\//, '');
   return path.length <= 320 && !/[\\\x00-\x1f\x7f]/.test(path)
     && relative.split('/').every(part => part && !part.startsWith('.') && !excluded.test(part) && !privateName.test(part))
-    && /\.(?:html?|docx?|pdf|png|jpe?g|gif|webp|svg|zip)$/i.test(relative);
+    && /\.(?:md|html?|docx?|pdf|png|jpe?g|gif|webp|svg|zip)$/i.test(relative);
 }
 
 const legacyJournal = 'answer-deliveries.json';

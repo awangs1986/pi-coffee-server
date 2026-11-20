@@ -1,5 +1,6 @@
 import {appendPluginVersions} from './plugin-versions.js';
-import {canonicalTaskPath} from './task-file-reference.js';
+import {canonicalTaskPath,previewKind} from './task-file-reference.js';
+import {openTaskFilePreview} from './task-file-preview.js';
 import {createTaskFileAccess,installTaskDownloads} from './task-file-access.js';
 import {createAnswerDeliveries,setAnswerDeliveryKey} from './answer-deliveries.js';
 import {createEngineDirectory} from './engine-directory.js';
@@ -183,7 +184,7 @@ function captureSelection({task=true}={}){
   const id=activeId,user=currentUser,epoch=taskSelectionEpoch,connection=connectionEpoch,ws=socket;
   return ()=>user===currentUser && epoch===taskSelectionEpoch && connection===connectionEpoch && ws===socket && connected && (!task || id===activeId);
 }
-let statusRequest=null,changesRequest=null,detailRequestSeq=0;
+let statusRequest=null,changesRequest=null,detailRequestSeq=0,disposeFilePreview=null;
 const dialogs=createDialogManager(ui.app,ui.prompt);
 const backupControls=initBackupControls({context:()=>({user:currentUser}),onOpen:()=>{closeBrandMenu();closeSidebarOnMobile();}});
 $('#backup-btn')?.addEventListener('click',()=>void backupControls.open());
@@ -3533,6 +3534,7 @@ async function workspaceApi(value,{signal}={}) {
   return data;
 }
 function setWorkspaceOpen(open) {
+  if(!open && disposeFilePreview)closeWorkspaceDetail();
   if(open)closeDiffDialog();
   (open ? ui.app : $('.topbar-actions')).append($('#files-toggle'));
   ui.app.classList.toggle('files-open', open);
@@ -4001,6 +4003,7 @@ function setReviewTab(tab) {
   }
 }
 function closeWorkspaceDetail() {
+  disposeFilePreview?.();disposeFilePreview=null;
   detailRequestSeq++;
   workspaceDetailOpen=false;
   selectedChangedPath=null;
@@ -4143,40 +4146,22 @@ function renderWorkspaceChecks(data) {
   detail.append(el('p','workspace-note','当前检查针对本地项目运行 git diff --check；不会自动运行测试或远程 CI。'));
 }
 async function showWorkspacePreview(path) {
-  if(!workspaceState || !transfer || !activeId){toast('请先打开项目对话');return;}
-  workspaceDetailOpen=true;
-  setWorkspaceOpen(true);
-  setReviewTab('');
+  const file=typeof path==='string'?{path}:path;
+  if(!fileViewScope() || !previewKind(file.path))return;
+  disposeFilePreview?.();detailRequestSeq++;
+  workspaceDetailOpen=true;setWorkspaceOpen(true);setReviewTab('');
   $('#workspace-panel').classList.add('detail-open');
   const detail=$('#workspace-detail');detail.classList.remove('hidden');
-  detail.replaceChildren();
-  detail.append(reviewHead('预览 · '+middleTruncate(path),{wrapToggle:false}));
-  const actions=el('div','workspace-preview-actions');
-  const open=el('a','btn small','外部打开');open.href=fileEndpoint('preview',path);open.target='_blank';open.rel='noopener noreferrer';
-  const download=el('a','btn small','下载');download.href=fileEndpoint('workspace-download',path);download.target='_blank';download.rel='noopener noreferrer';
-  actions.append(open,download);detail.append(actions);
-  const url=fileEndpoint('preview',path);
-  if(/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) {
-    const img=document.createElement('img');img.src=url;img.alt=path;img.loading='lazy';
-    img.onerror=()=>detail.append(el('p','workspace-warning','图片加载失败，请外部打开或下载。'));
-    detail.append(img);return;
-  }
-  if(/\.pdf$/i.test(path)) {
-    const frame=document.createElement('iframe');frame.src=url;frame.title=path;frame.referrerPolicy='no-referrer';frame.setAttribute('sandbox','');
-    frame.onerror=()=>detail.append(el('p','workspace-warning','沙箱内无法渲染 PDF，请外部打开或下载。'));
-    detail.append(frame,el('p','workspace-note','PDF 在沙箱中预览；需要完整查看时请外部打开或下载。'));return;
-  }
-  try {
-    const r=await fetch(url);
-    if(!r.ok)throw new Error('预览不可用，请下载');
-    if(!/^(text\/|application\/json)/i.test(r.headers.get('content-type') || ''))throw new Error('此格式不支持文本预览，请下载');
-    const text=await r.text();
-    if(selectedChangedPath!==null)selectedChangedPath=null;
-    if(/\.md$/i.test(path)){const body=el('div','markdown');body.innerHTML=renderMarkdown(text);detail.append(body);bindWorkspaceArtifacts();}
-    else detail.append(el('pre','file-text',text));
-  } catch(e){detail.append(el('p','workspace-warning',e.message));}
+  const actions=el('div','workspace-preview-actions'),download=el('a','btn small','下载原件');
+  download.dataset.deliveryPath=file.path;
+  if(file.version)download.dataset.deliveryVersion=file.version;
+  download.href=fileEndpoint('workspace-download',file.path,file.version);download.rel='noopener noreferrer';actions.append(download);
+  const content=el('div','file-preview-content');
+  detail.replaceChildren(reviewHead('预览 · '+middleTruncate(file.path)),actions,content);
+  disposeFilePreview=openTaskFilePreview(content,{...file,read:readTaskFile,endpoint:fileEndpoint,context:fileViewScope});
 }
 async function showWorkspaceReview(tab,path=null) {
+  disposeFilePreview?.();disposeFilePreview=null;
   if(!workspaceState || !activeId){toast('请先打开项目对话');return;}
   if(currentTask()?.workspaceKind==='chat'){toast('聊天没有项目检查');return;}
   if(tab==='diff')return showDiffDialog(path,{scope:'branch'});
@@ -4230,7 +4215,11 @@ const readTaskFile=createTaskFileAccess({context:fileViewScope,endpoint:fileEndp
     transfer=normalizeTransferGrant(grant,id);transferRevision++;
   } catch(error) {if(error.status===401 && fileViewScope()===scope){revokeCachedIdentity();void clearPreviews();connect();}throw error;}
 }});
-installTaskDownloads(ui.thread,{read:readTaskFile,context:fileViewScope,onError:toast});
+for(const root of [ui.thread,$('#workspace-detail')])installTaskDownloads(root,{read:readTaskFile,context:fileViewScope,onError:toast});
+ui.thread.addEventListener('click',event=>{
+  const button=event.target.closest('button[data-preview-path]');
+  if(button)void showWorkspacePreview({path:button.dataset.previewPath,version:button.dataset.deliveryVersion});
+});
 let boundGrant,documentCatalog;
 const documentReaders=new WeakMap();
 function loadDocuments(){

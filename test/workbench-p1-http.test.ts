@@ -71,6 +71,7 @@ it('persists new files under the native answer identity and hides attachments, o
       await mkdir(join(task.cwd, 'output'));
       await writeFile(join(task.cwd, 'output', 'report.html'), '<p>report</p>');
       await writeFile(join(task.taskRoot!, 'artifacts', 'report.docx'), 'doc fixture');
+      await writeFile(join(task.taskRoot!, 'artifacts', 'summary.md'), '# Summary');
       await writeFile(join(task.taskRoot!, 'attachments', 'input.pdf'), 'input');
       await symlink(join(root, 'unrelated.html'), join(task.cwd, 'other.html'));
       emit({type:'message_end',message:{role:'assistant',timestamp:123,content:[{type:'text',text:'Finished'}]}});
@@ -103,6 +104,7 @@ it('persists new files under the native answer identity and hides attachments, o
   expect(first.deliveries).toEqual([{
     key:'pi-message:123', files:[
       {path:'../artifacts/report.docx', available:true, version:expect.stringMatching(/^[a-f0-9]{64}$/)},
+      {path:'../artifacts/summary.md', available:true, version:expect.stringMatching(/^[a-f0-9]{64}$/)},
       {path:'output/report.html', available:true, version:expect.stringMatching(/^[a-f0-9]{64}$/)},
     ],
   }]);
