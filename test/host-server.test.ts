@@ -1352,6 +1352,80 @@ describe("Host WebSocket seam", () => {
       release();await expect(frames.next()).resolves.toMatchObject({type:'opened'});expect(creates).toBe(1);
     }finally{release();socket.close();}
   });
+  it("keeps opening and messaging a task while a native image preview is being imported", async () => {
+    const root = mkdtempSync(join(tmpdir(), "coffee-artifact-lifecycle-"));
+    const workspaces = new Workspaces(join(root, "projects"), { taskRoot: join(root, "tasks") });
+    const task = await workspaces.createChatConversation("task");
+    const factory = new FakeFactory();
+    const previewStarted = Promise.withResolvers<void>();
+    const finishImport = Promise.withResolvers<void>();
+    const resolveArtifact = async () => {
+      previewStarted.resolve();
+      await finishImport.promise;
+      return "preview.png";
+    };
+    await writeFile(join(task.cwd, "preview.png"), "fixture bytes");
+    const transfer = new TransferServer({ host: "127.0.0.1", port: 0, advertiseHost: "127.0.0.1", workdir: root });
+    await transfer.start();
+    server = new HostServer({ port: 0, token: "fixture", factory: Object.assign(factory, { resolveArtifact }), workspaces, transfer });
+    await server.start();
+    const address = `127.0.0.1:${server.address().port}`;
+    const headers = { authorization: "Bearer fixture", "x-pi-coffee-user": "alice", "content-type": "application/json" };
+    const post = (action: string) => fetch(`http://${address}/api/workspace`, {
+      method: "POST", headers, body: JSON.stringify({ action, id: task.id }),
+    });
+    const openSocket = async () => {
+      const socket = new WebSocket(`ws://${address}/host`, { headers });
+      const frames = new FrameQueue(socket);
+      await once(socket, "open");
+      socket.send(encodeFrame({ v: 1, type: "open", sessionId: task.id }));
+      return { socket, frames };
+    };
+    const first = await openSocket();
+    let second: Awaited<ReturnType<typeof openSocket>> | undefined;
+    let preview: Promise<Response> | undefined;
+    try {
+      expect(await first.frames.next()).toMatchObject({ type: "opened", sessionId: task.id });
+      while ((await first.frames.next()).type !== "transfer") { /* drain initial history */ }
+      const grant = await (await post("files")).json();
+      preview = fetch(grant.url + "/api/localsend/v2/preview?" + new URLSearchParams({
+        scope: grant.scope, token: grant.token, path: "/native/generated_images/thread/preview.png",
+      }));
+      await previewStarted.promise;
+      expect((await post("archive")).status).toBe(409);
+      second = await openSocket();
+      const reopened = await second.frames.next();
+      first.socket.send(encodeFrame({ v: 1, type: "get_models", requestId: "models" }));
+      const models = await first.frames.next();
+      first.socket.send(encodeFrame({ v: 1, type: "prompt", requestId: "prompt-once", text: "Keep working" }));
+      const results = [reopened, models, await first.frames.next()];
+      expect(results, JSON.stringify(results)).toMatchObject([
+        { type: "opened", sessionId: task.id },
+        { type: "models", requestId: "models" },
+        { type: "ack", operation: "prompt", requestId: "prompt-once" },
+      ]);
+      await waitFor(() => factory.sessions.get(task.id)?.history.length === 2);
+      expect(factory.sessions.get(task.id)?.history.filter(entry => entry.kind === "user")).toHaveLength(1);
+      first.socket.send(encodeFrame({ v: 1, type: "compact", mode: "handoff", acceptDrift: true, requestId: "handoff" }));
+      let handoff: ServerFrame;
+      do { handoff = await first.frames.next(); } while (!("requestId" in handoff && handoff.requestId === "handoff"));
+      expect(handoff).toMatchObject({ type: "error", message: "Task lifecycle operation in progress" });
+      finishImport.resolve();
+      const response = await preview;
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("fixture bytes");
+    } finally {
+      finishImport.resolve();
+      await preview?.then(response => response.body?.cancel()).catch(() => {});
+      first.socket.close();
+      second?.socket.close();
+      await server.close();
+      server = undefined;
+      await transfer.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("archives without stopping children and refuses deletion until all writers are quiescent",async()=>{
     const root=mkdtempSync(join(tmpdir(),"coffee-lifecycle-"));
     const factory=new FakeFactory();const {workspaces:ws,conversation}=await workspaceConversation(root,"safe");

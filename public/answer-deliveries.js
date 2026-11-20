@@ -22,7 +22,7 @@ export function createAnswerDeliveries({root, context, load, endpoint}) {
       // Renewed grants only change hrefs. Keep the existing row and its open
       // state so a workspace poll cannot move the conversation while reading.
       const state = JSON.stringify(files.map(({path,url}) => [path, Boolean(url)]));
-      const existing = node.querySelector('.answer-deliveries');
+      const existing = node.querySelector(':scope > .answer-deliveries');
       if (rendered.get(node) === state && (existing || !files.length)) {
         const links = existing?.querySelectorAll('a') ?? [];
         const urls = files.flatMap(file => file.url ? [file.url] : []);

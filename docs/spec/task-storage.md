@@ -174,8 +174,12 @@ guessed path or an inherited transcript reference.
 Imports share lifecycle custody with Fork/reset/cleanup and the platform backup
 writer fence. Concurrent requests for the same image share one import; a scoped
 Adapter admits at most four active imports and sixteen queued imports; multiple
-images in one task share the same held lifecycle operation. Copying uses 64 KiB buffers, checked source
-metadata, a 256 MiB file ceiling, private staging and synchronized publication.
+images in one task share the same held lifecycle lease. Importing an image does
+not block opening the task, reading Agent information, sending or queueing
+messages, stopping an active turn or answering a dialog. The lease still excludes
+workspace and binding changes such as Fork, reset, manual Handoff and cleanup.
+Copying uses 64 KiB buffers, checked source metadata, a 256 MiB file ceiling,
+private staging and synchronized publication.
 Directory descriptors anchor source and destination access. Publication never
 hardlinks the original native image or overwrites an existing task image.
 Interrupted removal of an owned staging link is reconciled by inode identity;

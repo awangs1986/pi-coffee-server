@@ -1,6 +1,6 @@
 import { publicPluginReleases, type PluginRelease } from '../shared/plugin-release.js';
 import { AnswerDeliveries, DELIVERY_MESSAGE_KEY } from './answer-deliveries.js';
-import {holdTaskLifecycle,requireTaskIdle} from './task-lifecycle.js';
+import {blocksTaskInteraction,holdTaskLifecycle,requireTaskIdle} from './task-lifecycle.js';
 import {TaskPreparation,type PreparationBudgets} from './task-preparation.js';
 import {createCompletionSpeech} from './completion-speech.js';
 import type {PersonalRecoveryCollection} from './personal-recovery-collection.js';
@@ -1163,7 +1163,7 @@ function resolveTaskArtifact(slot:UserSlot,id:string,path:string):Promise<string
  const key=JSON.stringify(['native-artifact',id,path]),existing=slot.workspaceReads.get(key);
  if(existing)return existing.then(value=>typeof value==='string'?value:undefined);
  let held=slot.artifactHolds.get(id);
- if(!held){held={active:0,release:holdTaskLifecycle(slot.lifecycleLocks,[id])};slot.artifactHolds.set(id,held);}
+ if(!held){held={active:0,release:holdTaskLifecycle(slot.lifecycleLocks,[id],'artifact-import')};slot.artifactHolds.set(id,held);}
  const group=held;group.active++;
  const pending=Promise.resolve().then(()=>slot.factory.resolveArtifact?.(id,path)).finally(()=>{slot.workspaceReads.delete(key);if(--group.active===0){slot.artifactHolds.delete(id);group.release();}});
  slot.workspaceReads.set(key,pending);return pending;
@@ -1355,7 +1355,16 @@ class HostSocket implements SessionSink {
       if(this.syncProtocol===2&&this.session&&!['open','list_sessions','get_backup_status','close'].includes(frame.type)){
         if(frame.conversationId!==this.session.id||frame.bindingEpoch!==this.bindingEpoch)throw new Error('Conversation identity changed; reopen before sending this command');
       }
-      if(((this.session&&this.lifecycleLocks.has(this.session.id))||('sessionId' in frame&&typeof frame.sessionId==='string'&&this.lifecycleLocks.has(frame.sessionId)))&&!["list_sessions","get_backup_status","get_state","get_queue"].includes(frame.type))throw new Error("Task lifecycle operation in progress");
+      if (!['list_sessions', 'get_backup_status', 'get_state', 'get_queue'].includes(frame.type)) {
+        const targetId = frame.type === 'open' ? frame.sessionId
+          : 'sessionId' in frame ? frame.sessionId ?? this.session?.id : this.session?.id;
+        // An empty Codex thread can be rebound by a context-preset change.
+        const requiresExclusive = frame.type === 'delete_session' || frame.type === 'set_context'
+          || (frame.type === 'compact' && frame.mode === 'handoff');
+        if (targetId && (requiresExclusive ? this.lifecycleLocks.has(targetId) : blocksTaskInteraction(this.lifecycleLocks, targetId))) {
+          throw new Error('Task lifecycle operation in progress');
+        }
+      }
       switch (frame.type) {
         case "open":
           await this.open(frame);
@@ -1401,7 +1410,7 @@ class HostSocket implements SessionSink {
         case "queue_action": {
           await this.assertRecoveryInput(frame);
           if(!this.session||!this.opened)throw new NotOpenError();
-          if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
+          if(blocksTaskInteraction(this.lifecycleLocks,this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
           try {await this.session.changeQueue(frame);this.send({v:1,type:'ack',operation:'queue_action',requestId:frame.requestId});}
           finally {this.send(this.session.queueFrame);}
           break;
@@ -1439,7 +1448,7 @@ class HostSocket implements SessionSink {
         }
         case "set_speed": {
           if(!this.session||!this.opened)throw new NotOpenError();
-          if(this.lifecycleLocks.has(this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
+          if(blocksTaskInteraction(this.lifecycleLocks,this.session.id)||await this.workspaces?.isArchived(this.session.id))throw new Error('Conversation is unavailable');
           await this.session.setSpeed(frame.mode);this.metadataEpoch++;
           this.send({v:1,type:'ack',operation:'set_speed',...rid(frame)});
           const target=this.session;
@@ -1462,7 +1471,7 @@ class HostSocket implements SessionSink {
         case "agent_command": {
           if(!this.session||!this.opened)throw new NotOpenError();
           const target=this.session;
-          if(this.lifecycleLocks.has(target.id)||await this.workspaces?.isArchived(target.id))throw Error('Conversation is unavailable');
+          if(blocksTaskInteraction(this.lifecycleLocks,target.id)||await this.workspaces?.isArchived(target.id))throw Error('Conversation is unavailable');
           if(frame.name==='goal'&&!frame.args.trim()){
             this.readMetadata(frame,'get_goal',async()=>({v:1,type:'agent_command_result',sessionId:target.id,name:'goal',text:await target.runCommand('goal','')}));
             break;
@@ -1540,7 +1549,6 @@ class HostSocket implements SessionSink {
       this.send({ v: 1, type: "error", code: "already_open", message: "Connection is already open" });
       return;
     }
-    if(frame.sessionId && this.lifecycleLocks.has(frame.sessionId))throw new Error("Workspace lifecycle operation in progress; reconnect shortly");
     if(frame.sessionId && await this.workspaces?.isArchived(frame.sessionId))throw new Error("Restore the archived conversation first");
     const task=frame.sessionId ? await this.workspaces?.lookup(frame.sessionId) : undefined;
     if(task?.engine && task.engine!=="pi" && frame.nativeProtocol!==1)throw new Error("This Task requires a native-Agent capable client");
@@ -1650,7 +1658,7 @@ class HostSocket implements SessionSink {
     const originSession=this.session,originGeneration=originSession?.commandGeneration;
     await this.assertRecoveryInput(frame);
     if(this.workspaces && this.session && await this.workspaces.isArchived(this.session.id)) throw new Error("Restore the archived conversation first");
-    if(this.session && this.lifecycleLocks.has(this.session.id))throw new Error("Conversation lifecycle operation in progress");
+    if(this.session && blocksTaskInteraction(this.lifecycleLocks,this.session.id))throw new Error("Conversation lifecycle operation in progress");
     if (!this.session || !this.opened) throw new NotOpenError();
     if(await this.workspaces?.lookup(this.session.id))await this.workspaces!.cwd(this.session.id);
     if(originSession&&originGeneration!==undefined)originSession.assertCommandGeneration(originGeneration);
