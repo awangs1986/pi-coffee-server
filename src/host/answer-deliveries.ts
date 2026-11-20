@@ -1,33 +1,18 @@
-import { constants, type Stats } from 'node:fs';
+import type { Stats } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { lstat, open, opendir } from 'node:fs/promises';
+import { lstat, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { JsonValue } from '../shared/protocol.js';
 import { runLifecycle } from '../shared/run-lifecycle.js';
-import { checkedTaskRoot, writeTaskJson } from './task-storage.js';
+import {DELIVERY_MESSAGE_KEY, MAX_FILES, deliveryPath, excluded, privateName, readDeliveryRows, writeDeliveryRow} from './answer-file-index.js';
 import type { Conversation, Workspaces } from './workspaces.js';
 
-const JOURNAL = 'answer-deliveries.json';
-const MAX_JOURNAL = 160 * 1024;
-const MAX_FILES = 8;
-const MAX_ANSWERS = 40;
-const MAX_ACTIVE = 24;
-export const DELIVERY_MESSAGE_KEY = /^(?:pi-message:[0-9]{1,16}|native-message:[a-zA-Z0-9_.:-]{1,200})$/;
+export {DELIVERY_MESSAGE_KEY} from './answer-file-index.js';
 type Snapshot = Map<string, string>;
-type FileRecord = { path: string; fingerprint: string };
-type RecordRow = { binding: string; key: string; files: FileRecord[] };
 type Turn = { requestId: string; binding: string; before: Map<string, Snapshot>; started: boolean; key?: string };
 
 const roots = ['../artifacts', '../images', ''];
-const excluded = /^(?:node_modules|venv|attachments|inbox|__pycache__|\.git)$/i;
-const privateName = /secret|credential|token|password|auth\.json/i;
-
-function deliveryPath(path: string) {
-  const relative = path.replace(/^\.\.\/(?:artifacts|images)\//, '');
-  return path.length <= 320 && !/[\\\x00-\x1f\x7f]/.test(path)
-    && relative.split('/').every(part => part && !part.startsWith('.') && !excluded.test(part) && !privateName.test(part))
-    && /\.(?:html?|docx?|pdf|png|jpe?g|gif|webp|svg|zip)$/i.test(relative);
-}
+const MAX_ACTIVE = 24;
 function taskBinding(task: Conversation | undefined) {
   if (!task?.taskRoot || task.archived || task.workspaceRemoved || task.cleanupStarted) return;
   return JSON.stringify([task.engine ?? 'pi', task.nativeBinding?.id ?? task.id, task.recoveryReceipt?.operationId ?? null]);
@@ -105,7 +90,7 @@ export class AnswerDeliveries {
     const task = await this.workspaces.lookup(id);
     const binding = taskBinding(task);
     if (!binding || !task?.taskRoot) return;
-    const rows = (await this.read(task.taskRoot)).filter(row => row.binding === binding && keys.has(row.key));
+    const rows = await readDeliveryRows(task.taskRoot,binding,keys);
     const result = [];
     // A bounded response and availability reads. A second access check occurs
     // at the existing file grant when the user clicks the link.
@@ -133,39 +118,13 @@ export class AnswerDeliveries {
     const publish = async () => {
       const task = await this.workspaces.lookup(id);
       if (!task?.taskRoot || taskBinding(task) !== turn.binding) return false;
-      const data = await checkedTaskRoot(task.taskRoot);
-      const rows = await this.read(data);
-      if (taskBinding(await this.workspaces.lookup(id)) !== turn.binding) return false;
-      await writeTaskJson(join(data, 'history'), JOURNAL, [
-        ...rows.filter(row => row.binding !== turn.binding || row.key !== key).slice(-MAX_ANSWERS + 1),
-        { binding: turn.binding, key, files: [...produced].sort(([left],[right])=>left.localeCompare(right))
-          .slice(0, MAX_FILES).map(([path,fingerprint])=>({path,fingerprint})) },
-      ]);
+      const files = [...produced].sort(([left],[right]) => left.localeCompare(right))
+        .slice(0, MAX_FILES).map(([path,fingerprint]) => ({path,fingerprint}));
+      await writeDeliveryRow(task.taskRoot,{binding:turn.binding,key,files});
       return true;
     };
     const fence = this.workspaces.backupWriterFence;
     return fence ? fence.runWriter('platform', publish) : publish();
-  }
-
-  private async read(root: string): Promise<RecordRow[]> {
-    try {
-      const directory = await checkedTaskRoot(join(await checkedTaskRoot(root), 'history'));
-      const handle = await open(join(directory, JOURNAL), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const info = await handle.stat();
-        if (!info.isFile() || info.size > MAX_JOURNAL) return [];
-        const buffer = Buffer.alloc(info.size + 1);
-        const { bytesRead } = await handle.read(buffer);
-        const value: unknown = JSON.parse(buffer.toString('utf8', 0, bytesRead));
-        if (!Array.isArray(value)) return [];
-        return value.slice(-MAX_ANSWERS).filter((row): row is RecordRow => Boolean(row
-          && typeof row.binding === 'string' && row.binding.length <= 1024
-          && typeof row.key === 'string' && DELIVERY_MESSAGE_KEY.test(row.key)
-          && Array.isArray(row.files) && row.files.length <= MAX_FILES
-          && row.files.every((item: FileRecord) => item && typeof item.path === 'string' && deliveryPath(item.path)
-            && typeof item.fingerprint === 'string' && /^[\d.:]+$/.test(item.fingerprint) && item.fingerprint.length <= 110)));
-      } finally { await handle.close(); }
-    } catch { return []; }
   }
 
   private async snapshot(id: string) {
