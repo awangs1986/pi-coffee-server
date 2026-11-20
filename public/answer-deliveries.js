@@ -71,7 +71,8 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
         const name = path.split('/').at(-1);
         item.textContent = url ? '下载 '+name : name+' · 文件不可用';
         if (url) { item.href=url; item.dataset.deliveryPath=path; if(version)item.dataset.deliveryVersion=version;item.target='_blank';item.rel='noopener noreferrer'; }
-        group.append(item);
+        const fileRow=document.createElement('div'); fileRow.className='answer-delivery-row';
+        fileRow.append(item);group.append(fileRow);
       }
       const body = node.querySelector('.body');
       if (body) body.after(group);

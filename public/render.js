@@ -75,7 +75,7 @@ export function boundedTranscriptWindow(source, { maxEntries = 40, maxBytes = TR
 }
 
 /** One replaceable page per message, not an ever-growing text/DOM expansion. */
-export function renderBoundedText(container, raw, { maxBytes = TEXT_CHUNK_BYTES, isCurrent = () => true } = {}) {
+export function renderBoundedText(container, raw, { maxBytes = TEXT_CHUNK_BYTES, isCurrent = () => true, onPage } = {}) {
   const text = typeof raw === 'string' ? raw : '';
   let state = boundedViews.get(container);
   if (!state || !container.contains(state.content)) {
@@ -102,7 +102,7 @@ export function renderBoundedText(container, raw, { maxBytes = TEXT_CHUNK_BYTES,
     }
     pages.append(label); container.replaceChildren(content, pages); boundedViews.set(container, state);
   }
-  state.text = text; state.maxBytes = maxBytes; state.isCurrent = isCurrent;
+  state.text = text; state.maxBytes = maxBytes; state.isCurrent = isCurrent;state.onPage=onPage;
   if (!isCurrent()) return;
   if (state.start > text.length) state.tail = true;
   paintTextPage(state, state.tail ? { tail: true } : { start: state.start });
@@ -120,6 +120,7 @@ function paintTextPage(state, options) {
   state.buttons.next.disabled = slice.end === state.text.length;
   state.buttons.latest.disabled = slice.end === state.text.length;
   state.label.textContent = `第 ${slice.start + 1}–${slice.end} / ${state.text.length} 字符 · 纯文本分页`;
+  state.onPage?.(slice);
 }
 
 function fitsRichText(text, maxBytes = TEXT_CHUNK_BYTES) {
@@ -436,16 +437,24 @@ export function showAnswerReferences(node, refs) {
   if(previous)previous.replaceWith(group);else body.after(group);
 }
 
+function showBoundedAnswer(node,body,text,isCurrent) {
+  const first=answerFileReferences(text);
+  renderBoundedText(body,text,{isCurrent,onPage:({start,end})=>{
+    const here=answerFileReferences(text,{from:start,to:end,budget:2*TEXT_CHUNK_BYTES,limit:TEXT_CHUNK_BYTES});
+    showAnswerReferences(node,[...first,...here]);
+  }});
+}
+
 export function assistantNode(entry, { done = true, controls = true } = {}) {
   const node = el('div', 'msg assistant');
   node.dataset.messageComplete=String(done);
   if (done || entry.status==='completed' || entry.done===true) setAnswerDeliveryKey(node,entry);
   const body = el('div', 'body');
-  if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '').trimEnd();
-  else renderBoundedText(body, entry.text || '');
   node.appendChild(body);
+  if (done && fitsRichText(entry.text)) body.innerHTML = renderMarkdown(entry.text || '').trimEnd();
+  else if(done)showBoundedAnswer(node,body,entry.text||'');
+  else renderBoundedText(body, entry.text || '');
   if(entry.fileReferences?.length)showAnswerReferences(node,entry.fileReferences);
-  else if(done && !fitsRichText(entry.text))showAnswerReferences(node,answerFileReferences(entry.text));
   if (!controls) return node;
   const tools = el('div', 'msg-tools');
   const copy = el('button', 'msg-tool', '复制');
@@ -465,10 +474,8 @@ export function updateAssistant(node, text, { done = false, isCurrent = () => tr
   if (done && fitsRichText(text)) {
     boundedViews.delete(body);
     body.innerHTML = renderMarkdown(text || '');
-  } else {
-    renderBoundedText(body, text || '', { isCurrent });
-    if(done)showAnswerReferences(node,answerFileReferences(text||''));
-  }
+  } else if(done)showBoundedAnswer(node,body,text||'',isCurrent);
+  else renderBoundedText(body, text || '', { isCurrent });
 }
 
 const toolViews = new WeakMap();

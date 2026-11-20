@@ -15,6 +15,16 @@ it('keeps authored downloads outside the text budget and leaves fenced examples 
  expect(example.querySelector('a[data-workspace-path]')).toBeNull();
 });
 
+it('keeps a file on the visible text page actionable after the initial reference batch fills',()=>{
+ const first=Array.from({length:40},(_,i)=>'[output '+i+'](../artifacts/file-'+i+'.zip)').join('\n');
+ const answer=assistantNode({id:'many',text:first+'\n'+'body '.repeat(4000)+'\n[final output](../artifacts/last.zip)'});
+ document.body.append(answer);
+ expect(answer.querySelector('[data-workspace-path="../artifacts/last.zip"]')?.textContent).toBe('final output');
+ answer.querySelector<HTMLButtonElement>('[data-text-page="previous"]')!.click();
+ answer.querySelector<HTMLButtonElement>('[data-text-page="previous"]')!.click();
+ expect(answer.querySelector('[data-workspace-path="../artifacts/file-39.zip"]')).not.toBeNull();
+});
+
 it('retries a failed image in place after an unchanged file grant is usable again',async()=>{
  const root=document.createElement('div');document.body.append(root);
  root.innerHTML=renderMarkdown('![result](../artifacts/result.svg)');

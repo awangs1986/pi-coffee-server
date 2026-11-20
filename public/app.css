@@ -1229,6 +1229,7 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .agent-option-row .agent-retry { flex: none; }
 .answer-deliveries { display: block; margin-top: .6rem; font-size: .85em; }
 .answer-deliveries summary { width: fit-content; cursor: pointer; }
+.answer-delivery-row { display: flex; flex-wrap: wrap; align-items: baseline; }
 .file-preview-trigger { margin-inline-start: .5em; padding: .1em .4em; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .answer-references { display: flex; flex-wrap: wrap; gap: .5em; }
 .answer-files-status { margin-top: .35em; font-size: .85em; }
