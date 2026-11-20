@@ -1416,7 +1416,18 @@ it.each(['cursor','grok'])('creates %s Work and hides unverified context and ste
 
 it.each(['pi','codex'])('renders completed %s Markdown and download links before history is reloaded',async(agent)=>{
  const app=await setup();const originalFetch=globalThis.fetch;
- vi.stubGlobal('fetch',async(url:any,init:any)=>{const body=init?.body?JSON.parse(init.body):null;if(body?.action==='files')return {ok:true,json:async()=>({url:'http://localhost/',scope:body.id,token:'synthetic'})};return originalFetch(url,init);});
+ const version='a'.repeat(64);
+ vi.stubGlobal('fetch',async(url:any,init:any)=>{
+   const body=init?.body?JSON.parse(init.body):null;
+   if(body?.action==='files')return {ok:true,json:async()=>({url:'http://localhost/',scope:body.id,token:'synthetic'})};
+   const request=new URL(String(url),'http://localhost');
+   if(request.pathname.endsWith('/deliveries')){
+     const keys=request.searchParams.getAll('key');
+     return {ok:true,json:async()=>({deliveries:keys.includes('native-message:answer')
+       ? [{key:'native-message:answer',files:[{path:'report.html',available:true,version}]}] : []})};
+   }
+   return originalFetch(url,init);
+ });
  chooseWork();document.querySelector<HTMLSelectElement>('#task-engine')!.value=agent;
  document.querySelector<HTMLButtonElement>('#create-task')!.click();await vi.advanceTimersByTimeAsync(20);
  const id=app.requests.find(r=>r.action==='conversation').id,ws=app.sockets.at(-1);
@@ -1433,6 +1444,10 @@ it.each(['pi','codex'])('renders completed %s Markdown and download links before
  emit({type:'message_update',...(agent==='codex'?{id:'ending'}:{}),assistantMessageEvent:{type:'text_delta',delta:ending}});
  emit(agent==='codex'?{type:'message_end',id:'ending',text:ending,message:{role:'assistant'}}:{type:'message_end',message:{role:'assistant',content:[{type:'text',text:ending}]}});
  emit({type:'agent_settled'});await vi.advanceTimersByTimeAsync(100);
+ if(agent==='codex'){
+   const download=document.querySelector<HTMLAnchorElement>('#thread a[data-workspace-path="report.html"]');
+   expect(new URL(download!.href).searchParams.get('version')).toBe(version);
+ }
  const live={code:!!document.querySelector('#thread .codeblock'),heading:!!document.querySelector('#thread h2'),link:!!document.querySelector('#thread a[data-workspace-path="report.html"]')?.getAttribute('href')?.includes('/workspace-download?'),ending:document.querySelector('#thread strong')?.textContent};
  ws.receive({type:'history',sessionId:id,entries:[{kind:'assistant',id:'answer',text},{kind:'assistant',id:'ending',text:ending}]});await vi.advanceTimersByTimeAsync(100);
  expect(document.querySelector('#thread .codeblock')).not.toBeNull();
