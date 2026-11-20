@@ -1236,9 +1236,10 @@ export class Workspaces {
   async file(id:string,path:string) {
     const c=await this.lookup(id);if(!c)throw new Error('Unknown workspace');
     await this.checkDirectory(c);
-    if(c.taskRoot && /^\.\.\/(attachments|artifacts|research|images)(?:\/|$)/.test(path)){
+    const workspacePath=relative(c.cwd,resolve(c.cwd,path));
+    if(c.taskRoot && /^\.\.\/(attachments|artifacts|research|images)(?:\/|$)/.test(workspacePath)){
       await checkedTaskRoot(c.taskRoot);
-      const name=path.split('/')[1],base=await checkedTaskRoot(join(c.taskRoot,name));
+      const name=workspacePath.split('/')[1],base=await checkedTaskRoot(join(c.taskRoot,name));
       const dest=await realpath(resolve(c.cwd,path)),rel=relative(base,dest);
       if(rel.startsWith('..') || isAbsolute(rel) || privateParts(rel.split(/[\\/]/)))throw new Error('Path outside task data');return dest;
     }

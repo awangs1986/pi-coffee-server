@@ -22,6 +22,9 @@ it('discovers and downloads generated Word files with scoped grants and intact b
   const params=new URLSearchParams({scope:task.id,token:transfer.issueToken(task.id,root,task.id,store)});
   expect((await fetch(base+'artifacts')).status).toBe(401);
   const list=(await (await fetch(base+'artifacts?'+params)).json()).artifacts;
+  const absolute=await fetch(base+'workspace-download?'+params+'&'+new URLSearchParams({path:join(task.taskRoot!,'artifacts','结果.doc')}));
+  expect(absolute.status).toBe(200);
+  expect(Buffer.from(await absolute.arrayBuffer())).toEqual(doc);
   expect(list.map((a:any)=>a.path).sort()).toEqual(['../artifacts/结果.doc','../artifacts/结果.docx']);
   for(const [path,bytes,mime] of [['../artifacts/结果.doc',doc,'application/msword'],['../artifacts/结果.docx',docx,'application/vnd.openxmlformats-officedocument.wordprocessingml.document']] as const){
    const response=await fetch(base+'workspace-download?'+params+'&'+new URLSearchParams({path}));

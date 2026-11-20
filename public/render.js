@@ -1,4 +1,5 @@
 import {setAnswerDeliveryKey} from './answer-deliveries.js';
+import {markdownFilePath} from './task-file-reference.js';
 import {splitUploadedFilesText} from './uploaded-files.js';
 // Rendering of messages, tool calls and Markdown. Pure view code: it turns
 // data the Host already produced into DOM and never talks to the network.
@@ -152,13 +153,15 @@ const marked = new Marked({
     },
     image({ href, text }) {
       if(/^(https?:|data:image\/(png|jpeg|gif|webp);base64,)/i.test(href || '')) return '<a href="'+esc(href)+'" target="_blank" rel="noopener noreferrer"><img src="'+esc(href)+'" alt="'+esc(text)+'"></a>';
-      if(!href || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(href))return esc(text);
+      href=markdownFilePath(href);
+      if(!href)return esc(text);
       return '<span class="workspace-image"><span class="workspace-image-status" role="status">等待图片访问授权…</span><a data-workspace-path="'+esc(href)+'" href="#"><img data-workspace-path="'+esc(href)+'" alt="'+esc(text)+'"></a><a class="artifact-download" data-workspace-path="'+esc(href)+'" data-workspace-download="true" href="#">下载图片</a></span>';
     },
     link({ href, title, tokens }) {
       const text = this.parser.parseInline(tokens);
       const safe = /^(https?:|mailto:)/i.test(href || '') ? href : '#';
-      if(safe==='#' && href && !/^[a-z][a-z0-9+.-]*:|^#|^\/\//i.test(href)) return '<a href="#" data-workspace-path="'+esc(href)+'" target="_blank" rel="noopener noreferrer">'+text+'</a>';
+      const path=safe==='#' && markdownFilePath(href);
+      if(path) return '<a href="#" data-workspace-path="'+esc(path)+'" target="_blank" rel="noopener noreferrer">'+text+'</a>';
       return '<a href="' + esc(safe) + '"' + (title ? ' title="' + esc(title) + '"' : '') + ' target="_blank" rel="noopener noreferrer">' + text + '</a>';
     },
   },

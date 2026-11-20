@@ -4,6 +4,14 @@ import {bindWorkspaceArtifactLinks} from '../public/workspace-artifacts.js';
 import {renderMarkdown} from '../public/render.js';
 import {ConversationSyncView} from '../public/conversation-sync-view.js';
 
+it('reads local Markdown destinations as URLs without decoding literal file names twice',()=>{
+ const root=document.createElement('div');
+ root.innerHTML=renderMarkdown('[A](../artifacts/%E5%9B%BE%20%2520%23.svg?view=1#L2) ![B](../images/ok%20file.png#preview)');
+ bindWorkspaceArtifactLinks(root,(action,path)=>'/'+action+'?'+new URLSearchParams({path}));
+ expect(new URL(root.querySelector('a')!.href).searchParams.get('path')).toBe('../artifacts/图 %20#.svg');
+ expect(new URL(root.querySelector('img')!.src).searchParams.get('path')).toBe('../images/ok file.png');
+});
+
 it('keeps a completed image reply visible when the next turn is running', async()=>{
   const container=document.createElement('div');document.body.append(container);
   const view=new ConversationSyncView({container,scroller:container,repository:{},context:()=>({conversationId:'task'})});

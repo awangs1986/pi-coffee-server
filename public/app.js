@@ -1,4 +1,5 @@
 import {appendPluginVersions} from './plugin-versions.js';
+import {canonicalTaskPath} from './task-file-reference.js';
 import {createAnswerDeliveries,setAnswerDeliveryKey} from './answer-deliveries.js';
 import {createEngineDirectory} from './engine-directory.js';
 import {prepareTask,prepareLegacyTask,preparationLabel,initPreparationRecovery} from './task-preparation.js';
@@ -3849,6 +3850,7 @@ $('#migrate-workspace').addEventListener('click',async()=>{
 });
 function fileEndpoint(route,path,version) {
   if(!transfer)throw new Error('请先打开对话以获取 VM 文件授权');
+  if(path!==undefined)path=canonicalTaskPath(path,currentTask()?.cwd);
   const u=new URL('/api/localsend/v2/'+route,transfer.url);u.search=new URLSearchParams({scope:transfer.scope,token:transfer.token,...(path===undefined?{}:{path}),...(version?{version}:{})});return u.href;
 }
 function currentTask() { return workspaceState?.conversations.find(c=>c.id===activeId) || null; }
