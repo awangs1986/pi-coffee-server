@@ -26,7 +26,9 @@ function filenameIndex(text,name){
 function bind(root,files,endpoint){
  for(const link of root.querySelectorAll('.generated-document-download')){
   if(!files.some(file=>file.path===link.dataset.documentPath)){removeLink(link);continue;}
-  const url=endpoint(link.dataset.documentPath);if(url&&link.getAttribute('href')!==url)link.href=url;
+  const url=endpoint(link.dataset.documentPath);
+  if(!url)link.removeAttribute('href');
+  else if(link.getAttribute('href')!==url)link.href=url;
  }
  for(const body of bodies(root)){
   for(const code of [...body.querySelectorAll('code')].slice(0,400)){

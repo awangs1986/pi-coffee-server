@@ -6,7 +6,7 @@ export function setAnswerDeliveryKey(node, answer) {
   if (answer.status !== 'inProgress' && KEY.test(key)) node.dataset.deliveryKey = key;
 }
 
-export function createAnswerDeliveries({root, context, load, endpoint,canonical=path=>path}) {
+export function createAnswerDeliveries({root, context, load, endpoint,canonical=path=>path,bindReferences=()=>{}}) {
   let scope = null, read = null, timer = null, status = null;
   const checked=new Set();
   let records = new Map();
@@ -18,8 +18,19 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
     return [...visible];
   }
   const document = root.ownerDocument;
+  function referenceUrl(node,action,path) {
+    if (!scope || scope!==context())return null;
+    const key=node.dataset.deliveryKey;
+    if (key && !checked.has(key))return null;
+    const normalized=canonical(path);
+    const file=records.get(key)?.files.find(item=>item.path===normalized);
+    return file?.available===false ? null : endpoint(normalized,file?.version,action);
+  }
   function paint(nodes) {
-    for (const node of nodes) paintRow(node);
+    for (const node of nodes) {
+      paintRow(node);
+      bindReferences(node);
+    }
     for (const node of nodes) addFilePreviewActions(node,canonical,Boolean(scope));
   }
   function paintRow(node) {
@@ -33,8 +44,8 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
           link.dataset.deliveryUnavailable='true';link.removeAttribute(link.tagName==='IMG'?'src':'href');link.setAttribute('aria-disabled','true');continue;
         }
         delete link.dataset.deliveryUnavailable;link.removeAttribute('aria-disabled');
-        if(!file.version)continue;
-        link.dataset.deliveryVersion=file.version;
+        if(file.version)link.dataset.deliveryVersion=file.version;
+        else delete link.dataset.deliveryVersion;
         const image=link.tagName==='IMG',preview=image||Boolean(link.querySelector('img[data-workspace-path]'));
         const url=endpoint(path,file.version,preview?'preview':'workspace-download'),attribute=image?'src':'href';
         if(url && link.getAttribute(attribute)!==url)link.setAttribute(attribute,url);
@@ -137,5 +148,5 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
     }
     timer=setTimeout(run,60);
   }
-  return {refresh};
+  return {refresh,referenceUrl};
 }

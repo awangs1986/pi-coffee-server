@@ -1,5 +1,25 @@
+// @vitest-environment jsdom
 import {expect,it,vi} from 'vitest';
-import {createTaskFileAccess} from '../public/task-file-access.js';
+import {createTaskFileAccess,installTaskDownloads} from '../public/task-file-access.js';
+
+it('finishes a clicked download after a same-conversation repaint and cancels it on a switch',async()=>{
+ const root=document.createElement('div');document.body.append(root);
+ let scope='first',pending=Promise.withResolvers<{url:string}>();
+ const read=vi.fn(()=>pending.promise),download=vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(()=>{});
+ installTaskDownloads(root,{read,context:()=>scope,onError:message=>{throw Error(message);}});
+ const clickThenRepaint=()=>{
+   const link=document.createElement('a');link.href='/original';link.dataset.deliveryPath='file.zip';
+   root.replaceChildren(link);link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+   root.replaceChildren(link.cloneNode(true));
+ };
+ try{
+   clickThenRepaint();expect(read).toHaveBeenCalledTimes(1);
+   pending.resolve({url:'/original'});await pending.promise;
+   expect(download).toHaveBeenCalledTimes(1);
+   pending=Promise.withResolvers();clickThenRepaint();scope='second';pending.resolve({url:'/original'});await pending.promise;
+   expect(download).toHaveBeenCalledTimes(1);
+ }finally{download.mockRestore();root.remove();}
+});
 
 it('coalesces simultaneous expired grants and rechecks even when the URL remains identical',async()=>{
  let expired=true;

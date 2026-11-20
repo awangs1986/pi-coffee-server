@@ -37,16 +37,20 @@ const artifacts=join(task.taskRoot,'artifacts');
 const fileName='图 100%.svg', svg='<svg xmlns="http://www.w3.org/2000/svg" width="23" height="11"><rect width="23" height="11" fill="blue"/></svg>';
 const html='<h1>Static fixture report</h1><a href="/fixture-must-not-load">Reference</a><img src="/fixture-must-not-load"><script>document.title="fixture-script-ran"</script>';
 const markdown='# Notes\n\n![diagram](../'+encodeURIComponent(fileName)+')';
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
 const zip=Buffer.from([0x50,0x4b,3,4,0xff,0]);
 const old=Buffer.from('original legacy fixture'), large=Buffer.alloc(10*1024*1024+1,65);
 const message=(key,text)=>({id:'row-'+key,kind:'assistant',sourceMessageKey:'pi-message:'+key,text});
 const records=[...Array.from({length:48},(_,i)=>message(i+1,'Saved reply '+(i+1))),
   message(53,'[large binary](../artifacts/large.bin)'),message(49,'[encoded](../artifacts/'+encodeURIComponent(fileName)+'?view=1#figure) [absolute](<'+join(artifacts,fileName).replace('%','%25')+'>)'),
   message(50,'x'.repeat(8181)+' [long file](../artifacts/export.zip)\n'+'y'.repeat(9000)),
-  message(54,'~~~svg\n<svg></svg>\n~~~'),message(51,'![inline](../artifacts/'+encodeURIComponent(fileName)+')'),
+  message(54,'~~~svg\n<svg></svg>\n~~~'),message(55,'\uE200visualize\uE202{"path":"../artifacts/report.html"}\uE201'),
+  message(51,'![inline](../artifacts/'+encodeURIComponent(fileName)+')'),
   message(52,'The requested files are ready.')];
 const listeners=new Set();
 const currentState={isStreaming:false,messageCount:records.length};
+const resumeOutput=Promise.withResolvers(),finishOutput=Promise.withResolvers();
+let streamingStarted=false;
 function history(key){const entries=key===otherId?[message(880,'The other conversation\n\n[work file](work-note.md)')]:records;return {entries,leafId:entries.at(-1).id};}
 const factory={
   list:async()=>[], delete:async()=>false, readHistory:async key=>({history:history(key),binding:key,sourceGeneration:'fixture-'+history(key).entries.length,sourceFreshness:'current',checkedAt:new Date().toISOString()}),
@@ -57,11 +61,12 @@ const factory={
       assert.equal(sessionId,id);assert.equal(prompt,'Create the synthetic live receipt');
       const emit=event=>{for(const fn of listeners)fn(event);};
       currentState.isStreaming=true;emit({type:'agent_start'});
+      streamingStarted=true;await resumeOutput.promise;
       for(let i=0;i<20;i++){
         emit({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'part'+i+' '}});
         await new Promise(r=>setTimeout(r,25));
       }
-      await writeFile(join(artifacts,'live.zip'),'LIVE RECEIPT');
+      await finishOutput.promise;await writeFile(join(artifacts,'live.zip'),'LIVE RECEIPT');
       const answer=message(99,'Live receipt completed');records.push(answer);
       emit({type:'message_end',message:{role:'assistant',timestamp:99,content:[{type:'text',text:answer.text}]}});
       currentState.isStreaming=false;currentState.messageCount=records.length;emit({type:'agent_settled'});
@@ -104,6 +109,7 @@ try {
   const tracked=new AnswerDeliveries(store,()=>{});await tracked.begin(id,'observed');tracked.observe(id,{type:'agent_start'});
   await mkdir(join(artifacts,'docs'));await writeFile(join(artifacts,'docs','notes.md'),markdown);
   await writeFile(join(artifacts,fileName),svg);await writeFile(join(artifacts,'report.html'),html);await writeFile(join(artifacts,'export.zip'),zip);
+  await writeFile(join(artifacts,'pixel.png'),png);
   tracked.observe(id,{type:'message_end',message:{role:'assistant',timestamp:52,content:[{type:'text',text:records.at(-1).text}]}});
   assert.equal(await tracked.observe(id,{type:'agent_settled'}),true);
   await host.close();await startHost(activePort);
@@ -126,7 +132,7 @@ try {
   page=await context.newPage();page.setDefaultTimeout(12000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   let forbiddenRequests=0,deniedImage=false,deniedHead=false,metadataReads=0,protocol,holdMetadata=false;
-  const seenTokens=new Set();let historyFrames=0,listFrames=0;
+  const seenTokens=new Set();let historyFrames=0,listFrames=0,lastMode;
   page.on('response',async response=>{
     const request=response.request();
     if(request.method()==='POST' && new URL(request.url()).pathname==='/api/workspace' && request.postDataJSON()?.action==='files'){
@@ -134,7 +140,7 @@ try {
     }
   });
   page.on('request',req=>{if(req.url().includes('/fixture-must-not-load'))forbiddenRequests++;});
-  page.on('websocket',socket=>socket.on('framereceived',({payload})=>{const frame=JSON.parse(String(payload));if(frame.type==='history'){protocol=frame.syncProtocol||1;historyFrames++;}if(frame.type==='sessions')listFrames++;}));
+  page.on('websocket',socket=>socket.on('framereceived',({payload})=>{const frame=JSON.parse(String(payload));if(frame.type==='history'){protocol=frame.syncProtocol||1;lastMode=frame.displayMode;historyFrames++;}if(frame.type==='sessions')listFrames++;}));
   await page.route('**/api/conversations/*/deliveries?**',route=>{metadataReads++;return (holdMetadata||metadataReads===1)?route.fulfill({status:503,body:'temporary'}):route.continue();});
   await page.route('**/api/localsend/v2/preview?**',route=>{
     if(!deniedImage&&route.request().resourceType()==='image'){deniedImage=true;return route.fulfill({status:401,headers:{'access-control-allow-origin':'*'},body:'retry'});}
@@ -159,12 +165,21 @@ try {
   assert.equal((await context.request.get(previewUrl.href)).status(),413);results.oversizeDownload=true;
   const example=page.locator('[data-delivery-key="pi-message:54"]');assert.equal(await example.locator('pre code').textContent(),'<svg></svg>');assert.equal(await example.locator('img,svg,button[data-preview-path]').count(),0);
   const detail=page.locator('#workspace-detail');
+  await last.getByRole('button',{name:'预览 pixel.png',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#workspace-detail .file-preview-content img')?.naturalWidth===1);
+  await download(detail.getByRole('link',{name:'下载原件'}),'pixel.png',png);results.pngOriginal=true;
   await last.getByRole('button',{name:'预览 '+fileName,exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('#workspace-detail .file-preview-content img')?.naturalWidth===23);
   await last.getByRole('button',{name:'预览 notes.md',exact:true}).click();
   await detail.getByRole('heading',{name:'Notes'}).waitFor();
   await page.waitForFunction(()=>document.querySelector('#workspace-detail .markdown img')?.naturalWidth===23);
   await download(detail.getByRole('link',{name:'下载原件'}),'notes.md',markdown);
+  const visualization=page.locator('[data-delivery-key="pi-message:55"]');
+  assert.equal(await visualization.locator('iframe').count(),0);
+  await download(visualization.getByRole('link',{name:/下载 HTML/}),'report.html',html);
+  await visualization.getByRole('button',{name:'预览 report.html',exact:true}).click();
+  await detail.frameLocator('iframe').getByRole('heading',{name:'Static fixture report'}).waitFor();
+  results.nativeVisualization=true;
   await last.getByRole('button',{name:'预览 report.html',exact:true}).click();
   const frame=detail.frameLocator('iframe');await frame.getByRole('heading',{name:'Static fixture report'}).waitFor();
   assert.equal(await frame.locator('script,[href],img[src],form').count(),0);
@@ -176,7 +191,8 @@ try {
   for(const mode of ['compact','detailed']){
     const pref=await context.request.post(base+'/api/workspace',{headers:{origin:base},data:{action:'conversation_display',mode}});assert.equal(pref.status(),200);
     for(const sync of [2,1]){
-      protocol=null;await page.goto(route+(sync===1?'?syncProtocol=1':''));
+      protocol=null;lastMode=null;await page.goto(route+(sync===1?'?syncProtocol=1':''));
+      await waitUntil(()=>protocol===sync && lastMode===mode,'Selected history protocol and display mode');
       const older=sync===2?page.locator('.history-page-trigger'):page.locator('details.history-older summary');
       await older.click();await download(page.locator('[data-delivery-key="pi-message:1"] .answer-delivery'),'legacy.zip',old);
       assert.equal(protocol,sync);results[mode+'-v'+sync]=true;
@@ -197,6 +213,17 @@ try {
     document.querySelectorAll=function(selector){if(selector==='[data-workspace-path]')globalThis.probeFileScans++;return original(selector);};
   });
   await page.locator('#prompt').fill('Create the synthetic live receipt');await page.locator('#prompt').press('Enter');
+  await waitUntil(()=>streamingStarted,'Synthetic turn began');
+  const reading=await checkpoint.evaluate(n=>{
+    const scroller=document.querySelector('#scroller');scroller.scrollTop=Math.max(0,scroller.scrollHeight-scroller.clientHeight-400);
+    const link=n.querySelector('a');link.focus({preventScroll:true});return scroller.scrollTop;
+  });
+  resumeOutput.resolve();
+  await page.waitForFunction(()=>document.querySelector('#thread')?.textContent.includes('part19'));
+  assert.equal(await checkpoint.evaluate(n=>document.activeElement===n.querySelector('a')),true);
+  assert.ok(Math.abs(await page.locator('#scroller').evaluate(n=>n.scrollTop)-reading)<4,'Reading position must survive streaming');
+  results.streamingReadingPosition=true;
+  finishOutput.resolve();
   await download(page.locator('[data-delivery-key="pi-message:99"]').getByRole('link',{name:'下载 live.zip',exact:true}),'live.zip','LIVE RECEIPT');
   assert.equal(await checkpoint.evaluate(n=>n.isConnected&&n.open),true);
   assert.equal(await page.evaluate(()=>globalThis.probeFileScans),0);results.liveCompletionAndStableTail=true;
@@ -231,5 +258,13 @@ try {
     rows:document.querySelectorAll('#thread .msg').length,indexed:Boolean(document.querySelector('.synced-transcript')),
     legacy:Boolean(document.querySelector('details.history-older')),connection:document.querySelector('#conn-banner')?.textContent?.slice(0,100)})).catch(()=>null));
   throw error;
-} finally {await browser?.close();await web?.close();await host?.close();await transfer.close();}
+} finally {resumeOutput.resolve();finishOutput.resolve();await browser?.close();await web?.close();await host?.close();await transfer.close();}
+}
+
+async function waitUntil(check,label){
+  for(let attempt=0;attempt<150;attempt++){
+    if(check())return;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  throw Error(label);
 }

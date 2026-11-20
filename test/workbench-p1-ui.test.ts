@@ -8,6 +8,23 @@ import { renderConversationPreview } from '../public/conversation-preview-view.j
 
 afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); });
 
+it('serves an explicit link that is also an observed delivery only after checking its original version',async()=>{
+ vi.useFakeTimers();
+ const root=document.createElement('div');document.body.append(root);
+ const row=assistantNode({id:'checked',text:'[Original report](report.zip)'});root.append(row);
+ const reply=Promise.withResolvers<unknown>();
+ const path='report.zip';
+ const files=createAnswerDeliveries({root,context:()=> 'task',load:()=>reply.promise,
+   endpoint:(p,version)=>'/files/'+p+'?version='+String(version)});
+ files.refresh();
+ expect(files.referenceUrl(row,'workspace-download',path)).toBeNull();
+ await vi.advanceTimersByTimeAsync(70);
+ reply.resolve([{key:'native-message:checked',files:[{path,available:true,version:'original'}]}]);
+ await vi.advanceTimersByTimeAsync(5);
+ expect(files.referenceUrl(row,'workspace-download',path)).toBe('/files/report.zip?version=original');
+ expect(row.querySelector('.answer-deliveries')).toBeNull();
+});
+
 it('offers one preview and the original download for image and Markdown deliverables',async()=>{
  vi.useFakeTimers();
  const root=document.createElement('div');document.body.append(root);

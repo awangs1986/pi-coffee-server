@@ -45,13 +45,14 @@ export function installTaskDownloads(root,{read,context,onError}) {
     busy.add(link);
     const scope=context(),path=link.dataset.deliveryPath||link.dataset.documentPath||link.dataset.workspacePath;
     try {
-      const {url}=await read('workspace-download',path,{method:'HEAD',version:link.dataset.deliveryVersion});
-      if(!scope || context()!==scope || !link.isConnected)return;
+      const version=new URL(link.href).searchParams.get('version') || link.dataset.deliveryVersion;
+      const {url}=await read('workspace-download',path,{method:'HEAD',version});
+      if(!scope || context()!==scope || !root.isConnected)return;
       const download=link.ownerDocument.createElement('a');
       download.href=url;download.download=path.split('/').at(-1);download.rel='noopener noreferrer';
       link.ownerDocument.body.append(download);download.click();download.remove();
     } catch(error) {
-      if(context()===scope && link.isConnected && error.name!=='AbortError')onError(error.message);
+      if(context()===scope && root.isConnected && error.name!=='AbortError')onError(error.message);
     } finally {busy.delete(link);}
   });
 }

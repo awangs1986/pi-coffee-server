@@ -33,9 +33,9 @@ const server=createServer(async(req,res)=>{try{
  }
  if(path.endsWith('/artifacts'))return json(res,{artifacts:files});
  if(path.includes('missing.png')||path.endsWith('/preview')){res.statusCode=404;return res.end();}
- if(deliveryMode&&path==='/api/conversations/'+task.id+'/deliveries'){
+ if(path==='/api/conversations/'+task.id+'/deliveries'){
   deliveryReads++;
-  return json(res,{deliveries:[{key:'native-message:history-0',files:[{path:'report.html',available:true},{path:'report.pdf',available:true}]}]});
+  return json(res,{deliveries:deliveryMode?[{key:'native-message:history-0',files:[{path:'report.html',available:true},{path:'report.pdf',available:true}]}]:[]});
  }
  if(path.startsWith('/api/conversations/')){res.statusCode=404;return json(res,{error:'Native fixture'});}
  if(path.startsWith('/api/'))return json(res,{});

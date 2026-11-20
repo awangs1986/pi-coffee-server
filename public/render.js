@@ -157,13 +157,13 @@ const marked = new Marked({
       if(/^(https?:|data:image\/(png|jpeg|gif|webp);base64,)/i.test(href || '')) return '<a href="'+esc(href)+'" target="_blank" rel="noopener noreferrer"><img src="'+esc(href)+'" alt="'+esc(text)+'"></a>';
       href=markdownFilePath(href);
       if(!href)return esc(text);
-      return '<span class="workspace-image"><span class="workspace-image-status" role="status">等待图片访问授权…</span><a data-workspace-path="'+esc(href)+'" href="#"><img data-workspace-path="'+esc(href)+'" alt="'+esc(text)+'"></a><a class="artifact-download" data-workspace-path="'+esc(href)+'" data-workspace-download="true" href="#">下载图片</a></span>';
+      return '<span class="workspace-image"><span class="workspace-image-status" role="status">等待图片访问授权…</span><a data-workspace-path="'+esc(href)+'"><img data-workspace-path="'+esc(href)+'" alt="'+esc(text)+'"></a><a class="artifact-download" data-workspace-path="'+esc(href)+'" data-workspace-download="true">下载图片</a></span>';
     },
     link({ href, title, tokens }) {
       const text = this.parser.parseInline(tokens);
       const safe = /^(https?:|mailto:)/i.test(href || '') ? href : '#';
       const path=safe==='#' && markdownFilePath(href);
-      if(path) return '<a href="#" data-workspace-path="'+esc(path)+'" target="_blank" rel="noopener noreferrer">'+text+'</a>';
+      if(path) return '<a data-workspace-path="'+esc(path)+'" target="_blank" rel="noopener noreferrer">'+text+'</a>';
       return '<a href="' + esc(safe) + '"' + (title ? ' title="' + esc(title) + '"' : '') + ' target="_blank" rel="noopener noreferrer">' + text + '</a>';
     },
   },
@@ -185,7 +185,7 @@ marked.use({extensions:[{
   },
   renderer(token){
     const name=token.path.split('/').at(-1);
-    return '<a class="artifact-download visualization-download" data-workspace-path="'+esc(token.path)+'" data-workspace-download="true" href="#">下载 HTML · '+esc(name)+'</a>';
+    return '<a class="artifact-download visualization-download" data-workspace-path="'+esc(token.path)+'" data-workspace-download="true">下载 HTML · '+esc(name)+'</a>';
   },
 }]});
 

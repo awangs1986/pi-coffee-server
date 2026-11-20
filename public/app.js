@@ -2059,8 +2059,11 @@ function handleFrame(frame, ws) {
       if(frame.notice&&typeof frame.notice.text==='string')toast(frame.notice.text.slice(0,300),6000);
       return;
     case 'history': {
-      if(frame.displayMode&&frame.displayMode!==displayMode)return;
       if (frame.sessionId !== activeId) return;
+      if(frame.displayMode && frame.displayMode!==displayMode){
+        if(!historyReady && !displayRequest)requestDisplaySync();
+        return;
+      }
       if(!conversationDisplay.history(frame))return;
       historyReady=true;
       bindWorkspaceArtifacts();
@@ -4208,7 +4211,7 @@ fetch('/api/me',{cache:'no-store'}).then(async r=>{
 }).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
 const fileViewScope=()=>historyReady && activeId && (transfer?.sessionId||transfer?.scope)===activeId && currentTask() && previewAllowed(activeId)
-  ? JSON.stringify([currentUser,activeId,taskSelectionEpoch,activeRecoveryGeneration,previewFingerprint(activeId)]) : null;
+  ? JSON.stringify([currentUser,activeId,taskSelectionEpoch,activeRecoveryGeneration,activeBindingEpoch,previewFingerprint(activeId)]) : null;
 const readTaskFile=createTaskFileAccess({context:fileViewScope,endpoint:fileEndpoint,renew:async()=>{
   const scope=fileViewScope(),id=activeId;
   try {
@@ -4239,9 +4242,16 @@ function loadDocuments(){
   }).catch(error=>{if(documentCatalog===item)documentCatalog=null;throw error;});
   documentCatalog=item;return item.work;
 }
-function bindTaskLinks(root){
-  bindWorkspaceArtifactLinks(root,(action,path,version)=>fileViewScope()?fileEndpoint(action,path,version):null,
+function bindAnswerReferences(row){
+  const endpoint=(action,path)=>answerDeliveries.referenceUrl(row,action,path);
+  bindWorkspaceArtifactLinks(row,endpoint,
     {context:fileViewScope,recover:(path,version)=>readTaskFile('preview',path,{method:'HEAD',version})});
+  let reader=documentReaders.get(row);
+  if(!reader){
+    reader=createDocumentDownloads({root:row,context:fileViewScope,load:loadDocuments,endpoint:path=>endpoint('workspace-download',path)});
+    documentReaders.set(row,reader);
+  }
+  void reader.refresh();
 }
 function bindWorkspaceArtifacts(changed,force=false) {
   if(!changed){
@@ -4250,20 +4260,13 @@ function bindWorkspaceArtifacts(changed,force=false) {
     boundGrant=grant;
   }
   const rows=changed??[...ui.thread.querySelectorAll('.msg.assistant')];
-  for(const row of rows){
-    bindTaskLinks(row);
-    let reader=documentReaders.get(row);
-    if(!reader){
-      reader=createDocumentDownloads({root:row,context:fileViewScope,load:loadDocuments,endpoint:path=>fileViewScope()?fileEndpoint('workspace-download',path):null});
-      documentReaders.set(row,reader);
-    }
-    void reader.refresh(force);
-  }
   answerDeliveries.refresh(false,rows);
+  if(force)for(const row of rows)void documentReaders.get(row)?.refresh(true);
 }
 const answerDeliveries=createAnswerDeliveries({
  root:ui.thread,
- context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
+ context:fileViewScope,
+ bindReferences:bindAnswerReferences,
  load:async(keys,signal)=>{
    const scope=fileViewScope();
    const params=new URLSearchParams(keys.map(key=>['key',key]));
@@ -4275,7 +4278,7 @@ const answerDeliveries=createAnswerDeliveries({
    return (await result.json()).deliveries;
  },
  canonical:path=>canonicalTaskPath(path,currentTask()?.cwd),
- endpoint:(path,version,action='workspace-download')=>transfer?fileEndpoint(action,path,version):null,
+ endpoint:(path,version,action='workspace-download')=>fileViewScope()?fileEndpoint(action,path,version):null,
 });
 new MutationObserver(mutations=>{
   const rows=new Set();
