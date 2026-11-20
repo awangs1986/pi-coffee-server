@@ -79,7 +79,7 @@ export async function readDeliveryRows(root: string, binding: string, keys: Set<
 export async function writeDeliveryRow(root: string, row: RecordRow) {
   const history = await checkedTaskRoot(join(await checkedTaskRoot(root),'history'));
   const directory = join(history,indexDir);
-  await mkdir(directory,{recursive:true,mode:0o700});
+  await mkdir(directory,{mode:0o700}).catch(error=>{if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;});
   await checkedTaskRoot(directory);
   if (await readJson(join(directory,migrated),64) !== true) {
     for (const old of await legacyRows(history)) {

@@ -7,7 +7,8 @@ export function setAnswerDeliveryKey(node, answer) {
 }
 
 export function createAnswerDeliveries({root, context, load, endpoint,canonical=path=>path}) {
-  let scope = null, read = null, signature = '', timer = null, status = null;
+  let scope = null, read = null, timer = null, status = null;
+  const checked=new Set();
   let records = new Map();
   const rendered = new WeakMap();
   const selector='.msg.assistant[data-delivery-key]';
@@ -93,17 +94,20 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
   function refresh(force = false, dirty) {
     const wanted = context();
     if (wanted !== scope) {
-      scope = wanted; records = new Map(); signature = '';
+      scope = wanted; records = new Map(); checked.clear();
       read?.controller.abort(); read = null; clearTimeout(timer); clearStatus();
     }
     const changed=dirty??Array.from(root.querySelectorAll(selector));
     for(const node of changed)if(node.matches(selector)&&root.contains(node))visible.add(node);
     const nodes=answers();
-    paint(dirty?changed.filter(node=>visible.has(node)):nodes);
+    paint(dirty?changed.filter(node=>root.contains(node)):nodes);
     if (!scope || !nodes.length) return;
-    const keys = [...new Set(nodes.map(node=>node.dataset.deliveryKey))].sort();
+    const activeKeys=new Set(nodes.map(node=>node.dataset.deliveryKey));
+    for(const key of checked)if(!activeKeys.has(key)){checked.delete(key);records.delete(key);}
+    const keys = [...activeKeys].filter(key=>force || !checked.has(key)).sort();
+    if(!keys.length)return;
     const next = JSON.stringify(keys);
-    if (!force && (next===signature || read?.key===next)) return;
+    if (!force && read?.key===next) return;
     read?.controller.abort(); clearTimeout(timer); clearStatus();
     const job = {key:next,controller:new AbortController(),attempt:0};
     read = job;
@@ -116,8 +120,10 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
           rows.push(...await load(keys.slice(i,i+40),job.controller.signal));
           if (!current()) return;
         }
-        records = new Map(rows.map(row=>[row.key,row]));
-        signature = next; read = null; clearStatus(); paint(answers());
+        const updated = new Set(keys);
+        for(const key of keys){checked.add(key);records.delete(key);}
+        for(const row of rows)if(updated.has(row.key))records.set(row.key,row);
+        read = null; clearStatus(); paint(answers().filter(node=>updated.has(node.dataset.deliveryKey)));
       } catch(error) {
         if (!current()) return;
         const transient = !error.status || error.status===408 || error.status===429 || error.status>=500;

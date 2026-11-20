@@ -23,7 +23,7 @@
 - Codex manual-only Handoff compression: [contract](spec/manual-handoff.md#codex-manual-handoff-accepted-2026-10-22), version 0.1.0; native automatic compression is unchanged.
 # PI Coffee documentation map
 
-- [Assistant answers and file delivery](spec/answer-rendering.md) is the accepted design for stable file actions in live and historical answers, scoped path resolution, recovery and bounded updates. Implementation and browser acceptance are pending.
+- [Assistant answers and file delivery](spec/answer-rendering.md) covers durable file actions in live and historical answers, scoped previews, recovery and bounded updates. [Server PR #177](https://github.com/awangs1986/pi-coffee-server/pull/177) tracks the integration and browser acceptance.
 
 - [Generated-image task interaction](spec/task-storage.md#native-codex-generated-images-102-2026-11-09): in-flight image imports preserve ordinary conversation use and continue to protect exclusive lifecycle changes.
 

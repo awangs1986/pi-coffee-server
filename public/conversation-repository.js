@@ -44,7 +44,7 @@ export function displayEntity(entry) {
   if(entry.kind==='assistant'){
     if(Array.isArray(entry.fileReferences)){
       const refs=entry.fileReferences.slice(0,32).filter(ref=>typeof ref?.path==='string' && ref.path.length>0 && ref.path.length<=4096 &&
-        !/^[a-z][a-z\d+.-]*:|^\/\/|[\\\u0000-\u001f\u007f]/i.test(ref.path)).map(ref=>({path:ref.path,label:prefix(ref.label,256),image:ref.image===true}));
+        !/^[a-z][a-z\d+.-]*:|^\/\/|[\\\u0000-\u001f\u007f]/i.test(ref.path)).map(ref=>({path:ref.path,label:prefix(typeof ref.label==='string'?ref.label:'',256),image:ref.image===true}));
       if(refs.length && bytes(refs)<=4096)value.fileReferences=refs;
     }
     if(typeof entry.sourceMessageKey==='string'&&entry.sourceMessageKey.length>0&&entry.sourceMessageKey.length<=1100&&!/[\u0000-\u001f\u007f]/.test(entry.sourceMessageKey))value.sourceMessageKey=entry.sourceMessageKey;

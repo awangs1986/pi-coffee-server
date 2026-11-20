@@ -1,8 +1,9 @@
 # Assistant answers and file delivery
 
-Accepted design, 2026-11-20. Implementation and browser acceptance are pending.
-Server 1.07 (`7e41c86`) is the reviewed baseline. This contract applies to the
-Browser, Web gateway and Host in Chat and Work.
+Accepted 2026-11-20. Server 1.07 (`7e41c86`) is the pre-change baseline.
+The implementation and acceptance evidence for Chat and Work are tracked in
+[Server PR #177](https://github.com/awangs1986/pi-coffee-server/pull/177).
+Source integration and production activation are separate.
 
 A user who opens a completed answer can preview or download its verified
 files again after switching Conversations, reconnecting, reloading or paging
@@ -29,6 +30,11 @@ the existing limit of eight automatic deliveries per answer. Import surviving
 journal entries idempotently. Older answers with no surviving record can still
 resolve their explicit authorized references. Missing associations must never
 be guessed from a filename, nearby turn or current directory listing.
+
+The legacy journal remains readable until a new observed delivery imports its
+surviving entries into the task's keyed index. Atomic per-answer writes and an
+import-complete marker allow interrupted migrations to resume. The original
+journal is preserved.
 
 Continue to associate observed outputs only where the adapter supplies a
 reliable native answer identity. A generated Markdown file qualifies alongside

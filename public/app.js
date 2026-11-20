@@ -2063,6 +2063,7 @@ function handleFrame(frame, ws) {
       if (frame.sessionId !== activeId) return;
       if(!conversationDisplay.history(frame))return;
       historyReady=true;
+      bindWorkspaceArtifacts();
       if(!conversationDisplay.indexed){completionProof=frame.completionId||(openCompletionKey?.startsWith('legacy:')?openCompletionKey:null);if(!streaming)liveCompletionStart=completionProof;maybeReadCompletion();}
       renderUncertainPrompts();if(!conversationDisplay.indexed)rememberRecentThread();refreshComposer();flushFirstPrompt();
       return;
@@ -2170,7 +2171,7 @@ function handleFrame(frame, ws) {
       if (frame.operation === 'compact') send({ v: 1, type: 'get_stats' });
       return;
     case 'answer_deliveries_changed':
-      if(frame.sessionId===activeId){documentCatalog=null;bindWorkspaceArtifacts(undefined,true);answerDeliveries.refresh(true);}
+      if(frame.sessionId===activeId){refreshSettledFiles();answerDeliveries.refresh(true);}
       return;
     case 'resync_required':
       pushNote('正在运行的这一段输出有部分未能补放；已完成的消息以上方历史为准。');
@@ -2264,7 +2265,7 @@ function handleEvent(event,{replayed=false}={}) {
   if(type==='background_state'){ui.status.textContent=event.known?(event.active?`后台任务：${event.active}`:'后台任务已结束'):'后台任务状态未知';return;}
   if(type==='run_completed'){
     liveCompletionSettled=true;
-    void documentDownloads.refresh(true);
+    refreshSettledFiles();
     queuedRequests.clear();
     pendingDelivery=null;setStreaming(false);notifyFinished();clearExtensionUi({preserveReplies:true});
     if(supports('models'))send({v:1,type:'get_models'});
@@ -2334,7 +2335,7 @@ function handleEvent(event,{replayed=false}={}) {
 
   if (type === 'agent_settled') {
     liveCompletionSettled=true;
-    void documentDownloads.refresh(true);
+    refreshSettledFiles();
     queuedRequests.clear();
     pendingDelivery=null;
     setStreaming(false);
@@ -4206,7 +4207,8 @@ fetch('/api/me',{cache:'no-store'}).then(async r=>{
   return r.ok?r.json():null;
 }).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
-const fileViewScope=()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null;
+const fileViewScope=()=>historyReady && activeId && (transfer?.sessionId||transfer?.scope)===activeId && currentTask() && previewAllowed(activeId)
+  ? JSON.stringify([currentUser,activeId,taskSelectionEpoch,activeRecoveryGeneration,previewFingerprint(activeId)]) : null;
 const readTaskFile=createTaskFileAccess({context:fileViewScope,endpoint:fileEndpoint,renew:async()=>{
   const scope=fileViewScope(),id=activeId;
   try {
@@ -4222,6 +4224,11 @@ ui.thread.addEventListener('click',event=>{
 });
 let boundGrant,documentCatalog;
 const documentReaders=new WeakMap();
+function refreshSettledFiles(){
+  documentCatalog=null;
+  const latest=[...ui.thread.querySelectorAll('.msg.assistant')].at(-1);
+  if(latest)bindWorkspaceArtifacts([latest],true);
+}
 function loadDocuments(){
   const scope=fileViewScope();
   if(documentCatalog?.scope===scope)return documentCatalog.work;
@@ -4258,10 +4265,11 @@ const answerDeliveries=createAnswerDeliveries({
  root:ui.thread,
  context:()=>workspaceState&&transfer&&activeId?JSON.stringify([currentUser,activeId,taskSelectionEpoch,previewFingerprint(activeId)]):null,
  load:async(keys,signal)=>{
+   const scope=fileViewScope();
    const params=new URLSearchParams(keys.map(key=>['key',key]));
    const result=await fetch('/api/conversations/'+encodeURIComponent(activeId)+'/deliveries?'+params,{signal,cache:'no-store'});
    if(!result.ok){
-     if(result.status===401 && !signal.aborted){revokeCachedIdentity();void clearPreviews();connect();}
+     if(result.status===401 && !signal.aborted && scope===fileViewScope()){revokeCachedIdentity();void clearPreviews();connect();}
      throw Object.assign(Error('交付文件暂时无法读取'),{status:result.status});
    }
    return (await result.json()).deliveries;

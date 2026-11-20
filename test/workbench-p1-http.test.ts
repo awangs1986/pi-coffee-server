@@ -112,6 +112,8 @@ it('persists new files under the native answer identity and hides attachments, o
   const download = new URL('/api/localsend/v2/workspace-download',transfer.publicUrl());
   download.search = new URLSearchParams({scope:'alice-fixture',token,path:delivered.path,version:delivered.version}).toString();
   expect(await (await fetch(download)).text()).toBe('doc fixture');
+  download.searchParams.set('path',join(task.taskRoot!,'artifacts','report.docx'));
+  expect(await (await fetch(download)).text()).toBe('doc fixture');
   await writeFile(join(task.taskRoot!,'artifacts','report.docx'),'replaced document');
   expect((await fetch(download)).status).toBe(409);
   expect(await (await get(host,'alice','pi-message:456')).json()).toEqual({deliveries:[]});

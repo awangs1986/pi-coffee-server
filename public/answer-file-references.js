@@ -5,7 +5,7 @@ import {markdownFilePath} from './task-file-reference.js';
 // tree. Marked parses at most one bounded candidate. Fences and code spans
 // are examples. A content-page read can request a later range independently.
 export function answerFileReferences(source,{from=0,to=source.length,budget=2048}={}) {
-  if(!source.includes('['))return [];
+  if(budget<=0 || !source.includes('[') || !source.includes(']'))return [];
   const lexer=new Lexer({gfm:true}), result=[],seen=new Set();
   const markers=/^ {0,3}(`{3,}|~{3,})|^(?: {4}|\t)|<!--|\\[^\n]|`+|!?\[/gm;
   const definitions=Object.create(null), pending=[];

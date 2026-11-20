@@ -31,6 +31,13 @@ it('retains every recorded answer after importing the old journal and restarting
    await writeFile(join(dir,'new.zip'),'new bytes');
    tracker.observe(task.id,{type:'message_end',message:{role:'assistant',timestamp:41,content:[{type:'text',text:'ready'}]}});
    expect(await tracker.observe(task.id,{type:'agent_settled'})).toBe(true);
+   // A migration interrupted before publishing its marker must be repeatable.
+   await rm(join(task.taskRoot!,'history','answer-deliveries-v2','legacy-imported.json'));
+   await tracker.begin(task.id,'second');tracker.observe(task.id,{type:'agent_start'});
+   await writeFile(join(dir,'next.zip'),'next bytes');
+   tracker.observe(task.id,{type:'message_end',message:{role:'assistant',timestamp:43,content:[{type:'text',text:'next'}]}});
+   expect(await tracker.observe(task.id,{type:'agent_settled'})).toBe(true);
+   await rm(journal);
    await host!.close();host=undefined;
    expect(await readKeys('pi-message:1','pi-message:41')).toMatchObject([
      {key:'pi-message:1',files:[{path:'../artifacts/old.zip',available:true}]},

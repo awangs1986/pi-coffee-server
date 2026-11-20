@@ -1,7 +1,8 @@
 import type { Workspaces } from "./workspaces.js";
 import { createHash, randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
-import { link, mkdir, open, readdir, rm, stat, realpath } from "node:fs/promises";
+import { link, mkdir, open, readdir, rm, stat, realpath, type FileHandle } from "node:fs/promises";
+import {pipeline} from 'node:stream/promises';
 import { deliveryFingerprint, deliveryVersion } from './answer-deliveries.js';
 
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
@@ -240,7 +241,7 @@ export class TransferServer {
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     // Cross-origin by design: the page comes from the Web Server, the bytes go here.
     response.setHeader("access-control-allow-origin", "*");
-    response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    response.setHeader("access-control-allow-methods", "GET, HEAD, POST, OPTIONS");
     response.setHeader("access-control-allow-headers", "content-type");
     response.setHeader("access-control-expose-headers", "content-disposition, content-length");
     if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
@@ -265,6 +266,7 @@ export class TransferServer {
         try {
           const info=await file.stat();
           if(!info.isFile())throw Error("Not a file");
+          if(process.platform==='linux' && await realpath('/proc/self/fd/'+file.fd)!==full)throw Error("Task file path changed");
           if(url.searchParams.has('version')){
             const task=await this.workspaceFor(scope)!.lookup(this.taskFor(scope));
             if(deliveryVersion(task,path,deliveryFingerprint(info))!==url.searchParams.get('version')){
@@ -276,6 +278,12 @@ export class TransferServer {
           const mime=mimeFor(full);const inline=route==="preview" && /^(image\/|text\/plain|text\/markdown|application\/pdf)/.test(mime);
           response.writeHead(200,{"content-type":mime,"content-length":String(info.size),"x-content-type-options":"nosniff","content-security-policy":"sandbox; default-src 'none'; style-src 'unsafe-inline'", "referrer-policy":"no-referrer","cache-control":"no-store","content-disposition":`${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(basename(full))}`});
           if(request.method==='HEAD'){response.end();return;}
+          if(url.searchParams.has('version')){
+            streaming=true;
+            void pipeline(versionedFileBytes(file,info.size,deliveryFingerprint(info)!),response)
+              .catch(()=>response.destroy()).finally(()=>file.close().catch(()=>undefined));
+            return;
+          }
           const stream=file.createReadStream();
           streaming=true;
           response.once('close',()=>stream.destroy());
@@ -573,6 +581,20 @@ export class TransferServer {
 
 class UploadError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
+}
+
+// Withhold the last bytes until the open descriptor still matches the observed
+// version. A concurrent in-place edit must not complete a mixed-byte download.
+async function* versionedFileBytes(file:FileHandle,size:number,fingerprint:string) {
+  let offset=0;
+  while(offset<size){
+    const buffer=Buffer.allocUnsafe(Math.min(64*1024,size-offset));
+    const {bytesRead}=await file.read(buffer,0,buffer.length,offset);
+    if(!bytesRead)throw Error('Delivered file truncated');
+    offset+=bytesRead;
+    if(offset===size && deliveryFingerprint(await file.stat())!==fingerprint)throw Error('Delivered file changed');
+    yield buffer.subarray(0,bytesRead);
+  }
 }
 
 /**

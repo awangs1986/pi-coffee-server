@@ -1,7 +1,7 @@
 import type { Stats } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { lstat, opendir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { JsonValue } from '../shared/protocol.js';
 import { runLifecycle } from '../shared/run-lifecycle.js';
 import {DELIVERY_MESSAGE_KEY, MAX_FILES, deliveryPath, excluded, privateName, readDeliveryRows, writeDeliveryRow} from './answer-file-index.js';
@@ -22,7 +22,9 @@ export function deliveryFingerprint(info: Stats) {
 }
 export function deliveryVersion(task: Conversation | undefined, path: string, fingerprint?: string) {
   const binding = taskBinding(task);
-  if (binding && fingerprint) return createHash('sha256').update(JSON.stringify([task!.id,binding,path,fingerprint])).digest('hex');
+  if (!task || !binding || !fingerprint) return;
+  const canonicalPath=relative(task.cwd,resolve(task.cwd,path));
+  return createHash('sha256').update(JSON.stringify([task.id,binding,canonicalPath,fingerprint])).digest('hex');
 }
 function answerKey(event: Record<string, JsonValue>) {
   const message = event.message;

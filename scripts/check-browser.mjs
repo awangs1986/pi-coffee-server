@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {mkdir,mkdtemp,rm} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-const probes=['probe-navigation-settings.mjs','probe-conversation-models.mjs','probe-completion-icon.mjs','probe-completion-speech.mjs','probe-sidebar-activity.mjs','probe-sidebar-scroll.mjs','probe-streaming-responsiveness.mjs','probe-codex-chat.mjs','probe-attachment-download.mjs','probe-attachment-drafts.mjs','probe-connection-recovery.mjs','probe-idle-recovery.mjs','probe-question-replay.mjs','probe-restart.mjs','probe-conversation-display.mjs','probe-recent-history.mjs','probe-codex-commands.mjs'];
+const probes=['probe-navigation-settings.mjs','probe-conversation-models.mjs','probe-completion-icon.mjs','probe-completion-speech.mjs','probe-sidebar-activity.mjs','probe-sidebar-scroll.mjs','probe-streaming-responsiveness.mjs','probe-codex-chat.mjs','probe-attachment-download.mjs','probe-answer-files.mjs','probe-attachment-drafts.mjs','probe-connection-recovery.mjs','probe-idle-recovery.mjs','probe-question-replay.mjs','probe-restart.mjs','probe-conversation-display.mjs','probe-recent-history.mjs','probe-codex-commands.mjs'];
 // The backup probe requires the explicit reviewed engine; never download one implicitly.
 if(process.env.PI_COFFEE_TEST_RESTIC)probes.push('probe-task-backup.mjs');
 if(process.argv.includes('--list'))console.log(JSON.stringify(probes));

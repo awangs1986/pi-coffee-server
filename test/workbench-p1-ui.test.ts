@@ -59,6 +59,17 @@ it('downloads an older retained answer through authoritative history beyond one 
   expect(root.querySelector('[data-delivery-key], .answer-delivery')).toBeNull();
 });
 
+it('queries only newly visible answer keys after an older page has already been checked',async()=>{
+ vi.useFakeTimers();
+ const root=document.createElement('div');document.body.append(root);root.append(assistantNode({id:'first',text:'one'}));
+ const queries:string[][]=[];
+ const files=createAnswerDeliveries({root,context:()=> 'task',endpoint:()=>'/download',load:async(keys:string[])=>{queries.push(keys);return [];}});
+ files.refresh();await vi.advanceTimersByTimeAsync(100);
+ const second=assistantNode({id:'second',text:'two'});root.append(second);
+ files.refresh(false,[second]);await vi.advanceTimersByTimeAsync(100);
+ expect(queries).toEqual([['native-message:first'],['native-message:second']]);
+});
+
 it('enables an independently checked engine while a second probe is pending and retries only the failed engine', async () => {
   const delayed = Promise.withResolvers<Response>(), login = Promise.withResolvers<Response>();
   const ok = (body: unknown) => new Response(JSON.stringify(body));
