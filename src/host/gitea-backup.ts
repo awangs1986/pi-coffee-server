@@ -57,9 +57,13 @@ export class GiteaBackupJob {
  private async serviceHealthy(p:GiteaBackupProfile){
   if(!p.url)return false;
   try{
-   const url=new URL('api/v1/version',p.url.endsWith('/')?p.url:p.url+'/');
-   const response=await fetch(url,{signal:AbortSignal.timeout(1000),redirect:'error'});
-   return response.ok&&(await response.json()).version===p.version;
+   const base=p.url.endsWith('/')?p.url:p.url+'/';
+   const read=async(path:string)=>{
+    const response=await fetch(new URL(path,base),{signal:AbortSignal.timeout(1000),redirect:'error'});
+    if(response.ok)return response.json();
+   };
+   const [version,health]=await Promise.all([read('api/v1/version'),read('api/healthz')]);
+   return version?.version===p.version&&health?.status==='pass';
   }catch{return false;}
  }
  private async resumeService(p:GiteaBackupProfile,journal:string){

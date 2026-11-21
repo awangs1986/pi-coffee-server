@@ -36,7 +36,7 @@ import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
 export type BoundCodexOptions=Omit<CodexSessionFactoryOptions,'nativeCustody'|'cwd'|'onBound'|'envForSession'|'preparation'>;
-export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>BoundCodexOptions;commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;trackPersonalVersionProbes?:boolean;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>BoundCodexOptions;commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;trackPersonalReadiness?:boolean;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private readonly imageImports=new Map<string,Promise<string|undefined>>();
@@ -107,8 +107,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
       signal.throwIfAborted();if(JSON.stringify(await this.options.workspaces.lookup(taskId))!==identity)throw new BackupError('capture_revoked','Task changed during native audit');
     });this.audits.set(controller,audit);try{await audit;}finally{this.audits.delete(controller);}
   }
-  private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine){
-    const supervisedProbe=this.options.trackPersonalVersionProbes&&args.length===1&&args[0]==='--version';
+  private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine,readiness=false){
+    const supervisedProbe=this.options.trackPersonalReadiness&&readiness;
     const release=await this.admit(Boolean(engine==='pi'||engine==='codex'||supervisedProbe)&&physicalFenceCoversCustody(this.options.writerFence?(trustedSourcePhysicalFence(this.options.writerFence)??this.options.writerFence):undefined,this.options.commandCustody),'native');
     try{
       if(!this.options.commandCustody)return {command:config.command,args:[...(config.args??[]),...args],env:nativeEnvironment(config.env)};
@@ -299,11 +299,11 @@ export class NativeAgentFactory implements AgentSessionFactory {
       const original=PI_ONLY_ENGINES.find(item=>item.id===engine)!;
       const config=original.id==="pi"?undefined:this.options[original.id];
       if(!config&&original.id!=="pi")return {...original,status:"not_configured"};
-      try{if(!this.options.trackPersonalVersionProbes)await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,status:"unavailable",reason:error instanceof Error?error.message:'Native launch denied'};}
+      try{if(!this.options.trackPersonalReadiness)await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,status:"unavailable",reason:error instanceof Error?error.message:'Native launch denied'};}
       if(!config)return {...original,status:"ready",modelCatalog:Boolean(this.options.pi.modelCatalog)};
       let version:string;
       try {
-        const prepared=await this.command(config,["--version"],undefined,original.id),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
+        const prepared=await this.command(config,["--version"],undefined,original.id,true),result=await exec(prepared.command,prepared.args,{env:prepared.env,timeout:5000,maxBuffer:8192});
         version=result.stdout.trim();
       } catch {return {...original,available:false,status:"unavailable",reason:"Native executable unavailable"};}
       const supported=original.id==="grok" ? /\b1\.0\.46\b/.test(version) : original.id==="cursor" ? /^2026\.10\.01-e373342$/.test(version) : original.id==="codex" ? /^codex-cli 0\.(154\.0|156\.1|159\.1|163\.0|170\.0)$/.test(version) : /\b2\.1\.280\b/.test(version);
@@ -315,7 +315,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
   }
   private async authentication(engine:"codex"|"claude"|"cursor"|"grok",config:NativeCommand):Promise<boolean> {
     if(engine==='grok'){
-      const probe=new NativeProcess(config,acpArguments('grok'),process.cwd(),true);
+      const probeArgs=acpArguments('grok');
+      const prepared=this.options.trackPersonalReadiness?await this.command(config,probeArgs,undefined,engine,true):undefined;
+      const probe=prepared?new NativeProcess({command:prepared.command,env:Object.fromEntries(Object.entries(prepared.env).filter((pair):pair is [string,string]=>pair[1]!==undefined))},prepared.args,process.cwd(),true):new NativeProcess(config,probeArgs,process.cwd(),true);
       try{
         const initialized=await initializeAcp(probe,5000);
         if(initialized.protocolVersion!==1)throw new Error('Unsupported Grok ACP protocol');
@@ -338,8 +340,9 @@ export class NativeAgentFactory implements AgentSessionFactory {
         return result.requiresOpenaiAuth===false || Boolean(result.account);
       } finally {await probe.stop();}
     }
-    const args=[...(config.args??[]),...(engine==="cursor"?["status","--format","json"]:["auth","status","--json"])];
-    const result=await exec(config.command,args,{env:nativeEnvironment(config.env),timeout:5000,maxBuffer:8192}).catch(error=>{
+    const args=engine==="cursor"?["status","--format","json"]:["auth","status","--json"];
+    const probe=this.options.trackPersonalReadiness?await this.command(config,args,undefined,engine,true):{command:config.command,args:[...(config.args??[]),...args],env:nativeEnvironment(config.env)};
+    const result=await exec(probe.command,probe.args,{env:probe.env,timeout:5000,maxBuffer:8192}).catch(error=>{
       if(error.code===1 && error.stdout)return {stdout:String(error.stdout)};throw error;
     });
     const status=JSON.parse(result.stdout);return engine==="cursor"?status.isAuthenticated===true:status.loggedIn===true;

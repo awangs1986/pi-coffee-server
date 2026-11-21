@@ -133,7 +133,7 @@ Example structure (replace paths and commands for the actual installation):
 `checkStopped` must exit zero only when **all Gitea writers are stopped**. A
 running service leaves an explicit gap unless an owner-approved maintenance
 window has been configured. Only after that approval may the profile include
-`stop` and `allowServicePause: true`. Configure the instance URL for its version health check. The backup worker records its responsibility before stopping a healthy instance. During retry it first restores service and verifies its health, even after an ambiguous start reply. An instance already stopped by its operator stays stopped. This pauses Gitea when needed, copies data, and starts it when the worker paused it
+`stop` and `allowServicePause: true`. Configure the instance URL for its version and application health checks (including database connectivity). The backup worker records its responsibility before stopping a healthy instance. During retry it first restores service and verifies its health, even after an ambiguous start reply. An instance already stopped by its operator stays stopped. This pauses Gitea when needed, copies data, and starts it when the worker paused it
 before encrypting the copy; it never stops Host or model tasks. Saving the normal
 daily plan then includes that trusted profile. Browser requests cannot provide
 commands or arbitrary service configuration. The panel exposes separate service
