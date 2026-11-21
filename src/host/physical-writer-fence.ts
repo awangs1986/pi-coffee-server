@@ -41,6 +41,25 @@ export class PhysicalWriterFence extends WriterAdmissionFence {
   let release:()=>void;try{release=super.beginWriter(writerClass);this.activeAdmissions++;if(!['platform','native'].includes(writerClass))this.uncoveredAdmission=true;}catch(error){kernel.release();throw error;}
   let done=false;return ()=>{if(!done){done=true;try{release();}finally{this.activeAdmissions--;this.revision++;kernel.release();}}};
  }
+ /** Reconcile a personal Host's prior unmanaged admission. New writers take
+  * priority during the asynchronous census, including a writer that has
+  * already exited by the time the census returns. */
+ async requalifyPersonalSource(checkExternal:()=>Promise<void>,commit:()=>void){
+  this.physical.publicationGate?.assertAdmission();
+  if(this.activeAdmissions||this.publications||this.audit)throw new BackupError('writers_active','Source in use');
+  const epoch=this.revision;
+  const state=await this.physical.custody.state();
+  if(state.state!=='quiescent')throw new BackupError(state.state==='active'?'writers_active':'writers_unknown','Native writer custody is not quiescent');
+  await checkExternal();
+  if(epoch!==this.revision||this.activeAdmissions||this.publications||this.audit)throw new BackupError('capture_revoked','Source changed during verification');
+  const lock=this.acquire('exclusive');
+  if(!lock)throw new BackupError('writers_active','Source writer is active');
+  try{
+   this.physical.publicationGate?.assertAdmission();
+   lock.assertHeld();commit();
+   this.forgetVerifiedWriterClass('unmanaged-native');this.uncoveredAdmission=false;
+  }finally{lock.release();}
+ }
  /** Only admission for an owned audit process, never a capture/source proof. */
  async runNativeAudit<T>(signal:AbortSignal,run:(signal:AbortSignal)=>Promise<T>):Promise<T>{
   if(this.audit||this.activeAdmissions||this.publications)throw new BackupError('writers_active','Source writers take priority over native audit');

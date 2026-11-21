@@ -21,3 +21,19 @@ it('shows independent daily schedule, persistent alerts and separate checkpoint/
  expect(document.body.textContent).toContain('04:00');expect(document.body.textContent).toContain('America/Toronto');expect(document.body.textContent).toContain('2026-10-22T04:00:00Z');expect(document.body.textContent).toContain('2026-10-23T04:10:00Z');expect(document.body.textContent).toContain('point-stale');expect(document.body.textContent).toContain('超过 2 分钟');
  expect([...document.querySelectorAll('button')].some(b=>b.textContent==='保存每日计划')).toBe(false);
 });
+it('lets the owner retry a busy source check from the panel',async()=>{
+ let verified=false,attempts=0;
+ const request=async(input?:{action:string})=>{
+  if(input?.action==='source-requalify'){
+   if(++attempts===1)throw Error('writers_active');
+   verified=true;return {known:true};
+  }
+  return {scope:'alice',canManage:true,personal:true,source:{known:verified},tasks:[]};
+ };
+ const panel=initBackupControls({context:()=>({user:'owner'}),request});await panel.open();
+ const check=[...document.querySelectorAll('button')].find(b=>b.textContent==='重新核验写入状态')!;
+ check.click();
+ await vi.waitFor(()=>expect(document.body.textContent).toContain('仍有写入，稍后可重试'));
+ check.click();
+ await vi.waitFor(()=>expect(document.body.textContent).not.toContain('重新核验写入状态'));
+});

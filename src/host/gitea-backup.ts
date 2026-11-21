@@ -1,7 +1,7 @@
 import {execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {randomUUID} from 'node:crypto';
-import {mkdir,mkdtemp,cp,lstat,readFile,realpath,readdir,rm} from 'node:fs/promises';
+import {mkdir,mkdtemp,rename,cp,lstat,readFile,realpath,readdir,rm} from 'node:fs/promises';
 import {join,dirname,resolve,relative,isAbsolute} from 'node:path';
 import {BackupError} from './backup.js';
 import type {BackupRepository} from './backup-repository.js';
@@ -54,22 +54,68 @@ export class GiteaBackupJob {
   try{const profile=await this.profile();return {configured:true,version:profile.version,allowServicePause:profile.allowServicePause===true,points,restores,last};}catch{return {configured:false,errorCode:'gitea_configuration_unavailable',points,restores,last};}
  }
 
- async backup(requestId?:string){
+ private async serviceHealthy(p:GiteaBackupProfile){
+  if(!p.url)return false;
+  try{
+   const url=new URL('api/v1/version',p.url.endsWith('/')?p.url:p.url+'/');
+   const response=await fetch(url,{signal:AbortSignal.timeout(1000),redirect:'error'});
+   return response.ok&&(await response.json()).version===p.version;
+  }catch{return false;}
+ }
+ private async resumeService(p:GiteaBackupProfile,journal:string){
+  if(!await this.serviceHealthy(p)){
+   const stopped=await run(p.checkStopped).then(()=>true,()=>false);
+   // A lost reply can mean the process already started. Observe the service
+   // even when the start command reports an error.
+   if(stopped)await run(p.start).catch(()=>undefined);
+   const deadline=Date.now()+10000;
+   while(!await this.serviceHealthy(p)){
+    if(Date.now()>=deadline)throw restoreFail('gitea_start_unverified');
+    await new Promise(resolve=>setTimeout(resolve,100));
+   }
+  }
+  await rm(journal);await syncDir(this.root);
+ }
+ async backup(requestId?:string,logicalJobId=requestId){
   return restoreLock(this.root,async()=>{
    const id=requestId??randomUUID();if(!/^[a-f0-9-]{36}$/.test(id))throw restoreFail('invalid_operation');
-   const old=(await this.options.repository.archivePoints('gitea')).find(job=>job.id===id&&job.state==='succeeded');if(old){await durableJson(join(this.root,'last.json'),{id,state:'succeeded',captureAt:old.points[0]?.captureAt,finishedAt:old.finishedAt});return old;}
+   const journal=join(this.root,'backup-service-pause.json');
    await durableJson(join(this.root,'last.json'),{id,state:'running',startedAt:new Date().toISOString()});
-   try{const p=await this.profile();await this.validateSource(p);
-   const stage=join(this.root,id),archive=join(stage,'archive');await mkdir(stage,{recursive:true,mode:0o700});
-   if(!await exists(join(archive,'archive.json'))){
-    if(await exists(archive))throw restoreFail('gitea_capture_interrupted');
-    const paused=await this.stopIfNeeded(p);
-    try{await createStateArchive({destination:archive,kind:'gitea',version:p.version,roots:p.roots,recovery:{giteaProfile:p},assertQuiescent:()=>run(p.checkStopped)});}finally{if(paused)await run(p.start);}
-   }
+   try{
+    const p=await this.profile(),identity=sha(JSON.stringify([p.binary,p.version,p.workPath,p.appIni,p.url]));
+    let captureId=id;
+    let serviceState:'healthy'|'already-stopped'|undefined;
+    if(await exists(journal)){
+     const pending=await readJson(journal);
+     if(pending.identity!==identity||!(/^[a-f0-9-]{36}$/.test(pending.id)))throw restoreFail('gitea_restore_profile_changed');
+     await this.resumeService(p,journal);serviceState='healthy';
+     if(pending.logicalJobId===logicalJobId)captureId=pending.id;
+    }
+    const old=(await this.options.repository.archivePoints('gitea')).find(job=>job.id===id&&job.state==='succeeded');
+    if(old){await durableJson(join(this.root,'last.json'),{id,state:'succeeded',serviceState,captureAt:old.points[0]?.captureAt,finishedAt:old.finishedAt});return old;}
+    await this.validateSource(p);
+    const stage=join(this.root,captureId),archive=join(stage,'archive');await mkdir(stage,{recursive:true,mode:0o700});
+    if(!await exists(join(archive,'archive.json'))){
+     if(await exists(archive))await rename(archive,join(stage,'interrupted-'+randomUUID()));
+     const stopped=await run(p.checkStopped).then(()=>true,()=>false);
+     if(!stopped){
+      if(!p.allowServicePause||!p.stop)throw restoreFail('gitea_maintenance_window_required');
+      if(!await this.serviceHealthy(p))throw restoreFail('gitea_health_required_before_pause');
+      await durableJson(journal,{id:captureId,logicalJobId,identity});
+     }
+     try{
+      if(!stopped){await run(p.stop!);await run(p.checkStopped);}
+      await createStateArchive({destination:archive,kind:'gitea',version:p.version,roots:p.roots,recovery:{giteaProfile:p},assertQuiescent:()=>run(p.checkStopped)});
+     }finally{
+      if(!stopped){await this.resumeService(p,journal);serviceState='healthy';
+      }
+      else serviceState='already-stopped';
+     }
+    }
    const result=await this.options.repository.backupArchive('gitea',archive,id);
-   await durableJson(join(this.root,'last.json'),{id,state:result.state,captureAt:result.points[0]?.captureAt,finishedAt:new Date().toISOString()});
+   await durableJson(join(this.root,'last.json'),{id,state:result.state,serviceState,captureAt:result.points[0]?.captureAt,finishedAt:new Date().toISOString()});
    // Only discard our exact verified temporary image, never unknown material.
-   try{const manifest=await verifyStateArchive(archive);if(sha(JSON.stringify(manifest))===result.points[0]?.manifestSha256&&(await readdir(stage)).length===1)await rm(stage,{recursive:true});}catch{await durableJson(join(this.root,'last.json'),{id,state:result.state,captureAt:result.points[0]?.captureAt,finishedAt:new Date().toISOString(),warning:'staging_cleanup_pending'});}
+   try{const manifest=await verifyStateArchive(archive);if(sha(JSON.stringify(manifest))===result.points[0]?.manifestSha256&&(await readdir(stage)).length===1)await rm(stage,{recursive:true});}catch{await durableJson(join(this.root,'last.json'),{id,state:result.state,serviceState,captureAt:result.points[0]?.captureAt,finishedAt:new Date().toISOString(),warning:'staging_cleanup_pending'});}
    return result;
    }catch(error){await durableJson(join(this.root,'last.json'),{id,state:'failed',errorCode:error instanceof BackupError?error.code:'gitea_backup_failed',finishedAt:new Date().toISOString()});throw error;}
   });

@@ -11,8 +11,22 @@ import type {Workspaces,Conversation} from './workspaces.js';
 import {assertNativeBindingHistory,type NativeBindingHistory} from './native-binding-history.js';
 import {sha,treeDigest} from './restore-files.js';
 
+const codexFormats = {
+ '0.159.1': 'codex-0.159.1-sqlx58-history7/coffee-checkpoint-v1',
+ '0.170.0': 'codex-0.170.0-sqlx62-history8/coffee-checkpoint-v1',
+} as const;
+export type CodexStoreVersion=keyof typeof codexFormats;
+export function codexCheckpointFormat(version:string){
+ if(!Object.hasOwn(codexFormats,version))throw new BackupError('native_version_unqualified','Native Codex version is not qualified');
+ return codexFormats[version as CodexStoreVersion];
+}
+export function compatibleRollout(store:string,version:unknown){
+ return version==='0.159.1'||store==='0.170.0'&&version==='0.170.0';
+}
+export const codexImageFile=/^exec-[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i;
+export const codexImageBinding=/^[a-zA-Z0-9-]{1,100}$/;
 export type CodexRow=Record<string,unknown>;
-export interface CodexStoreSnapshot {schemaVersion:1;cliVersion:'0.159.1';nativeHome:string;sqliteHome:string;databases:Record<string,{schema:Record<string,string>;migrations:unknown[];tables:Record<string,CodexRow[]>}>;}
+export interface CodexStoreSnapshot {schemaVersion:1;cliVersion:CodexStoreVersion;nativeHome:string;sqliteHome:string;databases:Record<string,{schema:Record<string,string>;migrations:unknown[];tables:Record<string,CodexRow[]>}>;}
 export interface CodexRecoveryOptions {scope:string;workspaces:Workspaces;codexHome:string;restoreConfiguration?:boolean;sqliteHome?:string;environmentSqliteHome?:string;cliVersion:string;nativeArgs?:readonly string[];fence:WriterAdmissionFence;destination?:RestoreDestination;sourceCustody:()=>Promise<{known:boolean;reason?:string}>;onDatabaseCommit?:(name:string)=>Promise<void>;}
 export function codexStore<T=CodexStoreSnapshot>(request:unknown,transport?:{publicationFd?:number;onDatabaseCommit?:(name:string)=>Promise<void>}):Promise<T>{return new Promise((ok,fail)=>{
  const child=spawn('/usr/bin/python3',[fileURLToPath(new URL('./codex-store.py',import.meta.url)),String(process.pid)],{stdio:['pipe','pipe','pipe',transport?.publicationFd??'ignore'],env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',PYTHONNOUSERSITE:'1'}});let pending='',error='',bytes=0,result:T|undefined,refused=false;
@@ -21,7 +35,7 @@ export function codexStore<T=CodexStoreSnapshot>(request:unknown,transport?:{pub
  child.once('error',()=>{clearTimeout(timer);fail(new BackupError('native_store_refused','Native Codex store refused'));});child.once('close',code=>{clearTimeout(timer);if(code===0&&!refused&&result)ok(result);else{const value=error.trim();fail(new BackupError(/^[a-z_]{1,64}$/.test(value)?value:'native_store_refused','Native Codex store refused'));}});child.stdin!.on('error',()=>undefined);child.stdin!.write(JSON.stringify(request)+'\n');
 });}
 export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
- readonly version='codex-0.159.1-sqlx58-history7/coffee-checkpoint-v1';
+ get version(){return codexCheckpointFormat(this.options.cliVersion);}
  constructor(readonly options:CodexRecoveryOptions){}
  async prepareRestore(point:{directory:string;manifest:CheckpointManifest},scope:string,taskId:string,stage:string,options?:NativeRestoreOptions){if(this.options.destination&&(!options?.destination||options.destination.scope!==scope))throw new BackupError('writers_unknown','Restore destination context required');if(!this.options.destination)await this.custody();const lease=this.options.destination?await this.options.destination.lease(options!.destination!):await this.options.fence.lease();try{const result=await prepareCodexRestore(this.options,point,scope,taskId,stage,options);lease.assertValid();return result;}finally{lease.release();}}
  async validateReplacementSafety(plan:Record<string,unknown>,context:{directory:string;manifest:CheckpointManifest;currentRegistry:Conversation|undefined;scope:string;taskId:string}){return validateCodexReplacementSafety(plan,context);}
@@ -30,29 +44,45 @@ export class CodexNativeRecoveryAdapter implements NativeRecoveryAdapter {
  async publishNativeMerge(plan:Record<string,unknown>,context:NativeMergeContext){if(this.options.destination)this.options.destination.assertLease(context.lease!);else await this.custody();return publishCodexMerge(plan,context,this.options.onDatabaseCommit);}
  async restoreLease(context?:DestinationContext){if(this.options.destination){if(!context)throw new BackupError('writers_unknown','Restore destination context required');return this.options.destination.lease(context);}await this.custody();return this.options.fence.publicationLease();}
  private async custody(){const proof=await this.options.sourceCustody();if(!proof.known)throw new BackupError('writers_unknown','Native source custody unknown');}
- async bindingInventory(scope:string){if(scope!==this.options.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');await this.custody();const roots=await codexStore({operation:'roots',home:resolve(this.options.codexHome),sqliteHome:this.options.sqliteHome,environmentSqliteHome:this.options.environmentSqliteHome}),ids:string[]=[];for(const path of await discoverRollouts(roots.nativeHome)){const row=JSON.parse((await readFile(path,'utf8')).split('\n')[0]);if(row.type!=='session_meta'||typeof row.payload?.id!=='string'||row.payload.cli_version!=='0.159.1')throw new BackupError('closure_incomplete','Unknown Codex graph');if(await this.options.workspaces.recoveryOwnsNativeCwd(row.payload.cwd))ids.push(row.payload.id);}if(new Set(ids).size!==ids.length)throw new BackupError('closure_incomplete','Duplicate native identity');return ids;}
+ async bindingInventory(scope:string){if(scope!==this.options.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');await this.custody();const roots=await codexStore({operation:'roots',cliVersion:this.options.cliVersion,home:resolve(this.options.codexHome),sqliteHome:this.options.sqliteHome,environmentSqliteHome:this.options.environmentSqliteHome}),ids:string[]=[];for(const path of await discoverRollouts(roots.nativeHome)){const row=JSON.parse((await readFile(path,'utf8')).split('\n')[0]);if(row.type!=='session_meta'||typeof row.payload?.id!=='string'||!compatibleRollout(this.options.cliVersion,row.payload.cli_version))throw new BackupError('closure_incomplete','Unknown Codex graph');if(await this.options.workspaces.recoveryOwnsNativeCwd(row.payload.cwd))ids.push(row.payload.id);}if(new Set(ids).size!==ids.length)throw new BackupError('closure_incomplete','Duplicate native identity');return ids;}
  async resolve(scope:string,taskId:string){return this.resolveHistory(scope,taskId);}
  async resolveHistory(scope:string,taskId:string,history?:NativeBindingHistory):Promise<NativeRecoveryGroup&{materialize:(lease:CaptureLease)=>Promise<NativeRecoveryGroup>}>{
   const o=this.options;if(scope!==o.scope)throw new BackupError('closure_incomplete','Native source scope mismatch');await this.custody();
-  assertNativeArgs(o.nativeArgs??[]);if(o.cliVersion!=='0.159.1')throw new BackupError('native_version_unqualified','Native Codex version is not qualified');const task=await o.workspaces.lookup(taskId);if(!task||!history&&(task.engine!=='codex'||!task.nativeBinding?.id))throw new BackupError('closure_incomplete','Codex task binding unavailable');if(history)assertNativeBindingHistory(task,history);assertTask(task,Boolean(history));
-  const roots=await codexStore({operation:'roots',home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome}),groupId='codex-'+sha(roots.nativeHome+'\0'+roots.sqliteHome).slice(0,32),identity=JSON.stringify(task);
+  assertNativeArgs(o.nativeArgs??[]);codexCheckpointFormat(o.cliVersion);const task=await o.workspaces.lookup(taskId);if(!task||!history&&(task.engine!=='codex'||!task.nativeBinding?.id))throw new BackupError('closure_incomplete','Codex task binding unavailable');if(history)assertNativeBindingHistory(task,history);assertTask(task,Boolean(history));
+  const roots=await codexStore({operation:'roots',cliVersion:this.options.cliVersion,home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome}),groupId='codex-'+sha(roots.nativeHome+'\0'+roots.sqliteHome).slice(0,32),identity=JSON.stringify(task);
   const validate=async()=>{await this.custody();const current=await o.workspaces.lookup(taskId);if(!current||JSON.stringify(current)!==identity)throw new BackupError('capture_revoked','Task binding changed');if(history)assertNativeBindingHistory(current,history);assertTask(current,Boolean(history));};
   return {adapterVersion:this.version,groupId,fence:o.fence,members:[{scope,taskId,engine:'codex',adapterVersion:this.version,nativeBindings:history?history.bindings.codex:[task.nativeBinding!.id!]}],sources:[],validate,materialize:async lease=>{lease.assertValid();await validate();const result=await this.materialize(scope,task,lease,history);if(result.groupId!==groupId)throw new BackupError('capture_revoked','Native roots changed before capture');return result;}};
  }
  private async materialize(scope:string,task:Conversation,lease:CaptureLease,history?:NativeBindingHistory):Promise<NativeRecoveryGroup>{
   const o=this.options,taskId=task.id;await o.workspaces.file(taskId,'');lease.assertValid();
-  const snapshot=await codexStore({operation:'snapshot',home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome});lease.assertValid();let sources:RecoverySource[];let fingerprint:string;
+  const snapshot=await codexStore({operation:'snapshot',cliVersion:o.cliVersion,home:resolve(o.codexHome),sqliteHome:o.sqliteHome,environmentSqliteHome:o.environmentSqliteHome});lease.assertValid();let sources:RecoverySource[];let fingerprint:string;
    const rollouts=await discoverRollouts(snapshot.nativeHome),byId=new Map<string,{path:string;meta:Record<string,any>}>();
    for(const path of rollouts){const raw=await readFile(path,'utf8'),row=JSON.parse(raw.split('\n')[0]);if(row.type!=='session_meta'||typeof row.payload?.id!=='string'||byId.has(row.payload.id))throw new BackupError('closure_incomplete','Unknown Codex graph');byId.set(row.payload.id,{path,meta:row.payload});}
    const required=new Set(history?history.bindings.codex:[task.nativeBinding!.id!,...task.retainedNativeIds??[],...task.takeoverSegments?.flatMap(s=>s.nativeId?[s.nativeId]:[])??[]]),selected=new Set<string>(),pending=[...required],visiting=new Set<string>();
-   const visit=async(id:string)=>{if(visiting.has(id))throw new BackupError('closure_incomplete','Native lineage cycle');if(selected.has(id))return;const item=byId.get(id);if(!item||item.meta.cli_version!=='0.159.1'||!await o.workspaces.recoveryOwnsNativeCwd(item.meta.cwd))throw new BackupError('closure_incomplete','Required native binding missing');visiting.add(id);
+   const visit=async(id:string)=>{if(visiting.has(id))throw new BackupError('closure_incomplete','Native lineage cycle');if(selected.has(id))return;const item=byId.get(id);if(!item||!compatibleRollout(o.cliVersion,item.meta.cli_version)||!await o.workspaces.recoveryOwnsNativeCwd(item.meta.cwd))throw new BackupError('closure_incomplete','Required native binding missing');visiting.add(id);
     for(const parent of [item.meta.forked_from_id,item.meta.parent_thread_id,item.meta.history_base?.thread_id])if(parent!==undefined){if(typeof parent!=='string')throw new BackupError('closure_incomplete','Unknown native lineage');await visit(parent);}visiting.delete(id);selected.add(id);};for(const id of pending)await visit(id);
    const state=snapshot.databases['state_5.sqlite'].tables;for(const id of selected)if(!state.threads.some(row=>row.id===id&&row.rollout_path===byId.get(id)!.path))throw new BackupError('closure_incomplete','Native index binding missing');
+   for(const row of state.threads){
+    if(typeof row.attached_thread_parent_id==='string' && selected.has(String(row.id))!==selected.has(row.attached_thread_parent_id))throw new BackupError('closure_incomplete','Attached thread requires joint recovery');
+   }
    for(const edge of state.thread_spawn_edges??[])if(selected.has(String(edge.parent_thread_id))!==selected.has(String(edge.child_thread_id)))throw new BackupError('closure_incomplete','Native spawn dependency outside task');
    if((state.thread_attachments??[]).some(row=>selected.has(String(row.thread_id))))throw new BackupError('closure_incomplete','Attachment resource mapping is not qualified');
    const all=await o.workspaces.list(),ownedIds=new Set<string>();for(const owner of all.conversations){const candidates=[...(owner.engine==='codex'&&owner.nativeBinding?.id?[owner.nativeBinding.id]:[]),...owner.retainedNativeIds??[],...owner.retainedNativeBindings?.filter(binding=>binding.engine==='codex').map(binding=>binding.nativeId)??[],...owner.takeoverSegments?.filter(segment=>segment.from==='codex').flatMap(segment=>segment.nativeId?[segment.nativeId]:[])??[]];for(const id of candidates){const native=byId.get(id);if(native&&typeof native.meta.cwd==='string'&&await o.workspaces.recoveryOwnsNativeCwd(native.meta.cwd)&&state.threads.some(row=>row.id===id&&row.rollout_path===native.path))ownedIds.add(id);}}if((snapshot.databases['memories_1.sqlite']?.tables.stage1_outputs??[]).some(row=>!ownedIds.has(String(row.thread_id))))throw new BackupError('closure_incomplete','Shared memory has an unmapped native owner');const project=all.projects.find(p=>p.id===task.projectId);
    sources=[{id:'registry',recoveryKey:'registry',role:'registry',data:Buffer.from(JSON.stringify({schemaVersion:1,scope,conversation:task,project}))},{id:'workspace',recoveryKey:'workspace',role:'workspace',path:task.cwd},{id:'task-data',recoveryKey:'task-data',role:'task-data',path:task.taskRoot??task.cwd},{id:'codex-group',recoveryKey:'codex/group-v1',role:'native',data:Buffer.from(JSON.stringify(snapshot))}];
    for(const id of selected)sources.push({id:'codex-'+sha(id).slice(0,24),recoveryKey:'codex/rollout/'+id,role:'native',path:byId.get(id)!.path});
+   if(o.cliVersion==='0.170.0'){
+    for(const id of selected){
+     if(!codexImageBinding.test(id))throw new BackupError('closure_incomplete','Invalid image binding');
+     const dir=join(snapshot.nativeHome,'generated_images',id);
+     if(!await present(dir))continue;
+     if(await realpath(dir)!==dir)throw new BackupError('unsafe_source','Generated image directory changed');
+     for(const file of await readdir(dir,{withFileTypes:true})){
+      if(!file.isFile()||!codexImageFile.test(file.name))throw new BackupError('closure_incomplete','Unknown generated image resource');
+      const key='codex/image/'+id+'/'+file.name;
+      sources.push({id:'image-'+sha(key),recoveryKey:key,role:'native',path:join(dir,file.name)});
+     }
+    }
+   }
    for(const name of ['session_index.jsonl','history.jsonl','memories','skills','prompts','AGENTS.md','config.toml',...(o.restoreConfiguration?['auth.json']:[])])if(await present(join(snapshot.nativeHome,name)))sources.push({id:'codex-resource-'+sha(name).slice(0,16),recoveryKey:'codex/resource/'+name,role:'native',path:join(snapshot.nativeHome,name)});
    fingerprint=await sourceFingerprint(snapshot.nativeHome,snapshot.sqliteHome);lease.assertValid();
    const bindings=[...selected].sort(),identity=JSON.stringify(task);

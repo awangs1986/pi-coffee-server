@@ -36,7 +36,7 @@ import { CodexSession } from "./codex.js";
 import { NativeProcess, nativeEnvironment, type NativeCommand } from "./process.js";
 const exec=promisify(execFile);
 export type BoundCodexOptions=Omit<CodexSessionFactoryOptions,'nativeCustody'|'cwd'|'onBound'|'envForSession'|'preparation'>;
-export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>BoundCodexOptions;commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
+export interface NativeAgentOptions {codexSessionOptions?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>BoundCodexOptions;commandCustody?:NativeWriterCustody;managedCustody?:ManagedNativeCustody;trackPersonalVersionProbes?:boolean;beforeNativeExecution?:(engine:AgentEngine)=>Promise<void>; writerFence?:WriterAdmissionFence; beforeUnmanagedNative?:()=>Promise<void>; instructions?:(id?:string)=>Promise<string|undefined>; pi:AgentSessionFactory;workspaces:Workspaces;codex?:NativeCommand;claude?:NativeCommand;cursor?:NativeCommand;grok?:NativeCommand;codexSessionFactory?:(id:string,cwd:string,onBound:(nativeId:string)=>Promise<void>,environment?:()=>Promise<Record<string,string>>,preparation?:boolean)=>AgentSessionFactory;legacyCodex?:AgentSessionFactory;codexSummary?:(cwd:string,id:string)=>Promise<import("../agent-adapter.js").AgentSessionListing|undefined>;codexListings?:(cwd:string)=>Promise<import("../agent-adapter.js").AgentSessionListing[]>; }
 /** Routes only by the durable Task binding; browser-provided native IDs are never accepted. */
 export class NativeAgentFactory implements AgentSessionFactory {
   private readonly imageImports=new Map<string,Promise<string|undefined>>();
@@ -108,7 +108,8 @@ export class NativeAgentFactory implements AgentSessionFactory {
     });this.audits.set(controller,audit);try{await audit;}finally{this.audits.delete(controller);}
   }
   private async command(config:NativeCommand,args:string[],cwd?:string,engine?:AgentEngine){
-    const release=await this.admit((engine==='pi'||engine==='codex')&&physicalFenceCoversCustody(this.options.writerFence?(trustedSourcePhysicalFence(this.options.writerFence)??this.options.writerFence):undefined,this.options.commandCustody),'native');
+    const supervisedProbe=this.options.trackPersonalVersionProbes&&args.length===1&&args[0]==='--version';
+    const release=await this.admit(Boolean(engine==='pi'||engine==='codex'||supervisedProbe)&&physicalFenceCoversCustody(this.options.writerFence?(trustedSourcePhysicalFence(this.options.writerFence)??this.options.writerFence):undefined,this.options.commandCustody),'native');
     try{
       if(!this.options.commandCustody)return {command:config.command,args:[...(config.args??[]),...args],env:nativeEnvironment(config.env)};
       const launch=await this.options.commandCustody.prepare({...(engine==='pi'||engine==='codex'?{engine}:{}),executable:config.command,args:[...(config.args??[]),...args],cwd:cwd??this.options.managedCustody?.profile.cwd??this.options.workspaces.root,env:config.env});
@@ -298,7 +299,7 @@ export class NativeAgentFactory implements AgentSessionFactory {
       const original=PI_ONLY_ENGINES.find(item=>item.id===engine)!;
       const config=original.id==="pi"?undefined:this.options[original.id];
       if(!config&&original.id!=="pi")return {...original,status:"not_configured"};
-      try{await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,status:"unavailable",reason:error instanceof Error?error.message:'Native launch denied'};}
+      try{if(!this.options.trackPersonalVersionProbes)await this.options.beforeNativeExecution?.(original.id);}catch(error){return {...original,available:false,status:"unavailable",reason:error instanceof Error?error.message:'Native launch denied'};}
       if(!config)return {...original,status:"ready",modelCatalog:Boolean(this.options.pi.modelCatalog)};
       let version:string;
       try {

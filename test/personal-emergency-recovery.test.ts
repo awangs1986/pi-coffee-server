@@ -12,7 +12,7 @@ import {PiNativeRecoveryAdapter} from '../src/host/pi-recovery.js';
 import {GroupedRecoveryAdapter} from '../src/host/grouped-recovery.js';
 import {BackupCoordinator} from '../src/host/backup.js';
 import {BackupRepository} from '../src/host/backup-repository.js';
-import {GiteaBackupJob} from '../src/host/gitea-backup.js';
+import {BackupJobRunner} from '../src/host/backup-job-runner.js';
 import {RestoreCoordinator} from '../src/host/restore.js';
 import {AccountRecoveryCoordinator} from '../src/host/account-recovery.js';
 import {PersonalRecoveryCollection} from '../src/host/personal-recovery-collection.js';
@@ -21,22 +21,28 @@ import {HostServer} from '../src/host/server.js';
 import {Workspaces} from '../src/host/workspaces.js';
 const execute=promisify(execFile);
 
-it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_GITEA||!process.env.PI_COFFEE_TEST_CODEX_ROOT)('recovers login plus both accounts Pi/Codex history and attachments after source and runtime loss using the offline CLI',async()=>{
+it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_GITEA||!process.env.PI_COFFEE_TEST_CODEX_ROOT).each(process.env.PI_COFFEE_TEST_CODEX_01700_ROOT?['0.159.1','0.170.0'] as const:['0.159.1'] as const)('recovers login plus both accounts Pi/Codex history and attachments after source and runtime loss using the offline CLI (%s)',async version=>{
  const evidence=process.env.PI_COFFEE_TEST_EVIDENCE_DIR,events:unknown[]=[];if(evidence)await mkdir(evidence,{recursive:true,mode:0o700});
- const g=await giteaBackupFixture(),c=await codexFixture({personalConfiguration:true});let host:HostServer|undefined,web:WebServer|undefined,browser:Browser|undefined;
+ const c=await codexFixture({personalConfiguration:true,version}),g=await giteaBackupFixture();let host:HostServer|undefined,web:WebServer|undefined,browser:Browser|undefined;
  try{
   const owner=await g.api('user'),second=await g.api('users/second'),scopes=['gitea-'+owner.id,'gitea-'+second.id];
   const secondRoot=join(c.root,'second','projects'),sessions=join(c.root,'pi-sessions'),agent=join(c.root,'pi-agent');for(const path of [sessions,agent])await mkdir(path,{mode:0o700});
-  const piStore=new Workspaces(secondRoot);await piStore.createChatConversation('pi-task');const piTask=(await piStore.lookup('pi-task'))!;
-  const pi=SessionManager.create(piTask.cwd,sessions,{id:'emergency-pi-id'});pi.appendMessage({role:'user',content:'Emergency Pi historical question',timestamp:1});await piStore.setNativeBinding('pi-task',{state:'bound',id:pi.getSessionId()});
+  const piStore=new Workspaces(secondRoot);await piStore.createChatConversation(c.task.id);const piTask=(await piStore.lookup(c.task.id))!;
+  const pi=SessionManager.create(piTask.cwd,sessions,{id:'emergency-pi-id'});pi.appendMessage({role:'user',content:'Emergency Pi historical question',timestamp:1});await piStore.setNativeBinding(c.task.id,{state:'bound',id:pi.getSessionId()});
   await writeFile(join(piTask.cwd,'attachment.txt'),'Pi attachment');await writeFile(join(c.task.cwd,'attachment.txt'),'Codex attachment');
+  const imageDir=join(c.home,'generated_images',c.id),imageName='exec-synthetic.png';
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+kB2kAAAAASUVORK5CYII=','base64');
+  const forkEvidence=join(c.task.taskRoot??c.task.cwd,'fork','source-history.json');
+  if(version==='0.170.0'){
+   await mkdir(imageDir,{recursive:true,mode:0o700});await writeFile(join(imageDir,imageName),png);
+   await mkdir(join(forkEvidence,'..'),{recursive:true});await writeFile(forkEvidence,'{"messages":["original fork history"]}');
+  }
   const stores=new Map([[scopes[0],c.store],[scopes[1],piStore]]);
-  const adapters=new Map<string,any>();const buildAdapters=()=>{adapters.set(scopes[0],new CodexNativeRecoveryAdapter({scope:scopes[0],workspaces:stores.get(scopes[0])!,codexHome:c.home,sqliteHome:c.sql,cliVersion:'0.159.1',restoreConfiguration:true,fence:c.fence,sourceCustody:async()=>({known:true})}));adapters.set(scopes[1],new PiNativeRecoveryAdapter({scope:scopes[1],workspaces:stores.get(scopes[1])!,sessionDir:sessions,agentDir:agent,restoreConfiguration:true,fence:c.fence,sourceCustody:async()=>({known:true})}));};buildAdapters();
+  const adapters=new Map<string,any>();const buildAdapters=()=>{adapters.set(scopes[0],new CodexNativeRecoveryAdapter({scope:scopes[0],workspaces:stores.get(scopes[0])!,codexHome:c.home,sqliteHome:c.sql,cliVersion:version,restoreConfiguration:true,fence:c.fence,sourceCustody:async()=>({known:true})}));adapters.set(scopes[1],new PiNativeRecoveryAdapter({scope:scopes[1],workspaces:stores.get(scopes[1])!,sessionDir:sessions,agentDir:agent,restoreConfiguration:true,fence:c.fence,sourceCustody:async()=>({known:true})}));};buildAdapters();
   const runtime=join(g.root,'runtime'),disk=join(g.root,'disk');await mkdir(disk,{mode:0o700});
-  const coordinator=new BackupCoordinator({root:join(runtime,'checkpoints'),adapter:new GroupedRecoveryAdapter({groupId:'emergency',fence:c.fence,inventory:async()=>[{scope:scopes[0],taskId:c.task.id,engine:'codex'},{scope:scopes[1],taskId:'pi-task',engine:'pi'}],resolve:(scope,id)=>adapters.get(scope).resolve(scope,id)})});
+  const coordinator=new BackupCoordinator({root:join(runtime,'checkpoints'),adapter:new GroupedRecoveryAdapter({groupId:'emergency',fence:c.fence,inventory:async()=>[{scope:scopes[0],taskId:c.task.id,engine:'codex'},{scope:scopes[1],taskId:c.task.id,engine:'pi'}],resolve:(scope,id)=>adapters.get(scope).resolve(scope,id)})});
   expect(await coordinator.capture(scopes[0],c.task.id,'codex')).toMatchObject({state:'protected'});
   let repository=new BackupRepository({root:join(runtime,'repository-runtime'),coordinator});await repository.configure({destination:disk,binary:process.env.PI_COFFEE_TEST_RESTIC!});const key=await repository.exportRecoveryPackage();await repository.verifyRecoveryPackage(key);
-  const nativeJob=await repository.backup([{scope:scopes[0],taskId:c.task.id}]);
   const port=await freePort(),origin=`http://127.0.0.1:${port}`,hostPort=await freePort(),login=join(g.root,'login'),profile=join(g.root,'gitea-profile.json');await mkdir(login,{mode:0o700});
   const oauth=await g.api('user/applications/oauth2',{name:'Emergency Recovery',redirect_uris:[origin+'/auth/callback'],confidential_client:true});
   const loginFile=join(login,'settings.json');await writeFile(loginFile,JSON.stringify({giteaUrl:`http://127.0.0.1:${g.port}`,publicUrl:origin,clientId:oauth.client_id,clientSecret:oauth.client_secret,hostToken:'synthetic-emergency-host-token',routes:Object.fromEntries([owner,second].map(user=>[String(user.id),{hostUrl:`ws://127.0.0.1:${hostPort}/host`,hostToken:'synthetic-emergency-host-token'}])),bindings:[{id:String(owner.id),scope:scopes[0],projects:join(c.root,'alice','projects')},{id:String(second.id),scope:scopes[1],projects:secondRoot}],native:{codexHome:c.home,sqliteHome:c.sql,piSessions:sessions,piAgent:agent}}),{mode:0o600});
@@ -51,7 +57,14 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_GITEA|
   const signIn=async(name:string)=>{await page.goto(origin+'/auth/login');if(await page.locator('input[name="user_name"]').count()){await page.locator('input[name="user_name"]').fill(name);await page.locator('input[name="password"]').fill('Synthetic-fixture-password-123!');await page.getByRole('button',{name:/Sign In|登录/}).click();}const button=page.getByRole('button',{name:/Authorize Application|授权应用/});if(await button.count())await button.click();await expect.poll(async()=>(await context.request.get(origin+'/api/me')).status(),{timeout:20000}).toBe(200);};
   await signIn('owner');
   await writeFile(profile,JSON.stringify({coffee:{configurationFiles:[loginFile],bindings:[{accountId:String(owner.id),scope:scopes[0],projects:join(c.root,'alice','projects')},{accountId:String(second.id),scope:scopes[1],projects:secondRoot}]},schema:1,url:`http://127.0.0.1:${g.port}/`,binary:g.binary,version:'1.27.3',appIni:g.config,workPath:g.work,roots:{gitea:g.work,login},checkStopped:['/usr/bin/python3',g.control,'check'],stop:['/usr/bin/python3',g.control,'stop'],start:['/usr/bin/python3',g.control,'start'],allowServicePause:true}),{mode:0o600});
-  await new GiteaBackupJob({root:join(runtime,'gitea'),repository,profile}).backup();
+  const workerToken=join(g.root,'worker-token');await writeFile(workerToken,'synthetic-emergency-host-token',{mode:0o600});
+  const scheduler=new BackupJobRunner({root:join(runtime,'schedule'),repository,coordinator});
+  await scheduler.configure({revision:'emergency-drill',scopes,timeZone:'UTC',hour:0,minute:0,giteaProfile:profile,host:{url:`http://127.0.0.1:${hostPort}`,tokenFile:workerToken,actor:'owner'}});
+  const tick=await execute(process.execPath,['dist/src/backup-cli.js','schedule-tick','--root',runtime],{timeout:120000});
+  const run=JSON.parse(tick.stdout).run;
+  expect(run,JSON.stringify(run)).toMatchObject({state:'succeeded',gitea:{state:'succeeded'}});
+  const nativeJob=run.attempts.at(-1);
+
   const recovery=join(g.root,'offline-key.json');await writeFile(recovery,key,{mode:0o600});
   await web!.close();web=undefined;await host!.close();host=undefined;await g.run('stop');
   for(const path of [g.work,login,profile,runtime,join(c.root,'alice'),join(c.root,'second'),sessions,agent,c.home,c.sql])await rm(path,{recursive:true});
@@ -68,9 +81,13 @@ it.skipIf(!process.env.PI_COFFEE_TEST_RESTIC||!process.env.PI_COFFEE_TEST_GITEA|
   const result=await post({action:'collection-confirm',id:plan.id,digest:plan.digest});expect(result,JSON.stringify(result)).toMatchObject({state:'completed'});
   expect((await (await context.request.get(origin+'/api/workspace')).json()).conversations.map((t:any)=>t.id)).toEqual([c.task.id]);
   expect(await readFile(join(c.task.cwd,'attachment.txt'),'utf8')).toBe('Codex attachment');expect(await readFile(join(piTask.cwd,'attachment.txt'),'utf8')).toBe('Pi attachment');
-  expect((await stores.get(scopes[0])!.lookup(c.task.id))?.nativeBinding?.id).toBe(c.id);expect((await stores.get(scopes[1])!.lookup('pi-task'))?.nativeBinding?.id).toBe('emergency-pi-id');
+  expect((await stores.get(scopes[0])!.lookup(c.task.id))?.nativeBinding?.id).toBe(c.id);expect((await stores.get(scopes[1])!.lookup(c.task.id))?.nativeBinding?.id).toBe('emergency-pi-id');
+  if(version==='0.170.0'){
+   expect(await readFile(join(imageDir,imageName))).toEqual(png);
+   expect(JSON.parse(await readFile(forkEvidence,'utf8')).messages).toEqual(['original fork history']);
+  }
   const restoredPi=(await SessionManager.list(piTask.cwd,sessions)).find(s=>s.id==='emergency-pi-id')!;expect(SessionManager.open(restoredPi.path).buildSessionContext().messages).toMatchObject([{role:'user',content:'Emergency Pi historical question'}]);await nativeReadResume(c);
-  await context.clearCookies();await signIn('second');expect((await (await context.request.get(origin+'/api/workspace')).json()).conversations.map((t:any)=>t.id)).toEqual(['pi-task']);
+  await context.clearCookies();await signIn('second');expect((await (await context.request.get(origin+'/api/workspace')).json()).conversations.map((t:any)=>t.id)).toEqual([c.task.id]);
   expect((await context.request.post(origin+'/api/backup',{headers:{origin},data:{action:'gitea-backup'}})).status()).toBe(403);
   if(evidence){await page.screenshot({path:join(evidence,'recovered-second-account.png')});await writeFile(join(evidence,'emergency-cli.json'),JSON.stringify({events,result,checks:{piHistory:true,codexNativeReadResume:true,attachments:true,oauthBothAccounts:true,oldCookieRejected:true,providerNewTurn:'not-run'}},null,2),{mode:0o600});}
  }finally{await browser?.close();await web?.close();await host?.close();await g.close();await rm(c.root,{recursive:true,force:true});}
