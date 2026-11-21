@@ -42,6 +42,6 @@ export function assertNativeHistoryCheckpoint(task:Conversation,value:NativeHist
 }
 export function historySourceEngine(key:string):RecoveryEngine|'common'|'history'|undefined{
  if(['registry','workspace','task-data'].includes(key))return 'common';if(key==='native-history/engine-bindings-v1')return 'history';
- if(key.startsWith('native-session/')||key.startsWith('native-artifacts/')||key.startsWith('native-config/')||['platform/mishu/notes-only-v1','pending-inputs/notes-only'].includes(key))return 'pi';if(key==='codex/group-v1'||key.startsWith('codex/rollout/')||['session_index.jsonl','history.jsonl','memories','skills','prompts','AGENTS.md','config.toml'].some(name=>key==='codex/resource/'+name))return 'codex';
+ if(key.startsWith('native-session/')||key.startsWith('native-artifacts/')||key.startsWith('native-config/')||['platform/mishu/notes-only-v1','pending-inputs/notes-only'].includes(key))return 'pi';if(key==='codex/group-v1'||key.startsWith('codex/rollout/')||/^codex\/image\/[a-zA-Z0-9-]{1,100}\/exec-[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i.test(key)||['session_index.jsonl','history.jsonl','memories','skills','prompts','AGENTS.md','config.toml','auth.json'].some(name=>key==='codex/resource/'+name))return 'codex';
 }
 export function nativeHistorySources<T extends Pick<RecoverySource,'recoveryKey'>>(sources:T[],kind:RecoveryEngine){if(sources.some(source=>!historySourceEngine(source.recoveryKey)))throw refused();return sources.filter(source=>['common',kind].includes(historySourceEngine(source.recoveryKey)!));}

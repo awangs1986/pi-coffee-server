@@ -2,7 +2,7 @@
 import base64, ctypes, hashlib, json, os, pathlib, signal, sqlite3, sys, tomllib, tempfile, shutil
 
 ROOT = pathlib.Path(__file__).resolve().parent
-SCHEMAS = json.loads((ROOT / 'codex-schema-01591.json').read_text())
+FORMATS = {'0.159.1': 'codex-schema-01591.json', '0.170.0': 'codex-schema-01700.json'}
 
 def encode(value):
     return {'$blob': base64.b64encode(value).decode()} if isinstance(value, bytes) else value
@@ -45,7 +45,7 @@ def roots(request, restore_target=False, require_sql=True):
     unknown = [p for p in sql.glob('*.sqlite') if p.name not in SCHEMAS]
     if unknown:
         raise ValueError('unsupported_native_schema')
-    return {'schemaVersion': 1, 'cliVersion': '0.159.1', 'nativeHome': str(home), 'sqliteHome': str(sql), 'databases': {}}
+    return {'schemaVersion': 1, 'cliVersion': version, 'nativeHome': str(home), 'sqliteHome': str(sql), 'databases': {}}
 
 def snapshot(request, restore_target=False):
     result = roots(request, restore_target)
@@ -269,6 +269,9 @@ try:
         ctypes.CDLL(None).prctl(1, signal.SIGKILL)
         if os.getppid() != int(sys.argv[1]): raise ValueError('native_controller_lost')
     request = json.loads(sys.stdin.readline())
+    version = request.get('cliVersion', request.get('plan', {}).get('cliVersion', '0.159.1'))
+    if version not in FORMATS: raise ValueError('unsupported_native_schema')
+    SCHEMAS = json.loads((ROOT / FORMATS[version]).read_text())
     os.umask(0o077)
     if request['operation'] == 'snapshot': result = snapshot(request)
     elif request['operation'] == 'roots': result = roots(request)

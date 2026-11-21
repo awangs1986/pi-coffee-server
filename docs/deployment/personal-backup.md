@@ -80,9 +80,18 @@ reported before confirmation. Necessary writer leases and durable publication
 records prevent accidental overwrite; they do not protect against the owner.
 
 Only normal Host/native writers in this configured topology are coordinated.
+After an unmanaged launch, the owner can select **重新核验写入状态** in the backup
+panel. The Host checks native process custody and the dedicated Host service
+cgroup, rejecting a busy or unverifiable source. Newly admitted writes revoke
+an in-progress check. A successful check permits a fresh capture; the displayed
+age changes only when a new point is sealed. For a layout with external producers,
+configure an absolute local executable in PI_COFFEE_BACKUP_CHECK_QUIESCENT that
+returns zero only inside an operator-coordinated stable window covering those
+producers. Keep external writers excluded until capture is complete. The default
+check applies to the dedicated single-Host systemd topology.
 An uncoordinated writer makes new capture unavailable until a stable source can
 be established; existing repository points remain readable. No task is stopped
-to produce a checkpoint. Codex native format is currently qualified at CLI 0.159.1; unknown formats are refused. Current fixture acceptance and production boundaries
+to produce a checkpoint. Codex native format is currently qualified at CLI 0.159.1 and 0.170.0; unknown formats are refused. Current fixture acceptance and production boundaries
 are recorded in [the PB-2.1 report](../reviews/personal-backup-pb21.md).
 
 ## Gitea and login configuration
@@ -124,7 +133,7 @@ Example structure (replace paths and commands for the actual installation):
 `checkStopped` must exit zero only when **all Gitea writers are stopped**. A
 running service leaves an explicit gap unless an owner-approved maintenance
 window has been configured. Only after that approval may the profile include
-`stop` and `allowServicePause: true`. This pauses Gitea, copies data, and starts it
+`stop` and `allowServicePause: true`. Configure the instance URL for its version and application health checks (including database connectivity). The backup worker records its responsibility before stopping a healthy instance. During retry it first restores service and verifies its health, even after an ambiguous start reply. An instance already stopped by its operator stays stopped. This pauses Gitea when needed, copies data, and starts it when the worker paused it
 before encrypting the copy; it never stops Host or model tasks. Saving the normal
 daily plan then includes that trusted profile. Browser requests cannot provide
 commands or arbitrary service configuration. The panel exposes separate service
@@ -158,7 +167,7 @@ manifest and these instructions. Requirements: Linux amd64, Node 22.19+ in the
 22.x line (tested 22.23.2), Python 3, `ionice`, and a working systemd user manager.
 Gitea 1.27.3 is separately obtainable from its official GitHub release. Install
 matching Pi/Codex/Server versions before native reconnection; source versions are
-recorded in the sealed manifests. The qualified Codex version is 0.159.1.
+recorded in the sealed manifests. Use the native CLI matching the saved format: 0.159.1 or 0.170.0. Offline reading of legacy points remains supported.
 
 1. Save the administrator recovery package to a private file (mode 0600). Keep
    the backup disk intact. Start with a new private runtime directory on the

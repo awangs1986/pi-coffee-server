@@ -57,6 +57,22 @@ export function initBackupControls({context,onOpen=()=>{},request=async(body,sig
      output.append(section);
     }
     renderGiteaBackup({data,output,request,signal:active.signal,current,refresh:()=>read({action:'status',scope})});
+    if(data.canManage && data.source?.known===false){
+     const button=document.createElement('button'),message=document.createElement('p');
+     message.textContent='未协调写入后，新检查点已暂停。请等待写入结束，再重新核验。';
+     button.textContent='重新核验写入状态';
+     button.onclick=async()=>{
+      button.disabled=true;
+      try{await request({action:'source-requalify'},active.signal);if(current())await read({action:'status',scope});}
+      catch(error){
+       if(current()){
+        message.textContent=({writers_active:'仍有写入，稍后可重试。',capture_revoked:'核验期间有新写入，请稍后重试。',writers_unknown:'尚未确认写入已停止，请检查写入进程后重试。'})[error.message]||error.message;
+        button.disabled=false;
+       }
+      }
+     };
+     output.append(message,button);
+    }
     renderRestoreControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     renderAccountRecoveryControls({data,output,request,signal:active.signal,current,refresh:()=>read(data.canManage?{action:'status',scope}:undefined)});
     renderPersonalCollections({data,output,request,signal:active.signal,current,refresh:()=>read({action:'status',scope})});

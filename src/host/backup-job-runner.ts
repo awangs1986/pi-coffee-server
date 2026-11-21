@@ -91,7 +91,7 @@ export class BackupJobRunner {
      const repository=this.options.repository;if(!(repository instanceof BackupRepository))throw new BackupError('gitea_unavailable','Local repository required');
      if(reconciling)await repository.recoverInterruptedOperation();
      const service=new GiteaBackupJob({root:join(this.root,'..','gitea'),repository,profile:run.giteaProfile});
-     const result=await service.backup(attempt.id);if(result.state!=='succeeded')throw new BackupError('gitea_backup_failed','Gitea backup failed');
+     const result=await service.backup(attempt.id,run.id);if(result.state!=='succeeded')throw new BackupError('gitea_backup_failed','Gitea backup failed');
      attempt.state='succeeded';attempt.finishedAt=this.time();delete attempt.errorCode;delete attempt.retryAt;
      // Include a newly successful independent service in a fresh retention plan.
      if(run.retention?.state==='completed')delete run.retention;

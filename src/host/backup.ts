@@ -29,6 +29,9 @@ export class WriterAdmissionFence {
  private readonly classes:Set<string>;
  constructor(private options:{writerClasses:string[];uncoveredWriters?:string[];probe?:()=>Promise<WriterProof>}){this.classes=new Set(options.writerClasses);}
  invalidate(reason='New writer admitted'):void{this.epoch++;for(const lease of this.leases)lease.abort(new BackupError('capture_revoked',reason));this.leases.clear();}
+ protected forgetVerifiedWriterClass(name:string){
+  this.options.uncoveredWriters=this.options.uncoveredWriters?.filter(value=>value!==name);
+ }
  beginWriter(writerClass:string):()=>void{
   this.invalidate();this.active++;
   if(!this.classes.has(writerClass))this.options.uncoveredWriters=[...new Set([...(this.options.uncoveredWriters??[]),writerClass])];
