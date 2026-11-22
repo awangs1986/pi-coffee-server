@@ -126,9 +126,10 @@ for await (const line of input) {
       if(process.env.FIXTURE_FORK_RPC_LOG)appendFileSync(process.env.FIXTURE_FORK_RPC_LOG,JSON.stringify({path:resumedFrom,command:'compact',marker:command.customInstructions})+'\n');
       if(process.env.FAKE_HANDOFF==="unobservable"){unobservable=true;send({id:command.id,type:"response",command:"compact",success:false,error:"Timeout waiting for response to compact. Stderr: fixture"});break;}
       if(process.env.FAKE_HANDOFF){
+        const {HANDOFF_VERSION}=await import("context-handoff/protocol");
         const commit=()=>{compacting=false;
           if(command.customInstructions!=="context-handoff:manual:v1")return response("compact",command.id,{});
-          entries.push({type:"compaction",id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,summary:"handoff",details:process.env.FAKE_HANDOFF==="native" ? {} : {plugin:"pi-handoff",pluginVersion:"0.2.0-experimental.7",trigger:"manual"}});
+          entries.push({type:"compaction",id:`e${++nextEntry}`,parentId:entries.at(-1)?.id??null,summary:"handoff",details:process.env.FAKE_HANDOFF==="native" ? {} : {plugin:"pi-handoff",pluginVersion:HANDOFF_VERSION,trigger:"manual"}});
           response("compact",command.id,{summary:"handoff"});};
         if(process.env.FAKE_HANDOFF==="slow"){compacting=true;setTimeout(commit,31000);}else commit();
         break;
