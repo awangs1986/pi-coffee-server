@@ -77,7 +77,9 @@ boundary. Preserve a segment boundary and prepend saved prior history to native
 history for Web display; do not show the internal bootstrap user prompt. Switching
 back starts another fresh native session rather than reviving stale context.
 Native preparation failure, timeout (3 minutes), approval request or missing
-readiness leaves the source binding unchanged and reports failure. Failed native
+readiness leaves the source binding unchanged and reports failure. Pi RPC notifications
+and one-way UI updates do not block preparation. Dialogs and unknown UI requests
+retain the source binding without submitting a response. Failed native
 sessions/records remain retained; there is no automatic retry. Host restart marks
 unfinished preparation failed. Graceful Host shutdown cancels preparation and waits
 for takeover recovery before closing owned sessions and native factories. A failed

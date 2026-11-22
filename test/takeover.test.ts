@@ -19,10 +19,10 @@ async function setup(transfer?:HostServerOptions['transfer']){
  await run(['init','-b','main']);await writeFile(join(source,'file.txt'),'base');await run(['add','.']);await run(['commit','-m','base']);await run(['clone','--bare',source,join(root,'repo.git')]);
  const workspaces=new Workspaces(join(root,'projects'));const project=await workspaces.registerProject('test',join(root,'repo.git'));const task=await workspaces.createConversation(project.id);
  const records=new Map<string,HistoryEntry[]>();records.set(task.id,[{id:'u1',kind:'user',text:'Keep the uncommitted fix. Continue testing.'},{id:'a1',kind:'assistant',text:'The fix needs verification.'}]);
- const calls:Array<{id:string;text:string;model?:string;effort?:string}>=[];let sequence=0;let fail=false;let hold:Promise<void>|undefined;let sourceStop:undefined|(()=>Promise<void>);const live=new Set<AgentSession>();
+ const calls:Array<{id:string;text:string;model?:string;effort?:string}>=[];let sequence=0;let fail=false;let hold:Promise<void>|undefined;let sourceStop:undefined|(()=>Promise<void>);let reconstructionEvents:unknown[]=[];const live=new Set<AgentSession>();
  const factoryFor=(onBound?:(id:string)=>Promise<void>):AgentSessionFactory=>({
  async create({sessionId,requireExisting}){const id=onBound&&!requireExisting?'codex-'+(++sequence):sessionId;await onBound?.(id);const entries=records.get(id)??[];records.set(id,entries);const listeners=new Set<(event:unknown)=>void>();let streaming=false;let model:string|undefined,effort:string|undefined;
- const session:AgentSession={async prompt(text){calls.push({id,text,model,effort});if(text==='hold'){streaming=true;for(const l of listeners)l({type:'agent_start'});return;}if(hold)await hold;if(fail)throw new Error('provider unavailable');entries.push({id:'u'+entries.length,kind:'user',text});entries.push({id:'a'+entries.length,kind:'assistant',text:'Verified current files; next: run tests.\n[TAKEOVER_READY]'});for(const l of listeners)l({type:'agent_settled'});},async steer(){},async followUp(){},async abort(){streaming=false;},async getState(){return {isStreaming:streaming,messageCount:entries.length};},async getHistory(){return {entries:[...entries],leafId:entries.at(-1)?.id??null};},async rename(){},async getModels(){return {models:[],current:null,thinkingLevel:'off',thinkingLevels:[]};},async setModel(_provider,id){model=id;},async setThinkingLevel(value){effort=value;},async getCommands(){return [];},async getExtensions(){return [];},async getStats(){return {};},async compact(){},async respondUi(){},onEvent(l){listeners.add(l);return ()=>listeners.delete(l);},async stop(){if(id===task.id)await sourceStop?.();live.delete(session);},async backgroundState(){return {known:true,active:0};}};live.add(session);return session;},async list(){return [];},async delete(){return false;}});
+ const session:AgentSession={async prompt(text){calls.push({id,text,model,effort});if(text==='hold'){streaming=true;for(const l of listeners)l({type:'agent_start'});return;}if(hold)await hold;if(fail)throw new Error('provider unavailable');for(const event of reconstructionEvents)for(const listener of listeners)listener(event);entries.push({id:'u'+entries.length,kind:'user',text});entries.push({id:'a'+entries.length,kind:'assistant',text:'Verified current files; next: run tests.\n[TAKEOVER_READY]'});for(const l of listeners)l({type:'agent_settled'});},async steer(){},async followUp(){},async abort(){streaming=false;},async getState(){return {isStreaming:streaming,messageCount:entries.length};},async getHistory(){return {entries:[...entries],leafId:entries.at(-1)?.id??null};},async rename(){},async getModels(){return {models:[],current:null,thinkingLevel:'off',thinkingLevels:[]};},async setModel(_provider,id){model=id;},async setThinkingLevel(value){effort=value;},async getCommands(){return [];},async getExtensions(){return [];},async getStats(){return {};},async compact(){},async respondUi(){},onEvent(l){listeners.add(l);return ()=>listeners.delete(l);},async stop(){if(id===task.id)await sourceStop?.();live.delete(session);},async backgroundState(){return {known:true,active:0};}};live.add(session);return session;},async list(){return [];},async delete(){return false;}});
  const factory=new NativeAgentFactory({workspaces,pi:factoryFor(),codex:{command:'fixture'},codexSessionFactory:(_id,_cwd,bound)=>factoryFor(bound)});
  factory.engines=async()=>[{id:'pi',name:'Pi',available:true},{id:'codex',name:'Codex',available:true}];
  factory.engineAvailability=async id=>({id,name:id,available:id==='pi'||id==='codex'});
@@ -37,7 +37,7 @@ async function setup(transfer?:HostServerOptions['transfer']){
   nextFactory.engineAvailability=factory.engineAvailability;
   const next=new HostServer({port:0,token:'test',factory:nextFactory,workspaces:store});await next.start();cleanup.push(()=>next.close());return next;
  };
- return {root,task,host,request,readTask,calls,workspaces,records,restart,live,factory,setSourceStop:(value:()=>Promise<void>)=>{sourceStop=value;},setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;}};
+ return {root,task,host,request,readTask,calls,workspaces,records,restart,live,factory,setSourceStop:(value:()=>Promise<void>)=>{sourceStop=value;},setHold:(value:Promise<void>|undefined)=>{hold=value;},setFail:(value:boolean)=>{fail=value;},setReconstructionEvents:(events:unknown[])=>{reconstructionEvents=events;}};
 }
 // Durable takeover commit precedes Host session adoption/export and lock release.
 // Observe the public running state before asking for another lifecycle mutation.
@@ -114,6 +114,30 @@ it('switches back into a fresh Pi session and retains both previous segments',as
  const task=await app.readTask();expect(task.engine).toBe('pi');expect(task.takeoverSegments).toHaveLength(2);
  expect(app.calls).toHaveLength(2);expect(app.calls[1].id).not.toBe(app.task.id);
  expect(app.records.get(app.task.id)?.[0]).toMatchObject({text:'Keep the uncommitted fix. Continue testing.'});
+});
+it('allows Pi RPC notifications during Codex to Pi takeover',async()=>{
+ const app=await setup();
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+ await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('completed');
+ await waitForTakeoverIdle(app.host,app.task.id);
+ app.setReconstructionEvents(['notify','setStatus','setWidget','setTitle','set_editor_text'].map(method=>({type:'extension_ui_request',id:method,method})));
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'pi',expectedEngine:'codex',acceptDrift:true})).status).toBe(202);
+ await expect.poll(async()=>(await app.readTask()).takeover?.status).not.toBe('preparing');
+ const task=await app.readTask();
+ expect(task.takeover?.status).toBe('completed');
+ expect(task.engine).toBe('pi');
+});
+it.each([
+ ['Pi question',{type:'extension_ui_request',id:'question',method:'select'}],
+ ['unknown Pi UI request',{type:'extension_ui_request',id:'question',method:'future_request'}],
+ ['native request',{type:'native_request',id:'request'}],
+ ['process interruption',{type:'agent_interrupted'}],
+])('retains the source binding when takeover encounters a %s',async(_name,event)=>{
+ const app=await setup();
+ app.setReconstructionEvents([event]);
+ expect((await app.request({action:'takeover',id:app.task.id,engine:'codex',expectedEngine:'pi',acceptDrift:true})).status).toBe(202);
+ await expect.poll(async()=>(await app.readTask()).takeover?.status).toBe('failed');
+ expect((await app.readTask()).engine).toBe('pi');
 });
 it('requires explicit consent, rejects Chat and stale Agent selection',async()=>{
  const app=await setup();const chat=await app.workspaces.createChatConversation();
