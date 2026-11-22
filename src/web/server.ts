@@ -2,6 +2,7 @@ import { publicPluginReleases } from '../shared/plugin-release.js';
 import {githubSecret} from '../shared/github-credentials.js';
 import {Restarts,RestartError,type RestartOptions} from './restart.js';
 import {readReleaseIdentity,releaseVersion,releaseCommit} from '../shared/release.js';
+import {publicDiskBackupStatus} from '../shared/disk-backup-status.js';
 import {isShellPath,loginDestination} from './conversation-route.js';
 import {GitHubOAuth,type GitHubOAuthOptions} from './github-oauth.js';
 import { USER_HEADER,ACTOR_HEADER } from "../shared/identity.js";
@@ -276,9 +277,10 @@ export class WebServer {
         const session=await this.identity?.authorize(request);if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
         if(request.method!=='GET'){json(response,405,{error:'Method not allowed'});return;}
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
-        const upstream=await this.hostApi(route,'/api/release','GET');const body=upstream.ok?await upstream.json():{};
+        const actor = session?.login ?? this.auth?.principalOf(request)?.user;
+        const upstream=await this.hostApi(route,'/api/release','GET',undefined,actor);const body=upstream.ok?await upstream.json():{};
         const backend=await readReleaseIdentity(this.releaseDir),frontend=await readReleaseIdentity(this.publicDir,'release-manifest.json');
-        json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion),hostPlugins:publicPluginReleases(body.hostPlugins)});
+        json(response,200,{webBackendCommit:backend.commit,webVersion:backend.version,frontendCommit:frontend.commit,frontendVersion:frontend.version,hostBackendCommit:releaseCommit(body.hostBackendCommit),hostVersion:releaseVersion(body.hostVersion),hostPlugins:publicPluginReleases(body.hostPlugins),diskBackup:actor ? publicDiskBackupStatus(body.diskBackup) : undefined});
       }catch{json(response,503,{error:'Release status unavailable'});}return;
     }
     const engineRead = path === '/api/engines' || /^\/api\/engines\/(?:directory|(?:pi|codex|claude|cursor|grok)(?:\/retry)?)$/.test(path);
