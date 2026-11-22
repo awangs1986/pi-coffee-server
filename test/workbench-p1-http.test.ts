@@ -143,10 +143,10 @@ it('reports qualified source separately from the selected Host plugin and omits 
     return dir;
   }
   const lsp = await packageRoot('stock-lsp','pi-coffee-lsp','0.4.8');
-  await packageRoot('stock-harness','pi-coffee-harness','0.3.4');
+  await packageRoot('stock-harness','pi-coffee-harness','0.3.5');
   const overridden = await packageRoot('custom-root','pi-coffee-harness','9.0.0',false);
-  await packageRoot('stock-handoff','context-handoff','0.2.0-experimental.7');
-  await packageRoot('stock-mishu','pi-coffee-mishu','0.4.0-experience.2');
+  await packageRoot('stock-handoff','context-handoff','0.2.0-experimental.8');
+  await packageRoot('stock-mishu','pi-coffee-mishu','0.4.0-experience.3');
   const factory = {list:async()=>[],delete:async()=>false,create:async()=>{throw Error('No native thread');}};
   const host = new HostServer({port:0,token:'plugin-fixture',factory,requireUser:true,
     pluginProvenance: () => readPluginProvenance({releaseDir:root,selectedRoots:[lsp,overridden],mishuEligible:true,resolvePackage:name=>manifests.get(name)}),
@@ -164,10 +164,10 @@ it('reports qualified source separately from the selected Host plugin and omits 
   expect(data.hostPlugins).toEqual(expect.arrayContaining([
     expect.objectContaining({name:'pi-coffee-lsp', state:'selected', installedVersion:'0.4.8', effectiveVersion:'0.4.8',
       artifactVersion:'0.4.8', integrity:expect.stringMatching(/^sha512-/), source:expect.objectContaining({commit:'dcbcc74367a53fd0355e3b2befdf7a0752beee88'})}),
-    expect.objectContaining({name:'pi-coffee-harness',state:'override',installedVersion:'0.3.4',effectiveVersion:'9.0.0'}),
+    expect.objectContaining({name:'pi-coffee-harness',state:'override',installedVersion:'0.3.5',effectiveVersion:'9.0.0'}),
     expect.objectContaining({name:'context-handoff',state:'disabled'}),
     expect.objectContaining({name:'pi-coffee-mishu',state:'conditional',source:{repository:'awangs/pi-coffee-mishu',
-      tag:'candidates/pi-1.4.0-08fbd13',commit:'08fbd13bee42a3106555c92cd432d359b7d4cfec'}}),
+      tag:'candidates/pi-1.6.0-1cc31cbe',commit:'1cc31cbeec1fda4c61bb86ef422f5fb15b359678'}}),
   ]));
   expect(JSON.stringify(data)).not.toContain(root);
   expect(JSON.stringify(data)).not.toContain('never-public');

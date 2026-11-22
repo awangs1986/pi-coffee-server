@@ -5,15 +5,17 @@ import { PLUGIN_REPOSITORIES, pluginIntegrity, pluginVersion, type CoffeePluginN
 
 const require = createRequire(import.meta.url);
 const PI_TAG = 'candidates/pi-1.4.0-dcbcc743';
-const MISHU_TAG = 'candidates/pi-1.4.0-08fbd13';
+const PI160_TAG = 'candidates/pi-1.6.0-3d61b424';
+const MISHU_TAG = 'candidates/pi-1.6.0-1cc31cbe';
 const PI_COMMIT = 'dcbcc74367a53fd0355e3b2befdf7a0752beee88';
-const MISHU_COMMIT = '08fbd13bee42a3106555c92cd432d359b7d4cfec';
+const PI160_COMMIT = '3d61b424a98e56643a21e109b9ed9f8a768b7d03';
+const MISHU_COMMIT = '1cc31cbeec1fda4c61bb86ef422f5fb15b359678';
 /** Qualified release tag and digest pairs. An unrecorded artifact is shown without a source claim. */
 const qualified = {
-  'pi-coffee-harness': { tag:PI_TAG, commit:PI_COMMIT, version:'0.3.4', integrity:'sha512-PFokh1JTe4X8uIT5/qFPSu2tZpLG3A8bDu18NjsCeckdd2l41I03YDixf4fUw3ag+/U1VOq6PpH8RWTv996G0A==' },
+  'pi-coffee-harness': { tag:PI160_TAG, commit:PI160_COMMIT, version:'0.3.5', integrity:'sha512-DHcNgkLYvOFURKsFFpbXWsV0OJIoAfm1OB0FGAlz9PqgW48Gy2aZ+AmtZ4PjoSoqAtz5lyveNm1ZEQy01o9hDg==' },
   'pi-coffee-lsp': { tag:PI_TAG, commit:PI_COMMIT, version:'0.4.8', integrity:'sha512-BGEMamwEgmYNOSwHp9ZLGqs5/A1RRh/aH7e4/1ls/45v7QP2vZqe962b+2Ltmhd8mrVEG5PgzDX1U3RxpVAtQw==' },
-  'context-handoff': { tag:PI_TAG, commit:PI_COMMIT, version:'0.2.0-experimental.7', integrity:'sha512-/obHxjR7DDpfTJDu2aU6UDXbLgr0OBlOXJZTtTar4Ti65nS5rszm8MhsNBpro6Jzf1y0bAaqs10K0rc/tHi2AA==' },
-  'pi-coffee-mishu': { tag:MISHU_TAG, commit:MISHU_COMMIT, version:'0.4.0-experience.2', integrity:'sha512-7p8XqQM/FnfgZFGS8rLGYfOvcee6epan7i8BePZK2Hki6UOujnA5pviDBADum2KJ2PCYnFQMKBJ0u124qdMjiA==' },
+  'context-handoff': { tag:PI160_TAG, commit:PI160_COMMIT, version:'0.2.0-experimental.8', integrity:'sha512-wrf1vR4itFiVMIAD2PtUKOTBx2QRK6fJULd3F02gsoszs3YQydNXHeWIAQSbP9hnrCz2a7eh1OZm1wTlGUq61A==' },
+  'pi-coffee-mishu': { tag:MISHU_TAG, commit:MISHU_COMMIT, version:'0.4.0-experience.3', integrity:'sha512-RhxZXNjHqOpKyW/LFNLEu0EinSGdEXOZASBVLTcjI1mNptH/diSPsNw65jCj1S+/1KDQt8aAMTU1tg2xkjlUvw==' },
 } satisfies Record<CoffeePluginName, { tag:string; commit:string; version:string; integrity:string }>;
 
 type LockEntry = { version?: unknown; resolved?: unknown; integrity?: unknown };

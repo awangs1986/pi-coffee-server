@@ -17,5 +17,6 @@ export function resolveHostPiExtensions(env: NodeJS.ProcessEnv = process.env): s
   packages.push(dirname(require.resolve('pi-coffee-harness/package.json')));
   if(!disabled(env.PI_COFFEE_LSP))packages.push(dirname(require.resolve('pi-coffee-lsp/package.json')));
   if(!disabled(env.PI_COFFEE_HANDOFF) && !disabled(env.PI_COFFEE_CONTEXT_FOLD))packages.push(dirname(require.resolve('context-handoff/package.json')));
+  if(!disabled(env.PI_COFFEE_GOALPLUS))packages.push(dirname(require.resolve('pi-goalplus/package.json')));
   return packages;
 }

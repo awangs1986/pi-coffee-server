@@ -333,6 +333,7 @@ Latest-history selection regression and acceptance: [2026-10-04 evidence](review
 
 - [2026-10-23 UI review and five regression fixes](reviews/ui-settings-20261023.md): edited-field saves, Pi speed isolation, bounded save recovery, takeover draft preservation and late initial catalogs.
 
+- [Pi 1.6.0 / Server 1.09 package and backup compatibility](development/pi-140-upgrade.md#pi-160-and-server-109).
 - [Pi 1.4 consumer candidate](development/pi-140-upgrade.md): native package upgrade, xAI OAuth and deferred idle activation.
 
 - [Pi 1.4 and Go/OpenRouter DeepSeek model selection](spec/native-agent-engines.md#pi-chat-provider-selection-2026-10-29): next-maintenance policy, private native credentials and explicit activation boundary.

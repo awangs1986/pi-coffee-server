@@ -60,3 +60,19 @@ Pi native catalog coverage verifies Muse and both DeepSeek V4.1 Flash providers
 without generating model turns. See the current native-engine model contract.
 DOMPurify 3.4.17 and Vitest 4.1.12 address advisories found during this refresh.
 Production credentials, backups and deployment receipts remain outside source.
+
+## Pi 1.6.0 and Server 1.09
+
+The Host pins the four native Pi packages to 1.6.0, Harness to 0.3.5,
+LSP to 0.4.8, Handoff to 0.2.0-experimental.8, and MISHU to
+0.4.0-experience.3. The explicit package roots also load subagents 0.89.2,
+Web Access 0.48.0, Antigravity 0.15.0 when its models are enabled,
+XAI OAuth 1.7.3-coffee.1, and GoalPlus 0.1.1. `PI_COFFEE_GOALPLUS=off`
+disables GoalPlus at the Host package boundary. The lockfile records the digest
+for each candidate artifact.
+
+The Pi native backup audit, Host adapter and stored custody receipt accept the
+qualified 1.6.0 SDK alongside 1.1.0 and 1.4.0. The SDK must read a format-3
+session under the authorized root without rewriting its stored bytes. Host
+acceptance covers capture and restore, resume and reconnect history, direct
+Handoff, and a subagent using the same native version as its parent.
