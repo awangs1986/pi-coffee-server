@@ -1,4 +1,5 @@
 import {appendPluginVersions} from './plugin-versions.js';
+import {appendDiskBackupStatus} from './disk-backup-status.js';
 import {canonicalTaskPath,previewKind} from './task-file-reference.js';
 import {openTaskFilePreview} from './task-file-preview.js';
 import {createTaskFileAccess,installTaskDownloads} from './task-file-access.js';
@@ -447,6 +448,16 @@ function toggleBrandMenu() {
 }
 
 let releaseStatusRequest=0;
+function resetReleaseStatus() {
+  releaseStatusRequest++;
+  const target = $('#release-status');
+  if (target) {
+    target.textContent = '版本信息';
+    target.removeAttribute('title');
+  }
+  closeBrandMenu();
+}
+
 async function loadReleaseStatus(){
   const target=$('#release-status');if(!target)return;
   const request=++releaseStatusRequest,user=currentUser;
@@ -462,6 +473,7 @@ async function loadReleaseStatus(){
     }));
     target.title=versions.map(([name,,sha])=>name+' '+commit(sha)).join('\n');
     appendPluginVersions(target,data.hostPlugins);
+    appendDiskBackupStatus(target,data.diskBackup);
   }catch{if(request===releaseStatusRequest&&user===currentUser)target.textContent='版本信息暂不可用';}
 }
 
@@ -1652,6 +1664,7 @@ async function whoAmI(epoch, signal) {
     const previousUser=currentUser;
     backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
+    if(previousUser!==currentUser)resetReleaseStatus();
     if(previousUser!==currentUser && disposeFilePreview)closeWorkspaceDetail();
     if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     engineDirectory.setScope(currentUser ?? 'local');
@@ -1673,6 +1686,7 @@ async function whoAmI(epoch, signal) {
   }
 }
 function revokeCachedIdentity(){
+  resetReleaseStatus();
   if(workspaceDetailOpen)closeWorkspaceDetail();
   goalControls.reset();
   engineDirectory.setScope(undefined);

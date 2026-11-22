@@ -17,6 +17,7 @@ import {parseRequestTarget} from '../shared/http.js';
 import {compactEntry,compactEvent} from "./conversation-projection.js";
 import {MishuStateError} from './mishu-state.js';
 import {readReleaseIdentity} from '../shared/release.js';
+import {readDiskBackupStatus} from './disk-backup-monitor.js';
 import {runLifecycle} from '../shared/run-lifecycle.js';
 import {MishuCoordinator} from './mishu.js';
 import {createRequire} from 'node:module';
@@ -84,6 +85,7 @@ export interface HostServerOptions {
 
 
   releaseDir?:string;
+  diskBackupStatusDir?: string;
   runtimeStatus?: () => PiRuntimeStatus;
   pluginProvenance?: (mishuEligible: boolean) => Promise<PluginRelease[]>;
   host?: string;
@@ -619,9 +621,14 @@ export class HostServer {
     }
     if(req.url === "/api/revoke-files" && req.method === "POST") {for(const [grant,target] of this.transferTargets)if(await target.slot===slot){await this.transfer?.revoke(grant);this.transferTargets.delete(grant);}json(res,200,{ok:true});return;}
     if (req.url === '/api/release' && req.method === 'GET') {
-      const release = await readReleaseIdentity(this.options.releaseDir ?? process.cwd());
-      const plugins = await this.options.pluginProvenance?.(Boolean(slot.mishu) && this.options.runtimeStatus?.().mode!=='emergency').catch(()=>undefined);
-      json(res,200,{hostBackendCommit:release.commit,hostVersion:release.version,hostPlugins:publicPluginReleases(plugins)});
+      const monitorDirectory = this.options.diskBackupStatusDir;
+      const backupOwner = this.options.backup?.administrator ?? 'awangs';
+      const [release, plugins, diskBackup] = await Promise.all([
+        readReleaseIdentity(this.options.releaseDir ?? process.cwd()),
+        this.options.pluginProvenance?.(Boolean(slot.mishu) && this.options.runtimeStatus?.().mode!=='emergency').catch(()=>undefined),
+        actor === backupOwner && monitorDirectory ? readDiskBackupStatus(monitorDirectory) : undefined,
+      ]);
+      json(res,200,{hostBackendCommit:release.commit,hostVersion:release.version,hostPlugins:publicPluginReleases(plugins),diskBackup});
       return;
     }
     if(req.url === '/api/runtime' && req.method === 'GET') {

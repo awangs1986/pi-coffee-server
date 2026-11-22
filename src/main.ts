@@ -268,6 +268,8 @@ async function run(selectedRole: Role): Promise<void> {
     }),
     ...(backupCoordinator?{backup:{personal:personalEnabled,gitea,giteaProfile,coordinator:backupCoordinator,restore:restoreCoordinator,accountRecovery,collection,...(scheduleForActor?{scheduleForActor,scheduleConnection}:{}),...(personalRepository?{repository:personalRepository,binary:process.env.PI_COFFEE_RESTIC_BINARY}:brokerConfig?{repositoryForActor:(actor:string|undefined,dataScope:string)=>actor?new BackupRepositoryClient({...brokerConfig,actor,dataScope}):undefined,configureRepositoryForActor:async(actor:string|undefined,dataScope:string)=>{if(!actor)throw new BackupError('forbidden','Authenticated administrator required');await new BackupRepositoryClient({...brokerConfig,actor,dataScope}).configure();}}:{binary:process.env.PI_COFFEE_RESTIC_BINARY,activationUnavailable:'Runtime secret is not isolated from unrestricted model processes'}),administrator:'awangs',scopes:envList("PI_COFFEE_BACKUP_USERS")}}:{}),
     releaseDir:process.env.PI_COFFEE_RELEASE_DIR??process.cwd(),
+    diskBackupStatusDir:process.env.PI_COFFEE_DISK_BACKUP_MONITOR_DIR?.trim() ||
+      join(process.env.XDG_STATE_HOME || join(homedir(),'.local','state'),'pi-coffee','disk-backup-monitor'),
     eventBufferSize: envNumber("PI_COFFEE_EVENT_BUFFER", 256),
     idleTimeoutMs,
     requireUser: envFlag("PI_COFFEE_REQUIRE_USER"),

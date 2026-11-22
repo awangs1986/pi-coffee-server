@@ -817,6 +817,38 @@ it('shows the actually deployed Web/Host/browser versions in the compact Logo me
  document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();app.network.release={webVersion:'<img src=x>',webBackendCommit:'/private/path',hostVersion:'unknown'};document.querySelector<HTMLButtonElement>('#brand-menu-btn')!.click();await tick();expect(label.textContent).toContain('未标记');expect(label.querySelector('img')).toBeNull();expect(label.getAttribute('title')).not.toContain('/private');
 });
 
+it('shows disk-backup health and the last completed backup in Beijing time below the versions', async () => {
+  const app = await setup();
+  const brand = document.querySelector<HTMLButtonElement>('#brand-menu-btn')!;
+  const label = document.querySelector('#release-status')!;
+  const lastBackupAt = '2026-11-21T22:10:52.000Z';
+  app.network.release.diskBackup = {state:'healthy',lastBackupAt};
+  brand.click();
+  await tick();
+  expect(label.textContent).toContain('备份状态 · 正常');
+  expect(label.textContent).toContain('最后备份 · 2026-11-22 06:10（北京时间）');
+  expect(label.textContent!.indexOf('页面 v0.13')).toBeLessThan(label.textContent!.indexOf('备份状态'));
+
+  for (const [state, caption] of [['running','备份中'], ['retrying','等待重试'], ['warning','异常'], ['stale','监控超时']]) {
+    brand.click();
+    app.network.release.diskBackup = {state,lastBackupAt};
+    brand.click();
+    await tick();
+    expect(label.textContent).toContain('备份状态 · '+caption);
+    expect(label.textContent).toContain('最后备份 · 2026-11-22');
+  }
+  brand.click();
+  app.network.release.diskBackup = {state:'waiting',lastBackupAt:null};
+  brand.click();
+  await tick();
+  expect(label.textContent).toContain('备份状态 · 等待备份');
+  expect(label.textContent).toContain('最后备份 · 暂无成功记录');
+
+  window.dispatchEvent(new StorageEvent('storage',{key:'pi-coffee.preview-clear.v1',newValue:'identity:logout'}));
+  await tick();
+  expect(label.textContent).not.toContain('最后备份');
+});
+
 
 describe('conversation display menu',()=>{
  it.each(['pi','codex','claude','cursor','grok'] as const)('defaults to compact below speed and changes a busy %s conversation without losing the draft',async engine=>{
