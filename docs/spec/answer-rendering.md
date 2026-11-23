@@ -89,7 +89,7 @@ Agent, submits a prompt or changes native history.
 
 | Content | User-visible behavior |
 | --- | --- |
-| Task-owned PNG, SVG and other supported images | Offer Preview and Download from the answer for an explicit file link, embedded image or verified delivery. Render SVG as an image resource. Raw SVG in message markup stays subject to sanitization. A fenced SVG example stays copyable source. |
+| Task-owned PNG, SVG and other supported images | Display the picture directly in the answer for a task image link, embedded image or verified delivery, including while the download list is collapsed. Reuse the versioned preview grant and keep the original download. Repeated references to a file share its preview. Render SVG as an image resource. Raw SVG in message markup stays subject to sanitization. A fenced SVG example stays copyable source. |
 | Markdown file | Offer a sanitized document preview and download of the original bytes. Relative images go through the same task-scoped resolver. |
 | HTML file or native visualization | Keep the original attachment download. An explicit Preview opens an isolated, static view. Active content cannot execute in the application, navigate it, access credentials or fetch other resources through its grant. |
 | Other authorized files | Offer the original download, including ZIP and files above the existing preview limit. A missing renderer or oversized preview does not disable download. PDF enhancements, math and in-message diff rendering are later options. |

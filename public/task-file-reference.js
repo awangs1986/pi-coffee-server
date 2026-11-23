@@ -33,6 +33,22 @@ export function previewKind(path){
   return null;
 }
 
+// A scoped URL is attached by bindWorkspaceArtifactLinks once the view has a grant.
+export function inlineFileImage(doc,path,label) {
+  const wrapper=doc.createElement('span');
+  wrapper.className='workspace-image';
+  const status=doc.createElement('span');
+  status.className='workspace-image-status';
+  status.setAttribute('role','status');
+  status.textContent='等待图片访问授权…';
+  const image=doc.createElement('img');
+  image.loading='lazy';
+  image.alt=label || path.split('/').at(-1);
+  image.dataset.workspacePath=path;
+  wrapper.append(status,image);
+  return wrapper;
+}
+
 export function addFilePreviewActions(row,canonical,enabled){
   const buttons=new Map([...row.querySelectorAll('button[data-preview-path]')].map(b=>[b.dataset.previewPath,b]));
   const seen=new Set();

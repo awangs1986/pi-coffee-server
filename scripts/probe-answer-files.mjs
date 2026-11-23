@@ -42,6 +42,7 @@ const zip=Buffer.from([0x50,0x4b,3,4,0xff,0]);
 const old=Buffer.from('original legacy fixture'), large=Buffer.alloc(10*1024*1024+1,65);
 const message=(key,text)=>({id:'row-'+key,kind:'assistant',sourceMessageKey:'pi-message:'+key,text});
 const records=[...Array.from({length:48},(_,i)=>message(i+1,'Saved reply '+(i+1))),
+  {id:'user-upload',kind:'user',text:'附件\n\n[已上传到工作目录的文件]\n- ../attachments/sent.png (68 B)'},
   message(53,'[large binary](../artifacts/large.bin)'),message(49,'[encoded](../artifacts/'+encodeURIComponent(fileName)+'?view=1#figure) [absolute](<'+join(artifacts,fileName).replace('%','%25')+'>)'),
   message(50,'x'.repeat(8181)+' [long file](../artifacts/export.zip)\n'+'y'.repeat(9000)),
   message(54,'~~~svg\n<svg></svg>\n~~~'),message(55,'\uE200visualize\uE202{"path":"../artifacts/report.html"}\uE201'),
@@ -110,6 +111,7 @@ try {
   await mkdir(join(artifacts,'docs'));await writeFile(join(artifacts,'docs','notes.md'),markdown);
   await writeFile(join(artifacts,fileName),svg);await writeFile(join(artifacts,'report.html'),html);await writeFile(join(artifacts,'export.zip'),zip);
   await writeFile(join(artifacts,'pixel.png'),png);
+  await writeFile(join(task.taskRoot,'attachments','sent.png'),png);
   tracked.observe(id,{type:'message_end',message:{role:'assistant',timestamp:52,content:[{type:'text',text:records.at(-1).text}]}});
   assert.equal(await tracked.observe(id,{type:'agent_settled'}),true);
   await host.close();await startHost(activePort);
@@ -150,6 +152,15 @@ try {
   const route=base+'/conversations/'+id;
   await page.goto(route);
   const last=page.locator('[data-delivery-key="pi-message:52"]');
+  await page.waitForFunction(()=>{
+    const delivered=document.querySelector('[data-delivery-key="pi-message:52"] .answer-images img[data-workspace-path$="pixel.png"]');
+    const linked=document.querySelector('[data-delivery-key="pi-message:49"] .answer-images img');
+    const uploaded=document.querySelector('.msg.user img[data-workspace-path$="sent.png"]');
+    return delivered?.naturalWidth===1 && linked?.naturalWidth===23 && uploaded?.naturalWidth===1;
+  });
+  assert.equal(await last.locator('details[open]').count(),0);
+  assert.equal(await page.locator('[data-delivery-key="pi-message:49"] .answer-images img').count(),1);
+  results.automaticInlineImages=true;
   await last.locator('.answer-deliveries summary').click();
   await download(last.getByRole('link',{name:'下载 export.zip',exact:true}),'export.zip',zip);
   results.temporaryLookup=metadataReads>=2;assert.equal(results.temporaryLookup,true);

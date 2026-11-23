@@ -929,6 +929,7 @@ function pushUser(text, images, imageCount, files) {
   entry.node = userBubble(entry);
   entries.push(entry);
   appendNode(entry.node);
+  bindUserImagePreviews(entry.node);
   if(currentActivity){updateActivity(currentActivity,activityCount,false);currentActivity.open=false;}
   currentActivity = undefined;
   return entry;
@@ -3096,7 +3097,14 @@ function renderUploadLogCard() {
   if (uploadLog.length > 20) card.append(el('p', 'workspace-note', `其余 ${uploadLog.length - 20} 个文件仍在工作区可用。`));
 }
 
+function bindUserImagePreviews(root) {
+  for(const strip of root.querySelectorAll('.user-file-previews')){
+    bindWorkspaceArtifactLinks(strip,(action,path)=>fileViewScope()?fileEndpoint(action,path):null,
+      {context:fileViewScope,recover:path=>readTaskFile('preview',path,{method:'HEAD'})});
+  }
+}
 function refreshToolDownloadLinks(changed) {
+  if(changed?.k==='user' && changed.node)bindUserImagePreviews(changed.node);
   for (const entry of changed?[changed]:entries) if (entry.k === 'tool' && entry.node) addToolDownloadLink(entry);
   for (const chip of (changed?.node||ui.thread).querySelectorAll('.file-chip[data-upload-path]')) {
     const path = chip.dataset.uploadPath;
@@ -4277,6 +4285,7 @@ function bindWorkspaceArtifacts(changed,force=false) {
     const grant=JSON.stringify([fileViewScope(),transfer?.url,transfer?.token]);
     if(!force && grant===boundGrant)return;
     boundGrant=grant;
+    bindUserImagePreviews(ui.thread);
   }
   const rows=changed??[...ui.thread.querySelectorAll('.msg.assistant')];
   answerDeliveries.refresh(false,rows);

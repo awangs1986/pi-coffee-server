@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import {expect,it,vi} from 'vitest';
 import {bindWorkspaceArtifactLinks} from '../public/workspace-artifacts.js';
-import {assistantNode,renderMarkdown} from '../public/render.js';
+import {assistantNode,renderMarkdown,userBubble} from '../public/render.js';
+import {createAnswerDeliveries} from '../public/answer-deliveries.js';
 import {ConversationSyncView} from '../public/conversation-sync-view.js';
 
 it('keeps authored downloads outside the text budget and leaves fenced examples inert',()=>{
@@ -129,4 +130,34 @@ it('escapes visualize filenames instead of turning them into chat markup',()=>{
  const link=root.querySelector<HTMLElement>('.visualization-download')!;
  expect(link.dataset.workspacePath).toBe(path);expect(root.querySelector('img,script,iframe')).toBeNull();
  expect(link.hasAttribute('onerror')).toBe(false);
+});
+
+
+it('shows linked and delivered pictures inline above collapsed downloads, also on bounded replies',async()=>{
+ const root=document.createElement('div');document.body.append(root);
+ const path='../artifacts/chart.png', other='../artifacts/output.svg';
+ const short=assistantNode({id:'short',text:'[图表]('+path+') [下载原图]('+path+')'});
+ const long=assistantNode({id:'long',text:'x'.repeat(10000)+' ![图表]('+path+')'});
+ const embed=assistantNode({id:'embed',text:'![图表]('+path+') [原图]('+path+')'});
+ root.append(short,long,embed);
+ const endpoint=(p:string,v:string|undefined,action='workspace-download')=>'/'+action+'?'+new URLSearchParams({path:p,...(v?{version:v}:{})});
+ const controller=createAnswerDeliveries({root,context:()=> 'task',endpoint,
+  load:async()=>[{key:'native-message:short',files:[{path,version:'v1',available:true},{path:other,version:'v2',available:true},{path:'output.zip',available:true}]}],
+  bindReferences:row=>bindWorkspaceArtifactLinks(row,(action,p)=>controller.referenceUrl(row,action,p))});
+ controller.refresh();
+ await vi.waitFor(()=>expect(short.querySelectorAll('img[src]')).toHaveLength(2));
+ expect(short.querySelector('details')?.open).toBe(false);
+ expect(short.querySelector('details img')).toBeNull();
+ expect(short.querySelector('img')?.getAttribute('src')).toBe(endpoint(path,'v1','preview'));
+ expect(short.querySelector('a')?.getAttribute('href')).toBe(endpoint(path,'v1'));
+ expect(long.querySelectorAll('img[src]')).toHaveLength(1);
+ expect(embed.querySelectorAll('img[src]')).toHaveLength(1);
+ const original=short.querySelector('img');controller.refresh();expect(short.querySelector('img')).toBe(original);
+ root.remove();
+});
+
+it('shows a saved user image attachment once, including when its native image bytes are absent',()=>{
+ const input={text:'图片',files:[{name:'shot.png',path:'../attachments/shot.png'}]};
+ expect(userBubble(input).querySelector('img')?.dataset.workspacePath).toBe('../attachments/shot.png');
+ expect(userBubble({...input,images:[{mimeType:'image/png',data:'AA=='}]}).querySelectorAll('img')).toHaveLength(1);
 });

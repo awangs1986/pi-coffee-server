@@ -1,9 +1,41 @@
-import {addFilePreviewActions} from './task-file-reference.js';
+import {addFilePreviewActions,inlineFileImage,previewKind} from './task-file-reference.js';
 const KEY = /^(?:pi-message:[0-9]{1,16}|native-message:[a-zA-Z0-9_.:-]{1,200})$/;
 
 export function setAnswerDeliveryKey(node, answer) {
   const key = answer.sourceMessageKey || (answer.id ? 'native-message:'+answer.id : '');
   if (answer.status !== 'inProgress' && KEY.test(key)) node.dataset.deliveryKey = key;
+}
+
+// File links keep their download action. Render one inline preview per canonical
+// image outside the collapsible file list, unless Markdown already embeds it.
+function syncAnswerImages(row,canonical,enabled) {
+  let gallery=row.querySelector(':scope > .answer-images');
+  if(!enabled){gallery?.remove();return;}
+  const embedded=new Set(Array.from(row.querySelectorAll('.body img[data-workspace-path]'),img=>canonical(img.dataset.workspacePath)));
+  const existing=new Map(Array.from(gallery?.children || [],wrapper=>[wrapper.querySelector('img').dataset.workspacePath,wrapper]));
+  const links=row.querySelectorAll('.body a[data-workspace-path],.answer-references a[data-workspace-path],.answer-deliveries a[data-delivery-path]');
+  for(const link of links) {
+    const path=canonical(link.dataset.deliveryPath || link.dataset.workspacePath);
+    if(embedded.has(path) || link.dataset.deliveryUnavailable==='true' ||
+      (previewKind(path)!=='image' && !link.hasAttribute('data-image-reference')))continue;
+    embedded.add(path);
+    if(!gallery) {
+      gallery=row.ownerDocument.createElement('div');
+      gallery.className='answer-images';
+      row.querySelector('.body').after(gallery);
+    }
+    let wrapper=existing.get(path);
+    if(!wrapper) {
+      wrapper=inlineFileImage(row.ownerDocument,path,path.split('/').at(-1));
+      gallery.append(wrapper);
+    }
+    existing.delete(path);
+    const image=wrapper.querySelector('img');
+    if(link.dataset.deliveryVersion)image.dataset.deliveryVersion=link.dataset.deliveryVersion;
+    else delete image.dataset.deliveryVersion;
+  }
+  for(const wrapper of existing.values())wrapper.remove();
+  if(gallery && !gallery.childElementCount)gallery.remove();
 }
 
 export function createAnswerDeliveries({root, context, load, endpoint,canonical=path=>path,bindReferences=()=>{}}) {
@@ -29,6 +61,7 @@ export function createAnswerDeliveries({root, context, load, endpoint,canonical=
   function paint(nodes) {
     for (const node of nodes) {
       paintRow(node);
+      syncAnswerImages(node,canonical,Boolean(scope));
       bindReferences(node);
     }
     for (const node of nodes) addFilePreviewActions(node,canonical,Boolean(scope));

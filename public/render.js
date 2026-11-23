@@ -1,5 +1,5 @@
 import {setAnswerDeliveryKey} from './answer-deliveries.js';
-import {markdownFilePath} from './task-file-reference.js';
+import {inlineFileImage,markdownFilePath,previewKind} from './task-file-reference.js';
 import {answerFileReferences} from './answer-file-references.js';
 import {splitUploadedFilesText} from './uploaded-files.js';
 // Rendering of messages, tool calls and Markdown. Pure view code: it turns
@@ -407,7 +407,15 @@ export function userBubble(entry) {
       strip.appendChild(img);
     }
     bubble.appendChild(strip);
-  } else if (entry.imageCount) {
+  } else {
+    const paths=new Set(parsed.files.map(file=>file.uploadPath || file.path).filter(path=>previewKind(path)==='image'));
+    if(paths.size) {
+      const strip=el('div','user-file-previews');
+      for(const path of paths)strip.append(inlineFileImage(document,path));
+      bubble.append(strip);
+    }
+  }
+  if (!entry.images?.length && entry.imageCount) {
     bubble.appendChild(el('div', 'thumbs-note', `[${entry.imageCount} 张图片]`));
   }
   node.appendChild(bubble);
@@ -431,7 +439,9 @@ export function showAnswerReferences(node, refs) {
     if(present.has(ref.path))continue;
     present.add(ref.path);
     const link=el('a','artifact-download',ref.label || ref.path.split('/').at(-1));
-    link.dataset.workspacePath=ref.path;link.dataset.workspaceDownload='true';group.append(link);
+    link.dataset.workspacePath=ref.path;link.dataset.workspaceDownload='true';
+    if(ref.image)link.dataset.imageReference='true';
+    group.append(link);
   }
   if(!group.childElementCount){previous?.remove();return;}
   if(previous)previous.replaceWith(group);else body.after(group);
