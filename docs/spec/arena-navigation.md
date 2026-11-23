@@ -55,6 +55,21 @@ Native Codex/Claude authentication remains their own user-VM authentication.
 
 ## Navigation
 
+A prompt reserved by Host counts as running even while its native agent is
+starting. The sidebar and the state returned when reopening the task include
+this interval, including for a first message. A follow-up enters the editable
+queue and waits for the current command to finish. Native steering requires a
+running native turn. An unrelated command error leaves the composer in its
+current mode. For Codex, a delayed completion for an earlier turn cannot end
+the current turn or clear its running indicator.
+
+For a previously created task, an open socket with healthy heartbeats does
+not prove that the task subscription has delivered history. If the selected
+task still lacks its first history frame after 20 seconds, reattach once,
+preserve the draft, and never replay input. After a second timeout, offer a
+manual retry for that conversation. Start event deduplication at the new
+attachment boundary even when cached or indexed history stays visible.
+
 Busy sidebar refreshes preserve the current keyboard/action focus with
 `preventScroll: true`. Restoring a row, menu button or group heading must not
 scroll the list back to that element when the user is reading further down.

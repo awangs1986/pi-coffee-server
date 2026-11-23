@@ -1676,7 +1676,8 @@ class HostSocket implements SessionSink {
       // Follow-ups remain editable in the Host until native delivery; steering is native.
       // If nothing is running, treat it as a plain prompt so the message is
       // never silently parked.
-      if (this.session.isStreaming) {
+      if (this.session.hasActiveRun) {
+        if (frame.mode === "steer" && !this.session.isStreaming) throw new SessionBusyError();
         if(frame.mode==='steer')await this.mishu?.validateSteer(this.session.id);
         // Durable acceptance precedes ACK; native/queue events still follow it.
         await this.session.acceptCommand(frame.requestId,frame.mode);

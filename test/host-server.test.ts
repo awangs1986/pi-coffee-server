@@ -887,6 +887,40 @@ describe("Host WebSocket seam", () => {
     expect(pi.stopped).toBe(true);
   });
 
+  it("shows a reserved run on reconnect and delivers a follow-up exactly once before native start", async () => {
+    const factory = new FakeFactory();
+    server = new HostServer({ port: 0, host: "127.0.0.1", factory });
+    await server.start();
+    const first = await connect(server.address().port), frames = new FrameQueue(first);
+    first.send(encodeFrame({v:1,type:"open"}));
+    const opened = await frames.next();
+    if (opened.type !== "opened") throw Error("expected opened");
+    await frames.next();
+    const pi = factory.sessions.get(opened.sessionId)!;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const deliveries: string[] = [];
+    pi.onPrompt = async text => { deliveries.push(text); if (text === "first") await held; };
+    const second = await connect(server.address().port), observer = new FrameQueue(second);
+    try {
+      first.send(encodeFrame({v:1,type:"prompt",requestId:"one",text:"first"}));
+      await waitFor(() => deliveries.length === 1);
+      second.send(encodeFrame({v:1,type:"open",sessionId:opened.sessionId}));
+      expect(await observer.next()).toMatchObject({type:"opened",state:{isStreaming:true}});
+      await observer.next();
+      second.send(encodeFrame({v:1,type:"list_sessions"}));
+      expect((await observer.nextSessions()).sessions).toContainEqual(expect.objectContaining({id:opened.sessionId,running:true}));
+      second.send(encodeFrame({v:1,type:"prompt",requestId:"two",text:"second",mode:"follow_up"}));
+      expect(await observer.next()).toMatchObject({type:"ack",operation:"follow_up",requestId:"two"});
+      expect(deliveries).toEqual(["first"]);
+      release();
+      await waitFor(() => pi.history.filter(item => item.kind === "assistant").length === 2);
+      expect(deliveries).toEqual(["first","second"]);
+      second.send(encodeFrame({v:1,type:"list_sessions"}));
+      await observer.nextSessions(frame => frame.sessions.some(row => row.id === opened.sessionId && !row.running));
+    } finally { release(); first.close(); second.close(); }
+  });
+
   it("joins a busy run with steer/follow_up and falls back to a plain prompt when idle", async () => {
     const factory = new FakeFactory();
     server = new HostServer({ port: 0, host: "127.0.0.1", factory });

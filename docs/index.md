@@ -147,6 +147,7 @@ Source publication and actual activation remain separate states.
 - Scrollable MISHU setup and current titles with recent-only selection: [contract](spec/mishu.md), [Server #62](https://github.com/awangs1986/pi-coffee-server/issues/62).
 - Selected MISHU Chat identity and current permission state: [repair evidence](reviews/mishu-identity-20261005.md), [Server #59](https://github.com/awangs1986/pi-coffee-server/issues/59).
 
+- In-flight prompts, sidebar running state and queued input on reconnect: [navigation contract](spec/arena-navigation.md#navigation).
 - Busy sidebar scrolling: [navigation contract](spec/arena-navigation.md#navigation), [Server #61](https://github.com/awangs1986/pi-coffee-server/issues/61).
 
 Start with [the repository map](../REPOSITORIES.md) before choosing a source directory or upgrading a plugin.

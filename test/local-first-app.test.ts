@@ -107,7 +107,45 @@ function assistantEvent(engine: Engine, text: string, complete = false) {
   return complete ? { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text }] } } : { type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text } };
 }
 
+it('keeps active input queued after an unrelated operation error', async () => {
+  const app = await setup(), socket = await app.select('a', undefined, true);
+  socket.receive({type:'error',code:'operation_failed',requestId:'unrelated',message:'Auxiliary operation failed'});
+  draft('next instruction');
+  document.querySelector('#composer')!.dispatchEvent(new Event('submit', {cancelable:true}));
+  expect(allFrames.filter(f=>f.type==='prompt')).toMatchObject([{mode:'follow_up',text:'next instruction'}]);
+});
+
 describe('idle connection recovery at the app-controller seam', () => {
+  it('recovers an existing conversation whose socket answers heartbeats but never delivers history',async()=>{
+    const app=await setup();
+    app.transport.replyPings=true;
+    choose('a');await tick();
+    const stalled=app.sockets.at(-1)!;
+    stalled.receive({type:'opened',sessionId:'a',engine:'codex',capabilities,state:{isStreaming:true}});
+    draft('keep this instruction');
+    await tick(21000);
+    const recovered=app.sockets.at(-1)!;
+    expect(recovered).not.toBe(stalled);
+    expect(allFrames.filter(f=>f.type==='open').at(-1)).toMatchObject({sessionId:'a'});
+    recovered.receive({type:'opened',sessionId:'a',engine:'codex',capabilities,state:{isStreaming:true}});
+    recovered.receive({type:'history',sessionId:'a',entries:[{kind:'assistant',text:'Recovered output'}]});
+    await tick();
+    expect(thread().textContent).toContain('Recovered output');
+    expect(prompt().value).toBe('keep this instruction');
+    expect(allFrames.filter(f=>f.type==='prompt')).toEqual([]);
+  });
+  it('accepts new Host cursors after reconnect while retaining indexed history', async()=>{
+    const app=await setup('codex',2), first=await app.select('a');
+    first.receive({type:'event',sessionId:'a',cursor:90,event:{type:'agent_settled'}});
+    first.close();first.onclose?.({code:1006});
+    window.dispatchEvent(new Event('focus'));await tick();
+    const next=app.sockets.at(-1)!;
+    next.receive({type:'opened',syncProtocol:2,bindingEpoch:'epoch-a',sessionId:'a',engine:'codex',capabilities,state:{isStreaming:false},cursor:0});
+    next.receive({type:'history',sessionId:'a',...app.snapshot('a')});await tick();
+    next.receive({type:'event',sessionId:'a',cursor:1,event:{type:'agent_start'}});
+    draft('after restart');document.querySelector('#composer')!.dispatchEvent(new Event('submit',{cancelable:true}));
+    expect(allFrames.filter(f=>f.type==='prompt')).toMatchObject([{mode:'follow_up'}]);
+  });
   it.each(['focus','pageshow','resume'])('restores the selected reply on %s before a throttled retry, without navigation',async event=>{
     const app=await setup();const socket=await app.select('b');draft('Unsent draft for B');
     socket.close();socket.onclose?.({code:1006});

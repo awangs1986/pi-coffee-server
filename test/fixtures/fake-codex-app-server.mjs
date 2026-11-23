@@ -81,7 +81,7 @@ async function mishuCall(config,input){
 
 async function runTurn(thread, input, options) {
   const guidance=[thread.baseInstructions,process.env.FAKE_DEVELOPER_INSTRUCTIONS].filter(Boolean).join('\n');writeFileSync(join(home,'fake-guidance.json'),JSON.stringify(guidance));
-  const turnId = uid("turn");
+  const turnId = options.turnId ?? uid("turn");
   const state = { turnId, interrupted: false };
   active.set(thread.id, state);
   const text = input.filter((part) => part.type === "text").map((part) => part.text).join("\n");
@@ -94,6 +94,10 @@ async function runTurn(thread, input, options) {
   if (options.effort) thread.effort = options.effort;
   save(thread.id);
   notify("turn/started", { threadId: thread.id, turn: { ...turn, items: [] } });
+  if(text==='fixture:late-completion'){
+    notify('turn/completed',{threadId:thread.id,turn:{id:'previous-turn',status:'completed',items:[]}});
+    await waitTrackingGate('release-current-turn');
+  }
   const user = { type: "userMessage", id: uid("item"), clientId: null, content: input };
   turn.items.push(user);
   notify("item/started", { item: user, threadId: thread.id, turnId, startedAtMs: Date.now() });
@@ -374,8 +378,9 @@ rl.on("line", (line) => {
     case "review/start": {
       if(params.delivery!=='inline')return fail('Review must not create a detached thread');
       const thread=threads[params.threadId];if(!thread)return fail('no such thread');
-      reply({turn:{id:uid('review'),status:'inProgress'},reviewThreadId:thread.id});
-      void runTurn(thread,[{type:'text',text:'NATIVE_REVIEW:'+params.target.type+':'+thread.model}],{});return;
+      const turnId=uid('review');
+      reply({turn:{id:turnId,status:'inProgress'},reviewThreadId:thread.id});
+      void runTurn(thread,[{type:'text',text:'NATIVE_REVIEW:'+params.target.type+':'+thread.model}],{turnId});return;
     }
     case 'thread/settings/update': {
       const thread=threads[params.threadId];if(!thread)return fail('no such thread');
@@ -394,9 +399,9 @@ rl.on("line", (line) => {
       const thread = threads[params.threadId];
       if (!thread) return fail("no such thread");
       if (active.has(thread.id)) return fail("turn already active");
-      const turnId = uid("turn-pre");
+      const turnId = uid("turn");
       reply({ turn: { id: turnId, items: [], itemsView: "notLoaded", status: "inProgress", error: null, startedAt: null, completedAt: null, durationMs: null } });
-      void runTurn(thread, params.input, { model: params.model, effort: params.effort,collaborationMode:params.collaborationMode });
+      void runTurn(thread, params.input, { turnId, model: params.model, effort: params.effort,collaborationMode:params.collaborationMode });
       return;
     }
     case "turn/steer": {

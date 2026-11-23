@@ -408,7 +408,6 @@ export class CodexSessionFactory implements PiSessionFactory {
     }
     if(this.options.protectedProvider&&response.modelProvider!==this.options.protectedProvider)throw Error('Native Codex provider is outside the protected transport');
     const thread = response.thread as Obj;
-    await this.options.onBound?.(options.sessionId,String(thread.id));
     const session = new CodexSession(server, String(thread.id), {
       allowedModels:this.options.allowedModels,
       freshEmpty:!resumed||preferences.emptyContext===true&&(!this.options.allowEmptyRecovery||await this.options.allowEmptyRecovery()),
@@ -436,6 +435,8 @@ export class CodexSessionFactory implements PiSessionFactory {
       codexHistoryObservations.set(server,[...rows.filter(row=>row.binding!==session.threadId),observation]);await persistNativeHistoryObservation(server);
     }catch{/* Optional witness failure never changes native history. */}}return result;};
     session.absorbThread(thread);
+    try { await this.options.onBound?.(options.sessionId,String(thread.id)); }
+    catch(error){ await session.stop(); throw error; }
     this.live.add(session);
     session.onStop = () => this.release(session);
     return session;
@@ -702,6 +703,7 @@ class CodexSession implements PiSession {
   private readonly asyncQuestionItems=new Set<string>();
   private sessionName?: string;
   private activeTurnId?: string;
+  private turnRevision = 0;
   private streaming = false;
   private goal?:import('../shared/protocol.js').GoalState|null;
   private goalRevision=0;
@@ -853,6 +855,7 @@ class CodexSession implements PiSession {
     this.nativeInputSeen=true;
     await this.updatePreferences({});
     if(command?.[1]==='review')await this.server.request('thread/resume',{threadId:this.threadId,excludeTurns:true,cwd:this.cwd,model:this.model??null,serviceTier:this.speed==='fast'?'fast':'default',approvalPolicy:this.settings.approvalPolicy,...(this.settings.sandbox?{sandbox:this.settings.sandbox}:{}),config:{...nativeThreadConfig(this.preset),...(this.effort?{model_reasoning_effort:this.effort}:{})}});
+    const revision = this.turnRevision;
     const result = command?.[1]==='review'
       ? await this.server.request('review/start',{threadId:this.threadId,delivery:'inline',target:command[2]?{type:'custom',instructions:command[2]}:{type:'uncommittedChanges'}}) as Obj
       : await this.server.request("turn/start", {
@@ -863,7 +866,7 @@ class CodexSession implements PiSession {
       ...(this.settings.preparation?{sandboxPolicy:{type:'readOnly',networkAccess:false},approvalPolicy:'never'}:{}),
     }) as Obj;
     const turn = result.turn as Obj | undefined;
-    if (turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
+    if (revision === this.turnRevision && turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
   }
 
   async steer(text: string, images?: ImageInput[]): Promise<void> {
@@ -911,10 +914,11 @@ class CodexSession implements PiSession {
   async getState(): Promise<SessionState> {
     // A turn we did not start (the VM admin's terminal on the same thread)
     // sends us no turn/completed; ask the thread itself whether it is still busy.
-    if (this.streaming && this.activeTurnId === undefined && !this.asyncQuestion) {
-      const result = await this.server.request("thread/read", { threadId: this.threadId, includeTurns: false }).catch(() => undefined) as Obj | undefined;
+    if (this.activeTurnId === undefined && !this.asyncQuestion) {
+      const revision = this.turnRevision;
+      const result = await this.server.request("thread/read", { threadId: this.threadId, includeTurns: false },3000).catch(() => undefined) as Obj | undefined;
       const status = (result?.thread as Obj | undefined)?.status as Obj | undefined;
-      if (status && status.type !== "active") this.streaming = false;
+      if (revision === this.turnRevision && this.activeTurnId === undefined && typeof status?.type === "string") this.streaming = status.type === "active";
     }
     return {
       isStreaming: this.streaming,
@@ -1154,6 +1158,7 @@ class CodexSession implements PiSession {
       }
 
       case "turn/started": {
+        this.turnRevision++;
         const turn = params.turn as Obj | undefined;
         if (turn && typeof turn.id === "string") {this.activeTurnId = turn.id;this.tracking.start(turn.id);}
         this.streaming = true;
@@ -1212,6 +1217,8 @@ class CodexSession implements PiSession {
       }
       case "turn/completed": {
         const turn = params.turn as Obj | undefined;
+        if (this.activeTurnId && typeof turn?.id === "string" && turn.id !== this.activeTurnId) return;
+        this.turnRevision++;
         if(this.asyncQuestion&&!this.asyncQuestion.resuming&&turn?.status!=='failed'){
           this.activeTurnId=undefined;this.asyncQuestion.paused=true;this.asyncQuestion.resolve();
           this.streamedItems.clear();this.toolNames.clear();this.toolOutput.clear();

@@ -77,6 +77,19 @@ const text = (events: Event[]) => events
 describe("Codex app-server adapter", () => {
   const benches: Bench[] = [];
   const setup = () => { const b = bench(); benches.push(b); return b; };
+  it('keeps the current turn active across a delayed completion for the previous turn',async()=>{
+    const b=setup(),session=await b.factory().create({sessionId:'current-turn'}),events=recorder(session);
+    await session.prompt('fixture:late-completion');
+    await events.until(e=>e.type==='agent_start');
+    try {
+      // This RPC round trip also fences the preceding native notifications.
+      await session.getModels();
+      expect((await session.getState()).isStreaming).toBe(true);
+      expect(events.events.filter(settled)).toHaveLength(0);
+    } finally {writeFileSync(join(b.codexHome,'release-current-turn'),'1');}
+    await events.until(settled);
+    expect((await session.getState()).isStreaming).toBe(false);
+  });
   it('retains a completed native image generation as a deliverable reply without base64',async()=>{
     const b=setup(),session=await b.factory().create({sessionId:'image-result'});
     const path=join(b.codexHome,'generated_images','thread-1','exec-image.png');

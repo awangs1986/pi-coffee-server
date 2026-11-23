@@ -105,6 +105,7 @@ ui.scroller.dataset.speechScroller='';
 let socket, reconnectTimer, connectionEpoch=0;
 let connectionDeadline=null, connectionExpiresAt=0, connectionAbort=null;
 let heartbeat=null, reconnectAttempt=0;
+let openHistoryTimer=null, retriedSelection=null;
 let connectionAuthEpoch=null, resumeMetadataEpoch=null, resumeMetadataAt=0;
 let modelsRequestEpoch=0, modelsSyncTimer=null;
 
@@ -124,7 +125,7 @@ let activeBindingEpoch=null, syncHintTimer=null;
 const preferDurableSync=new URLSearchParams(location.search).get('syncProtocol')!=='1';
 const viewScheduler=createRenderScheduler({budgetMs:4});
 function currentRenderView(){return {userScope:currentUser,conversationId:activeId,epoch:connectionEpoch,viewGeneration:taskSelectionEpoch};}
-const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened)connect();}},timeoutMs:10000});
+const syncStatus=createSyncStatus($('#conversation-sync-status'),{onRetry:()=>{if(activeId){void conversationRepository.sync(activeId,{priority:0});if(!opened||!historyReady)connect();}},timeoutMs:10000});
 let displayMode="compact",displaySaving=false,displayAnchor=null,displayRequest=null,displayTimer=null;
 const conversationRepository=new ConversationRepository({displayMode,onUnauthorized:()=>{revokeCachedIdentity();void clearPreviews();}});
 const syncedView=new ConversationSyncView({container:ui.thread,scroller:ui.scroller,repository:conversationRepository,context:()=>currentRenderView(),
@@ -290,7 +291,7 @@ function showRecentThread(id){
   });
 }
 
-const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;let mishuMemory=null;let mishuEvidence=null;let mishuUsage=null;let mishuCollaboration=null;
+const nativeItems=new Map();let nativeCursor=0;let pendingDelivery=null;let admittedPrompt=null;let mishuChangingId=null;let mishuControls=null;let mishuCommands=null;let mishuMemory=null;let mishuEvidence=null;let mishuUsage=null;let mishuCollaboration=null;
 function closeMishuPanels(){mishuMemory?.close();mishuEvidence?.close();mishuUsage?.close();mishuCollaboration?.close();}
 // Unacknowledged requests stay in this tab, scoped to their owner and task.
 // Never infer acceptance from matching history text or resend automatically.
@@ -1877,6 +1878,7 @@ function resumeLiveSubscription() {
   if (activeId && !takeoverBusy()) void conversationRepository.sync(activeId, { priority: 0 }).catch(() => {});
 }
 function disconnectExecution() {
+  clearTimeout(openHistoryTimer);admittedPrompt=null;
   goalControls.connection(false);
   clearConnectionDeadline();
   abandonPendingSettings();clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);abandonRenames();unconfirmedUiAnswers();abandonPromptDelivery();
@@ -1993,7 +1995,20 @@ async function openSession(id) {
   pendingOpenId = id || 'new';
   const frame = { v: 1, type: 'open', nativeProtocol:1, recentHistory:true, displayMode, ...(preferDurableSync?{syncProtocol:2}:{}) };
   if (id) frame.sessionId = id;
-  if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); }
+  if (!send(frame)) { pendingOpenId = null; restoreQueuedPrompt(); return; }
+  if (id && !queuedPrompt) {
+    const ws=socket, selection=taskSelectionEpoch, user=currentUser;
+    clearTimeout(openHistoryTimer);
+    openHistoryTimer=setTimeout(()=>{
+      if(socket!==ws || !connected || id!==activeId || user!==currentUser || selection!==taskSelectionEpoch || historyReady || (!opened && pendingOpenId!==id))return;
+      if(retriedSelection===selection){
+        syncStatus.update({conversationId:id,state:'timeout',message:'尚未收到对话记录，可重试连接。草稿已保留。'});
+        return;
+      }
+      retriedSelection=selection;
+      connect();
+    },20000);
+  }
 }
 function afterOpened() {
   refreshComposer();
@@ -2035,6 +2050,8 @@ function handleFrame(frame, ws) {
       if(pendingOpenId && pendingOpenId!=="new" && frame.sessionId!==pendingOpenId)return;
       engine=frame.engine || workspaceState?.conversations.find(c=>c.id===frame.sessionId)?.engine || "pi";capabilities=frame.capabilities || null;models=null;resetSlashCommands();skillReloadScope=null;
       const sameTransfer=(transfer?.sessionId || transfer?.scope)===frame.sessionId;
+      // The Host cursor belongs to this attachment. Indexed history can survive a Host restart.
+      nativeCursor=0;
       openedEventCursor=Number.isSafeInteger(frame.cursor)?frame.cursor:0;receivedEventCursor=0;
       openCompletionKey=completionKey(sessions.find(s=>s.id===frame.sessionId));
       liveCompletionStart=sessions.find(s=>s.id===frame.sessionId)?.completionId||openCompletionKey;
@@ -2083,7 +2100,7 @@ function handleFrame(frame, ws) {
         return;
       }
       if(!conversationDisplay.history(frame))return;
-      historyReady=true;
+      clearTimeout(openHistoryTimer);retriedSelection=null;historyReady=true;
       bindWorkspaceArtifacts();
       if(!conversationDisplay.indexed){completionProof=frame.completionId||(openCompletionKey?.startsWith('legacy:')?openCompletionKey:null);if(!streaming)liveCompletionStart=completionProof;maybeReadCompletion();}
       renderUncertainPrompts();if(!conversationDisplay.indexed)rememberRecentThread();refreshComposer();flushFirstPrompt();
@@ -2171,6 +2188,7 @@ function handleFrame(frame, ws) {
     case 'ack':
       if(frame.operation==='set_display_mode'&&frame.requestId===displayRequest){clearTimeout(displayTimer);displayRequest=null;return;}
       // Acceptance is known even if the connection drops before the turn ends.
+      if(frame.operation==='prompt')admittedPrompt=frame.requestId;
       if(['prompt','steer','follow_up'].includes(frame.operation)){const accepted=promptOutbox.get(frame.requestId);if(accepted?.optimistic)delete accepted.optimistic.pendingRequestId;accepted?.card?.remove();promptOutbox.delete(frame.requestId);if(frame.requestId===pendingDelivery)pendingDelivery=null;}
       if(frame.operation==='ui_response'){confirmUiAnswer(frame.requestId);return;}
       if(frame.operation==='rename_session' && pendingRenames.has(frame.requestId)){
@@ -2242,7 +2260,9 @@ function handleFrame(frame, ws) {
       // Identity, binding and lifecycle changes still invalidate it at their own boundaries.
       if(!opened&&pendingOpenId&&activeId&&frame.code!=='operation_failed')invalidatePreview(activeId);
       pushNote('错误（' + frame.code + '）：' + frame.message, true);
-      if (!rejectedQueuedInput) setStreaming(frame.code === 'busy');
+      if (!rejectedQueuedInput && (rejectedPrompt || (frame.requestId && frame.requestId===admittedPrompt))) {
+        admittedPrompt=null;setStreaming(frame.code === 'busy');
+      }
       if (!opened || frame.code === 'not_open' || frame.code === 'already_open') {pendingOpenId = null;syncStatus.update({conversationId:activeId,state:'error',message:'同步失败，可重试'});}
       if (queuedPrompt !== null && frame.code !== 'busy') {restoreQueuedPrompt();refreshComposer();}
       if (frame.fatal) ws.close();
@@ -2259,7 +2279,7 @@ function handleEvent(event,{replayed=false}={}) {
   if(type==='display_boundary'){currentAssistant=undefined;return;}
   if(type==='display_notice'){if(displayMode==='detailed')pushNote(event.text,Boolean(event.error));return;}
 
-  if (type === 'agent_start') {startCompletionReadRun(replayed); setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
+  if (type === 'agent_start') {admittedPrompt=null;startCompletionReadRun(replayed); setStreaming(true); showThinking(true); currentAssistant = undefined; retryNote = undefined; return; }
   if (type === 'tool_execution_update') {
     // Live output of a running command: refresh the card at most once per frame.
     const entry = event.toolCallId && openTools.get(event.toolCallId);
@@ -2269,7 +2289,7 @@ function handleEvent(event,{replayed=false}={}) {
     return;
   }
   if (type === 'turn_diff') { scheduleTurnDiffRefresh(); return; }   // Codex edited a file: refresh an open 最近一轮
-  if(type==='run_started'){startCompletionReadRun(replayed);setStreaming(true);showThinking(true);return;}
+  if(type==='run_started'){admittedPrompt=null;startCompletionReadRun(replayed);setStreaming(true);showThinking(true);return;}
   if(type==='message_delta' || type==='message_completed'){
     showThinking(false);let entry=nativeItems.get(event.id);
     if(!entry){entry=pushAssistant('');nativeItems.set(event.id,entry);}
@@ -3371,7 +3391,7 @@ function submitPrompt(text, images) {
     item.uncertain=true;item.reason='20 秒内未收到发送确认';
     if(item.user===currentUser&&item.task===activeId)renderUncertainPrompts();
   },20000);
-  if(!send(frame)){promptOutbox.get(frame.requestId).uncertain=true;pendingDelivery=null;setStreaming(false);renderUncertainPrompts();}
+  if(!send(frame)){promptOutbox.get(frame.requestId).uncertain=true;pendingDelivery=null;if(mode==='prompt')setStreaming(false);renderUncertainPrompts();}
   attachments = [];
   uploads = uploads.filter((u) => u.state === 'uploading' || u.state === 'finishing');
   renderAttachments();
