@@ -59,7 +59,8 @@ try{
   // Emulate delayed timer admission after background/sleep throttling. Network
   // close events may be delivered before an already scheduled retry can run.
   // Returning focus must restore the selected task without clicking its row.
-  await page.clock.pauseAt(new Date(await page.evaluate(()=>Date.now())));
+  const pauseTime=await page.evaluate(()=>Date.now()+1000);
+  await page.clock.pauseAt(new Date(pauseTime));
   latest='REPLY_WHILE_AWAY';
   const beforeWake=connections;
   for(const ws of wsServer.clients)ws.close();

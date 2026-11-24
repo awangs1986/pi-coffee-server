@@ -250,7 +250,11 @@ try {
   for(let i=0;i<40&&listFrames===stable;i++)await page.waitForTimeout(100);
   assert.ok(listFrames>stable);results.idleReadsAndChanges=true;
   const beforeReconnect=historyFrames,webPort=web.address().port;
-  await web.close();web=new WebServer({...webOptions,port:webPort});await web.start();
+  // Simulate Web process exit even if Chromium reuses an accepted HTTP socket.
+  const closingWeb=web.close();
+  web.http.closeAllConnections();
+  await closingWeb;
+  web=new WebServer({...webOptions,port:webPort});await web.start();
   for(let i=0;i<100&&historyFrames===beforeReconnect;i++)await page.waitForTimeout(100);
   assert.ok(historyFrames>beforeReconnect,'Browser reattached without reload');
   const summary=last.locator('.answer-deliveries summary');await summary.waitFor();
