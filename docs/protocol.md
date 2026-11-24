@@ -337,6 +337,11 @@ An expired question reports failure and returns a non-secret typed answer to the
 composer so the user can explicitly send it as a message. Error/disconnect feedback
 does not mark the ongoing model turn as completed.
 
+The pending question can be minimized to read or scroll the transcript. The
+Continue answering button above the composer opens the same question with its
+current input intact. These controls send no reply. The button is removed when
+the question closes, the turn settles, or the conversation changes.
+
 ### Accepted questions are not replayed — 2026-10-11, Server #118
 
 A historical `extension_ui_request` or `native_request` is not a pending question

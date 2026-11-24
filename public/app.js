@@ -96,6 +96,7 @@ const ui = {
   spBar: $('#sp-bar'), spCompact: $('#sp-compact'),
   uiModal: $('#ui-modal'), uiTitle: $('#ui-title'), uiText: $('#ui-text'), uiOptions: $('#ui-options'), uiInput: $('#ui-input'),
   uiEditor: $('#ui-editor'), uiMeta: $('#ui-meta'), uiOk: $('#ui-ok'), uiNo: $('#ui-no'), uiCancel: $('#ui-cancel'),
+  uiMinimize: $('#ui-minimize'), uiReopen: $('#ui-reopen'),
   userBtn: $('#user-btn'), userName: $('#user-name'),
 };
 
@@ -2546,7 +2547,7 @@ function showNextUiDialog() {
   ui.uiMeta.textContent = (req.timeout ? `超时 ${Math.round(req.timeout / 1000)} 秒后按默认处理 · ` : '') + (uiQueue.length ? `还有 ${uiQueue.length} 个请求排队` : '');
   ui.uiOptions.innerHTML = '';
   if (req.method === 'select'||inputChoices) {
-    (req.options || []).forEach((option, index) => {
+    (req.options || []).forEach(option => {
       const button = el('button', 'ui-option', String(option));
       button.type = 'button';
       button.setAttribute('role', 'option');
@@ -2554,15 +2555,26 @@ function showNextUiDialog() {
         if(inputChoices){ui.uiInput.value=String(option);rememberUiDraft();ui.uiInput.focus();}
         else answerUi({ value: String(option) });
       });
-      if (index === 0&&!inputChoices) setTimeout(() => button.focus(), 0);
       ui.uiOptions.appendChild(button);
     });
   }
-  if (req.method === 'input') { ui.uiInput.type=req.secret?'password':'text'; ui.uiInput.value = req.secret?'':uiDrafts.get(uiDraftKey(req))||''; ui.uiInput.placeholder = req.placeholder || ''; setTimeout(() => ui.uiInput.focus(), 0); }
-  if (req.method === 'editor') { ui.uiEditor.value = uiDrafts.get(uiDraftKey(req))??req.prefill??''; setTimeout(() => ui.uiEditor.focus(), 0); }
-  if (req.method === 'confirm') setTimeout(() => ui.uiOk.focus(), 0);
-  dialogs.show(ui.uiModal,()=>answerUi({cancelled:true}),undefined,{nonModal:true});
+  if (req.method === 'input') { ui.uiInput.type=req.secret?'password':'text'; ui.uiInput.value = req.secret?'':uiDrafts.get(uiDraftKey(req))||''; ui.uiInput.placeholder = req.placeholder || ''; }
+  if (req.method === 'editor') ui.uiEditor.value = uiDrafts.get(uiDraftKey(req))??req.prefill??'';
+  openUiDialog();
 }
+function openUiDialog() {
+  if (!uiCurrent) return;
+  ui.uiReopen?.classList.add('hidden');
+  const initial = { select: ui.uiOptions.firstElementChild, confirm: ui.uiOk, input: ui.uiInput, editor: ui.uiEditor }[uiCurrent.method];
+  dialogs.show(ui.uiModal, () => answerUi({ cancelled: true }), initial && !initial.disabled ? initial : ui.uiMinimize, { nonModal: true });
+}
+ui.uiMinimize?.addEventListener('click', () => {
+  if (!uiCurrent || !ui.uiReopen) return;
+  dialogs.hide(ui.uiModal);
+  ui.uiReopen.classList.remove('hidden');
+  ui.uiReopen.focus({ preventScroll: true });
+});
+ui.uiReopen?.addEventListener('click', openUiDialog);
 function answerUi(answer) {
   if (!uiCurrent || [...pendingUiAnswers.values()].some(p=>p.question.id===uiCurrent.id)) return;
   if(uiCurrent.required&&!answer.cancelled&&(typeof answer.value!=='string'||!answer.value.trim())){ui.uiMeta.textContent='请选择一个选项或输入回答，再点击确定。';return;}
@@ -2604,6 +2616,7 @@ function closeUiDialog() {
   uiCurrent = null;
   uiSending(false);
   dialogs.hide(ui.uiModal);
+  ui.uiReopen?.classList.add('hidden');
 }
 ui.uiOk.addEventListener('click', () => {
   if (!uiCurrent) return;

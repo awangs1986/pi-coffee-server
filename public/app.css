@@ -526,10 +526,12 @@ a.file-chip:hover { border-color: var(--border-strong); background: var(--bg-sub
 .widgets { width: min(var(--composer-width), 100%); margin: 0 auto 6px; display: flex; flex-direction: column; gap: 6px; }
 .widget { margin: 0; padding: 8px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; color: var(--text-2); background: var(--bg-side); border: 1px solid var(--border); border-radius: 10px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
 .modal.ui-dialog { border-top: 3px solid var(--busy); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; overflow: hidden; }
-.ui-dialog > .ui-badge, .ui-dialog > h2, .ui-dialog > .ui-meta, .ui-dialog > .modal-actions { flex: none; }
+.ui-dialog > .question-heading, .ui-dialog > h2, .ui-dialog > .ui-meta, .ui-dialog > .modal-actions { flex: none; }
+.question-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.question-reopen { display: block; margin: 0 auto 6px; }
 .ui-dialog > h2 { max-height: 35vh; max-height: 35dvh; overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ui-dialog #ui-text { min-height: 0; overflow-y: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ui-badge { display: inline-block; font-size: 11px; color: var(--busy); border: 1px solid #d4d4d8; border-radius: 999px; padding: 1px 8px; margin-bottom: 8px; }
+.ui-badge { display: inline-block; font-size: 11px; color: var(--busy); border: 1px solid #d4d4d8; border-radius: 999px; padding: 1px 8px; }
 .ui-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .ui-option { flex: none; text-align: left; border: 1px solid var(--border-strong); background: var(--bg); border-radius: 9px; padding: 9px 12px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
 .ui-option:hover, .ui-option:focus-visible { background: var(--bg-subtle); border-color: var(--text-3); }

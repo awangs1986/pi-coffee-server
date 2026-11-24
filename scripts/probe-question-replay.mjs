@@ -14,15 +14,17 @@ try{
  browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE?{executablePath:process.env.BROWSER_EXECUTABLE}:{})});
  for(const engine of ['pi','codex']){
   const sessions=new Map();
+  const transcript=Array.from({length:28},(_,i)=>({kind:'assistant',text:'Context line '+i}));
   const factory={list:async()=>[],delete:async()=>false,capabilities:async()=>({questions:true,stop:true}),create:async({sessionId})=>{
    const listeners=new Set(),answers=[];
-   const session={id:sessionId,answers,state:{isStreaming:false},emit(event){for(const listener of listeners)listener(event);},onEvent(listener){listeners.add(listener);return()=>listeners.delete(listener);},getState:async()=>session.state,getHistory:async()=>({entries:answers.length?[{kind:'assistant',text:'ACCEPTED_ANSWER_HISTORY'}]:[],leafId:null}),respondUi:async(answer)=>{answers.push(answer);},abort:async()=>{session.state.isStreaming=false;session.emit({type:'agent_settled'});},stop:async()=>{},prompt:async()=>{throw Error('Probe must not call a model');}};
+   const session={id:sessionId,answers,state:{isStreaming:false},emit(event){for(const listener of listeners)listener(event);},onEvent(listener){listeners.add(listener);return()=>listeners.delete(listener);},getState:async()=>session.state,getHistory:async()=>({entries:answers.length?[...transcript,{kind:'assistant',text:'ACCEPTED_ANSWER_HISTORY'}]:transcript,leafId:null}),respondUi:async(answer)=>{answers.push(answer);},abort:async()=>{session.state.isStreaming=false;session.emit({type:'agent_settled'});},stop:async()=>{},prompt:async()=>{throw Error('Probe must not call a model');}};
    sessions.set(sessionId,session);return session;
   }};
   const workspaces=new Workspaces(join(root,engine));await workspaces.createChatConversation('question-'+engine,engine);
   const host=new HostServer({host:'127.0.0.1',port:0,token:'synthetic',factory,workspaces});await host.start();
   const web=new WebServer({host:'127.0.0.1',port:0,hostUrl:'ws://127.0.0.1:'+host.address().port+'/host',hostToken:'synthetic',defaultUser:'fixture'});await web.start();
-  const page=await browser.newPage(),errors=[];let navigations=0;
+  const page=await browser.newPage(engine==='codex'?{viewport:{width:390,height:844}}:{}),errors=[],responses=[];let navigations=0;
+  page.on('websocket',socket=>socket.on('framesent',({payload})=>{const frame=JSON.parse(String(payload));if(frame.type==='ui_response')responses.push(frame);}));
   page.on('pageerror',error=>errors.push(error.message));page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigations++;});
   await page.addInitScript(()=>{
    const Original=window.WebSocket;
@@ -37,7 +39,28 @@ try{
    session.emit(question('first-question'));
    await page.locator('#ui-modal:not(.hidden)').waitFor();
    const beforeAnswer=navigations;
-   await page.locator('#ui-options button').filter({hasText:'Blue'}).click();
+   const dialog=page.locator('#ui-modal');
+   const scroller=page.locator('#scroller');
+   if(engine==='codex')await page.locator('#ui-options button').filter({hasText:'Blue'}).click();
+   const box=await dialog.getByRole('dialog').boundingBox();
+   assert.ok(box);
+   await dialog.getByRole('button',{name:'最小化'}).click({timeout:2000});
+   await dialog.waitFor({state:'hidden'});
+   const reopen=page.getByRole('button',{name:'继续回答',exact:true});
+   await reopen.waitFor();
+   assert.equal(responses.length,0,'Minimizing sent a response');
+   assert.equal(session.state.isStreaming,true);
+   const scrollBefore=await scroller.evaluate(node=>{node.scrollTop=node.scrollHeight;return node.scrollTop;});
+   assert.ok(scrollBefore>0);
+   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+   await page.mouse.wheel(0,-350);
+   await page.waitForFunction(previous=>document.querySelector('#scroller').scrollTop<previous,scrollBefore);
+   await reopen.click();
+   await dialog.waitFor();
+   await reopen.waitFor({state:'hidden'});
+   assert.equal(responses.length,0,'Reopening sent a response');
+   if(engine==='codex')assert.equal(await page.locator('#ui-input').inputValue(),'Blue');
+   else await page.locator('#ui-options button').filter({hasText:'Blue'}).click();
    if(engine==='codex')await page.locator('#ui-ok').click();
    await page.locator('#ui-modal').waitFor({state:'hidden'});
    assert.equal(session.answers.length,1);assert.equal(navigations,beforeAnswer,'Answer click navigated the page');
@@ -49,8 +72,16 @@ try{
    assert.equal(session.answers.length,1,'Reload automatically resubmitted an answer');
    session.emit(question('new-unanswered-question'));await page.locator('#ui-modal:not(.hidden)').waitFor();
    await page.locator('#ui-options button').filter({hasText:'Red'}).click();if(engine==='codex')await page.locator('#ui-ok').click();await page.locator('#ui-modal').waitFor({state:'hidden'});
-   assert.equal(session.answers.length,2);assert.deepEqual(errors,[]);
-   results.push({engine,answerDidNotNavigate:true,reloadDidNotReask:true,newQuestionStillWorks:true,noAutomaticResubmission:true});
+   assert.equal(session.answers.length,2);
+   session.emit(question('question-before-settle'));await dialog.waitFor();
+   await dialog.getByRole('button',{name:'最小化'}).click();
+   await reopen.waitFor();
+   const beforeSettle=responses.length;
+   await session.abort();
+   await reopen.waitFor({state:'hidden'});
+   assert.equal(responses.length,beforeSettle,'Settling a minimized question sent a response');
+   assert.deepEqual(errors,[]);
+   results.push({engine,minimizedQuestionLeavesHistoryScrollable:true,restoreRetainsDraft:true,settledQuestionRemovesRestore:true,answerDidNotNavigate:true,reloadDidNotReask:true,newQuestionStillWorks:true,noAutomaticResubmission:true});
   }finally{await page.close();await web.close();await host.close();}
  }
  await writeFile(join(evidence,'result.json'),JSON.stringify({pass:true,results},null,2));console.log(JSON.stringify({pass:true,results,evidence}));

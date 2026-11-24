@@ -169,6 +169,7 @@
             <button id="goal-details" class="context-action" type="button">目标详情</button>
           </div>
           <div class="widgets hidden" id="widgets"></div>
+          <button type="button" class="btn question-reopen hidden" id="ui-reopen" aria-controls="ui-modal">继续回答</button>
           <div class="queue hidden" id="queue"></div>
           <div class="slash hidden" id="slash" role="listbox"></div>
           <div class="composer-card" id="composer-card">
@@ -403,7 +404,10 @@
     <!-- Extension dialogs (Pi ctx.ui.select / confirm / input / editor) -->
     <div class="modal-backdrop hidden" id="ui-modal">
       <div class="modal ui-dialog" role="dialog" aria-modal="true" aria-labelledby="ui-title">
-        <div class="ui-badge">Agent 请求</div>
+        <div class="question-heading">
+          <span class="ui-badge">Agent 请求</span>
+          <button type="button" class="btn" id="ui-minimize">最小化</button>
+        </div>
         <h2 id="ui-title"></h2>
         <p id="ui-text"></p>
         <div id="ui-options" class="ui-options hidden" role="listbox"></div>

@@ -211,7 +211,7 @@ Issues carry scope, status and acceptance evidence; checked-in code and tests ca
 
 - Confirmed, lightweight conversation rename: [contract](spec/arena-navigation.md#confirmed-conversation-rename-2026-10-01), [Server #22](https://github.com/awangs1986/pi-coffee-server/issues/22).
 
-- Confirmed question delivery and batched history rendering: [protocol](protocol.md#confirmed-dialog-answers-2026-10-01), [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23).
+- Confirmed question delivery, minimizing a pending question to read history, and batched history rendering: [protocol](protocol.md#confirmed-dialog-answers-2026-10-01), [Server #23](https://github.com/awangs1986/pi-coffee-server/issues/23).
 
 - Blocking Codex questions and legacy asynchronous-question compatibility: [confirmed question contract](protocol.md#confirmed-dialog-answers-2026-10-01), `scripts/probe-codex-questions.mjs`.
 
