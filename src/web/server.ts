@@ -9,7 +9,7 @@ import { USER_HEADER,ACTOR_HEADER } from "../shared/identity.js";
 import {clientAddress} from './client-address.js';
 import type { GiteaAuth } from "./auth.js";
 import { readJson, json, parseRequestTarget } from "../shared/http.js";
-import { Identity, type IdentityOptions } from "./identity.js";
+import { Identity, IdentityUnavailableError, type IdentityOptions } from "./identity.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
@@ -90,14 +90,23 @@ export class WebServer {
     this.releaseDir=options.releaseDir??process.cwd();
     this.publicDir = options.publicDir ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../public");
     this.secure = options.tls !== undefined;
-    const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response).catch(()=>{
+    const handler = (request: IncomingMessage, response: ServerResponse) => void this.handleHttp(request, response).catch(error=>{
       if(response.destroyed)return;
-      if(!response.headersSent)json(response,500,{error:'Web operation failed'});else response.destroy();
+      if(response.headersSent){response.destroy();return;}
+      if(error instanceof IdentityUnavailableError){
+        response.setHeader('cache-control','no-store');
+        json(response,503,{error:'identity_unavailable'});
+      }else json(response,500,{error:'Web operation failed'});
     });
     this.http = options.tls ? createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handler) : createServer(handler);
     this.http.requestTimeout = 0;
     this.wsServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-    this.http.on("upgrade", (request, socket, head) => {void this.handleUpgrade(request, socket, head).catch(()=>socket.destroy());});
+    this.http.on("upgrade", (request, socket, head) => {
+      void this.handleUpgrade(request, socket, head).catch(error=>{
+        if(error instanceof IdentityUnavailableError)socket.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+        else socket.destroy();
+      });
+    });
     this.wsServer.on("connection", (socket, request) => {
       const route = (request as IncomingMessage & { coffeeRoute?: { hostUrl: string; hostToken: string; user?:string } }).coffeeRoute;
       const actor=(request as IncomingMessage & {coffeeActor?:string}).coffeeActor;
@@ -110,7 +119,7 @@ export class WebServer {
           try { if (!await authorized()) {
             bridge.close();
             if(route) await this.hostApi(route,"/api/revoke-files","POST",{}).catch(()=>undefined);
-          } } finally { checking=false; }
+          } } catch { bridge.close(); } finally { checking=false; }
         }, 5000);
         timer.unref(); socket.once("close", () => clearInterval(timer));
       }
@@ -189,7 +198,7 @@ export class WebServer {
       return;
     }
     if(path === "/auth/logout" && request.method === "POST" && this.identity?.originAllowed(request)) {
-      const session=await this.identity.authorize(request);
+      const session=await this.identity.authorize(request).catch(()=>undefined);
       // End the local login before contacting a VM that may be unavailable.
       await this.identity.handle(request,response);
       if(session) void this.hostApi(session.route,"/api/revoke-files","POST",{}).catch(()=>undefined);
@@ -207,6 +216,7 @@ export class WebServer {
     }
     if (this.auth && await this.auth.handle(request,response)) return;
     if (path==="/auth/me") {
+      response.setHeader('cache-control','no-store');
       const session=await this.identity?.authorize(request);
       if(this.identity && !session){json(response,401,{error:"Login required",loginUrl:"/auth/login"});return;}
       json(response,200,{auth:Boolean(this.identity),user:session?{id:session.id,login:session.login}:this.defaultUser??null});return;
@@ -260,13 +270,14 @@ export class WebServer {
     if(/^\/api\/conversations\/[^/]+\/(meta|page|changes|content|commands|recent-page|recent-content|native-export|deliveries)$/.test(path)) {
       response.setHeader('cache-control','no-store');
       if(request.method!=='GET'){json(response,405,{error:'Use GET'});return;}
+      const session=await this.identity?.authorize(request);
+      if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
       try {
-        const session=await this.identity?.authorize(request);
-        if(this.identity&&!session){json(response,401,{error:'Login required'});return;}
         const route=session?.route??{hostUrl:this.hostUrl,hostToken:this.hostToken??'',user:this.auth?.principalOf(request)?.user??this.defaultUser};
         const upstreamUrl=new URL(route.hostUrl);upstreamUrl.protocol=upstreamUrl.protocol==='wss:'?'https:':'http:';upstreamUrl.pathname=path;upstreamUrl.search=new URL(request.url??'/', 'http://web').search;
         const upstream=await fetch(upstreamUrl,{headers:{authorization:`Bearer ${route.hostToken}`,...(route.user?{[USER_HEADER]:route.user}:{})},signal:AbortSignal.timeout(path.endsWith('/native-export')?120000:path.endsWith('/meta')?3000:10000),redirect:'error'});
         if(path.endsWith('/native-export')&&upstream.ok){const body=Buffer.from(await upstream.arrayBuffer());response.writeHead(200,{'content-type':'text/markdown; charset=utf-8','content-disposition':upstream.headers.get('content-disposition')??'attachment; filename=conversation.md'});response.end(body);return;}
+        if(upstream.status===401){await upstream.body?.cancel();json(response,502,{error:'Host route authorization unavailable'});return;}
         const userScope=session?`gitea-${session.id}`:this.auth?.principalOf(request)?.user??this.defaultUser??null;
         json(response,upstream.status,{...await upstream.json(),userScope});
       }catch{json(response,502,{error:'sync_unavailable'});}
@@ -285,14 +296,15 @@ export class WebServer {
     }
     const engineRead = path === '/api/engines' || /^\/api\/engines\/(?:directory|(?:pi|codex|claude|cursor|grok)(?:\/retry)?)$/.test(path);
     if(path === "/api/backup" || path === "/api/completion-speech" || path === "/api/mishu" || path === "/api/workspace" || engineRead || path === "/api/runtime" || path === "/api/skills" || path === "/api/runners" || path === "/api/sshme") {
+      const session=await this.identity?.authorize(request);
+      if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
       try {
-        const session=await this.identity?.authorize(request);
-        if(this.identity && !session) {json(response,401,{error:"Login required"});return;}
         if((engineRead || path === "/api/runtime") && request.method !== "GET") {json(response,405,{error:"Method not allowed"});return;}
         if(request.method === "POST" && (this.identity ? !this.identity.originAllowed(request) : this.auth ? !this.auth.originAllowed(request) : request.headers.origin !== `${this.scheme}://${request.headers.host}`)) {json(response,403,{error:"Invalid origin"});return;}
         if(!["GET","POST"].includes(request.method ?? "")) {json(response,405,{error:"Method not allowed"});return;}
         const route=session?.route ?? {hostUrl:this.hostUrl,hostToken:this.hostToken ?? "",user:this.auth?.principalOf(request)?.user ?? this.defaultUser};
         const result=await this.hostApi(route,path,request.method!,request.method==="POST" ? await readJson(request) : undefined,path==='/api/backup'?session?.login??this.auth?.principalOf(request)?.user:undefined);
+        if(result.status===401){await result.body?.cancel();json(response,502,{error:'Host route authorization unavailable'});return;}
         const body=await result.json();
         if(path==='/api/backup' || engineRead)response.setHeader('cache-control','no-store');
         if(result.ok)this.recordTransferGrant(body, session ? `identity:${session.id}` : this.auth ? `auth:${this.auth.principalOf(request)!.user}` : "local");
@@ -547,6 +559,7 @@ class BrowserBridge {
       }
       this.host.send(data, isBinary);
     } catch (error) {
+      if(error instanceof IdentityUnavailableError){this.close();return;}
       this.sendGatewayError("host_unavailable", error instanceof Error ? error.message : "Host is unavailable");
     }
   }

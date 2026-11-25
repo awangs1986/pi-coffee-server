@@ -14,7 +14,11 @@ export interface IdentityOptions {
   sessionMs?: number;
   sharedHost?: boolean;
 }
-interface Login { id: string; login: string; token: string; expires: number; checked: number; route: UserRoute }
+interface Login { id: string; login: string; token: string; expires: number; checked: number; route: UserRoute; checking?: Promise<boolean> }
+export class IdentityUnavailableError extends Error {
+  constructor(){super('Gitea identity check temporarily unavailable');}
+}
+class IdentityRejectedError extends Error {}
 const COOKIE = "coffee_session";
 function cookie(req: IncomingMessage, name: string) { return (req.headers.cookie ?? "").split(';').map(v=>v.trim()).find(v=>v.startsWith(name+'='))?.slice(name.length+1); }
 export class Identity {
@@ -32,21 +36,46 @@ export class Identity {
   }
   originAllowed(req: IncomingMessage) { return req.headers.origin === this.origin; }
   async authorize(req: IncomingMessage): Promise<Login | undefined> {
-    const key = cookie(req, COOKIE); const session = key ? this.sessions.get(key) : undefined;
+    const key = cookie(req, COOKIE);
+    if (!key) return;
+    const session = this.currentLogin(key);
     if (!session) return;
-    let route: UserRoute | undefined;
-    try { route = this.routes()[session.id]; } catch { return; }
-    if (session.expires <= Date.now() || !route || route.hostUrl !== session.route.hostUrl || route.hostToken !== session.route.hostToken || route.user !== session.route.user) { this.sessions.delete(key!); return; }
-    if (Date.now() - session.checked > 30000) {
-      try {
-        const user = await this.user(session.token);
-        if (String(user.id) !== session.id || user.active === false || user.prohibit_login === true) throw new Error('Revoked');
-        session.checked = Date.now();
-      } catch { this.sessions.delete(key!); return; }
+    if (Date.now() - session.checked <= 30000) return session;
+
+    // HTTP polling and WebSocket verification share one provider read.
+    session.checking ??= this.recheck(key, session).finally(() => { session.checking = undefined; });
+    if (await session.checking && this.currentLogin(key) === session) return session;
+  }
+
+  private currentLogin(key: string): Login | undefined {
+    const session = this.sessions.get(key);
+    if (!session) return;
+    if (session.expires <= Date.now()) {
+      this.sessions.delete(key);
+      return;
     }
-    if(this.sessions.get(key!)!==session || session.expires<=Date.now())return;
+    let route: UserRoute | undefined;
+    try { route = this.routes()[session.id]; } catch { throw new IdentityUnavailableError(); }
+    if (!route || route.hostUrl !== session.route.hostUrl || route.hostToken !== session.route.hostToken || route.user !== session.route.user) {
+      this.sessions.delete(key);
+      return;
+    }
     return session;
   }
+
+  private async recheck(key: string, session: Login): Promise<boolean> {
+    try {
+      const user = await this.user(session.token);
+      if (String(user.id) !== session.id || user.active === false || user.prohibit_login === true) throw new IdentityRejectedError();
+      session.checked = Date.now();
+      return true;
+    } catch (error) {
+      if (!(error instanceof IdentityRejectedError)) throw error;
+      this.sessions.delete(key);
+      return false;
+    }
+  }
+
   private routes(): Record<string, UserRoute> {
     const routes=this.options.routes();const urls=new Set<string>();const tokens=new Set<string>();
     const scopedUrls=new Set<string>();const scopedTokens=new Set<string>();const resolved:Record<string,UserRoute>={};
@@ -71,11 +100,17 @@ export class Identity {
     try{return Object.values(this.routes()).some(route=>route.user===user&&timingSafeEqual(createHash('sha256').update(route.hostToken).digest(),createHash('sha256').update(token).digest()));}catch{return false;}
   }
   private async user(token: string) {
-    const res = await this.request(`${this.options.giteaUrl.replace(/\/$/,'')}/api/v1/user`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000), redirect: 'error' });
-    if (!res.ok) throw new Error('Identity unavailable');
-    const user = await res.json() as any;
-    if (!Number.isSafeInteger(user.id) || typeof user.login !== 'string') throw new Error('Invalid identity');
-    return user;
+    try {
+      const res = await this.request(`${this.options.giteaUrl.replace(/\/$/,'')}/api/v1/user`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000), redirect: 'error' });
+      if (res.status === 401 || res.status === 403) throw new IdentityRejectedError();
+      if (!res.ok) throw new IdentityUnavailableError();
+      const user = await res.json() as {id?:number;login?:string;active?:boolean;prohibit_login?:boolean};
+      if (!Number.isSafeInteger(user.id) || typeof user.login !== 'string') throw new IdentityUnavailableError();
+      return { ...user, login: user.login };
+    } catch (error) {
+      if (error instanceof IdentityRejectedError) throw error;
+      throw new IdentityUnavailableError();
+    }
   }
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? '/', this.origin);
@@ -130,7 +165,12 @@ export class Identity {
         res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:session.id,login:session.login}));return true;
       }
       res.writeHead(405);res.end();
-    } catch {
+    } catch (error) {
+      if (url.pathname === '/api/me' && error instanceof IdentityUnavailableError) {
+        res.writeHead(503,{'content-type':'application/json; charset=utf-8'});
+        res.end(JSON.stringify({error:'identity_unavailable'}));
+        return true;
+      }
       if (req.method === 'GET' && url.pathname !== '/api/me') {
         // OAuth provider cookies belong to Gitea: a local retry cannot sign out
         // that account. Offer both actions without redirecting into a loop.

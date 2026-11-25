@@ -114,8 +114,44 @@ try{
   await new Promise(resolve=>setTimeout(resolve,50));await page.clock.runFor(32);
   await page.locator('#slash .slash-name').filter({hasText:'$refocus'}).waitFor({timeout:2000});
   if(new URL(page.url()).pathname!=='/conversations/b')throw Error('Skill retry navigated away');
+  // A provider outage uses a retryable auth status. No navigation or WebSocket
+  // attempt occurs until the same login can be checked again.
+  await page.unroute('**/auth/me');
+  let authUnavailable=true;
+  await page.route('**/auth/me',route=>authUnavailable
+    ? route.fulfill({status:503,json:{error:'identity_unavailable'}})
+    : route.continue());
+  await page.locator('#prompt').fill('保留验证故障期间的文字');
+  const connectionsBeforeFailure=connections;
+  for(const ws of wsServer.clients)ws.close();
+  await page.locator('#conn-banner:not(.hidden)').waitFor();
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await page.locator('#conn-banner').filter({hasText:'登录验证暂时不可用'}).waitFor({timeout:2000});
+  if(connections!==connectionsBeforeFailure||new URL(page.url()).pathname!=='/conversations/b')throw Error('Transient identity check navigated or reattached before authorization');
+  if(await page.locator('#prompt').inputValue()!=='保留验证故障期间的文字')throw Error('Transient identity check erased the composer');
+  authUnavailable=false;
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')));
+  await expectModel('gpt-6-luna');
+  await page.unroute('**/auth/me');
+  const reloadDraft='正在输入的草稿 — 不应发送';
+  await page.locator('#prompt').fill(reloadDraft);
+  const beforeReload=frames.filter(frame=>frame.type==='prompt').length;
+  await page.reload();
+  await expectModel('gpt-6-luna');
+  if(await page.locator('#prompt').inputValue()!==reloadDraft)throw Error('Full reload lost the unsent composer draft');
+  if(frames.filter(frame=>frame.type==='prompt').length!==beforeReload)throw Error('Reload replayed a prompt');
+  await page.locator('#session-list [data-session-id="a"]').click();
+  await expectModel('gpt-6.1-sol');
+  if(await page.locator('#prompt').inputValue()!=='')throw Error('Conversation A received the draft from B');
+  await page.locator('#session-list [data-session-id="b"]').click();
+  await expectModel('gpt-6-luna');
+  if(await page.locator('#prompt').inputValue()!==reloadDraft)throw Error('Conversation B lost its recovered draft');
+  identity.user='synthetic-other-profile';
+  await page.reload();
+  await expectModel('gpt-6-luna');
+  if(await page.locator('#prompt').inputValue()!=='')throw Error('Reload exposed another account’s draft');
   if(errors.length)throw Error(JSON.stringify(errors));
-  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,identityTimeoutRestoresLatest:true,lateIdentityIgnored:true,skillRetryInPlace:true,errors};
+  const result={pass:true,transport:'synthetic HTTP/WS with throttled Browser timers',browser:browser.version(),unfocusedIdleUpdates:true,focusRestoresLatestWithoutClick:true,wakeKeepsHealthySubscription:true,identityTimeoutRestoresLatest:true,lateIdentityIgnored:true,skillRetryInPlace:true,fullReloadDraftRetained:true,providerOutageRetainsEditing:true,draftScopeIsolated:true,errors};
   await writeFile(join(evidence,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({...result,evidence}));
 }finally{
   await browser?.close();for(const ws of wsServer.clients)ws.terminate();await new Promise(resolve=>wsServer.close(resolve));

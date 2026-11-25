@@ -1,9 +1,55 @@
-import { describe,it,expect } from 'vitest';
+import { describe,it,expect,vi } from 'vitest';
 import { WebServer } from '../src/web/server.js';
 import { parseUserRoutes, type UserRoute } from '../src/web/identity.js';
 import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
 describe('Gitea identity and fixed VM routing',()=> {
+ it('fails closed during a transient Gitea check and recovers the same login without OAuth',async()=>{
+  let upstream=200;
+  const clock=vi.spyOn(Date,'now');
+  const host=createServer((_req,res)=>{res.writeHead(401);res.end('{}');});
+  await new Promise<void>(resolve=>host.listen(0,'127.0.0.1',resolve));
+  const hostUrl='ws://127.0.0.1:'+(host.address() as {port:number}).port+'/host';
+  const web=new WebServer({port:0,hostUrl,identity:{
+   giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'fixture',publicUrl:'http://coffee.test',
+   routes:()=>({'7':{hostUrl,hostToken:'fixture'}}),
+   fetch:(async url=>String(url).includes('access_token')?Response.json({access_token:'fixture'}):
+    upstream===200?Response.json({id:7,login:'owner',active:true}):new Response(null,{status:upstream})) as typeof fetch,
+  }});
+  await web.start();const base='http://127.0.0.1:'+web.address().port;
+  try{
+   const login=await fetch(base+'/auth/login',{redirect:'manual'});
+   const state=new URL(login.headers.get('location')!).searchParams.get('state');
+   const callback=await fetch(base+'/auth/callback?state='+state+'&code=fixture',{redirect:'manual',headers:{cookie:login.headers.get('set-cookie')!.split(';')[0]}});
+   const headers={cookie:callback.headers.get('set-cookie')!.split(';')[0]};
+   const started=Date.now();
+   clock.mockReturnValue(started+31000);
+   upstream=503;
+   for(const path of ['/auth/me','/api/me','/api/conversations/task/meta','/api/workspace']){
+    const response=await fetch(base+path,{headers,redirect:'manual'});
+    expect(response.status,path).toBe(503);
+    expect(response.headers.has('location')).toBe(false);
+   }
+   const ws=new WebSocket(base.replace('http:','ws:')+'/ws',{headers:{...headers,origin:'http://coffee.test'}});
+   const blocked=await new Promise<number>((resolve,reject)=>{
+    ws.on('unexpected-response',(_,res)=>{res.resume();resolve(res.statusCode!);ws.terminate();});
+    ws.on('error',reject);
+   });
+   expect(blocked).toBe(503);
+   upstream=200;
+   const recovered=await fetch(base+'/auth/me',{headers});
+   expect(recovered.status).toBe(200);
+   expect(await recovered.json()).toMatchObject({user:{id:'7',login:'owner'}});
+   const rejectedRoute=await fetch(base+'/api/conversations/task/meta',{headers});
+   expect(rejectedRoute.status).toBe(502);
+   expect((await fetch(base+'/auth/me',{headers})).status).toBe(200);
+   clock.mockReturnValue(started+62000);
+   upstream=401;
+   expect((await fetch(base+'/auth/me',{headers})).status).toBe(401);
+   upstream=200;
+   expect((await fetch(base+'/auth/me',{headers})).status).toBe(401);
+  }finally{clock.mockRestore();await web.close();await new Promise<void>(resolve=>host.close(()=>resolve()));}
+ });
  it('recovers legacy login deep links after identity expiry without an open redirect',async()=> {
   const web=new WebServer({port:0,hostUrl:'ws://127.0.0.1:1/host',identity:{giteaUrl:'http://gitea.test',clientId:'app',clientSecret:'fixture',publicUrl:'http://coffee.test',routes:()=>({'7':{hostUrl:'ws://127.0.0.1:1/host',hostToken:'fixture'}}),fetch:(async(url)=>new Response(JSON.stringify(String(url).includes('access_token')?{access_token:'fixture'}:{id:7,login:'owner',active:true}))) as typeof fetch}});
   await web.start();const base=`http://127.0.0.1:${web.address().port}`;

@@ -98,6 +98,8 @@ Source publication and actual activation remain separate states.
 
 - MISHU 产品源码和功能主票：[独立仓库职责与包接口](development/mishu-source-ownership.md)。秘书体验规格与研究已迁回 MISHU，旧链接保留指针。
 
+- [Typing across reload and identity outage](spec/conversation-switching.md#typing-across-a-page-reload-and-temporary-identity-outage), [Server #117](https://github.com/awangs1986/pi-coffee-server/issues/117). Scoped tab drafts and retryable Gitea checks cover page reload and authorization interruptions.
+
 - Window wake after idle connection loss: [current recovery contract](spec/conversation-switching.md#window-wake-recovery-2026-10-11-server-117), [Server #117](https://github.com/awangs1986/pi-coffee-server/issues/117). Focus/page restoration reattaches the selected conversation without navigation; synthetic timer-throttling evidence does not identify the original production disconnect trigger.
 
 - MISHU manager review repairs: [regressions, integration and merge evidence](development/mishu-manager-repairs.md). Retains historical Codex-source repair evidence; current #122 allows only Pi secretary sources. Target-native capabilities remain independently gated.

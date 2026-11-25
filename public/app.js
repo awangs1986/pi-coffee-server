@@ -39,6 +39,7 @@ import {ConversationRepository} from './conversation-repository.js';
 import {ConversationSyncView} from './conversation-sync-view.js';
 import {createRenderScheduler} from './render-scheduler.js';
 import {createSyncStatus} from './sync-status.js';
+import {createComposerDrafts} from './composer-drafts.js';
 import {RecentConversations} from './recent-conversations.js';
 import {ConversationPreviewStore,createConversationPreview} from './conversation-preview-store.js';
 import {renderConversationPreview,conversationPreviewNode} from './conversation-preview-view.js';
@@ -154,21 +155,26 @@ const navigation=createConversationNavigation({onSelect:id=>applyConversationSel
 
 function rememberTask(id){navigation.adopt(id);if(id){sessionStorage.setItem(ACTIVE_KEY,id);localStorage.setItem(ACTIVE_KEY,id);}else{sessionStorage.removeItem(ACTIVE_KEY);localStorage.removeItem(ACTIVE_KEY);}}
 let pendingOpenId = null, queuedPrompt = null, prepareNew = false;
-const textDrafts=new Map();
+const textDrafts=createComposerDrafts();
 const attachmentDrafts=new Map();
 const draftKey=()=>JSON.stringify([currentUser,activeId]);
+function rememberTextDraft(){
+  const pending=queuedPrompt?.text;
+  const entered=ui.prompt.value;
+  textDrafts.set(activeId,pending&&pending!==entered?[pending,entered].filter(Boolean).join('\n\n'):entered);
+}
+function flushTextDraft(){rememberTextDraft();textDrafts.flush();}
 function saveComposerDraft(){
   restoreQueuedPrompt();
-  const key=draftKey();textDrafts.delete(key);
+  rememberTextDraft();
+  const key=draftKey();
   // Preserve original browser Files, never another session's grants or upload paths.
   const files=[...new Set([...draftFiles,...filesAwaitingTransfer,...uploads.filter(u=>u.state!=='cancelled').map(u=>u.file)])].filter(Boolean);
   const images=attachments.filter(image=>!image.file);
   if(files.length||images.length)attachmentDrafts.set(key,{files,images});else attachmentDrafts.delete(key);
-  if(ui.prompt.value)textDrafts.set(key,ui.prompt.value);
-  while(textDrafts.size>30 || [...textDrafts.values()].reduce((sum,text)=>sum+text.length,0)>4*1024*1024)textDrafts.delete(textDrafts.keys().next().value);
 }
 function restoreComposerDraft(){
-  ui.prompt.value=textDrafts.get(draftKey())||'';
+  ui.prompt.value=textDrafts.get(activeId);
   const saved=attachmentDrafts.get(draftKey());
   draftFiles=saved?.files.slice()||[];attachments=saved?.images.slice()||[];
   // Encoded previews are disposable; restore their originals without keeping large base64 caches.
@@ -1655,26 +1661,44 @@ async function whoAmI(epoch, signal) {
     const response = await fetch('/auth/me', { cache: 'no-store', signal });
     if(epoch!==connectionEpoch)return false;
     if (response.status === 401) {
-      revokeCachedIdentity();await clearPreviews();
+      revokeCachedIdentity();
+      const revokedEpoch=connectionEpoch;
+      await clearPreviews();
       const body = await response.json().catch(() => ({}));
-      const loginUrl=body?.loginUrl || '/login';
-      location.href=loginUrl+(loginUrl.includes('?')?'&':'?')+'returnTo='+encodeURIComponent(location.pathname);
+      if(revokedEpoch!==connectionEpoch)return false;
+      const loginUrl=body?.loginUrl==='/auth/login'?'/auth/login':'/login';
+      location.href=loginUrl+'?returnTo='+encodeURIComponent(location.pathname);
+      return false;
+    }
+    if (response.status === 503) {
+      clearConnectionDeadline();
+      setConnection('登录验证暂时不可用，正在重试…', 'error');
+      scheduleReconnect();
       return false;
     }
     if (!response.ok) return true;
     const info = await response.json();
     if(epoch!==connectionEpoch)return false;
-    const previousUser=currentUser;
+    const previousUser=currentUser,previousId=activeId;
     backupControls.close();
     currentUser = typeof info.user==='string' ? info.user : info.user?.id ? 'gitea-'+info.user.id : null;
     if(previousUser!==currentUser)resetReleaseStatus();
     if(previousUser!==currentUser && disposeFilePreview)closeWorkspaceDetail();
-    if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
+    if(previousUser!==currentUser){goalControls.reset();completionSpeech?.scopeChanged();displayMode="compact";conversationRepository.setDisplayMode(displayMode);displaySaving=false;models=null;modelPreview=null;capabilities=null;sidebarOrder.clear();if(previousUser!==null){clearPreviews();clearAttachmentDrafts();ui.prompt.value='';workspaceRequestSeq++;workspaceState=null;sessions=[];closeMenu();sidebarDragId=null;ui.sessionList.replaceChildren();renderSessionList();}else recentConversations.clear();clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();}
     engineDirectory.setScope(currentUser ?? 'local');
     completionReads.setScope(currentUser);conversationRepository.setScope(currentUser);conversationModels.setScope(currentUser);
     if(currentUser)loginCoffee.play(currentUser);
     const key = currentUser ? ACTIVE_KEY_BASE + ':' + currentUser : ACTIVE_KEY_BASE;
     if (key !== ACTIVE_KEY || activeId === null) { ACTIVE_KEY = key; activeId = navigation.initial(sessionStorage.getItem(ACTIVE_KEY) || localStorage.getItem(ACTIVE_KEY) || null); }
+    if(previousUser!==currentUser || previousId!==activeId){
+      textDrafts.setScope(currentUser);
+      if(!queuedPrompt){
+        const saved=textDrafts.get(activeId);
+        const entered=previousUser===null?ui.prompt.value:'';
+        ui.prompt.value=entered&&entered!==saved?[saved,entered].filter(Boolean).join('\n\n'):saved;
+        autoGrow();
+      }
+    }
     if(!models){restoreModelPreview();if(activeId&&!opened)engine=currentTask()?.engine||modelPreview?.engine||engine;refreshComposer();renderAgentSettings();}
     ui.userBtn.classList.toggle('hidden', !info.auth);
     ui.userName.textContent = info.user?.login || currentUser || '';
@@ -1688,7 +1712,10 @@ async function whoAmI(epoch, signal) {
     return true;   // the Web Server may be restarting; let the socket retry decide
   }
 }
-function revokeCachedIdentity(){
+function revokeCachedIdentity({discardDrafts=false}={}){
+  if(discardDrafts)textDrafts.clear();
+  else flushTextDraft();
+  textDrafts.setScope(null);
   resetReleaseStatus();
   if(workspaceDetailOpen)closeWorkspaceDetail();
   goalControls.reset();
@@ -1698,7 +1725,7 @@ function revokeCachedIdentity(){
   abandonPendingSettings(false);
   connectionEpoch++;taskSelectionEpoch++;closeMishuPanels();modelsRequestEpoch++;clearHeartbeat();clearModelsSyncTimer();clearTimeout(reconnectTimer);clearTimeout(previewTimer);previewTimer=null;
   if(socket){socket.onopen=socket.onmessage=socket.onclose=socket.onerror=null;socket.close();socket=null;}
-  loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);textDrafts.clear();clearAttachmentDrafts();ui.prompt.value='';
+  loginCoffee.reset();sidebarOrder.clear();completionReads.setScope(null);conversationRepository.setScope(null);conversationDisplay.dispose();navigation.reset();syncedView.clear();syncStatus.select(null);clearAttachmentDrafts();ui.prompt.value='';
   backupControls.close();
   opened=false;historyReady=false;connected=false;activeBindingEpoch=null;currentUser=null;completionSpeech?.scopeChanged();activeId=null;workspaceState=null;sessions=[];workspaceRequestSeq++;
   clearExtensionUi();uiDrafts.clear();promptOutbox.clear();resetThread();refreshComposer();renderAgentSettings();
@@ -1707,7 +1734,7 @@ window.addEventListener('storage',event=>{
   if(completionReads.key()&&(event.key===null||event.key?.startsWith(completionReads.key()))){completionReads.refresh();renderSessionList();return;}
   if(event.key!==CACHE_CLEAR_KEY)return;
   if(event.newValue?.startsWith('cache:')){void clearPreviews();if(previewScroll!==null)resetThread();connect();return;}
-  revokeCachedIdentity();void clearPreviews();connect();
+  revokeCachedIdentity({discardDrafts:true});void clearPreviews();connect();
 });
 ui.userBtn.addEventListener('click', async () => {
   if (!currentUser) return;
@@ -1715,7 +1742,7 @@ ui.userBtn.addEventListener('click', async () => {
   const identityLogin = String(currentUser).startsWith('gitea-');
   sessionStorage.removeItem(ACTIVE_KEY);
   localStorage.removeItem(ACTIVE_KEY);
-  revokeCachedIdentity();
+  revokeCachedIdentity({discardDrafts:true});
   await clearPreviews();
   await fetch('/auth/logout', { method: 'POST' }).catch(() => undefined);
   // Other tabs revoke their sockets after logout has reached the server.
@@ -1977,8 +2004,9 @@ async function openSession(id) {
         ? await prepareTask({operationId:creationRequest.id,targetTaskId:creationRequest.id,kind:workspaceKind==='chat'?'create-chat':'create-work',engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch||ui.startBranch.value.trim()||undefined}:{})},{request:workspaceApi,active:isCurrent,changed:operation=>{$('#create-task').textContent=preparationLabel(operation);}})
         : await prepareLegacyTask({action:'conversation',id:creationRequest.id,workspaceKind,engine:selectedEngine,...(workspaceKind==='project'?{projectId,branch:existing?.startBranch||ui.startBranch.value.trim()||undefined}:{})},workspaceApi);
       if(!isCurrent())return;
-      textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
+      textDrafts.set(activeId,'');attachmentDrafts.delete(draftKey());
       id=c.id;activeId=id;speedToApply=selectedEngine==='codex'&&draftSpeed==='fast'?draftSpeed:null;contextToApply=['pi','codex'].includes(selectedEngine)?draftContextPreset:null;thinkingToApply=['pi','codex','claude'].includes(selectedEngine)&&draftModel&&draftThinking?{level:draftThinking,explicit:draftThinkingExplicit}:null;rememberTask(id);creationRequest=null;saveCreation();workspaceSync=null;
+      rememberTextDraft();
       // The preparation coordinator has published a validated native binding.
       // Sidebar/file grants are independent and must never own first-message delivery.
       workspaceState={...workspaceState,conversations:[...(workspaceState?.conversations||[]).filter(task=>task.id!==c.id),c]};
@@ -3291,6 +3319,7 @@ for (const type of ['dragleave', 'drop']) document.addEventListener(type, (e) =>
 
 // ---------- composer ----------
 function autoGrow() {
+  rememberTextDraft();
   ui.prompt.style.height = 'auto';
   ui.prompt.style.height = Math.min(ui.prompt.scrollHeight, 336) + 'px';
 }
@@ -3408,7 +3437,7 @@ function submitPrompt(text, images) {
   attachments = [];
   uploads = uploads.filter((u) => u.state === 'uploading' || u.state === 'finishing');
   renderAttachments();
-  ui.prompt.value = '';textDrafts.delete(draftKey());attachmentDrafts.delete(draftKey());
+  ui.prompt.value = '';textDrafts.set(activeId,'');attachmentDrafts.delete(draftKey());
   ui.slash.classList.add('hidden');
   autoGrow();
   refreshComposer();
@@ -3565,10 +3594,11 @@ document.addEventListener('keydown', (event) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState!=='visible'){heartbeat?.stop();return;}
+  if(document.visibilityState!=='visible'){flushTextDraft();heartbeat?.stop();return;}
   maybeReadCompletion();
   resumeLiveSubscription();
 });
+window.addEventListener('pagehide', flushTextDraft);
 window.addEventListener('online', resumeLiveSubscription);
 window.addEventListener('focus', resumeLiveSubscription);
 window.addEventListener('pageshow', resumeLiveSubscription);
@@ -4265,10 +4295,6 @@ $('#view-all-changes').addEventListener('click',()=>{showWorkspaceReview('diff')
 $('#wt-download').addEventListener('click',()=>{void downloadWorkspacePatch().catch(e=>toast(e.message));});
 void loadWorkspace();
 setInterval(()=>{if(!document.hidden || uploadsBusy())void loadWorkspace();},5000);
-fetch('/api/me',{cache:'no-store'}).then(async r=>{
-  if(r.status===401){const body=await r.json().catch(()=>({}));location.href=body?.loginUrl||'/auth/login';return null;}
-  return r.ok?r.json():null;
-}).then(user=>{if(!user)return;if(!currentUser)currentUser=user.id?'gitea-'+user.id:user.login;ui.userName.textContent=user.login||currentUser||'';ui.userBtn.classList.remove('hidden');ui.userBtn.disabled=false;}).catch(()=>{});
 
 const fileViewScope=()=>historyReady && activeId && (transfer?.sessionId||transfer?.scope)===activeId && currentTask() && previewAllowed(activeId)
   ? JSON.stringify([currentUser,activeId,taskSelectionEpoch,activeRecoveryGeneration,activeBindingEpoch,previewFingerprint(activeId)]) : null;

@@ -466,3 +466,20 @@ It saves scoped drafts, detaches the old transport, invalidates callbacks, reset
 selection-owned state and restores the target view. Reconnect reuses detachment.
 The three independent lifetimes in this contract remain unchanged. See
 [architecture maintenance](architecture-maintenance.md) for scope and evidence.
+
+## Typing across a page reload and temporary identity outage
+
+The ordinary composer keeps a bounded text draft for each Conversation and
+for the new-task view in the current browser tab's session storage. The
+Browser saves edits and flushes on page hide. After a page reload or sign-in
+redirect, a confirmed matching account restores its text. Changing accounts
+or explicitly signing out purges the previous account's stored text.
+Restoration never sends a prompt. Attachments, question answers and delivery
+receipts retain their separate lifecycles.
+
+When a periodic Gitea user check times out or receives a temporary failure,
+Web denies the protected request with a retryable status and retains the
+session record. WebSocket recovery retries the authorization in place.
+An expired session, removed account route or provider denial requires login
+again. A Host transport authorization failure does not revoke the Browser's
+Gitea login.
