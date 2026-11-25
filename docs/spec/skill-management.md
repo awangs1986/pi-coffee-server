@@ -314,3 +314,18 @@ claiming the exact production trigger was proven.
 ### Codex native command Web adaptation (2026-10-20)
 
 The [Codex command contract](codex-native-commands.md) adds an explicit native/Web command inventory alongside the Skill catalog. Native commands are dispatched as operations, never blindly forwarded as text; the contract lists supported routes and unavailable terminal/shared-setting operations.
+
+### Typed Codex Skill aliases
+
+The Codex composer accepts `$name`, `/name`, `/namespace:name`, and pasted
+Pi-style `/skill:name`. On explicit submission, it expands a slash alias
+against the enabled native Skill catalog and preserves the argument text.
+The exact native name wins. A short name can identify a namespaced Skill only
+when there is a single match. Ambiguous and unknown commands retain the draft.
+Native and Web commands take precedence, including unavailable commands.
+Canonical dollar syntax can still select a Skill whose name matches a command.
+
+A submission waiting for its catalog resumes once if the same draft and
+selection are still current. Editing the draft, changing its attachments,
+switching conversations or a failed discovery cancels that pending submission.
+The Codex adapter still resolves the native Skill path through native discovery.

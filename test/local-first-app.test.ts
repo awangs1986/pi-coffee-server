@@ -209,6 +209,51 @@ describe('idle connection recovery at the app-controller seam', () => {
 });
 
 describe('Skill menu recovery',()=>{
+ it.each([
+  ['/refocus 核对目标', '$refocus 核对目标'],
+  ['/cat-skills:fresh-agent 核对目标\n保留第二行', '$cat-skills:fresh-agent 核对目标\n保留第二行'],
+  ['/fresh-agent 核对目标', '$cat-skills:fresh-agent 核对目标'],
+  ['/skill:refocus 核对目标', '$refocus 核对目标'],
+  ['$refocus 核对目标', '$refocus 核对目标'],
+ ])('sends Codex Skill input from %s using the same native invocation',async (input,expected)=>{
+  const app=await setup();
+  const socket=await app.select('a');
+  socket.receive({type:'commands',commands:[
+   {name:'refocus',invocation:'$refocus',source:'skill'},
+   {name:'cat-skills:fresh-agent',invocation:'$cat-skills:fresh-agent',source:'skill'},
+  ]});
+  draft(input);
+  document.querySelector<HTMLFormElement>('#composer')!.requestSubmit();
+  expect(allFrames.filter(frame=>frame.type==='prompt')).toMatchObject([{text:expected}]);
+ });
+ it.each([false,true])('holds a pasted skill command until the catalog arrives, with draft edits=%s',async edit=>{
+  const app=await setup();
+  const socket=await app.select('a');
+  socket.receive({type:'opened',sessionId:'a',engine:'codex',capabilities:{...capabilities,commands:true},state:{isStreaming:false}});
+  socket.receive({type:'history',sessionId:'a',entries:[]});
+  draft('/tdd 修复问题');
+  document.querySelector<HTMLFormElement>('#composer')!.requestSubmit();
+  expect(prompt().value).toBe('/tdd 修复问题');
+  expect(allFrames.filter(frame=>frame.type==='prompt')).toHaveLength(0);
+  if(edit)draft('/tdd 一份新的草稿');
+  socket.receive({type:'commands',commands:[{name:'tdd',invocation:'$tdd',source:'skill'}]});
+  expect(allFrames.filter(frame=>frame.type==='prompt')).toMatchObject(edit?[]:[{text:'$tdd 修复问题'}]);
+  if(edit)expect(prompt().value).toBe('/tdd 一份新的草稿');
+ });
+ it('retains unknown and ambiguous slash drafts and gives reserved commands precedence',async()=>{
+  const app=await setup();
+  const socket=await app.select('a');
+  socket.receive({type:'commands',commands:['goal','logout','one:check','two:check'].map(name=>({name,invocation:'$'+name,source:'skill'}))});
+  const form=document.querySelector<HTMLFormElement>('#composer')!;
+  for(const input of ['/missing request','/check request','/logout']){
+   draft(input);form.requestSubmit();
+   expect(prompt().value).toBe(input);
+   expect(allFrames.filter(frame=>frame.type==='prompt')).toHaveLength(0);
+  }
+  draft('/goal finish this');form.requestSubmit();
+  expect(allFrames.filter(frame=>frame.type==='agent_command')).toContainEqual(expect.objectContaining({name:'goal',args:'finish this'}));
+  expect(allFrames.filter(frame=>frame.type==='prompt')).toHaveLength(0);
+ });
  it('offers a retry after command discovery fails and then shows refocus without navigating',async()=>{
   const app=await setup();const socket=await app.select('a');
   socket.receive({type:'opened',sessionId:'a',engine:'codex',capabilities:{...capabilities,commands:true},state:{isStreaming:false}});await tick();

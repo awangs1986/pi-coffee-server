@@ -36,6 +36,7 @@ wss.on('connection',socket=>{
   if(frame.type==='list_sessions')send({type:'sessions',sessions:tasks});
   if(frame.type==='get_model_catalog')send({type:'model_catalog',requestId:frame.requestId,engine:'codex',...values()});
   if(frame.type==='open'){socket.task=frame.sessionId;send({type:'opened',engine:'codex',sessionId:frame.sessionId,state:{},capabilities:{commands:true,models:true,stats:true,stop:true,followUp:true,rename:true,compact:true}});send({type:'history',sessionId:frame.sessionId,entries:[]});}
+  if(frame.type==='get_commands')send({type:'commands',commands:[{name:'cat-skills:tdd',source:'skill',invocation:'$cat-skills:tdd'}]});
   if(frame.type==='get_stats')send({type:'stats',requestId:frame.requestId,sessionId:socket.task,stats:{contextUsage:{tokens:1000,contextWindow:272000},tokens:{input:0,output:0,total:0}}});
   if(frame.type==='get_models')send({type:'models',requestId:frame.requestId,sessionId:socket.task,...values()});
   if(frame.type==='set_model'){socket.model=frame.id;send({type:'ack',operation:frame.type,requestId:frame.requestId});}
@@ -98,6 +99,12 @@ try{
  await page.locator('#stop').click();
  evidence.push({manualHandoffConfirmed:true,cancelAndTaskSwitchFenced:true,nativeSlashCompactionPreserved:true});
  evidence.push({goalWithoutPrompt:true,unsupportedDraftRetained:true,exportDownload:true,lateResponseFenced:true,existingDialogPreserved:true});
+ await page.locator('#prompt').fill('/tdd fix the focused regression');
+ await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+ const skillSent=once(server,'fixture-prompt',{signal:AbortSignal.timeout(6000)});
+ await page.locator('#prompt').press('Enter');await skillSent;
+ if(prompts.length!==1||prompts[0].text!=='$cat-skills:tdd fix the focused regression')throw Error('Pasted slash alias did not reach the native Skill prompt path');
+ evidence.push({pastedSlashSkill:true,nativeSkillNameRetained:true});
  if(errors.length)throw Error(JSON.stringify(errors));
  const result={passed:true,evidence,errors};console.log(JSON.stringify(result));
  if(process.env.EVIDENCE_DIR){await mkdir(process.env.EVIDENCE_DIR,{recursive:true});await writeFile(join(process.env.EVIDENCE_DIR,'codex-commands.json'),JSON.stringify(result));}

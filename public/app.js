@@ -2182,11 +2182,10 @@ function handleFrame(frame, ws) {
       return;
     case 'command_catalog':
       if(opened||activeId||frame.engine!==$('#task-engine').value||frame.requestId!==commandRequest)return;
-      finishCommandRead();commandRequest=null;commandState='ready';commands=Array.isArray(frame.commands)?frame.commands:[];renderSlash();return;
+      acceptCommands(frame.commands);
+      return;
     case 'commands':
-      finishCommandRead();commandState='ready';
-      commands = Array.isArray(frame.commands) ? frame.commands : [];
-      renderSlash();
+      acceptCommands(frame.commands);
       return;
     case 'agent_command_result': {
       if(goalControls.receive(frame))return;
@@ -2268,8 +2267,7 @@ function handleFrame(frame, ws) {
       void loadRuntimeStatus();
       if(frame.code==='metadata_unavailable'){
         if(modelConfirmation&&frame.requestId===modelConfirmation){abandonPendingSettings();toast('模型设置确认失败，输入已保留');refreshComposer();return;}
-        if(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest){commandRequest=null;finishCommandRead();commandState='error';commandError='读取命令超时或失败';renderSlash();}
-        if(frame.operation==='get_commands'){finishCommandRead();commandState='error';commandError='读取命令超时或失败';renderSlash();}
+        if(frame.operation==='get_commands'||(frame.operation==='get_command_catalog'&&frame.requestId===commandRequest))failCommandRead('读取命令超时或失败');
         if(frame.operation==='get_model_catalog'&&frame.requestId===catalogRequest){catalogRequest=null;refreshComposer();}
         toast('辅助信息读取失败，当前任务仍可继续：'+frame.message,5000);return;
       }
@@ -2279,7 +2277,7 @@ function handleFrame(frame, ws) {
       if(frame.requestId?.startsWith('queue-')){queueControls.error(frame.requestId,frame.message);return;}
       if(thinkingPending&&frame.requestId===thinkingPending){thinkingPending=null;thinkingToApply=null;restoreQueuedPrompt();toast('思考强度设置失败：'+frame.message);renderModels();refreshComposer();return;}
       if(contextPending&&frame.requestId===contextPending){contextPending=null;contextToApply=null;restoreQueuedPrompt();toast('上下文设置未生效：'+frame.message);refreshComposer();return;} {
-      if(commandRequest&&frame.requestId===commandRequest){commandRequest=null;finishCommandRead();commandState='error';commandError='读取命令失败：'+frame.message;renderSlash();return;}
+      if(commandRequest&&frame.requestId===commandRequest){failCommandRead('读取命令失败：'+frame.message);return;}
       const rejectedQueuedInput = queuedRequests.delete(frame.requestId);
       if (pendingDelivery === frame.requestId) pendingDelivery = null;
       const rejectedPrompt=promptOutbox.get(frame.requestId);
@@ -2802,7 +2800,8 @@ function handleCodexSlash(text){
  if((opened?engine:draftModelEngine())!=='codex')return false;
  const command=parseCodexCommand(text);if(!command||['restart','sshme','mishu','mishu-setup','mishu-tasks','mishu-disable'].includes(command.name))return false;
  const {entry,name,args}=command;
- if(!entry||entry.route==='unavailable'){toast(entry?.description||'未知 Codex 原生命令；未发送给模型',7000);return true;}
+ if(!entry)return false;
+ if(entry.route==='unavailable'){toast(entry.description,7000);return true;}
  if(draftFiles.length||attachments.length||uploads.length||filesAwaitingTransfer.length){toast('原生命令不发送附件，请先处理附件草稿');return true;}
  if(entry.route==='turn'){
   if(!opened||!activeId||streaming||compacting||takeoverBusy()){toast('请先打开空闲的 Codex 对话');return true;}
@@ -2846,14 +2845,69 @@ function handleCodexSlash(text){
 
 // ---------- slash commands ----------
 let slashIndex = 0, commandRequest = null, commandState = 'idle', commandError = '', skillReloadScope = null, commandTimer=null;
-function beginCommandRead(){clearTimeout(commandTimer);commandState='loading';commandError='';commandTimer=setTimeout(()=>{commandState='error';commandError='读取命令超时，请重试';renderSlash();},12000);}
+let pendingSkillSend = null;
+function beginCommandRead(){clearTimeout(commandTimer);commandState='loading';commandError='';commandTimer=setTimeout(()=>failCommandRead('读取命令超时，请重试'),12000);}
 function finishCommandRead(){clearTimeout(commandTimer);commandTimer=null;commandError='';}
-function resetSlashCommands(){finishCommandRead();commands=[];commandRequest=null;commandState='idle';commandError='';ui.slash.classList.add('hidden');}
-function loadSlashCommands(){
-  if(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)||!connected||commandState!=='idle')return;
-  if(opened){if(supports('commands')){beginCommandRead();send({v:1,type:'get_commands'});}return;}
+function resetSlashCommands(){finishCommandRead();commands=[];commandRequest=null;commandState='idle';pendingSkillSend=null;ui.slash.classList.add('hidden');}
+function failCommandRead(message) {
+  finishCommandRead();commandRequest=null;commandState='error';commandError=message;
+  if(pendingSkillSend)toast(message+'，输入已保留');
+  pendingSkillSend=null;renderSlash();
+}
+function acceptCommands(catalog) {
+  finishCommandRead();commandRequest=null;commandState='ready';
+  commands=Array.isArray(catalog)?catalog:[];
+  renderSlash();
+  const resume=pendingSkillSend;
+  pendingSkillSend=null;
+  resume?.();
+}
+function loadSlashCommands({forSkillSend=false}={}) {
+  if(!connected||commandState!=='idle')return;
+  if(!forSkillSend&&(!ui.prompt.value.startsWith('/')||/\s/.test(ui.prompt.value)))return;
+  if(opened){
+    if(supports('commands')){
+      beginCommandRead();
+      if(!send({v:1,type:'get_commands'}))failCommandRead('命令读取请求未发送');
+    }
+    return;
+  }
   if(activeId||pendingOpenId||!['pi','codex','claude'].includes($('#task-engine').value))return;
-  commandRequest=requestId('commands');beginCommandRead();send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest});
+  commandRequest=requestId('commands');beginCommandRead();
+  if(!send({v:1,type:'get_command_catalog',engine:$('#task-engine').value,requestId:commandRequest}))failCommandRead('命令读取请求未发送');
+}
+function codexSkillPrompt(text) {
+  if((opened?engine:draftModelEngine())!=='codex')return text;
+  if(/^\/(?:restart|sshme)(?:\s|$)|^\/mishu(?:-|\s|$)/i.test(text))return text;
+  const match=/^\/([a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)*)(?=\s|$)/.exec(text);
+  if(!match)return text;
+
+  if(commandState==='error')commandState='idle';
+  loadSlashCommands({forSkillSend:true});
+  if(commandState==='loading'){
+    const current=captureSelection();
+    const composerFiles=()=>[...draftFiles,...attachments,...uploads,...filesAwaitingTransfer];
+    const submittedFiles=composerFiles();
+    pendingSkillSend=()=>{
+      if(!current()||ui.prompt.value.trim()!==text||(opened?engine:draftModelEngine())!=='codex')return;
+      const files=composerFiles();
+      if(files.length===submittedFiles.length&&files.every((file,index)=>file===submittedFiles[index]))ui.composer.requestSubmit();
+    };
+    toast('正在读取 Codex 技能，输入已保留');
+    return null;
+  }
+  if(commandState!=='ready'){
+    toast('暂时无法读取 Codex 技能，输入已保留');
+    return null;
+  }
+  const name=match[1];
+  const skills=commands.filter(command=>command.source==='skill'&&command.invocation==='$'+command.name);
+  const short=name.startsWith('skill:')?name.slice('skill:'.length):name;
+  const exact=skills.find(skill=>skill.name===name)??skills.find(skill=>skill.name===short);
+  const matches=exact?[exact]:short.includes(':')?[]:skills.filter(skill=>skill.name.split(':').at(-1)===short);
+  if(matches.length===1)return matches[0].invocation+text.slice(match[0].length);
+  toast(matches.length?'有多个同名技能，请输入完整名称（/命名空间:技能名）':'未知 Codex 命令或未启用的技能，输入已保留',7000);
+  return null;
 }
 function slashItems() {
   const value = ui.prompt.value;
@@ -2894,6 +2948,7 @@ function renderSlash() {
   });
 }
 function applySlash(command) {
+  pendingSkillSend=null;
   ui.prompt.value = (command.invocation||'/' + command.name) + ' ';
   ui.slash.classList.add('hidden');
   ui.prompt.focus();
@@ -3329,6 +3384,7 @@ function syncToBottomPosition() {
 }
 if (globalThis.ResizeObserver && ui.composerWrap) new ResizeObserver(syncToBottomPosition).observe(ui.composerWrap);
 ui.prompt.addEventListener('input', () => {
+  pendingSkillSend=null;
   autoGrow();
   refreshComposer();
   slashIndex = 0;
@@ -3356,8 +3412,11 @@ $('#composer').addEventListener('submit', (event) => {
   if(queuedPrompt!==null){toast('首条消息正在准备；新输入保留为草稿');return;}
   if(imagesDecoding()){toast('正在读取图片，请稍后发送');return;}
   if(!opened && draftModelEngine() && !models){toast('正在加载模型和思考强度，请稍后发送');return;}
-  const text = ui.prompt.value.trim();
-  if(handleCodexSlash(text))return;
+  const entered = ui.prompt.value.trim();
+  pendingSkillSend=null;
+  if(handleCodexSlash(entered))return;
+  const text = codexSkillPrompt(entered);
+  if(text===null)return;
   const files = completedUploads();
   const pendingNewTaskFiles = !opened && filesAwaitingTransfer.length > 0;
   if ((!text && draftFiles.length===0 && attachments.length === 0 && files.length === 0 && !pendingNewTaskFiles) || !socket || socket.readyState !== WebSocket.OPEN) return;
