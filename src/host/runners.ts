@@ -35,12 +35,15 @@ export class RunnerManager {
   if(this.purpose!=='sshme'||typeof id!=='string'||! /^[a-zA-Z0-9_-]{1,128}$/.test(id))throw new Error('A valid conversation is required for SSHME');
   let manager=this.conversations.get(id);if(!manager){manager=new RunnerManager(join(this.root,'conversations',id),'sshme');this.conversations.set(id,manager);}return manager;
  }
+ private testingInstruction():string {
+  return `For remote execution or testing, read the runner configuration at ${this.configPath}. Do not run tests on this Linux host.`;
+ }
  async guidance():Promise<{revision:string;text?:string}>{return this.serial(async()=>{
   if(this.purpose!=='testing')return {revision:'none'};
   const rows=await this.rows();let exists=true;try{await readFile(this.configPath);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')exists=false;else throw error;}
   if(!exists)return {revision:'none'};
   if(!this.cliRefreshed){await this.persist(rows);this.cliRefreshed=true;}
-  return {revision:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),text:rows.length?`For remote execution or testing, read the runner configuration at ${this.configPath}.`:'No test server is currently configured; do not use previously supplied test-server connections.'};
+  return {revision:createHash('sha256').update(JSON.stringify(rows)).digest('hex'),text:rows.length?this.testingInstruction():'No test server is currently configured; do not use previously supplied test-server connections.'};
  });}
  private async rows():Promise<Runner[]>{
   try {const value=JSON.parse(await readFile(this.configPath,'utf8'));if(value.version!==1||!Array.isArray(value.runners))throw new Error('Unsupported runner configuration');return value.runners;}
@@ -64,7 +67,7 @@ export class RunnerManager {
   const rows=await this.rows();if(!rows.length)return undefined;
   // A newly started native session resolves the CLI in the current Host release.
   await this.persist(rows);
-  return `For remote execution or testing, read the runner configuration at ${this.configPath}.`;
+  return this.testingInstruction();
  });}
  async list(){await this.writes;return {runners:(await this.rows()).map(view)};}
  async handle(input:Record<string,unknown>):Promise<unknown>{

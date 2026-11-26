@@ -24,7 +24,7 @@ it('scopes runner CRUD, redacts secrets, preserves passwords on edit and conditi
  expect(await manager('alice').instruction()).toBeUndefined();
  const saved=await call({action:'save',runner:input});expect(saved.status).toBe(200);const runner=saved.body.runner;
  expect(runner).toMatchObject({name:input.name,hasPassword:true});expect(JSON.stringify(saved.body)).not.toContain(input.password);
- const pointer=await manager('alice').instruction();expect(pointer).toBe(`For remote execution or testing, read the runner configuration at ${join(root,'alice','runners.json')}.`);
+ const pointer=await manager('alice').instruction();expect(pointer).toBe(`For remote execution or testing, read the runner configuration at ${join(root,'alice','runners.json')}. Do not run tests on this Linux host.`);
  expect(pointer!.split('\n')).toHaveLength(1);
  expect((await call({action:'list'},'bob')).body.runners).toEqual([]);
  expect((await call({action:'delete',id:runner.id},'bob')).status).toBe(409);

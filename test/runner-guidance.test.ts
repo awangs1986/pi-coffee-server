@@ -30,7 +30,7 @@ it('delivers account test-server changes only to Work, never Chat or SSHME disco
   const {runner}=await request({action:'save',runner:{name:'Testing only',host:'192.0.2.10',port:22,username:'tester',platform:'windows',workdir:'',password:'fixture-password'}});
   await chatOpened;chatSocket.send(JSON.stringify({v:1,type:'open',sessionId:chat.id}));await expect.poll(()=>chatFrames.some(f=>f.type==='history')).toBe(true);
   expect(await chatPrompt('ordinary Chat')).not.toMatch(/runner configuration|No test server|SSHME/);
-  const first=await prompt('test now');expect(first).toContain('For remote execution or testing, read the runner configuration at');expect(first).not.toMatch(/fixture-password|SSHME|sshme/);
+  const first=await prompt('test now');expect(first).toContain('For remote execution or testing, read the runner configuration at');expect(first).toContain('Do not run tests on this Linux host.');expect(first).not.toMatch(/fixture-password|SSHME|sshme/);
   expect(await prompt('continue')).not.toContain('runner configuration');
   await request({action:'save',runner:{...runner,name:'Changed test server',password:''}});
   expect(await prompt('next test')).toContain('runner configuration');
